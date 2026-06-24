@@ -29,9 +29,12 @@ depth_backend=native-realsense
 replay_fps=5
 chunk_seconds=5
 chunk_frame_count=25
-max_chunks=7
+max_chunks=None
 gpu_mode=single
+realtime_gpu_mode=single
+warmup_gpu_mode=single
 demo32_cuda_visible_devices=0
+shape_prior_device=cuda:0
 demo32_device=cuda
 demo32_tracker_device=cuda
 shape_prior_warmup=true
@@ -138,25 +141,40 @@ conda run -n demo_2_max --no-capture-output \
   python demo_v4/realtime_futurephystwin_chunks.py \
   --futurephystwin-base-path result/demo_v4/full_fake_realtime_native_full_sam3d_20260624/cases \
   --case-prefix demo_v4_native_full_sam3d \
-  --max-chunks 7 \
   --capture-extra-seconds 220 \
   --shape-prior-chunk-wait-timeout-s 420
 ```
 
-GPU routing is explicit:
+For a short debug run, add `--max-chunks <N>`. Omit `--max-chunks` for the
+default full fake-live recording pass.
+
+GPU routing is explicit and split by role:
 
 ```bash
-# Default: one visible GPU for Demo 3.2 / EdgeTAM / TAPNext++
-python demo_v4/realtime_futurephystwin_chunks.py --gpu-mode single
+# Default: Demo 3.2 realtime and SAM3D warmup both resolve to GPU0.
+python demo_v4/realtime_futurephystwin_chunks.py \
+  --realtime-gpu-mode single \
+  --warmup-gpu-mode single
 
-# Dual-GPU isolation: keep a local SAM3D worker on physical GPU0 and run
-# Demo 3.2 inside CUDA_VISIBLE_DEVICES=1.
-python demo_v4/realtime_futurephystwin_chunks.py --gpu-mode dual
+# Dual warmup + single realtime: run Demo 3.2 with CUDA_VISIBLE_DEVICES=0
+# and resolve shape-prior device to cuda:1.
+python demo_v4/realtime_futurephystwin_chunks.py \
+  --realtime-gpu-mode single \
+  --warmup-gpu-mode dual
+
+# Realtime isolation: run Demo 3.2 inside CUDA_VISIBLE_DEVICES=1.
+python demo_v4/realtime_futurephystwin_chunks.py \
+  --realtime-gpu-mode dual
 ```
 
-The process terminates the Demo 3.2 subprocess after `max_chunks` are written;
-`demo32_return_code=-15` with `demo32_stop_reason=max_chunks_reached` is the
-expected controlled stop.
+`--gpu-mode` remains a backward-compatible alias for realtime routing.
+`--demo32-cuda-visible-devices` and `--shape-prior-device` remain explicit
+debug overrides.
+
+When `--max-chunks` is supplied, the process terminates the Demo 3.2 subprocess
+after that many chunks are written; `demo32_return_code=-15` with
+`demo32_stop_reason=max_chunks_reached` is the expected controlled stop. The
+default unlimited fake-live path runs until the recording source finishes.
 
 ## Chunk Cadence Telemetry
 
@@ -166,24 +184,34 @@ wall-clock publish cadence. Every chunk manifest records:
 ```text
 source_window_start_s
 source_window_end_s
+window_closed_wall_s
+track_finalize_done_wall_s
+final_data_written_wall_s
+validation_done_wall_s
+atomic_rename_done_wall_s
 materialize_start_wall_s
 materialize_end_wall_s
 publish_wall_s
 materialize_latency_ms
+publish_latency_ms
 publish_lag_ms
 backlog_chunks
 ```
 
 `source_window_*` is nominal source time from row offsets and FPS. The
-`*_wall_s` fields are relative to Demo v4 chunk streaming startup. Realtime
-cadence is acceptable only when steady-state `publish_wall_s` intervals are no
-larger than the chunk source window and `backlog_chunks` does not grow after
-startup.
+`*_wall_s` fields are relative to Demo v4 chunk streaming startup.
+`publish_wall_s` is an alias of `atomic_rename_done_wall_s`, so
+`publish_latency_ms` measures the real consumer-visible path from
+`window_closed_wall_s` until the validated READY case has been atomically
+published. `materialize_latency_ms` remains useful for internal finalizer work
+but is not the READY-visible publish metric. Realtime cadence is acceptable only
+when steady-state `publish_wall_s` intervals are no larger than the chunk source
+window and `backlog_chunks` does not grow after startup.
 
 ## Validation Chunks
 
-The validation selector uses the second-last and fifth-last chunks. With the
-default seven chunks this means:
+The validation selector uses the second-last and fifth-last chunks. A short
+seven-chunk debug run selects:
 
 ```text
 demo_v4_native_full_sam3d_chunk_0006
@@ -193,15 +221,16 @@ demo_v4_native_full_sam3d_chunk_0003
 This avoids proving the path only on an early chunk where the controller may not
 have moved enough.
 
-Demo v4 supports both single-GPU and dual-GPU routing:
+Demo v4 supports independent warmup and realtime GPU routing:
 
-- `--gpu-mode single` is the default. Demo 3.2 receives
+- `--realtime-gpu-mode single` is the default. Demo 3.2 receives
   `CUDA_VISIBLE_DEVICES=0`, logical `--device cuda`, and logical
   `--tracker-device cuda`.
-- `--gpu-mode dual` runs Demo 3.2 with `CUDA_VISIBLE_DEVICES=1`, so a local
-  SAM3D worker can stay resident on physical GPU0.
-- `--demo32-cuda-visible-devices` remains an explicit debug override for either
-  preset.
+- `--realtime-gpu-mode dual` runs Demo 3.2 with `CUDA_VISIBLE_DEVICES=1`.
+- `--warmup-gpu-mode single` resolves `--shape-prior-device cuda:0`.
+- `--warmup-gpu-mode dual` resolves `--shape-prior-device cuda:1`, supporting
+  dual-GPU warmup plus single-GPU realtime camera/fake-camera finalization.
+- `--gpu-mode` remains a compatibility alias for realtime routing.
 
 ## Verified 2026-06-24 Run
 

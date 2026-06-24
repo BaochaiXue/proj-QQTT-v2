@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import pickle
 import shutil
+import time
 from typing import Any, Callable, Mapping, Sequence
 import uuid
 
@@ -254,6 +255,44 @@ def _final_data_payload(
     return final
 
 
+def _zero_point_count(points: np.ndarray) -> int:
+    pts = np.asarray(points, dtype=np.float64)
+    if pts.ndim < 2 or pts.shape[-1] != 3 or pts.shape[0] == 0:
+        return 0
+    return int(np.count_nonzero(np.linalg.norm(pts[0], axis=-1) <= 1e-9))
+
+
+def _quality_manifest_fields(
+    final_data: Mapping[str, np.ndarray],
+    track_process: Mapping[str, np.ndarray],
+) -> dict[str, Any]:
+    object_points = np.asarray(final_data["object_points"], dtype=np.float64)
+    controller_points = np.asarray(final_data["controller_points"], dtype=np.float64)
+    surface_points = np.asarray(final_data["surface_points"], dtype=np.float64).reshape(-1, 3)
+    interior_points = np.asarray(final_data["interior_points"], dtype=np.float64).reshape(-1, 3)
+    controller_mask = np.asarray(
+        track_process.get("controller_mask", np.ones((controller_points.shape[1],), dtype=bool)),
+        dtype=bool,
+    )
+    target_counts_met = bool(surface_points.shape[0] >= 700 and interior_points.shape[0] >= 1000)
+    return {
+        "object_point_count": int(object_points.shape[1]),
+        "controller_point_count": int(controller_points.shape[1]),
+        "controller_candidate_count": int(controller_mask.shape[0]),
+        "controller_valid_candidate_count": int(np.count_nonzero(controller_mask)),
+        "surface_point_count": int(surface_points.shape[0]),
+        "interior_point_count": int(interior_points.shape[0]),
+        "shape_prior_fields_present": bool(surface_points.shape[0] > 0 and interior_points.shape[0] > 0),
+        "shape_prior_target_counts_met": target_counts_met,
+        "shape_prior_complete": target_counts_met,
+        "object_points_finite": bool(np.isfinite(object_points).all()),
+        "controller_points_finite": bool(np.isfinite(controller_points).all()),
+        "shape_prior_points_finite": bool(np.isfinite(surface_points).all() and np.isfinite(interior_points).all()),
+        "first_frame_zero_object_points": _zero_point_count(object_points),
+        "first_frame_zero_controller_points": _zero_point_count(controller_points),
+    }
+
+
 def _metadata_payload(chunk: FuturePhysTwinChunk, frame_count: int, width_height: tuple[int, int]) -> dict[str, Any]:
     intrinsics = np.asarray(chunk.intrinsics, dtype=np.float32)
     if intrinsics.shape == (3, 3):
@@ -291,9 +330,35 @@ def write_futurephystwin_chunk_case(
     case_name: str,
     chunk: FuturePhysTwinChunk,
     manifest_extras: Mapping[str, Any] | Callable[[], Mapping[str, Any]] | None = None,
+    *,
+    relative_wall_time_s: Callable[[], float] | None = None,
 ) -> dict[str, Any]:
     base = Path(base_path)
     base.mkdir(parents=True, exist_ok=True)
+    local_wall_origin_s = time.monotonic()
+
+    def now_wall_s() -> float:
+        if relative_wall_time_s is not None:
+            return float(relative_wall_time_s())
+        return float(time.monotonic() - local_wall_origin_s)
+
+    def apply_publish_timing(manifest_payload: dict[str, Any], *, atomic_rename_done_wall_s: float) -> None:
+        manifest_payload["atomic_rename_done_wall_s"] = float(atomic_rename_done_wall_s)
+        manifest_payload["publish_wall_s"] = float(atomic_rename_done_wall_s)
+        if "materialize_start_wall_s" in manifest_payload:
+            manifest_payload["materialize_end_wall_s"] = float(atomic_rename_done_wall_s)
+            manifest_payload["materialize_latency_ms"] = float(
+                (float(atomic_rename_done_wall_s) - float(manifest_payload["materialize_start_wall_s"])) * 1000.0
+            )
+        if "window_closed_wall_s" in manifest_payload:
+            manifest_payload["publish_latency_ms"] = float(
+                (float(atomic_rename_done_wall_s) - float(manifest_payload["window_closed_wall_s"])) * 1000.0
+            )
+        if "source_window_end_s" in manifest_payload:
+            manifest_payload["publish_lag_ms"] = float(
+                (float(atomic_rename_done_wall_s) - float(manifest_payload["source_window_end_s"])) * 1000.0
+            )
+
     case = base / str(case_name)
     if case.exists():
         raise FileExistsError(f"FuturePhysTwin chunk case already exists: {case}")
@@ -334,6 +399,7 @@ def write_futurephystwin_chunk_case(
         )
         with (staging / "final_data.pkl").open("wb") as handle:
             pickle.dump(final_data, handle)
+        final_data_written_wall_s = now_wall_s()
 
         manifest = {
             "case_name": str(case_name),
@@ -349,12 +415,23 @@ def write_futurephystwin_chunk_case(
             "depth_source_internal": str(chunk.depth_source_internal),
             "data_process_sam3d_metrics": dict(DATA_PROCESS_SAM3D_METRICS),
             "publish_contract": "ready_marker_atomic_rename",
+            "final_data_written_wall_s": float(final_data_written_wall_s),
         }
+        manifest.update(_quality_manifest_fields(final_data, track_process))
         if manifest_extras is not None:
             extras = manifest_extras() if callable(manifest_extras) else manifest_extras
             manifest.update(dict(extras))
-        (staging / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        timing_floor_s = max(
+            float(manifest.get("window_closed_wall_s", 0.0) or 0.0),
+            float(manifest.get("track_finalize_done_wall_s", 0.0) or 0.0),
+        )
+        manifest["final_data_written_wall_s"] = float(max(final_data_written_wall_s, timing_floor_s))
         validate_futurephystwin_case(staging)
+        validation_done_wall_s = max(now_wall_s(), float(manifest["final_data_written_wall_s"]))
+        manifest["validation_done_wall_s"] = float(validation_done_wall_s)
+        atomic_rename_done_wall_s = max(now_wall_s(), validation_done_wall_s)
+        apply_publish_timing(manifest, atomic_rename_done_wall_s=atomic_rename_done_wall_s)
+        (staging / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         (staging / "READY").write_text("ready\n", encoding="utf-8")
         os.replace(staging, case)
         try:

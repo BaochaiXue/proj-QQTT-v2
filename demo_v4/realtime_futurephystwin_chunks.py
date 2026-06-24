@@ -29,7 +29,7 @@ DEFAULT_REPLAY_FPS = 5.0
 DEFAULT_CHUNK_SECONDS = 5.0
 DEFAULT_CASE_PREFIX = "demo_v4"
 DEFAULT_DEPTH_BACKEND = "native-realsense"
-DEFAULT_MAX_CHUNKS = 7
+DEFAULT_MAX_CHUNKS: int | None = None
 DEFAULT_CAPTURE_EXTRA_SECONDS = 10.0
 DEFAULT_SHAPE_PRIOR_ENDPOINT = "tcp://127.0.0.1:7100"
 DEFAULT_MASK_RADIUS_OUTLIER_RADIUS_M = 0.01
@@ -38,6 +38,10 @@ DEFAULT_GPU_MODE = "single"
 GPU_MODE_DEMO32_CUDA_VISIBLE_DEVICES = {
     "single": "0",
     "dual": "1",
+}
+GPU_MODE_SHAPE_PRIOR_DEVICE = {
+    "single": "cuda:0",
+    "dual": "cuda:1",
 }
 DEFAULT_DEMO32_DEVICE = "cuda"
 DEFAULT_DEMO32_TRACKER_DEVICE = "cuda"
@@ -74,9 +78,21 @@ def build_parser() -> argparse.ArgumentParser:
         choices=tuple(GPU_MODE_DEMO32_CUDA_VISIBLE_DEVICES),
         default=DEFAULT_GPU_MODE,
         help=(
-            "GPU routing preset. single exposes one GPU to Demo 3.2; dual keeps Demo 3.2 "
-            "on the second GPU so a local SAM3D worker can occupy the first."
+            "Backward-compatible realtime GPU routing preset. Prefer "
+            "--realtime-gpu-mode for new experiments."
         ),
+    )
+    parser.add_argument(
+        "--realtime-gpu-mode",
+        choices=tuple(GPU_MODE_DEMO32_CUDA_VISIBLE_DEVICES),
+        default=None,
+        help="GPU routing preset for the Demo 3.2 camera/fake-camera -> final-data realtime subprocess.",
+    )
+    parser.add_argument(
+        "--warmup-gpu-mode",
+        choices=tuple(GPU_MODE_SHAPE_PRIOR_DEVICE),
+        default=DEFAULT_GPU_MODE,
+        help="GPU routing preset for SAM3D shape-prior warmup device selection.",
     )
     parser.add_argument(
         "--demo32-cuda-visible-devices",
@@ -103,7 +119,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-chunks",
         type=int,
         default=DEFAULT_MAX_CHUNKS,
-        help="Limit realtime chunk count. Defaults to seven chunks so second-last and fifth-last validation are meaningful.",
+        help=(
+            "Optional realtime chunk cap for debug/short validation runs. "
+            "Omit it to stream until the fake-live recording or live capture ends."
+        ),
     )
     parser.add_argument(
         "--capture-extra-seconds",
@@ -161,7 +180,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=300.0,
         help="How long Demo v4 waits for required shape-prior structure points before writing final_data chunks.",
     )
-    parser.add_argument("--shape-prior-device", default="cuda:0")
+    parser.add_argument(
+        "--shape-prior-device",
+        default=None,
+        help="Explicit shape-prior device override. Defaults from --warmup-gpu-mode.",
+    )
     parser.add_argument("--shape-prior-profile-json", type=Path, default=None)
     parser.add_argument(
         "--mask-radius-outlier-filter",
@@ -209,14 +232,41 @@ def resolve_chunk_frame_count(args: argparse.Namespace) -> int:
     return value
 
 
+def resolve_realtime_gpu_mode(args: argparse.Namespace) -> str:
+    value = getattr(args, "realtime_gpu_mode", None)
+    if value is None:
+        value = getattr(args, "gpu_mode", DEFAULT_GPU_MODE)
+    value = str(value)
+    if value not in GPU_MODE_DEMO32_CUDA_VISIBLE_DEVICES:
+        raise ValueError(f"unsupported realtime gpu mode: {value!r}")
+    return value
+
+
+def resolve_warmup_gpu_mode(args: argparse.Namespace) -> str:
+    value = str(getattr(args, "warmup_gpu_mode", DEFAULT_GPU_MODE))
+    if value not in GPU_MODE_SHAPE_PRIOR_DEVICE:
+        raise ValueError(f"unsupported warmup gpu mode: {value!r}")
+    return value
+
+
 def resolve_demo32_cuda_visible_devices(args: argparse.Namespace) -> str:
     override = None if args.demo32_cuda_visible_devices is None else str(args.demo32_cuda_visible_devices).strip()
     if override:
         return override
     try:
-        return GPU_MODE_DEMO32_CUDA_VISIBLE_DEVICES[str(args.gpu_mode)]
+        return GPU_MODE_DEMO32_CUDA_VISIBLE_DEVICES[resolve_realtime_gpu_mode(args)]
     except KeyError as exc:
-        raise ValueError(f"unsupported gpu mode: {args.gpu_mode!r}") from exc
+        raise ValueError(f"unsupported realtime gpu mode: {resolve_realtime_gpu_mode(args)!r}") from exc
+
+
+def resolve_shape_prior_device(args: argparse.Namespace) -> str:
+    override = getattr(args, "shape_prior_device", None)
+    if override is not None and str(override).strip():
+        return str(override).strip()
+    try:
+        return GPU_MODE_SHAPE_PRIOR_DEVICE[resolve_warmup_gpu_mode(args)]
+    except KeyError as exc:
+        raise ValueError(f"unsupported warmup gpu mode: {resolve_warmup_gpu_mode(args)!r}") from exc
 
 
 def _load_optional_points(path: Path | None) -> np.ndarray | None:
@@ -243,7 +293,9 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "depth_backend": str(args.depth_backend),
         "capture_extra_seconds": float(args.capture_extra_seconds),
         "demo32_capture_dir": None if args.demo32_capture_dir is None else str(args.demo32_capture_dir),
-        "gpu_mode": str(args.gpu_mode),
+        "gpu_mode": resolve_realtime_gpu_mode(args),
+        "realtime_gpu_mode": resolve_realtime_gpu_mode(args),
+        "warmup_gpu_mode": resolve_warmup_gpu_mode(args),
         "demo32_cuda_visible_devices": resolve_demo32_cuda_visible_devices(args),
         "demo32_cuda_visible_devices_override": (
             None if args.demo32_cuda_visible_devices is None else str(args.demo32_cuda_visible_devices)
@@ -255,6 +307,8 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "shape_prior_start_policy": str(args.shape_prior_start_policy),
         "shape_prior_execution": str(args.shape_prior_execution),
         "shape_prior_endpoint": str(args.shape_prior_endpoint),
+        "shape_prior_device": resolve_shape_prior_device(args),
+        "shape_prior_device_override": None if args.shape_prior_device is None else str(args.shape_prior_device),
         "shape_prior_chunk_wait_timeout_s": float(args.shape_prior_chunk_wait_timeout_s),
         "mask_radius_outlier_filter": bool(args.mask_radius_outlier_filter),
         "mask_radius_outlier_radius_m": float(args.mask_radius_outlier_radius_m),
@@ -323,7 +377,7 @@ def build_demo32_realtime_command(
                 "--shape-prior-timeout-ms",
                 str(int(args.shape_prior_timeout_ms)),
                 "--shape-prior-device",
-                str(args.shape_prior_device),
+                resolve_shape_prior_device(args),
                 "--shape-prior-profile-json",
                 str(profile_json),
             ]
@@ -367,6 +421,33 @@ def select_validation_chunk_cases(manifests: Sequence[dict[str, object]]) -> lis
     ]
 
 
+def _runtime_chunk_summary(manifests: Sequence[dict[str, object]]) -> dict[str, object]:
+    publish_times = [
+        float(item["publish_wall_s"])
+        for item in manifests
+        if item.get("publish_wall_s") is not None
+    ]
+    intervals = [publish_times[idx] - publish_times[idx - 1] for idx in range(1, len(publish_times))]
+    backlog_values = [
+        int(item["backlog_chunks"])
+        for item in manifests
+        if item.get("backlog_chunks") is not None
+    ]
+    shape_publish_times = [
+        float(item["publish_wall_s"])
+        for item in manifests
+        if item.get("publish_wall_s") is not None
+        and bool(item.get("shape_prior_complete") or item.get("shape_prior_target_counts_met"))
+    ]
+    return {
+        "first_ready_chunk_wall_s": publish_times[0] if publish_times else None,
+        "first_shape_prior_ready_chunk_wall_s": shape_publish_times[0] if shape_publish_times else None,
+        "steady_publish_intervals_s": intervals,
+        "steady_state_publish_interval_max_s": max(intervals) if intervals else None,
+        "max_backlog_chunks": max(backlog_values) if backlog_values else None,
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -403,6 +484,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "chunk_count": int(len(manifests)),
             "chunks": manifests,
         }
+        summary.update(_runtime_chunk_summary(manifests))
         summary_path = base_path / f"{args.case_prefix}_chunks_manifest.json"
         summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         print(json.dumps(summary, indent=2, sort_keys=True))
@@ -453,12 +535,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     summary = {
         "demo_version": "demo_v4",
         "mode": "full-fake-realtime-camera" if str(args.input_source) == "fake-live" else "full-live-camera",
-        "gpu_mode": str(args.gpu_mode),
+        "gpu_mode": resolve_realtime_gpu_mode(args),
+        "realtime_gpu_mode": resolve_realtime_gpu_mode(args),
+        "warmup_gpu_mode": resolve_warmup_gpu_mode(args),
         "demo32_command": command,
         "demo32_cuda_visible_devices": cuda_visible_devices,
         "demo32_cuda_visible_devices_override": (
             None if args.demo32_cuda_visible_devices is None else str(args.demo32_cuda_visible_devices)
         ),
+        "shape_prior_device": resolve_shape_prior_device(args),
+        "shape_prior_device_override": None if args.shape_prior_device is None else str(args.shape_prior_device),
         "demo32_return_code": return_code,
         "demo32_stop_reason": stop_reason,
         "demo32_capture_dir": str(capture_dir),
@@ -471,6 +557,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "validation_chunk_cases": validation_cases,
         "external_shape_prior_points": bool(surface_points is not None or interior_points is not None),
     }
+    summary.update(_runtime_chunk_summary(manifests))
     summary_path = base_path / f"{args.case_prefix}_chunks_manifest.json"
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(summary, indent=2, sort_keys=True))

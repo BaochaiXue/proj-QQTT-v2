@@ -406,6 +406,101 @@ def _chunk_payload_from_rows(
     )
 
 
+def _queries_txy_from_yx(query_points_yx: np.ndarray) -> np.ndarray:
+    queries_yx = np.asarray(query_points_yx, dtype=np.float32).reshape(-1, 2)
+    queries_txy = np.zeros((len(queries_yx), 3), dtype=np.float32)
+    if len(queries_yx):
+        queries_txy[:, 1] = queries_yx[:, 1]
+        queries_txy[:, 2] = queries_yx[:, 0]
+    return np.ascontiguousarray(queries_txy, dtype=np.float32)
+
+
+def _prepared_frame_from_row(
+    capture_dir: Path,
+    row: Mapping[str, Any],
+) -> strict.PreparedPhysTwinFrame | None:
+    path_value = row.get("prepared_phystwin_frame_path")
+    if path_value is None:
+        return None
+    return strict.load_prepared_phystwin_frame(capture_dir / str(path_value))
+
+
+def _chunk_payload_from_prepared_frames(
+    metadata: Mapping[str, Any],
+    frames: Sequence[strict.PreparedPhysTwinFrame],
+    *,
+    surface_points: np.ndarray,
+    interior_points: np.ndarray,
+    fps: int,
+    serial_number: str,
+    chunk_index: int,
+) -> FuturePhysTwinChunk:
+    if not frames:
+        raise ValueError("prepared PhysTwin chunk requires at least one frame")
+    c2w = _camera_to_world(metadata)
+    intrinsics = _intrinsics_matrix(metadata)
+    first_queries = np.asarray(frames[0].query_points_yx, dtype=np.float32).reshape(-1, 2)
+
+    rgb_frames: list[np.ndarray] = []
+    processed_masks: list[list[dict[str, np.ndarray]]] = []
+    tracks: list[np.ndarray] = []
+    visibility: list[np.ndarray] = []
+    pcd_points: list[np.ndarray] = []
+    pcd_colors: list[np.ndarray] = []
+    source_frame_indices: list[int] = []
+
+    for frame in frames:
+        queries = np.asarray(frame.query_points_yx, dtype=np.float32).reshape(-1, 2)
+        if queries.shape != first_queries.shape or not np.allclose(queries, first_queries):
+            raise ValueError("prepared PhysTwin frames in one chunk must share query_points_yx")
+        rgb_frames.append(np.ascontiguousarray(frame.rgb_frame, dtype=np.uint8))
+        processed_masks.append([strict.normalize_processed_mask_frame(frame.processed_mask_frame)])
+        tracks.append(np.ascontiguousarray(frame.tracks_yx, dtype=np.float32).reshape(-1, 2))
+        visibility.append(np.ascontiguousarray(frame.visibility, dtype=bool).reshape(-1))
+        pcd_points.append(np.ascontiguousarray(frame.pcd_points, dtype=np.float32))
+        pcd_colors.append(np.ascontiguousarray(frame.pcd_colors, dtype=np.uint8))
+        source_frame_indices.append(int(frame.source_frame_index if frame.source_frame_index is not None else frame.seq))
+
+    tracks_yx = np.stack(tracks, axis=0)
+    tracker_visibility = np.stack(visibility, axis=0)
+    pcd_points_arr = np.stack(pcd_points, axis=0)
+    pcd_colors_arr = np.stack(pcd_colors, axis=0)
+    track_input = strict.build_track_process_input(
+        tracks_yx=tracks_yx,
+        visibility=tracker_visibility,
+        processed_masks=processed_masks,
+        pcd_points=pcd_points_arr,
+        pcd_colors=pcd_colors_arr,
+    )
+    filtered = strict.apply_phystwin_motion_filters(track_input)
+    track_process = strict.select_final_controller_points(filtered, count=30)
+
+    return FuturePhysTwinChunk(
+        rgb_frames=rgb_frames,
+        processed_masks=processed_masks,
+        track_process_data=track_process,
+        intrinsics=intrinsics,
+        camera_to_world_c2w=c2w,
+        tracks_yx=tracks_yx,
+        tracker_visibility=tracker_visibility,
+        queries_txy=_queries_txy_from_yx(first_queries),
+        surface_points=surface_points,
+        interior_points=interior_points,
+        pcd_points=pcd_points_arr,
+        pcd_colors=pcd_colors_arr,
+        fps=int(fps),
+        serial_number=serial_number,
+        depth_backend=str(metadata.get("depth_backend") or metadata.get("depth_source", "")),
+        depth_source_internal=str(
+            metadata.get("depth_source_internal")
+            or metadata.get("depth_source")
+            or metadata.get("depth_backend", "")
+        ),
+        chunk_index=int(chunk_index),
+        source_frame_indices=source_frame_indices,
+    )
+
+
 def _write_chunk_from_rows(
     *,
     capture: Path,
@@ -424,30 +519,48 @@ def _write_chunk_from_rows(
     mask_radius_outlier_radius_m: float,
     mask_radius_outlier_nb_points: int,
     wall_time_origin_s: float,
+    window_closed_wall_s: float,
+    prepared_frames: Sequence[strict.PreparedPhysTwinFrame | None] | None = None,
     backlog_chunks: Callable[[], int] | None = None,
 ) -> dict[str, Any]:
     case_name = f"{case_prefix}_chunk_{chunk_index:04d}"
+    source_window_start_s = float(row_start) / float(fps)
+    source_window_end_s = float(row_end) / float(fps)
     materialize_start_wall_s = _relative_wall_s(float(wall_time_origin_s))
-    chunk = _chunk_payload_from_rows(
-        capture,
-        metadata,
-        rows,
-        surface_points=surface_points,
-        interior_points=interior_points,
-        fps=int(fps),
-        serial_number=serial_number,
-        chunk_index=chunk_index,
-        mask_radius_outlier_filter=bool(mask_radius_outlier_filter),
-        mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
-        mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
-    )
+    prepared = list(prepared_frames or [])
+    prepared_count = sum(1 for frame in prepared if frame is not None)
+    if prepared and len(prepared) == len(rows) and prepared_count == len(rows):
+        chunk = _chunk_payload_from_prepared_frames(
+            metadata,
+            [frame for frame in prepared if frame is not None],
+            surface_points=surface_points,
+            interior_points=interior_points,
+            fps=int(fps),
+            serial_number=serial_number,
+            chunk_index=chunk_index,
+        )
+        materialization_source = "prepared_phystwin_frame"
+        legacy_reprocess_count = 0
+    else:
+        chunk = _chunk_payload_from_rows(
+            capture,
+            metadata,
+            rows,
+            surface_points=surface_points,
+            interior_points=interior_points,
+            fps=int(fps),
+            serial_number=serial_number,
+            chunk_index=chunk_index,
+            mask_radius_outlier_filter=bool(mask_radius_outlier_filter),
+            mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
+            mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
+        )
+        materialization_source = "legacy_reprocess"
+        legacy_reprocess_count = len(rows)
+    track_finalize_done_wall_s = max(_relative_wall_s(float(wall_time_origin_s)), window_closed_wall_s)
 
     def manifest_extras() -> dict[str, Any]:
-        materialize_end_wall_s = _relative_wall_s(float(wall_time_origin_s))
         backlog_count = 0 if backlog_chunks is None else int(backlog_chunks())
-        publish_wall_s = _relative_wall_s(float(wall_time_origin_s))
-        source_window_start_s = float(row_start) / float(fps)
-        source_window_end_s = float(row_end) / float(fps)
         return {
             "source_capture_dir": str(capture),
             "source_row_start": int(row_start),
@@ -460,15 +573,24 @@ def _write_chunk_from_rows(
                 if rows[-1].get("source_timestamp_s") is None
                 else float(rows[-1]["source_timestamp_s"])
             ),
+            "window_closed_wall_s": float(window_closed_wall_s),
+            "track_finalize_done_wall_s": float(track_finalize_done_wall_s),
             "materialize_start_wall_s": materialize_start_wall_s,
-            "materialize_end_wall_s": materialize_end_wall_s,
-            "publish_wall_s": publish_wall_s,
-            "materialize_latency_ms": float((materialize_end_wall_s - materialize_start_wall_s) * 1000.0),
-            "publish_lag_ms": float((publish_wall_s - source_window_end_s) * 1000.0),
+            "materialize_end_wall_s": track_finalize_done_wall_s,
+            "materialize_latency_ms": float((track_finalize_done_wall_s - materialize_start_wall_s) * 1000.0),
             "backlog_chunks": backlog_count,
+            "chunk_materialization_source": materialization_source,
+            "prepared_frame_count": int(prepared_count),
+            "legacy_reprocess_frame_count": int(legacy_reprocess_count),
         }
 
-    manifest = write_futurephystwin_chunk_case(base_path, case_name, chunk, manifest_extras=manifest_extras)
+    manifest = write_futurephystwin_chunk_case(
+        base_path,
+        case_name,
+        chunk,
+        manifest_extras=manifest_extras,
+        relative_wall_time_s=lambda: _relative_wall_s(float(wall_time_origin_s)),
+    )
     return manifest
 
 
@@ -508,6 +630,7 @@ def write_chunks_from_headless_capture(
     chunk_size = int(chunk_frame_count)
     chunk_index = 1
     row_buffer: list[dict[str, Any]] = []
+    prepared_buffer: list[strict.PreparedPhysTwinFrame | None] = []
     row_start = 0
     wall_time_origin_s = time.monotonic()
     frames_path = capture / "frames.jsonl"
@@ -515,9 +638,12 @@ def write_chunks_from_headless_capture(
         if max_chunks is not None and len(manifests) >= int(max_chunks):
             break
         row_buffer.append(row)
+        prepared_buffer.append(_prepared_frame_from_row(capture, row))
         if len(row_buffer) < chunk_size:
             continue
+        window_closed_wall_s = _relative_wall_s(float(wall_time_origin_s))
         chunk_rows = row_buffer
+        chunk_prepared = prepared_buffer
         manifest = _write_chunk_from_rows(
             capture=capture,
             metadata=metadata,
@@ -535,6 +661,8 @@ def write_chunks_from_headless_capture(
             mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
             mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
             wall_time_origin_s=wall_time_origin_s,
+            window_closed_wall_s=window_closed_wall_s,
+            prepared_frames=chunk_prepared,
             backlog_chunks=lambda path=frames_path, size=chunk_size, published=chunk_index: _complete_chunk_backlog(
                 path,
                 chunk_size=size,
@@ -547,6 +675,7 @@ def write_chunks_from_headless_capture(
         chunk_index += 1
         row_start = row_idx + 1
         row_buffer = []
+        prepared_buffer = []
     return manifests
 
 
@@ -603,6 +732,7 @@ def stream_chunks_from_headless_capture(
     next_row_idx = 0
     row_start = 0
     row_buffer: list[dict[str, Any]] = []
+    prepared_buffer: list[strict.PreparedPhysTwinFrame | None] = []
     chunk_index = 1
     chunk_size = int(chunk_frame_count)
     wall_time_origin_s = time.monotonic()
@@ -615,9 +745,12 @@ def stream_chunks_from_headless_capture(
         rows = _read_jsonl(frames_path) if frames_path.is_file() else []
         for row in rows[next_row_idx:]:
             row_buffer.append(row)
+            prepared_buffer.append(_prepared_frame_from_row(capture, row))
             next_row_idx += 1
             if len(row_buffer) < chunk_size:
                 continue
+            window_closed_wall_s = _relative_wall_s(float(wall_time_origin_s))
+            chunk_prepared = prepared_buffer
             latest_metadata, shape_surface, shape_interior = _shape_points_for_chunk(
                 capture,
                 surface_points=surface_points,
@@ -645,6 +778,8 @@ def stream_chunks_from_headless_capture(
                 mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
                 mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
                 wall_time_origin_s=wall_time_origin_s,
+                window_closed_wall_s=window_closed_wall_s,
+                prepared_frames=chunk_prepared,
                 backlog_chunks=lambda path=frames_path, size=chunk_size, published=chunk_index: _complete_chunk_backlog(
                     path,
                     chunk_size=size,
@@ -657,6 +792,7 @@ def stream_chunks_from_headless_capture(
             chunk_index += 1
             row_start = next_row_idx
             row_buffer = []
+            prepared_buffer = []
             if max_chunks is not None and len(manifests) >= int(max_chunks):
                 break
         if max_chunks is not None and len(manifests) >= int(max_chunks):
