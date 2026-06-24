@@ -390,6 +390,13 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
                 manifest["data_process_sam3d_metrics"]["shape_prior_sampling_backend"],
                 "sam3d-single-view",
             )
+            self.assertEqual(manifest["data_process_sam3d_metrics"]["shape_prior_configured_max_dist_m"], 0.05)
+            self.assertEqual(manifest["data_process_sam3d_metrics"]["shape_prior_effective_max_dist_m"], 0.05)
+            self.assertEqual(
+                manifest["data_process_sam3d_metrics"]["shape_prior_distance_policy"],
+                "canonical_single_view_configured",
+            )
+            self.assertTrue(manifest["data_process_sam3d_metrics"]["offline_single_view_parity"])
             self.assertEqual(
                 manifest["data_process_sam3d_metrics"]["shape_prior_sampling_source"],
                 "data_process_sam3d/data_process_sample.py",
@@ -1044,7 +1051,10 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
         self.assertFalse(samples.metadata["uses_mvsam3d"])
         self.assertEqual(samples.metadata["shape_prior_target_surface_points"], 700)
         self.assertEqual(samples.metadata["shape_prior_target_interior_points"], 1000)
-        self.assertEqual(samples.metadata["shape_prior_effective_max_dist_m"], 0.035)
+        self.assertEqual(samples.metadata["shape_prior_configured_max_dist_m"], 0.08)
+        self.assertEqual(samples.metadata["shape_prior_effective_max_dist_m"], 0.08)
+        self.assertEqual(samples.metadata["shape_prior_distance_policy"], "canonical_single_view_configured")
+        self.assertTrue(samples.metadata["offline_single_view_parity"])
 
     def test_select_validation_chunks_uses_second_last_and_fifth_last(self) -> None:
         manifests = [{"case_name": f"chunk_{idx:04d}"} for idx in range(1, 8)]

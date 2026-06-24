@@ -51,7 +51,10 @@ DATA_PROCESS_SAM3D_METRICS = {
     "shape_prior_target_surface_points": 700,
     "shape_prior_target_interior_points": 1000,
     "shape_prior_volume_sample_size_m": 0.005,
-    "shape_prior_effective_max_dist_m": 0.035,
+    "shape_prior_configured_max_dist_m": 0.05,
+    "shape_prior_effective_max_dist_m": 0.05,
+    "shape_prior_distance_policy": "canonical_single_view_configured",
+    "offline_single_view_parity": True,
     "shape_prior_uses_mvsam3d": False,
     "shape_prior_ground_policy": "preserve",
 }

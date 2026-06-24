@@ -38,7 +38,7 @@ parser.add_argument(
     default=0.05,
     help=(
         "Filter sampled shape-prior points that are too far from observed object points "
-        "(meters; set <=0 to disable; positive values are capped at 0.035 m)."
+        "(meters; set <=0 to disable; MV-SAM3D caps positive values at 0.035 m)."
     ),
 )
 parser.add_argument(
@@ -187,7 +187,7 @@ def sample_sam3d_prior_points(
     np.random.seed(42)
     min_bound = np.min(reference_points, axis=0)
     prior_grid_size = max(volume_sample_size * 0.4, 1e-4)
-    max_dist = effective_shape_prior_max_dist(shape_prior_max_dist)
+    max_dist = effective_shape_prior_max_dist(shape_prior_max_dist, "sam3d-single-view")
     reference_tree = cKDTree(reference_points)
 
     surface_selector = ShapePriorBatchSelector(

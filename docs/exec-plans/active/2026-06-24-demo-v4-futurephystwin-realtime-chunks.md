@@ -77,7 +77,8 @@ shape prior isolated from tracking identities and live observation PCD.
 - `qqtt/demo/single_view_shape_prior_sampling.py` ports the relevant
   `data_process_sam3d/data_process_sample.py` sampling semantics for single
   view: full 700 surface / 1000 interior targets, NN distance filtering with
-  the 0.035 m cap, observed-object priority, and 5 mm voxel dedupe.
+  the configured single-view max distance, observed-object priority, and 5 mm
+  voxel dedupe. The 0.035 m cap is MV-SAM3D-only.
 
 ## Illegal Simplification Found And Removed
 

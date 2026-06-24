@@ -52,10 +52,15 @@ def _legacy_select(
 
 
 class ShapePriorSamplingOptimizationTest(unittest.TestCase):
-    def test_effective_shape_prior_max_dist_caps_positive_values(self) -> None:
-        self.assertEqual(effective_shape_prior_max_dist(0.08), 0.035)
-        self.assertEqual(effective_shape_prior_max_dist(0.02), 0.02)
-        self.assertEqual(effective_shape_prior_max_dist(0.0), 0.0)
+    def test_effective_shape_prior_max_dist_is_backend_aware(self) -> None:
+        self.assertEqual(effective_shape_prior_max_dist(0.08, "mvsam3d"), 0.035)
+        self.assertEqual(effective_shape_prior_max_dist(0.02, "mvsam3d"), 0.02)
+        self.assertEqual(effective_shape_prior_max_dist(0.08, "sam3d-single-view"), 0.08)
+        self.assertEqual(effective_shape_prior_max_dist(0.05, "legacy"), 0.05)
+        self.assertEqual(effective_shape_prior_max_dist(0.0, "mvsam3d"), 0.0)
+        self.assertEqual(effective_shape_prior_max_dist(-0.1, "sam3d-single-view"), -0.1)
+        with self.assertRaisesRegex(ValueError, "unsupported shape-prior sampling backend"):
+            effective_shape_prior_max_dist(0.08, "unknown")
 
     def test_same_voxel_keeps_nearest_point_within_batch(self) -> None:
         selector = ShapePriorBatchSelector(

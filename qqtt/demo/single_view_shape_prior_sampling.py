@@ -7,7 +7,6 @@ import numpy as np
 from scipy.spatial import cKDTree
 
 from data_process_sam3d.shape_prior_sampling import (
-    DATA_PROCESS_SAM3D_MAX_DIST_CAP_M,
     ShapePriorBatchSelector,
     effective_shape_prior_max_dist,
 )
@@ -64,7 +63,7 @@ def filter_points_by_nn_distance(points: np.ndarray, reference_points: np.ndarra
 
 
 def _effective_data_process_sam3d_max_dist(max_dist: float) -> float:
-    return effective_shape_prior_max_dist(max_dist)
+    return effective_shape_prior_max_dist(max_dist, "sam3d-single-view")
 
 
 def _sort_by_reference_distance(points: np.ndarray, reference_points: np.ndarray) -> np.ndarray:
@@ -252,6 +251,10 @@ def sample_data_process_sam3d_single_view_shape_prior_points(
                 "shape_prior_sampling_reason": "empty_reference_points",
                 "shape_prior_target_surface_points": int(target_surface_points),
                 "shape_prior_target_interior_points": int(target_interior_points),
+                "shape_prior_configured_max_dist_m": float(shape_prior_max_dist_m),
+                "shape_prior_effective_max_dist_m": _effective_data_process_sam3d_max_dist(shape_prior_max_dist_m),
+                "shape_prior_distance_policy": "canonical_single_view_configured",
+                "offline_single_view_parity": True,
             },
         )
     mesh = _as_trimesh_mesh(mesh.copy() if hasattr(mesh, "copy") else mesh)
@@ -272,6 +275,10 @@ def sample_data_process_sam3d_single_view_shape_prior_points(
                 "shape_prior_target_interior_points": int(target_interior_points),
                 "shape_prior_surface_points": int(len(vertices)),
                 "shape_prior_interior_points": 0,
+                "shape_prior_configured_max_dist_m": float(shape_prior_max_dist_m),
+                "shape_prior_effective_max_dist_m": _effective_data_process_sam3d_max_dist(shape_prior_max_dist_m),
+                "shape_prior_distance_policy": "canonical_single_view_configured",
+                "offline_single_view_parity": True,
             },
         )
 
@@ -341,7 +348,10 @@ def sample_data_process_sam3d_single_view_shape_prior_points(
             "shape_prior_target_surface_points": int(target_surface_points),
             "shape_prior_target_interior_points": int(target_interior_points),
             "shape_prior_max_dist_m": float(shape_prior_max_dist_m),
+            "shape_prior_configured_max_dist_m": float(shape_prior_max_dist_m),
             "shape_prior_effective_max_dist_m": float(max_dist),
+            "shape_prior_distance_policy": "canonical_single_view_configured",
+            "offline_single_view_parity": True,
             "shape_prior_volume_sample_size_m": float(volume_sample_size_m),
             "shape_prior_surface_candidates": int(surface_selector.accepted_candidate_count),
             "shape_prior_interior_candidates": int(interior_selector.accepted_candidate_count),

@@ -754,7 +754,10 @@ class ShapePriorWorkerSam3DInputTest(unittest.TestCase):
         self.assertFalse(response.metadata["uses_mvsam3d"])
         self.assertEqual(response.metadata["shape_prior_target_surface_points"], 700)
         self.assertEqual(response.metadata["shape_prior_target_interior_points"], 1000)
-        self.assertEqual(response.metadata["shape_prior_effective_max_dist_m"], 0.035)
+        self.assertEqual(response.metadata["shape_prior_configured_max_dist_m"], 0.05)
+        self.assertEqual(response.metadata["shape_prior_effective_max_dist_m"], 0.05)
+        self.assertEqual(response.metadata["shape_prior_distance_policy"], "canonical_single_view_configured")
+        self.assertTrue(response.metadata["offline_single_view_parity"])
         self.assertGreater(response.surface_points_m.shape[0], 0)
         self.assertGreater(response.interior_points_m.shape[0], 0)
 

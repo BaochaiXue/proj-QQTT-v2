@@ -7,13 +7,19 @@ from scipy.spatial import cKDTree
 
 
 DATA_PROCESS_SAM3D_MAX_DIST_CAP_M = 0.035
+SINGLE_VIEW_SHAPE_PRIOR_BACKENDS = {"legacy", "sam3d-single-view"}
 
 
-def effective_shape_prior_max_dist(max_dist: float) -> float:
-    value = float(max_dist)
+def effective_shape_prior_max_dist(configured_max_dist_m: float, backend: str) -> float:
+    value = float(configured_max_dist_m)
     if value <= 0.0:
         return value
-    return min(value, DATA_PROCESS_SAM3D_MAX_DIST_CAP_M)
+    normalized_backend = str(backend).strip().lower()
+    if normalized_backend == "mvsam3d":
+        return min(value, DATA_PROCESS_SAM3D_MAX_DIST_CAP_M)
+    if normalized_backend in SINGLE_VIEW_SHAPE_PRIOR_BACKENDS:
+        return value
+    raise ValueError(f"unsupported shape-prior sampling backend: {backend}")
 
 
 def _points(points: np.ndarray) -> np.ndarray:
@@ -144,6 +150,7 @@ class ShapePriorBatchSelector:
 
 __all__ = [
     "DATA_PROCESS_SAM3D_MAX_DIST_CAP_M",
+    "SINGLE_VIEW_SHAPE_PRIOR_BACKENDS",
     "ShapePriorBatchSelector",
     "effective_shape_prior_max_dist",
 ]
