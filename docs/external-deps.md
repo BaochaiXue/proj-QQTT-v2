@@ -59,7 +59,9 @@ python services/shape_prior_remote/server.py \
 - Demo 3.2 defaults to a 180000 ms shape-prior request timeout because the
   resident worker still runs the x4 upscaler and SAM3D inference per request.
 - The request metadata includes `table_z_m` and `table_z_above_direction`; the
-  worker uses these fields for single-view alignment validation.
+  worker uses these fields for single-view alignment validation. If older
+  protocol/debug requests omit `table_z_above_direction`, the worker falls back
+  to `negative` so Demo 3.2 stays compatible with Z-down table-world artifacts.
 
 - Protocol/debug self-test mode that avoids importing SAM3D:
 

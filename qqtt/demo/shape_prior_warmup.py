@@ -48,7 +48,7 @@ class ShapePriorSnapshot:
     k_color: np.ndarray
     camera_to_world_c2w: np.ndarray | None
     table_z_m: float = 0.0
-    table_z_above_direction: str = "positive"
+    table_z_above_direction: str = "negative"
 
 
 @dataclass(frozen=True)

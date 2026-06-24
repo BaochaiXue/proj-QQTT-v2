@@ -136,7 +136,7 @@ def _object_observation_points_world(request: ShapePriorRequest, *, max_points: 
 
 def _alignment_config_from_request(request: ShapePriorRequest) -> ShapeAlignmentConfig:
     metadata = dict(request.metadata)
-    above_direction = str(metadata.get("table_z_above_direction", "positive"))
+    above_direction = str(metadata.get("table_z_above_direction", "negative"))
     if above_direction not in {"positive", "negative"}:
         raise ValueError("table_z_above_direction must be positive or negative")
     return ShapeAlignmentConfig(

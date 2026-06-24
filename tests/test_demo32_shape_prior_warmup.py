@@ -248,6 +248,28 @@ class ShapePriorProtocolAndSnapshotTest(unittest.TestCase):
                 warmup.replace_snapshot(snapshot, depth_color_m=np.ones((2, 4), dtype=np.float32))
             )
 
+    def test_snapshot_defaults_to_negative_table_z_direction(self) -> None:
+        object_mask = np.zeros((2, 2), dtype=bool)
+        object_mask[0, 0] = True
+        snapshot = warmup.ShapePriorSnapshot(
+            seq=0,
+            source_timestamp_s=None,
+            input_source="fake-live",
+            depth_backend="native-realsense",
+            depth_source_internal="realsense",
+            rgb_u8=np.zeros((2, 2, 3), dtype=np.uint8),
+            object_mask=object_mask,
+            controller_mask=np.zeros((2, 2), dtype=bool),
+            depth_color_m=np.ones((2, 2), dtype=np.float32),
+            k_color=np.eye(3, dtype=np.float32),
+            camera_to_world_c2w=np.eye(4, dtype=np.float32),
+        )
+
+        normalized = warmup.normalize_snapshot(snapshot)
+
+        self.assertEqual(snapshot.table_z_above_direction, "negative")
+        self.assertEqual(normalized.table_z_above_direction, "negative")
+
     def test_protocol_roundtrip_preserves_snapshot_arrays_and_metadata(self) -> None:
         snapshot = self._snapshot()
 
@@ -279,6 +301,27 @@ class ShapePriorProtocolAndSnapshotTest(unittest.TestCase):
         self.assertEqual(response.points_m.shape, (2, 3))
         self.assertEqual(response.colors_rgb_u8.shape, (2, 3))
         self.assertEqual(response.metadata["single_view_alignment_ms"], 3.5)
+
+    def test_protocol_fallback_defaults_to_negative_table_z_direction(self) -> None:
+        snapshot = SimpleNamespace(
+            seq=0,
+            source_timestamp_s=None,
+            input_source="fake-live",
+            depth_backend="native-realsense",
+            depth_source_internal="realsense",
+            rgb_u8=np.zeros((2, 2, 3), dtype=np.uint8),
+            object_mask=np.ones((2, 2), dtype=bool),
+            controller_mask=np.zeros((2, 2), dtype=bool),
+            depth_color_m=np.ones((2, 2), dtype=np.float32),
+            k_color=np.eye(3, dtype=np.float32),
+            camera_to_world_c2w=np.eye(4, dtype=np.float32),
+        )
+
+        request = parse_shape_prior_request_parts(
+            build_shape_prior_request_parts(snapshot=snapshot, request_id="default-z")
+        )
+
+        self.assertEqual(request.metadata["table_z_above_direction"], "negative")
 
     def test_protocol_error_response_is_parseable_without_point_payload(self) -> None:
         response = parse_shape_prior_response_parts(
@@ -476,6 +519,21 @@ class ShapePriorWorkerSam3DInputTest(unittest.TestCase):
 
         self.assertEqual(response.metadata["status"], "ready")
         self.assertEqual(response.metadata["alignment"]["ground_z_fraction"], 0.0)
+
+    def test_worker_alignment_config_defaults_to_negative_table_z_direction(self) -> None:
+        request = shape_prior_server.ShapePriorRequest(
+            metadata={},
+            rgb_u8=np.zeros((2, 2, 3), dtype=np.uint8),
+            object_mask=np.ones((2, 2), dtype=bool),
+            controller_mask=np.zeros((2, 2), dtype=bool),
+            depth_color_m=np.ones((2, 2), dtype=np.float32),
+            k_color=np.eye(3, dtype=np.float32),
+            camera_to_world_c2w=np.eye(4, dtype=np.float32),
+        )
+
+        config = shape_prior_server._alignment_config_from_request(request)
+
+        self.assertEqual(config.above_direction, "negative")
 
 
 class RuntimeShapePriorIntegrationTest(unittest.TestCase):
@@ -856,17 +914,20 @@ class RuntimeShapePriorIntegrationTest(unittest.TestCase):
 
 
 class SingleViewShapeAlignmentTest(unittest.TestCase):
+    def test_alignment_config_defaults_to_negative_table_z_direction(self) -> None:
+        self.assertEqual(ShapeAlignmentConfig().above_direction, "negative")
+
     def test_align_canonical_shape_to_observation_recovers_scale_and_translation(self) -> None:
         canonical = np.array(
             [
-                [0.0, 0.0, 0.02],
-                [0.02, 0.0, 0.02],
-                [0.0, 0.02, 0.03],
-                [0.02, 0.02, 0.04],
+                [0.0, 0.0, -0.02],
+                [0.02, 0.0, -0.02],
+                [0.0, 0.02, -0.03],
+                [0.02, 0.02, -0.04],
             ],
             dtype=np.float32,
         )
-        observation = canonical * np.float32(2.0) + np.array([0.10, -0.05, 0.01], dtype=np.float32)
+        observation = canonical * np.float32(2.0) + np.array([0.10, -0.05, -0.01], dtype=np.float32)
 
         result = align_canonical_shape_to_observation(
             canonical,

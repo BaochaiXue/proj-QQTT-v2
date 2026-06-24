@@ -14,7 +14,7 @@ class ShapeAlignmentConfig:
     max_ground_z_fraction: float = 0.35
     ground_z_epsilon_m: float = 0.003
     table_z_m: float = 0.0
-    above_direction: str = "positive"
+    above_direction: str = "negative"
 
 
 @dataclass(frozen=True)

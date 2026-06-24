@@ -145,8 +145,9 @@ conda run -n <sam3d-env> --no-capture-output \
 The Demo 3.2 client waits up to `--shape-prior-timeout-ms 180000` by default so
 cold upscaler + SAM3D requests can complete. The `ShapePriorSnapshot` also
 forwards `table_z_m` and `table_z_above_direction` to the worker; single-view
-alignment validation uses those table-world semantics instead of assuming a
-positive-Z-above-table frame.
+alignment validation uses those table-world semantics. Missing legacy metadata
+falls back to `table_z_above_direction = negative`, matching the historical
+Demo 3.2 Z-down table-world artifacts.
 
 For protocol/debug testing without loading SAM3D, use:
 
