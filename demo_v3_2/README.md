@@ -139,15 +139,21 @@ conda run -n <sam3d-env> --no-capture-output \
   --bind tcp://0.0.0.0:7100 \
   --sam3d-root /home/xinjie/external/sam-3d-objects \
   --upscale-category "stuffed animal" \
-  --futurephystwin-root /home/xinjie/FuturePhysTwin
+  --futurephystwin-root /home/xinjie/FuturePhysTwin \
+  --preload-models \
+  --warmup-models
 ```
 
-The Demo 3.2 client waits up to `--shape-prior-timeout-ms 180000` by default so
-cold upscaler + SAM3D requests can complete. The `ShapePriorSnapshot` also
-forwards `table_z_m` and `table_z_above_direction` to the worker; single-view
-alignment validation uses those table-world semantics. Missing legacy metadata
-falls back to `table_z_above_direction = negative`, matching the historical
-Demo 3.2 Z-down table-world artifacts.
+With these benchmark flags, the worker loads the x4 upscaler and SAM3D model
+and runs one dummy upscaler + SAM3D + mesh-conversion request before it binds
+the endpoint or reports ready. Cold worker startup is therefore measured
+separately from warm snapshot-to-shape latency. The Demo 3.2 client still waits
+up to `--shape-prior-timeout-ms 180000` by default for the real SAM3D request.
+The `ShapePriorSnapshot` also forwards `table_z_m` and
+`table_z_above_direction` to the worker; single-view alignment validation uses
+those table-world semantics. Missing legacy metadata falls back to
+`table_z_above_direction = negative`, matching the historical Demo 3.2 Z-down
+table-world artifacts.
 
 For protocol/debug testing without loading SAM3D, use:
 
@@ -192,8 +198,12 @@ conda run -n demo_2_max --no-capture-output \
 ```
 
 Default scheduling is
-`--shape-prior-start-policy async-after-first-strict-pair`, so first track and
-first render must not wait for SAM3D. Use
+`--shape-prior-start-policy async-after-first-mask-depth-pair`, so the SAM3D
+request starts as soon as the first valid object mask, color-aligned depth,
+intrinsics, and table-world calibration snapshot is available. TAPNext++ first
+track and the first strict render pair continue in parallel. Use
+`--shape-prior-start-policy async-after-first-strict-pair` only when comparing
+against the previous scheduling behavior. Use
 `--shape-prior-start-policy blocking-before-first-output` only to measure the
 startup penalty of waiting for shape prior completion. Use
 `--shape-prior-start-policy after-teardown` for an offline diagnostic request

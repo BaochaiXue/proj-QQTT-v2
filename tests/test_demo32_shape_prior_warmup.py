@@ -111,6 +111,18 @@ class Sam3dOnlyCliContractTest(unittest.TestCase):
         self.assertIn("Long-lived remote SAM3D shape-prior worker", help_text)
         self.assertIn("--sam3d-root", help_text)
 
+    def test_shape_prior_worker_parser_accepts_preload_and_warmup_flags(self) -> None:
+        args = shape_prior_server.build_parser().parse_args(["--preload-models", "--warmup-models"])
+
+        self.assertTrue(args.preload_models)
+        self.assertTrue(args.warmup_models)
+
+    def test_shape_prior_worker_warmup_args_imply_preload_args(self) -> None:
+        args = shape_prior_server.parse_args(["--warmup-models"])
+
+        self.assertTrue(args.preload_models)
+        self.assertTrue(args.warmup_models)
+
 
 class Demo32ShapePriorWrapperTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -135,7 +147,7 @@ class Demo32ShapePriorWrapperTest(unittest.TestCase):
         delegate = runtime.build_live_delegate_argv(args, active_serial="s0")
 
         self.assertTrue(args.shape_prior_warmup)
-        self.assertEqual(args.shape_prior_start_policy, "async-after-first-strict-pair")
+        self.assertEqual(args.shape_prior_start_policy, "async-after-first-mask-depth-pair")
         self.assertEqual(args.shape_prior_execution, "remote-worker")
         self.assertEqual(args.shape_prior_endpoint, "tcp://127.0.0.1:7100")
         self.assertEqual(args.shape_prior_timeout_ms, 180000)
@@ -143,7 +155,7 @@ class Demo32ShapePriorWrapperTest(unittest.TestCase):
         self.assertTrue(args.shape_prior_skip_route_visualizations)
         self.assertTrue(contract["shape_prior_warmup_enabled"])
         self.assertEqual(contract["shape_prior_status"], "pending")
-        self.assertEqual(contract["shape_prior_start_policy"], "async-after-first-strict-pair")
+        self.assertEqual(contract["shape_prior_start_policy"], "async-after-first-mask-depth-pair")
         self.assertEqual(contract["shape_prior_execution"], "remote-worker")
         self.assertEqual(contract["shape_backend"], "sam3d-objects")
         self.assertEqual(contract["shape_prior_timeout_ms"], 180000)
@@ -171,6 +183,20 @@ class Demo32ShapePriorWrapperTest(unittest.TestCase):
 
         self.assertEqual(contract["shape_prior_profile_json"], str(profile_path))
         self.assertEqual(_option_value(delegate, "--shape-prior-profile-json"), str(profile_path))
+
+    def test_demo32_shape_prior_old_strict_pair_policy_remains_explicitly_supported(self) -> None:
+        args = self._parse(
+            runtime.DEMO_VERSION_3_2,
+            ["--dry-run", "--shape-prior-start-policy", "async-after-first-strict-pair"],
+        )
+
+        runtime.validate_args(args)
+        contract = runtime.build_contract(args)
+        delegate = runtime.build_live_delegate_argv(args, active_serial="s0")
+
+        self.assertEqual(args.shape_prior_start_policy, "async-after-first-strict-pair")
+        self.assertEqual(contract["shape_prior_start_policy"], "async-after-first-strict-pair")
+        self.assertEqual(_option_value(delegate, "--shape-prior-start-policy"), "async-after-first-strict-pair")
 
     def test_demo32_shape_prior_can_be_disabled(self) -> None:
         args = self._parse(runtime.DEMO_VERSION_3_2, ["--dry-run", "--no-shape-prior-warmup"])
@@ -361,6 +387,16 @@ class ShapePriorProtocolAndSnapshotTest(unittest.TestCase):
 
 
 class ShapePriorWorkerSam3DInputTest(unittest.TestCase):
+    def _worker(self) -> shape_prior_server.ShapePriorSam3DWorker:
+        return shape_prior_server.ShapePriorSam3DWorker(
+            sam3d_root=Path("/does/not/matter"),
+            config=None,
+            device="cuda:0",
+            seed=42,
+            max_points=128,
+            upscale_category="stuffed animal",
+        )
+
     def test_sam3d_receives_upscaled_object_crop_and_resized_mask(self) -> None:
         rgb = np.zeros((12, 16, 3), dtype=np.uint8)
         rgb[:, :, 0] = np.arange(16, dtype=np.uint8)[None, :]
@@ -393,14 +429,7 @@ class ShapePriorWorkerSam3DInputTest(unittest.TestCase):
                 calls["sam3d_kwargs"] = dict(kwargs)
                 return {"glb": SimpleNamespace(vertices=np.eye(3, dtype=np.float32))}
 
-        worker = shape_prior_server.ShapePriorSam3DWorker(
-            sam3d_root=Path("/does/not/matter"),
-            config=None,
-            device="cuda:0",
-            seed=42,
-            max_points=128,
-            upscale_category="stuffed animal",
-        )
+        worker = self._worker()
         worker._load_upscaler = lambda: FakeUpscaler()  # type: ignore[method-assign]
         worker._load_inference = lambda: SimpleNamespace(_pipeline=FakePipeline())  # type: ignore[method-assign]
 
@@ -414,8 +443,124 @@ class ShapePriorWorkerSam3DInputTest(unittest.TestCase):
         self.assertGreater(calls["sam3d_mask_pixels"], 0)
         self.assertEqual(canonical.shape, (3, 3))
         self.assertGreaterEqual(metadata["image_upscale_ms"], 0.0)
+        self.assertIn("upscaler_model_load_ms", metadata)
         self.assertGreaterEqual(metadata["mask_refinement_ms"], 0.0)
         self.assertEqual(metadata["sam3d_input_shape"], list(calls["sam3d_image_shape"]))
+
+    def test_preload_models_loads_upscaler_and_sam3d_before_requests(self) -> None:
+        worker = self._worker()
+        calls: list[str] = []
+        worker._load_upscaler = lambda: calls.append("upscaler") or object()  # type: ignore[method-assign]
+        worker._load_inference = lambda: calls.append("sam3d") or object()  # type: ignore[method-assign]
+
+        metadata = worker.preload_models()
+
+        self.assertEqual(calls, ["upscaler", "sam3d"])
+        self.assertTrue(metadata["worker_preloaded_models"])
+        self.assertFalse(metadata["worker_warmed_models"])
+        self.assertGreaterEqual(metadata["worker_preload_upscaler_ms"], 0.0)
+        self.assertGreaterEqual(metadata["worker_preload_sam3d_ms"], 0.0)
+
+    def test_warmup_models_implies_preload_and_runs_before_ready(self) -> None:
+        worker = self._worker()
+        calls: list[str] = []
+        worker.preload_models = lambda: calls.append("preload") or worker.startup_metadata()  # type: ignore[method-assign]
+        worker.run_dummy_warmup = lambda: calls.append("warmup") or worker.startup_metadata()  # type: ignore[method-assign]
+
+        metadata = shape_prior_server._prepare_worker_startup(
+            worker,
+            preload_models=False,
+            warmup_models=True,
+        )
+
+        self.assertEqual(calls, ["preload", "warmup"])
+        self.assertTrue(metadata["worker_preloaded_models"])
+        self.assertTrue(metadata["worker_warmed_models"])
+
+    def test_warmup_failure_fails_startup_before_ready(self) -> None:
+        worker = self._worker()
+        worker.preload_models = lambda: worker.startup_metadata()  # type: ignore[method-assign]
+
+        def fail_warmup():
+            raise RuntimeError("dummy warmup failed")
+
+        worker.run_dummy_warmup = fail_warmup  # type: ignore[method-assign]
+
+        with self.assertRaisesRegex(RuntimeError, "dummy warmup failed"):
+            shape_prior_server._prepare_worker_startup(
+                worker,
+                preload_models=True,
+                warmup_models=True,
+            )
+
+    def test_dummy_warmup_runs_upscaler_sam3d_and_mesh_conversion(self) -> None:
+        worker = self._worker()
+        calls: dict[str, object] = {}
+
+        class FakeUpscaler:
+            def __call__(self, *, prompt: str, image: Image.Image):
+                calls["prompt"] = prompt
+                calls["warmup_input_size"] = image.size
+                return SimpleNamespace(images=[image.resize((32, 32), Image.Resampling.NEAREST)])
+
+        class FakePipeline:
+            def run(self, image_rgb, mask_u8, **kwargs):
+                calls["sam3d_image_shape"] = tuple(image_rgb.shape)
+                calls["sam3d_mask_pixels"] = int(np.count_nonzero(mask_u8))
+                calls["sam3d_kwargs"] = dict(kwargs)
+                return {
+                    "glb": SimpleNamespace(
+                        vertices=np.array(
+                            [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                            dtype=np.float32,
+                        ),
+                        faces=np.array([[0, 1, 2]], dtype=np.int32),
+                    )
+                }
+
+        worker._load_upscaler = lambda: FakeUpscaler()  # type: ignore[method-assign]
+        worker._load_inference = lambda: SimpleNamespace(_pipeline=FakePipeline())  # type: ignore[method-assign]
+
+        metadata = worker.run_dummy_warmup()
+
+        self.assertEqual(calls["prompt"], "Hand manipulates a stuffed animal.")
+        self.assertEqual(calls["sam3d_image_shape"], (32, 32, 3))
+        self.assertGreater(calls["sam3d_mask_pixels"], 0)
+        self.assertTrue(metadata["worker_warmed_models"])
+        self.assertGreaterEqual(metadata["worker_dummy_warmup_ms"], 0.0)
+
+    def test_response_metadata_includes_worker_startup_timing(self) -> None:
+        worker = self._worker()
+        worker._startup_metadata.update(
+            {
+                "worker_preloaded_models": True,
+                "worker_warmed_models": True,
+                "worker_preload_upscaler_ms": 11.0,
+                "worker_preload_sam3d_ms": 22.0,
+                "worker_dummy_warmup_ms": 33.0,
+                "worker_ready_ms": 66.0,
+            }
+        )
+        worker.echo_observation = True
+        request = shape_prior_server.ShapePriorRequest(
+            metadata={"request_id": "req-startup-timing", "seq": 3},
+            rgb_u8=np.zeros((2, 2, 3), dtype=np.uint8),
+            object_mask=np.ones((2, 2), dtype=bool),
+            controller_mask=np.zeros((2, 2), dtype=bool),
+            depth_color_m=np.ones((2, 2), dtype=np.float32),
+            k_color=np.eye(3, dtype=np.float32),
+            camera_to_world_c2w=np.eye(4, dtype=np.float32),
+        )
+
+        response = parse_shape_prior_response_parts(worker.handle(request))
+
+        self.assertEqual(response.metadata["status"], "ready")
+        self.assertTrue(response.metadata["worker_preloaded_models"])
+        self.assertTrue(response.metadata["worker_warmed_models"])
+        self.assertEqual(response.metadata["worker_preload_upscaler_ms"], 11.0)
+        self.assertEqual(response.metadata["worker_preload_sam3d_ms"], 22.0)
+        self.assertEqual(response.metadata["worker_dummy_warmup_ms"], 33.0)
+        self.assertEqual(response.metadata["worker_ready_ms"], 66.0)
 
     def test_sam3d_scene_geometry_vertices_are_accepted(self) -> None:
         rgb = np.zeros((10, 10, 3), dtype=np.uint8)
@@ -618,7 +763,7 @@ class RuntimeShapePriorIntegrationTest(unittest.TestCase):
         args = masked_demo.build_parser().parse_args([])
 
         self.assertFalse(args.shape_prior_warmup)
-        self.assertEqual(args.shape_prior_start_policy, "async-after-first-strict-pair")
+        self.assertEqual(args.shape_prior_start_policy, "async-after-first-mask-depth-pair")
         self.assertEqual(args.shape_prior_execution, "remote-worker")
         self.assertEqual(args.shape_prior_endpoint, "tcp://127.0.0.1:7100")
         self.assertEqual(args.shape_prior_timeout_ms, 180000)
@@ -697,6 +842,8 @@ class RuntimeShapePriorIntegrationTest(unittest.TestCase):
                 "--depth-backend-label",
                 "native-realsense",
                 "--shape-prior-warmup",
+                "--shape-prior-start-policy",
+                "async-after-first-mask-depth-pair",
             ]
         )
         demo = masked_demo.RealtimeMaskedEdgeTamPcdDemo(args)
@@ -743,6 +890,51 @@ class RuntimeShapePriorIntegrationTest(unittest.TestCase):
         )
         demo.table_c2w = np.eye(4, dtype=np.float32)
         return demo
+
+    def _pcd_result_for_shape_prior(
+        self,
+        seq: int = 6,
+        *,
+        object_mask: np.ndarray | None = None,
+        depth_m: object = ...,
+    ) -> masked_demo.PcdBuildResult:
+        color_bgr = np.zeros((2, 2, 3), dtype=np.uint8)
+        if object_mask is None:
+            object_mask = np.array([[True, False], [False, False]], dtype=bool)
+        mask_packet = masked_demo.MaskPacket(
+            seq=seq,
+            color_bgr=color_bgr,
+            depth_source="realsense",
+            intrinsics=masked_demo.CameraIntrinsics(100.0, 100.0, 1.0, 1.0),
+            depth_scale_m_per_unit=0.001,
+            receive_perf_s=1.0,
+            process_done_perf_s=2.0,
+            dropped_capture_frames=0,
+            timing=masked_demo.PipelineTiming(),
+            controller_mask=np.zeros((2, 2), dtype=bool),
+            object_mask=object_mask,
+            k_color=np.eye(3, dtype=np.float32),
+            source_timestamp_s=1.0,
+        )
+        pcd_packet = masked_demo.MaskedPcdPacket(
+            seq=seq,
+            controller_xyz_m=np.empty((0, 3), dtype=np.float32),
+            controller_colors_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            object_xyz_m=np.empty((0, 3), dtype=np.float32),
+            object_colors_rgb_u8=np.empty((0, 3), dtype=np.uint8),
+            intrinsics=mask_packet.intrinsics,
+            receive_perf_s=1.0,
+            process_done_perf_s=2.0,
+            dropped_capture_frames=0,
+            dropped_seg_frames=0,
+            timing=masked_demo.PipelineTiming(),
+        )
+        resolved_depth_m = np.ones((2, 2), dtype=np.float32) if depth_m is ... else depth_m
+        return masked_demo.PcdBuildResult(
+            packet=pcd_packet,
+            depth_m=resolved_depth_m,
+            mask_packet=mask_packet,
+        )
 
     def test_shape_prior_snapshot_uses_selected_depth_mask_rgb_and_table_transform(self) -> None:
         demo = self._runtime_for_snapshot()
@@ -870,6 +1062,131 @@ class RuntimeShapePriorIntegrationTest(unittest.TestCase):
 
         self.assertEqual(client.calls, 1)
         self.assertEqual(demo.shape_prior_manager.status, "ready")
+
+    def test_mask_depth_policy_submits_from_pcd_result_before_strict_pair(self) -> None:
+        class CountingClient:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.seqs: list[int] = []
+
+            def request_shape_prior(self, snapshot: warmup.ShapePriorSnapshot) -> warmup.ShapePriorResult:
+                self.calls += 1
+                self.seqs.append(int(snapshot.seq))
+                return warmup.ShapePriorResult(
+                    seq=snapshot.seq,
+                    status="ready",
+                    points_m=np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+                    colors_rgb_u8=np.array([[150, 150, 150]], dtype=np.uint8),
+                    source_seq=snapshot.seq,
+                    source_timestamp_s=snapshot.source_timestamp_s,
+                    metadata={"shape_backend": "sam3d-objects"},
+                )
+
+        demo = self._runtime_for_snapshot()
+        client = CountingClient()
+        demo.shape_prior_manager = warmup.ShapePriorWarmupManager(
+            enabled=True,
+            client=client,
+            start_policy="async-after-first-mask-depth-pair",
+        )
+
+        submitted = demo._maybe_start_shape_prior_from_pcd_result(self._pcd_result_for_shape_prior(seq=8))
+        demo.shape_prior_manager.wait(timeout_s=1.0)
+
+        self.assertTrue(submitted)
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(client.seqs, [8])
+        self.assertEqual(demo.shape_prior_manager.status, "ready")
+        profile = demo.shape_prior_manager.profile()
+        self.assertGreaterEqual(profile["shape_prior_submit_ms"], 0.0)
+        self.assertEqual(profile["first_mask_depth_pair_ms"], profile["shape_prior_submit_ms"])
+
+    def test_strict_pair_policy_does_not_submit_from_pcd_result(self) -> None:
+        class CountingClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def request_shape_prior(self, snapshot: warmup.ShapePriorSnapshot) -> warmup.ShapePriorResult:
+                self.calls += 1
+                return warmup.ShapePriorResult(
+                    seq=snapshot.seq,
+                    status="ready",
+                    points_m=np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+                    colors_rgb_u8=np.array([[150, 150, 150]], dtype=np.uint8),
+                )
+
+        demo = self._runtime_for_snapshot()
+        demo.args.shape_prior_start_policy = "async-after-first-strict-pair"
+        client = CountingClient()
+        demo.shape_prior_manager = warmup.ShapePriorWarmupManager(
+            enabled=True,
+            client=client,
+            start_policy="async-after-first-strict-pair",
+        )
+
+        submitted = demo._maybe_start_shape_prior_from_pcd_result(self._pcd_result_for_shape_prior(seq=9))
+
+        self.assertFalse(submitted)
+        self.assertEqual(client.calls, 0)
+
+    def test_mask_depth_policy_waits_for_later_valid_snapshot(self) -> None:
+        class CountingClient:
+            def __init__(self) -> None:
+                self.calls = 0
+                self.seqs: list[int] = []
+
+            def request_shape_prior(self, snapshot: warmup.ShapePriorSnapshot) -> warmup.ShapePriorResult:
+                self.calls += 1
+                self.seqs.append(int(snapshot.seq))
+                return warmup.ShapePriorResult(
+                    seq=snapshot.seq,
+                    status="ready",
+                    points_m=np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+                    colors_rgb_u8=np.array([[150, 150, 150]], dtype=np.uint8),
+                )
+
+        demo = self._runtime_for_snapshot()
+        client = CountingClient()
+        demo.shape_prior_manager = warmup.ShapePriorWarmupManager(
+            enabled=True,
+            client=client,
+            start_policy="async-after-first-mask-depth-pair",
+        )
+
+        invalid = self._pcd_result_for_shape_prior(seq=1, object_mask=np.zeros((2, 2), dtype=bool))
+        valid = self._pcd_result_for_shape_prior(seq=2)
+
+        self.assertFalse(demo._maybe_start_shape_prior_from_pcd_result(invalid))
+        self.assertEqual(client.calls, 0)
+        self.assertTrue(demo._maybe_start_shape_prior_from_pcd_result(valid))
+        demo.shape_prior_manager.wait(timeout_s=1.0)
+
+        self.assertEqual(client.calls, 1)
+        self.assertEqual(client.seqs, [2])
+
+    def test_mask_depth_policy_skips_pcd_result_without_dense_depth(self) -> None:
+        class CountingClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def request_shape_prior(self, snapshot: warmup.ShapePriorSnapshot) -> warmup.ShapePriorResult:
+                self.calls += 1
+                return warmup.ShapePriorResult(seq=snapshot.seq, status="ready")
+
+        demo = self._runtime_for_snapshot()
+        client = CountingClient()
+        demo.shape_prior_manager = warmup.ShapePriorWarmupManager(
+            enabled=True,
+            client=client,
+            start_policy="async-after-first-mask-depth-pair",
+        )
+
+        submitted = demo._maybe_start_shape_prior_from_pcd_result(
+            self._pcd_result_for_shape_prior(seq=3, depth_m=None)
+        )
+
+        self.assertFalse(submitted)
+        self.assertEqual(client.calls, 0)
 
     def test_packet_with_shape_prior_state_attaches_ready_result_without_changing_pcd_counts(self) -> None:
         class ReadyClient:

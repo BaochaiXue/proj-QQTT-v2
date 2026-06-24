@@ -2042,7 +2042,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--shape-prior-start-policy",
         choices=shape_prior_warmup.SHAPE_PRIOR_START_POLICIES,
-        default=shape_prior_warmup.SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_STRICT_PAIR,
+        default=shape_prior_warmup.SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_MASK_DEPTH_PAIR,
     )
     parser.add_argument(
         "--shape-prior-execution",
@@ -4226,7 +4226,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 getattr(
                     self.args,
                     "shape_prior_start_policy",
-                    shape_prior_warmup.SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_STRICT_PAIR,
+                    shape_prior_warmup.SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_MASK_DEPTH_PAIR,
                 )
             ),
         )
@@ -4416,6 +4416,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
             ),
             "shape_prior_source_seq": shape_profile.get("shape_prior_source_seq"),
             "shape_prior_source_time_s": shape_profile.get("shape_prior_source_time_s"),
+            "shape_prior_submit_ms": float(shape_profile.get("shape_prior_submit_ms", 0.0) or 0.0),
+            "first_mask_depth_pair_ms": float(shape_profile.get("first_mask_depth_pair_ms", 0.0) or 0.0),
+            "first_strict_pair_ms": float(shape_profile.get("first_strict_pair_ms", 0.0) or 0.0),
             "shape_prior_depth_backend": depth_backend_label(self.args),
             "shape_prior_depth_source_internal": str(self.args.depth_source),
             "execution_mode": (
@@ -5946,21 +5949,32 @@ class RealtimeMaskedEdgeTamPcdDemo:
             shape_prior_profile=profile,
         )
 
-    def _maybe_start_shape_prior_from_pcd_result(self, result: PcdBuildResult) -> None:
+    def _maybe_start_shape_prior_from_pcd_result(
+        self,
+        result: PcdBuildResult,
+        *,
+        from_strict_pair: bool = False,
+    ) -> bool:
         snapshot = self._shape_prior_snapshot_from_pcd_result(result)
         if snapshot is None:
-            return
+            return False
         policy = str(getattr(self.args, "shape_prior_start_policy", ""))
         if policy == shape_prior_warmup.SHAPE_PRIOR_START_POLICY_AFTER_TEARDOWN:
             if self._shape_prior_deferred_snapshot is None:
                 self._shape_prior_deferred_snapshot = snapshot
             self._write_shape_prior_profile_json()
-            return
+            return False
+        if (
+            policy == shape_prior_warmup.SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_STRICT_PAIR
+            and not bool(from_strict_pair)
+        ):
+            return False
         submitted = self.shape_prior_manager.maybe_submit(snapshot)
         if submitted and policy == shape_prior_warmup.SHAPE_PRIOR_START_POLICY_BLOCKING_BEFORE_FIRST_OUTPUT:
             self.shape_prior_manager.wait()
         if submitted:
             self._write_shape_prior_profile_json()
+        return bool(submitted)
 
     def _maybe_write_shape_prior_headless_result(self) -> None:
         profile = self._shape_prior_profile_payload()
@@ -5991,7 +6005,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         pcd_result: PcdBuildResult,
         tracker_packet: TrackerMarkerPacket,
     ) -> PairedRenderPacket:
-        self._maybe_start_shape_prior_from_pcd_result(pcd_result)
+        self._maybe_start_shape_prior_from_pcd_result(pcd_result, from_strict_pair=True)
         pcd_result = replace(
             pcd_result,
             packet=self._packet_with_shape_prior_state(pcd_result.packet),
@@ -6080,6 +6094,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     rng=rng,
                     require_filter_seq=True,
                 )
+                self._maybe_start_shape_prior_from_pcd_result(result)
                 self._lossless_pcd_results += 1
                 if not self.same_seq_pairer.wait_for_side_capacity("pcd", stop_event=self.stop_event):
                     break
@@ -6145,9 +6160,6 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     time.sleep(0.001)
                     continue
                 last_seq = mask_packet.seq
-                tracker_packet = self._build_tracker_marker_packet(mask_packet, adapter)
-                if tracker_packet is None:
-                    continue
                 try:
                     pcd_result = self._build_pcd_packet_from_mask(
                         mask_packet,
@@ -6157,6 +6169,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 except Exception as exc:
                     if not self.stop_event.is_set():
                         print(f"[WARN] strict PCD frame {mask_packet.seq} failed: {type(exc).__name__}: {exc}", flush=True)
+                    continue
+                self._maybe_start_shape_prior_from_pcd_result(pcd_result)
+                tracker_packet = self._build_tracker_marker_packet(mask_packet, adapter)
+                if tracker_packet is None:
                     continue
                 self._publish_strict_render_pair(pcd_result, tracker_packet)
         except Exception as exc:
@@ -7086,6 +7102,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 if not self.stop_event.is_set():
                     print(f"[WARN] PCD frame {mask_packet.seq} failed: {type(exc).__name__}: {exc}", flush=True)
                 continue
+            self._maybe_start_shape_prior_from_pcd_result(result)
             result = replace(result, packet=self._packet_with_shape_prior_state(result.packet))
             self.render_slot.put(result.packet)
             self._maybe_write_shape_prior_headless_result()

@@ -177,19 +177,27 @@ def build_shape_prior_response_parts(
     ]
 
 
-def build_error_response_parts(*, request_id: str, seq: int, error: str) -> list[bytes]:
+def build_error_response_parts(
+    *,
+    request_id: str,
+    seq: int,
+    error: str,
+    metadata: dict[str, Any] | None = None,
+) -> list[bytes]:
+    payload = dict(metadata or {})
+    payload.update(
+        {
+            "protocol": PROTOCOL_NAME,
+            "version": PROTOCOL_VERSION,
+            "request_id": str(request_id),
+            "seq": int(seq),
+            "status": "error",
+            "error": str(error),
+            "point_count": 0,
+        }
+    )
     return [
-        _json_dumps(
-            {
-                "protocol": PROTOCOL_NAME,
-                "version": PROTOCOL_VERSION,
-                "request_id": str(request_id),
-                "seq": int(seq),
-                "status": "error",
-                "error": str(error),
-                "point_count": 0,
-            }
-        )
+        _json_dumps(payload)
     ]
 
 

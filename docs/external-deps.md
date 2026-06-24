@@ -53,11 +53,18 @@ python services/shape_prior_remote/server.py \
   --bind tcp://0.0.0.0:7100 \
   --sam3d-root /home/xinjie/external/sam-3d-objects \
   --upscale-category "stuffed animal" \
-  --futurephystwin-root /home/xinjie/FuturePhysTwin
+  --futurephystwin-root /home/xinjie/FuturePhysTwin \
+  --preload-models \
+  --warmup-models
 ```
 
-- Demo 3.2 defaults to a 180000 ms shape-prior request timeout because the
-  resident worker still runs the x4 upscaler and SAM3D inference per request.
+- `--preload-models --warmup-models` makes the worker load the x4 upscaler and
+  SAM3D model, then run one deterministic dummy upscaler + SAM3D +
+  mesh-conversion request before binding the endpoint. Report cold worker
+  startup timing separately from warm request latency.
+- Demo 3.2 defaults to a 180000 ms shape-prior request timeout because each real
+  request still runs x4 upscaling, SAM3D inference, single-view alignment, and
+  data-process-compatible sampling.
 - The request metadata includes `table_z_m` and `table_z_above_direction`; the
   worker uses these fields for single-view alignment validation. If older
   protocol/debug requests omit `table_z_above_direction`, the worker falls back

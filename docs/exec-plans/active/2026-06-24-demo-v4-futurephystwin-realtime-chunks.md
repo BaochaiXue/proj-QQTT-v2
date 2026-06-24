@@ -117,6 +117,8 @@ conda run -n phystwin-max --no-capture-output \
   --bind tcp://127.0.0.1:7100 \
   --sam3d-root /home/xinjie/external/sam-3d-objects \
   --device cuda:0 \
+  --preload-models \
+  --warmup-models \
   --debug
 ```
 

@@ -111,6 +111,8 @@ conda run -n phystwin-max --no-capture-output \
   --bind tcp://127.0.0.1:7100 \
   --sam3d-root /home/xinjie/external/sam-3d-objects \
   --device cuda:0 \
+  --preload-models \
+  --warmup-models \
   --debug
 ```
 
@@ -174,7 +176,10 @@ table_z_filter_threshold_m=0.0
 ```
 
 The shape-prior profile recorded image upscale, SAM3D inference, single-view
-alignment, and sampling:
+alignment, and sampling. New runs should also inspect
+`worker_preload_upscaler_ms`, `worker_preload_sam3d_ms`,
+`worker_dummy_warmup_ms`, and `worker_ready_ms` so cold worker startup is not
+mixed with warm request latency:
 
 ```text
 image_upscale_ms=20508.7

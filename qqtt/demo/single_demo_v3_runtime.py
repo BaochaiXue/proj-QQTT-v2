@@ -421,7 +421,7 @@ def build_arg_parser(*, demo_version: str = DEMO_VERSION_3) -> argparse.Argument
         parser.add_argument(
             "--shape-prior-start-policy",
             choices=shape_prior_warmup.SHAPE_PRIOR_START_POLICIES,
-            default=shape_prior_warmup.SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_STRICT_PAIR,
+            default=shape_prior_warmup.SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_MASK_DEPTH_PAIR,
         )
         parser.add_argument(
             "--shape-prior-execution",

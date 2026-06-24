@@ -14,10 +14,12 @@ SHAPE_PRIOR_STATUS_PENDING = "pending"
 SHAPE_PRIOR_STATUS_READY = "ready"
 SHAPE_PRIOR_STATUS_FAILED = "failed"
 SHAPE_PRIOR_STATUS_UNAVAILABLE = "unavailable"
+SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_MASK_DEPTH_PAIR = "async-after-first-mask-depth-pair"
 SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_STRICT_PAIR = "async-after-first-strict-pair"
 SHAPE_PRIOR_START_POLICY_BLOCKING_BEFORE_FIRST_OUTPUT = "blocking-before-first-output"
 SHAPE_PRIOR_START_POLICY_AFTER_TEARDOWN = "after-teardown"
 SHAPE_PRIOR_START_POLICIES = (
+    SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_MASK_DEPTH_PAIR,
     SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_STRICT_PAIR,
     SHAPE_PRIOR_START_POLICY_BLOCKING_BEFORE_FIRST_OUTPUT,
     SHAPE_PRIOR_START_POLICY_AFTER_TEARDOWN,
@@ -154,12 +156,20 @@ def default_profile(*, enabled: bool) -> dict[str, Any]:
         "first_rgb_ms": 0.0,
         "first_depth_ms": 0.0,
         "first_mask_ms": 0.0,
+        "first_mask_depth_pair_ms": 0.0,
         "first_strict_pair_ms": 0.0,
         "snapshot_copy_ms": 0.0,
         "snapshot_write_ms": 0.0,
         "request_upload_ms": 0.0,
         "worker_queue_ms": 0.0,
         "sam3d_model_load_ms": 0.0,
+        "upscaler_model_load_ms": 0.0,
+        "worker_preload_upscaler_ms": 0.0,
+        "worker_preload_sam3d_ms": 0.0,
+        "worker_dummy_warmup_ms": 0.0,
+        "worker_ready_ms": 0.0,
+        "worker_preloaded_models": False,
+        "worker_warmed_models": False,
         "image_upscale_ms": 0.0,
         "mask_refinement_ms": 0.0,
         "sam3d_inference_ms": 0.0,
@@ -168,6 +178,7 @@ def default_profile(*, enabled: bool) -> dict[str, Any]:
         "sampling_ms": 0.0,
         "response_download_ms": 0.0,
         "shape_prior_total_ms": 0.0,
+        "shape_prior_submit_ms": 0.0,
         "time_to_first_track_ms": 0.0,
         "time_to_first_render_ms": 0.0,
         "time_to_shape_prior_ready_ms": 0.0,
@@ -181,7 +192,7 @@ class ShapePriorWarmupManager:
         *,
         enabled: bool,
         client: ShapePriorClient | None,
-        start_policy: str = SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_STRICT_PAIR,
+        start_policy: str = SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_MASK_DEPTH_PAIR,
         created_perf_s: float | None = None,
     ) -> None:
         if start_policy not in SHAPE_PRIOR_START_POLICIES:
@@ -218,12 +229,18 @@ class ShapePriorWarmupManager:
         if not self.enabled:
             return False
         normalized = normalize_snapshot(snapshot)
+        submit_ms = (time.perf_counter() - float(self.created_perf_s)) * 1000.0
         with self._lock:
             if self._submitted:
                 return False
             self._submitted = True
             self._status = SHAPE_PRIOR_STATUS_PENDING
             self._profile.update(self._snapshot_profile_fields(normalized))
+            self._profile["shape_prior_submit_ms"] = submit_ms
+            if self.start_policy == SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_MASK_DEPTH_PAIR:
+                self._profile["first_mask_depth_pair_ms"] = submit_ms
+            elif self.start_policy == SHAPE_PRIOR_START_POLICY_ASYNC_AFTER_FIRST_STRICT_PAIR:
+                self._profile["first_strict_pair_ms"] = submit_ms
         if self.client is None:
             self._mark_failed(normalized, "shape-prior client is unavailable")
             return True

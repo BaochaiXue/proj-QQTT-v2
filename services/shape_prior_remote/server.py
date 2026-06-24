@@ -52,6 +52,7 @@ from services.shape_prior_remote.protocol import (  # noqa: E402
 DEFAULT_SAM3D_ROOT = Path("/home/xinjie/external/sam-3d-objects")
 DEFAULT_FUTUREPHYSTWIN_ROOT = Path("/home/xinjie/FuturePhysTwin")
 DEFAULT_UPSCALE_CATEGORY = "stuffed animal"
+_WARMUP_IMAGE_SIZE = 64
 
 
 def _elapsed_ms(start_s: float, end_s: float | None = None) -> float:
@@ -76,6 +77,17 @@ def _sample_points(points: np.ndarray, max_points: int) -> np.ndarray:
         indices = np.linspace(0, len(arr) - 1, int(max_points), dtype=np.int64)
         arr = arr[indices]
     return np.ascontiguousarray(arr, dtype=np.float32)
+
+
+def _default_startup_metadata() -> dict[str, Any]:
+    return {
+        "worker_preload_upscaler_ms": 0.0,
+        "worker_preload_sam3d_ms": 0.0,
+        "worker_dummy_warmup_ms": 0.0,
+        "worker_ready_ms": 0.0,
+        "worker_preloaded_models": False,
+        "worker_warmed_models": False,
+    }
 
 
 def _mesh_vertices(mesh_like: Any) -> np.ndarray | None:
@@ -269,11 +281,19 @@ class ShapePriorSam3DWorker:
         self._inference: Any | None = None
         self._upscaler: Any | None = None
         self._model_load_ms = 0.0
+        self._last_sam3d_model_load_ms = 0.0
+        self._last_upscaler_model_load_ms = 0.0
+        self._startup_metadata: dict[str, Any] = _default_startup_metadata()
         self._last_canonical_mesh: Any | None = None
+
+    def startup_metadata(self) -> dict[str, Any]:
+        return dict(self._startup_metadata)
 
     def _load_upscaler(self) -> Any:
         if self._upscaler is not None:
+            self._last_upscaler_model_load_ms = 0.0
             return self._upscaler
+        start_s = time.perf_counter()
         from diffusers import StableDiffusionUpscalePipeline
         import torch
 
@@ -282,10 +302,12 @@ class ShapePriorSam3DWorker:
             torch_dtype=torch.float16,
         )
         self._upscaler = pipeline.to(self.device)
+        self._last_upscaler_model_load_ms = _elapsed_ms(start_s)
         return self._upscaler
 
     def _load_inference(self) -> Any:
         if self._inference is not None:
+            self._last_sam3d_model_load_ms = 0.0
             return self._inference
         start_s = time.perf_counter()
         root = self.sam3d_root.resolve()
@@ -301,13 +323,98 @@ class ShapePriorSam3DWorker:
         if not config.exists():
             raise FileNotFoundError(f"SAM3D config not found: {config}")
         self._inference = Inference(str(config), compile=False)
-        self._model_load_ms = _elapsed_ms(start_s)
+        self._last_sam3d_model_load_ms = _elapsed_ms(start_s)
+        self._model_load_ms = self._last_sam3d_model_load_ms
         return self._inference
+
+    def preload_models(self) -> dict[str, Any]:
+        upscaler_start_s = time.perf_counter()
+        self._load_upscaler()
+        upscaler_elapsed_ms = _elapsed_ms(upscaler_start_s)
+        upscaler_load_ms = float(getattr(self, "_last_upscaler_model_load_ms", 0.0))
+        self._last_upscaler_model_load_ms = 0.0
+
+        sam3d_start_s = time.perf_counter()
+        self._load_inference()
+        sam3d_elapsed_ms = _elapsed_ms(sam3d_start_s)
+        sam3d_load_ms = float(getattr(self, "_last_sam3d_model_load_ms", 0.0))
+        self._last_sam3d_model_load_ms = 0.0
+        self._model_load_ms = 0.0
+
+        self._startup_metadata.update(
+            {
+                "worker_preload_upscaler_ms": upscaler_load_ms if upscaler_load_ms > 0.0 else upscaler_elapsed_ms,
+                "worker_preload_sam3d_ms": sam3d_load_ms if sam3d_load_ms > 0.0 else sam3d_elapsed_ms,
+                "worker_preloaded_models": True,
+            }
+        )
+        return self.startup_metadata()
+
+    def run_dummy_warmup(self) -> dict[str, Any]:
+        warmup_start_s = time.perf_counter()
+        rgb = np.full((_WARMUP_IMAGE_SIZE, _WARMUP_IMAGE_SIZE, 3), 127, dtype=np.uint8)
+        gradient = np.linspace(80, 180, _WARMUP_IMAGE_SIZE, dtype=np.uint8)
+        rgb[:, :, 0] = gradient[None, :]
+        rgb[:, :, 1] = gradient[:, None]
+        mask = np.zeros((_WARMUP_IMAGE_SIZE, _WARMUP_IMAGE_SIZE), dtype=np.uint8)
+        margin = _WARMUP_IMAGE_SIZE // 4
+        mask[margin:-margin, margin:-margin] = 255
+
+        prompt = f"Hand manipulates a {self.upscale_category}."
+        upscaler = self._load_upscaler()
+        upscaled = upscaler(prompt=prompt, image=Image.fromarray(rgb)).images[0]
+        upscaled_rgb = np.ascontiguousarray(np.asarray(upscaled.convert("RGB"), dtype=np.uint8))
+        mask_u8 = np.asarray(
+            Image.fromarray(mask).resize(upscaled.size, Image.Resampling.NEAREST),
+            dtype=np.uint8,
+        )
+        if int(np.count_nonzero(mask_u8)) <= 0:
+            raise RuntimeError("dummy shape-prior warmup mask is empty")
+
+        infer = self._load_inference()
+        outputs = infer._pipeline.run(  # type: ignore[attr-defined]
+            upscaled_rgb,
+            np.ascontiguousarray(mask_u8, dtype=np.uint8),
+            seed=self.seed,
+            with_mesh_postprocess=True,
+            with_texture_baking=False,
+            with_layout_postprocess=True,
+            use_vertex_color=False,
+        )
+        mesh_like = outputs.get("glb", None)
+        mesh = _mesh_to_trimesh(mesh_like)
+        if mesh is None:
+            mesh_like = outputs.get("mesh", None)
+            mesh = _mesh_to_trimesh(mesh_like)
+        vertices = np.asarray(mesh.vertices, dtype=np.float32).reshape(-1, 3) if mesh is not None else _mesh_vertices(mesh_like)
+        if vertices is None or len(vertices) <= 0:
+            raise RuntimeError("dummy SAM3D warmup did not produce convertible mesh geometry")
+        try:
+            import torch
+
+            if str(self.device).startswith("cuda") and torch.cuda.is_available():
+                torch.cuda.synchronize(self.device)
+        except Exception:
+            pass
+        self._last_canonical_mesh = None
+        self._last_upscaler_model_load_ms = 0.0
+        self._last_sam3d_model_load_ms = 0.0
+        self._model_load_ms = 0.0
+        self._startup_metadata.update(
+            {
+                "worker_dummy_warmup_ms": _elapsed_ms(warmup_start_s),
+                "worker_warmed_models": True,
+            }
+        )
+        return self.startup_metadata()
 
     def _upscaled_sam3d_input(
         self,
         request: ShapePriorRequest,
     ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+        upscaler = self._load_upscaler()
+        upscaler_model_load_ms = float(getattr(self, "_last_upscaler_model_load_ms", 0.0))
+        self._last_upscaler_model_load_ms = 0.0
         upscale_start_s = time.perf_counter()
         rgb = np.ascontiguousarray(request.rgb_u8, dtype=np.uint8)
         object_mask = np.asarray(request.object_mask, dtype=bool)
@@ -316,7 +423,7 @@ class ShapePriorSam3DWorker:
         crop_mask_u8 = (object_mask.astype(np.uint8) * 255)
         crop_mask = Image.fromarray(crop_mask_u8).crop(crop_box)
         prompt = f"Hand manipulates a {self.upscale_category}."
-        upscaled = self._load_upscaler()(prompt=prompt, image=crop_rgb).images[0]
+        upscaled = upscaler(prompt=prompt, image=crop_rgb).images[0]
         upscaled_rgb = np.ascontiguousarray(np.asarray(upscaled.convert("RGB"), dtype=np.uint8))
         image_upscale_ms = _elapsed_ms(upscale_start_s)
 
@@ -327,6 +434,7 @@ class ShapePriorSam3DWorker:
         if int(np.count_nonzero(mask_u8)) <= 0:
             raise RuntimeError("upscaled shape-prior mask is empty")
         return upscaled_rgb, np.ascontiguousarray(mask_u8, dtype=np.uint8), {
+            "upscaler_model_load_ms": upscaler_model_load_ms,
             "image_upscale_ms": image_upscale_ms,
             "mask_refinement_ms": mask_refinement_ms,
             "shape_prior_upscale_prompt": prompt,
@@ -340,6 +448,9 @@ class ShapePriorSam3DWorker:
     def _canonical_points_from_sam3d(self, request: ShapePriorRequest) -> tuple[np.ndarray, dict[str, Any]]:
         image_rgb, mask_u8, prep_stats = self._upscaled_sam3d_input(request)
         infer = self._load_inference()
+        sam3d_model_load_ms = float(getattr(self, "_last_sam3d_model_load_ms", 0.0))
+        self._last_sam3d_model_load_ms = 0.0
+        self._model_load_ms = 0.0
         start_s = time.perf_counter()
         outputs = infer._pipeline.run(  # type: ignore[attr-defined]
             image_rgb,
@@ -368,12 +479,13 @@ class ShapePriorSam3DWorker:
         if len(canonical) < 3:
             raise RuntimeError("SAM3D canonical mesh has fewer than 3 finite vertices")
         stats = {
-            "sam3d_model_load_ms": float(self._model_load_ms),
+            "sam3d_model_load_ms": sam3d_model_load_ms,
             "sam3d_inference_ms": _elapsed_ms(start_s),
             "geometry_export_ms": 0.0,
             "sam3d_mesh_source": mesh_source,
         }
         stats.update(prep_stats)
+        stats.update(self.startup_metadata())
         return canonical, stats
 
     def handle(self, request: ShapePriorRequest) -> list[bytes]:
@@ -392,6 +504,7 @@ class ShapePriorSam3DWorker:
                 interior_points = np.empty((0, 3), dtype=np.float32)
                 metadata = {
                     "sam3d_model_load_ms": 0.0,
+                    "upscaler_model_load_ms": 0.0,
                     "sam3d_inference_ms": 0.0,
                     "geometry_export_ms": 0.0,
                     "single_view_alignment_ms": 0.0,
@@ -443,6 +556,7 @@ class ShapePriorSam3DWorker:
                         "alignment": aligned.validation,
                     }
                 )
+            metadata.update(self.startup_metadata())
             colors = np.full((len(points), 3), DEFAULT_SHAPE_PRIOR_RENDER_RGB, dtype=np.uint8)
             metadata.update(
                 {
@@ -465,7 +579,30 @@ class ShapePriorSam3DWorker:
                 metadata=metadata,
             )
         except Exception as exc:
-            return build_error_response_parts(request_id=request_id, seq=seq, error=str(exc))
+            return build_error_response_parts(
+                request_id=request_id,
+                seq=seq,
+                error=str(exc),
+                metadata=self.startup_metadata(),
+            )
+
+
+def _prepare_worker_startup(
+    worker: ShapePriorSam3DWorker,
+    *,
+    preload_models: bool,
+    warmup_models: bool,
+) -> dict[str, Any]:
+    startup_start_s = time.perf_counter()
+    should_preload = bool(preload_models) or bool(warmup_models)
+    if should_preload:
+        worker.preload_models()
+        worker._startup_metadata["worker_preloaded_models"] = True
+    if bool(warmup_models):
+        worker.run_dummy_warmup()
+        worker._startup_metadata["worker_warmed_models"] = True
+    worker._startup_metadata["worker_ready_ms"] = _elapsed_ms(startup_start_s)
+    return worker.startup_metadata()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -487,12 +624,29 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Protocol/debug mode: return first-frame object observation PCD without loading SAM3D.",
     )
+    parser.add_argument(
+        "--preload-models",
+        action="store_true",
+        help="Load the x4 upscaler and SAM3D inference model before binding the worker endpoint.",
+    )
+    parser.add_argument(
+        "--warmup-models",
+        action="store_true",
+        help="Run a strict deterministic dummy upscaler + SAM3D + mesh-conversion warmup before ready.",
+    )
     parser.add_argument("--debug", action="store_true")
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = build_parser().parse_args(argv)
+    if bool(args.warmup_models):
+        args.preload_models = True
+    return args
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     worker = ShapePriorSam3DWorker(
         sam3d_root=Path(args.sam3d_root),
         config=args.config,
@@ -502,12 +656,28 @@ def main(argv: list[str] | None = None) -> int:
         upscale_category=str(args.upscale_category),
         echo_observation=bool(args.echo_observation),
     )
+    try:
+        startup_metadata = _prepare_worker_startup(
+            worker,
+            preload_models=bool(args.preload_models),
+            warmup_models=bool(args.warmup_models),
+        )
+    except Exception as exc:
+        print(f"[shape-prior-worker] startup failed: {exc}", file=sys.stderr, flush=True)
+        return 1
     import zmq
 
     context = zmq.Context.instance()
     socket = context.socket(zmq.REP)
     socket.bind(str(args.bind))
-    print(f"[shape-prior-worker] bind={args.bind} sam3d_root={args.sam3d_root} echo={args.echo_observation}", flush=True)
+    print(
+        "[shape-prior-worker] "
+        f"ready bind={args.bind} sam3d_root={args.sam3d_root} "
+        f"echo={args.echo_observation} preload={startup_metadata.get('worker_preloaded_models')} "
+        f"warmup={startup_metadata.get('worker_warmed_models')} "
+        f"worker_ready_ms={float(startup_metadata.get('worker_ready_ms', 0.0)):.1f}",
+        flush=True,
+    )
     while True:
         parts = socket.recv_multipart()
         recv_s = time.perf_counter()

@@ -60,8 +60,16 @@ conda run -n <sam3d-env> --no-capture-output \
   python services/shape_prior_remote/server.py \
   --bind tcp://0.0.0.0:7100 \
   --sam3d-root /home/xinjie/external/sam-3d-objects \
-  --futurephystwin-root /home/xinjie/FuturePhysTwin
+  --futurephystwin-root /home/xinjie/FuturePhysTwin \
+  --preload-models \
+  --warmup-models
 ```
+
+  The worker should print ready only after the x4 upscaler, SAM3D inference
+  model, and one dummy upscaler + SAM3D + mesh-conversion warmup complete.
+  Record `worker_preload_upscaler_ms`, `worker_preload_sam3d_ms`,
+  `worker_dummy_warmup_ms`, and `worker_ready_ms` separately from warm request
+  timing.
 
 - For protocol-only validation without SAM3D weights, start:
 
@@ -99,7 +107,8 @@ conda run -n demo_2_max --no-capture-output \
 - For real-live validation, remove `--input-source fake-live` and repeat for
   the native default plus explicit `--depth-backend ir-ffs`.
 - Keep the default `--shape-prior-timeout-ms 180000` unless measuring timeout
-  behavior; cold worker requests can include x4 upscaling plus SAM3D model load.
+  behavior; warm worker requests still include x4 upscaling, SAM3D inference,
+  single-view alignment, and data-process-compatible sampling.
 - For each command, run a baseline with `--no-shape-prior-warmup` and the same
   input/depth settings.
 - Repeat the matrix with
