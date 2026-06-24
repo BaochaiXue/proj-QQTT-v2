@@ -17,9 +17,11 @@ repeat experiments, but it does not count as the main 60-second proof.
 
 ## Non-Negotiable Product Contract
 
-- Keep FuturePhysTwin case roots complete: `final_data.pkl`,
-  `track_process_data.pkl`, masks, RGB, dense PCD, tracking/cotracker,
-  calibration, metadata, split, manifest, and `READY`.
+- Keep FuturePhysTwin case roots complete for the consumer being targeted:
+  realtime cadence mode must include `final_data.pkl`, `track_process_data.pkl`,
+  masks, RGB, tracking/cotracker, calibration, metadata, split, manifest, and
+  `READY`; dense per-frame `pcd/` remains available behind `--write-final-pcd`
+  for diagnostics/export.
 - Keep strict semantic/motion rules: first-frame object/controller identity,
   depth-valid mask gating, radius-outlier mask refinement, PhysTwin-style
   motion filtering, controller FPS 30, object 5 mm sampling, and 700/1000
@@ -40,10 +42,13 @@ repeat experiments, but it does not count as the main 60-second proof.
   `atomic_rename_done_wall_s`, `publish_latency_ms`, and backlog.
 - [x] Change shape-prior interior sampling to deterministic voxel/raycast
   candidate generation first, with the old volume sampler retained as fallback.
-- [ ] Run focused tests, smoke validation, and a clean-GPU cold SAM3D benchmark.
-- [ ] If single-GPU cold first READY remains above 60 seconds, run the explicit
+- [x] Add prepared-only headless capture, uncompressed prepared frames,
+  final-data cadence mode, 1 ms chunk tailing, configurable lossless backlog,
+  and configurable lossless input FPS.
+- [x] Run focused tests and clean-GPU cold/preloaded SAM3D benchmarks.
+- [x] If single-GPU cold first READY remains above 60 seconds, run the explicit
   `--warmup-gpu-mode dual --realtime-gpu-mode single` benchmark.
-- [ ] Record exact commands, GPU assignment, profiles, chunk cadence, and
+- [x] Record exact commands, GPU assignment, profiles, chunk cadence, and
   FuturePhysTwin quality checks under `docs/generated/`.
 
 ## Validation Commands
@@ -67,3 +72,16 @@ conda run -n demo_2_max --no-capture-output \
 - `max_backlog_chunks` does not grow after startup.
 - validation chunks have finite object/controller/surface/interior points,
   controller count 30, and product-run shape-prior target counts 700/1000.
+
+## 2026-06-24 Results
+
+- Single-GPU cold same-card SAM3D did not meet the target: no chunks were
+  published before strict lossless backlog failure, and the worker reported
+  about 78.8 seconds for shape prior.
+- Preload-only dual warmup plus single realtime met the target after the
+  sampling change:
+  `first_shape_prior_ready_chunk_wall_s=43.942`,
+  `shape_prior_total_ms=27154.2`, `sampling_ms=64.1`.
+- No-warmup final-data cadence with external shape points met steady-state
+  cadence: max publish interval `4.853s`, backlog `0`, 7 chunks.
+- Warmup run catch-up backlog peaked at 4 chunks and drained to 0 by chunk 7.

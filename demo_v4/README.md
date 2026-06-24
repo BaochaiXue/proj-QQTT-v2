@@ -40,6 +40,8 @@ demo32_tracker_device=cuda
 shape_prior_warmup=true
 shape_prior_execution=remote-worker
 shape_prior_start_policy=async-after-first-mask-depth-pair
+demo32_headless_prepared_only=true
+write_final_pcd=false
 ```
 
 Chunk length is time-first. Operators should normally change
@@ -61,7 +63,7 @@ Demo v4 writes each complete case under `--futurephystwin-base-path`:
   split.json
   color/0/<frame>.png
   mask/processed_masks.pkl
-  pcd/<frame>.npz
+  pcd/<frame>.npz        # only when --write-final-pcd is enabled
   tracking/0.npz
   cotracker/0.npz
   manifest.json
@@ -72,6 +74,12 @@ Consumers must treat `READY` as the publish marker and ignore directories
 without it. Demo v4 writes and validates each chunk under `<base>/.publishing/`,
 creates `READY` last, and then atomically renames the staged directory to
 `<base>/<case>/`.
+
+The default realtime path is optimized for FuturePhysTwin `final_data.pkl`
+cadence and skips dense per-frame `pcd/` files. The final-data, mask, RGB,
+tracking/cotracker, calibration, metadata, split, manifest, and READY contract
+remain complete. Use `--write-final-pcd` when a diagnostic/export consumer
+needs dense per-frame point-cloud files in each published chunk.
 
 The `final_data.pkl` schema follows
 `/home/xinjie/FuturePhysTwin/qqtt/data/real_data.py`:
@@ -124,25 +132,37 @@ tracking identities.
 Start the SAM3D worker separately in the FuturePhysTwin/SAM3D environment:
 
 ```bash
+CUDA_VISIBLE_DEVICES=1 \
 conda run -n phystwin-max --no-capture-output \
   python services/shape_prior_remote/server.py \
-  --bind tcp://127.0.0.1:7100 \
+  --bind tcp://127.0.0.1:7103 \
   --sam3d-root /home/xinjie/external/sam-3d-objects \
   --device cuda:0 \
   --preload-models \
-  --warmup-models \
   --debug
 ```
+
+`--preload-models` keeps the x4 upscaler and SAM3D model resident before Demo
+v4 starts. `--warmup-models` runs an additional dummy SAM3D pass, but it needs
+more VRAM; on the 2026-06-24 GPU1 test it OOMed during `decode_slat`, while
+preload-only was stable.
 
 Then run Demo v4:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
   python demo_v4/realtime_futurephystwin_chunks.py \
-  --futurephystwin-base-path result/demo_v4/full_fake_realtime_native_full_sam3d_20260624/cases \
-  --case-prefix demo_v4_native_full_sam3d \
-  --capture-extra-seconds 220 \
-  --shape-prior-chunk-wait-timeout-s 420
+  --realtime-gpu-mode single \
+  --warmup-gpu-mode dual \
+  --demo32-cuda-visible-devices 0 \
+  --shape-prior-endpoint tcp://127.0.0.1:7103 \
+  --demo32-source-replay-fps 5.2 \
+  --futurephystwin-base-path result/demo_v4/warmup_fast_sampling_dual_rt_single_lossless52_20260624/cases \
+  --case-prefix demo_v4_warmup_fast_sampling_dual_rt_single_lossless52 \
+  --capture-extra-seconds 140 \
+  --shape-prior-timeout-ms 240000 \
+  --shape-prior-chunk-wait-timeout-s 240 \
+  --demo32-lossless-max-backlog-seconds 45
 ```
 
 For a short debug run, add `--max-chunks <N>`. Omit `--max-chunks` for the
@@ -208,6 +228,14 @@ but is not the READY-visible publish metric. Realtime cadence is acceptable only
 when steady-state `publish_wall_s` intervals are no larger than the chunk source
 window and `backlog_chunks` does not grow after startup.
 
+`--replay-fps` remains the PhysTwin logical FPS used for chunk window math and
+published `metadata.json`. `--demo32-source-replay-fps` is separate: it controls
+Demo 3.2 fake-live/lossless wall-clock pacing and, when non-default, Demo v4
+forwards the same value as Demo 3.2 `--lossless-input-fps`. The 2026-06-24
+cadence proof used `--replay-fps 5.0`, 25-frame chunks, and
+`--demo32-source-replay-fps 5.2` to give wall-clock headroom while preserving
+published `fps=5`.
+
 ## Validation Chunks
 
 The validation selector uses the second-last and fifth-last chunks. A short
@@ -232,79 +260,54 @@ Demo v4 supports independent warmup and realtime GPU routing:
   dual-GPU warmup plus single-GPU realtime camera/fake-camera finalization.
 - `--gpu-mode` remains a compatibility alias for realtime routing.
 
-## Verified 2026-06-24 Run
+## Verified 2026-06-24 Optimization Run
 
-The latest single-GPU full fake realtime native-RealSense stream produced seven
-chunks at 25 frames each:
-
-```text
-result/demo_v4/full_fake_realtime_native_single_gpu_fast_20260624/cases
-```
-
-The Demo v4 summary and Demo 3.2 capture metadata recorded:
+The current passing warmup run is:
 
 ```text
-input_source=fake-live
-gpu_mode=single
+result/demo_v4/warmup_fast_sampling_dual_rt_single_lossless52_20260624/cases
+
+realtime_gpu_mode=single
+warmup_gpu_mode=dual
 demo32_cuda_visible_devices=0
-depth_backend=native-realsense
-depth_source_internal=realsense
-replay_fps=5.0
-tracking_product_backend=phystwin-strict-tracking
-tracker_query_count=5000
+shape_prior_worker=GPU1 preload-only remote worker
+demo32_source_replay_fps=5.2
+demo32_lossless_input_fps=5.2
+write_final_pcd=false
+chunk_count=7
+first_shape_prior_ready_chunk_wall_s=43.942
+shape_prior_total_ms=27154.2
+sampling_ms=64.1
+steady_state_publish_interval_max_s=1.747
+max_backlog_chunks=4, drained to 0 by chunk_0007
+surface/interior target counts=700/1000
+```
+
+The steady-state no-warmup cadence proof is:
+
+```text
+result/demo_v4/realtime_final_data_only_lossless52_20260624/cases
+
 external_shape_prior_points=true
-table_z_above_direction=negative
-table_z_filter_threshold_m=0.0
+chunk_count=7
+steady_publish_intervals_s=[4.706, 4.779, 4.820, 4.766, 4.760, 4.853]
+steady_state_publish_interval_max_s=4.853
+max_backlog_chunks=0
+materialize_latency_s=[1.714, 1.603, 1.582, 1.607, 1.557, 1.516, 1.560]
 ```
 
-The source SAM3D snapshot used for this single-GPU run is:
+Both validation chunks in both runs passed `validate_futurephystwin_case` with
+`require_ready=True`, 25 frames, 30 controller points, finite object/controller
+points, and 700/1000 shape-prior target counts. The warmup run still records
+`single_view_shape_prior_sampling_backend=sam3d-single-view`, source
+`data_process_sam3d/data_process_sample.py`, and keeps the same final-data
+fields consumed by FuturePhysTwin.
 
-```text
-result/demo_v4/single_gpu_shape_bootstrap_20260624
-
-status=ready
-alignment_valid=true
-ground_z_fraction=0.2759
-image_upscale_ms=15779.0
-sam3d_model_load_ms=18714.5
-sam3d_inference_ms=11040.0
-single_view_alignment_ms=2.5
-sampling_ms=28675.6
-shape_prior_total_ms=79241.4
-```
-
-Chunk geometry audits:
-
-```text
-steady publish intervals after startup:
-  [4.722, 4.969, 4.904, 5.135, 4.874, 5.049] seconds
-backlog_chunks:
-  [0, 0, 0, 0, 0, 0, 0]
-materialize_latency_s:
-  [4.298, 4.046, 4.022, 3.888, 4.049, 3.934, 3.990]
-
-chunk_0006: object=(25,2122,3), controller=(25,30,3),
-            surface=(700,3), interior=(1000,3),
-            finite object/controller/shape-prior points=True,
-            first-frame zero object/controller points=0/0
-
-chunk_0003: object=(25,2145,3), controller=(25,30,3),
-            surface=(700,3), interior=(1000,3),
-            finite object/controller/shape-prior points=True,
-            first-frame zero object/controller points=0/0
-```
-
-This run includes the `data_process_sam3d/data_process_mask.py` radius-outlier
-mask refinement before chunk finalization. Tiny synthetic tests can disable it
-with `--no-mask-radius-outlier-filter`; product runs keep it enabled.
-Shape-prior sampling records `single_view_shape_prior_sampling_backend=
-sam3d-single-view`, source `data_process_sam3d/data_process_sample.py`, and the
-same full target counts used by the offline SAM3D route: 700 surface points and
-1000 interior points.
-
-Both validation chunks loaded in FuturePhysTwin and completed 0-order CMA plus
-1-order `train_warp.py`. Exact commands and outcomes are recorded in
-`docs/generated/demo_v4_futurephystwin_validation_20260624.md`.
+Single-GPU cold same-card SAM3D remains above target and can break realtime
+backlog: the 2026-06-24 cold run produced no chunks and hit lossless backlog
+while the worker reported about 78.8 seconds for shape prior. The supported
+sub-60s path is therefore dual warmup plus single realtime, with the long-lived
+remote worker preloaded before the Demo v4 run.
 
 ## Known External Environment Notes
 
