@@ -172,3 +172,19 @@ git add docs/exec-plans/active/2026-06-24-demo4-realtime-phystwin-env.md \
 git commit -m "docs: record demo4 realtime phystwin env setup"
 git push origin single-camera
 ```
+
+## Execution Outcome
+
+- Installed the realtime PhysTwin dependency stack into `demo_2_max` while preserving Python 3.12, Torch 2.11.0+cu130, torchvision 0.26.0, and Pillow 12.2.0.
+- Built PyTorch3D, Kaolin, mip-splatting `diff_gaussian_rasterization`, FuturePhysTwin `simple_knn`, and `gsplat` against the existing CUDA/Torch stack.
+- Patched MoviePy distribution metadata in the conda environment so Pillow 12.2.0 is accepted instead of forcing a Pillow downgrade.
+- Added real `realtime_phystwin` online-stream support and patched optional W&B video logging so missing H.264 writer output does not abort training.
+- Validation completed:
+  - realtime PhysTwin import and CUDA smoke passed.
+  - `python -m unittest tests.test_demo_v4_futurephystwin_chunks` passed with 39 tests.
+  - `optimize_cma.py --max_iter 1` completed on Demo v4 chunk 0031 and wrote `optimal_params.pkl`.
+  - `train_warp.py` completed through iteration 199 on GPU0 and wrote `best_199.pth`.
+  - `scripts/harness/validation/run.py --profile smoke` passed with 301 tests.
+- `pip check` still reports the pre-existing `sam3` vs NumPy 2.4.5 metadata conflict; it was not resolved by downgrading NumPy.
+
+Detailed command transcript and artifact paths are recorded in `docs/generated/demo4_realtime_phystwin_env_2026-06-24.md`.

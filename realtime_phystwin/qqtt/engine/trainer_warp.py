@@ -48,6 +48,29 @@ import csv
 import json
 
 
+def _log_wandb_video_if_present(video_path, step):
+    if os.path.exists(video_path):
+        wandb.log(
+            {
+                "video": wandb.Video(
+                    video_path,
+                    format="mp4",
+                    fps=cfg.FPS,
+                ),
+            },
+            step=step,
+        )
+    else:
+        logger.warning(f"[Visualize]: video missing, skipping wandb video log: {video_path}")
+        wandb.log(
+            {
+                "video_missing": True,
+                "video_missing_path": video_path,
+            },
+            step=step,
+        )
+
+
 class InvPhyTrainerWarp:
     def __init__(
         self,
@@ -1828,16 +1851,7 @@ class InvPhyTrainerWarp:
             if i % cfg.vis_interval == 0 or i == cfg.iterations - 1:
                 video_path = f"{cfg.base_dir}/train/sim_iter{i}.mp4"
                 self.visualize_sim(save_only=True, video_path=video_path)
-                wandb.log(
-                    {
-                        "video": wandb.Video(
-                            video_path,
-                            format="mp4",
-                            fps=cfg.FPS,
-                        ),
-                    },
-                    step=i,
-                )
+                _log_wandb_video_if_present(video_path, step=i)
                 # Save the parameters
                 cur_model = {
                     "epoch": i,
@@ -2435,16 +2449,7 @@ class InvPhyTrainerWarp:
             if need_global_vis:
                 video_path = f"{cfg.base_dir}/train/sim_iter{i}.mp4"
                 self.visualize_sim(save_only=True, video_path=video_path)
-                wandb.log(
-                    {
-                        "video": wandb.Video(
-                            video_path,
-                            format="mp4",
-                            fps=cfg.FPS,
-                        ),
-                    },
-                    step=i,
-                )
+                _log_wandb_video_if_present(video_path, step=i)
 
                 cur_model = {
                     "epoch": i,
@@ -3061,16 +3066,7 @@ class InvPhyTrainerWarp:
                 if save_video:
                     video_path = f"{cfg.base_dir}/train/online_sim_iter{i}.mp4"
                     self.visualize_sim(save_only=True, video_path=video_path)
-                    wandb.log(
-                        {
-                            "video": wandb.Video(
-                                video_path,
-                                format="mp4",
-                                fps=cfg.FPS,
-                            ),
-                        },
-                        step=i,
-                    )
+                    _log_wandb_video_if_present(video_path, step=i)
 
                 cur_model = {
                     "epoch": i,
