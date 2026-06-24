@@ -94,12 +94,16 @@ from qqtt.demo.phystwin_strict_product import (  # noqa: E402
     COMPATIBILITY_TARGET_PHYSTWIN,
     DEFAULT_TRACKING_PRODUCT_BACKEND,
     PHYSTWIN_STRICT_EXECUTION_MODE,
+    PreparedPhysTwinFrame,
     TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT,
     TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY,
     TRACKING_PRODUCT_BACKENDS,
     finalize_headless_capture,
+    load_prepared_phystwin_frame,
     normalize_tracking_product_backend,
+    prepare_phystwin_frame,
     tracking_product_backend_is_strict,
+    write_prepared_phystwin_frame,
 )
 from qqtt.demo import shape_prior_warmup  # noqa: E402
 from qqtt.demo.demo32_side_by_side_panel import (  # noqa: E402
@@ -970,6 +974,36 @@ class TrackerMarkerPacket:
         return int(self.marker_xyz_m.shape[0])
 
 
+def _full_tracker_arrays_for_prepared_frame(packet: TrackerMarkerPacket) -> tuple[np.ndarray, np.ndarray]:
+    query_count = int(np.asarray(packet.query_points_yx, dtype=np.float32).reshape(-1, 2).shape[0])
+    all_tracks = np.asarray(packet.all_tracks_yx, dtype=np.float32).reshape(-1, 2)
+    all_visibility = np.asarray(packet.all_tracker_visibility, dtype=bool).reshape(-1)
+    if all_tracks.shape[0] == query_count and all_visibility.shape[0] == query_count:
+        return (
+            np.ascontiguousarray(all_tracks, dtype=np.float32),
+            np.ascontiguousarray(all_visibility, dtype=bool),
+        )
+
+    active_tracks = np.asarray(packet.tracks_yx, dtype=np.float32).reshape(-1, 2)
+    active_visibility = np.asarray(packet.visibility, dtype=bool).reshape(-1)
+    if active_tracks.shape[0] == query_count and active_visibility.shape[0] == query_count:
+        return (
+            np.ascontiguousarray(active_tracks, dtype=np.float32),
+            np.ascontiguousarray(active_visibility, dtype=bool),
+        )
+
+    indices = np.asarray(packet.query_indices, dtype=np.int64).reshape(-1)
+    if indices.shape[0] != active_tracks.shape[0] or active_tracks.shape[0] != active_visibility.shape[0]:
+        raise ValueError("sparse tracker packet must have query_indices, tracks_yx, and visibility with matching lengths")
+    if np.any(indices < 0) or np.any(indices >= query_count):
+        raise ValueError("tracker packet query_indices contains out-of-range values")
+    tracks = np.zeros((query_count, 2), dtype=np.float32)
+    visibility = np.zeros((query_count,), dtype=bool)
+    tracks[indices] = active_tracks
+    visibility[indices] = active_visibility
+    return np.ascontiguousarray(tracks, dtype=np.float32), np.ascontiguousarray(visibility, dtype=bool)
+
+
 @dataclass(frozen=True)
 class PairedRenderPacket:
     seq: int
@@ -1068,6 +1102,7 @@ class HeadlessCaptureWriter:
         self.trajectory_dir = self.output_dir / "query_trajectory"
         self.mask_dir = self.output_dir / "masks"
         self.shape_prior_dir = self.output_dir / "shape_prior"
+        self.prepared_phystwin_dir = self.output_dir / "prepared_phystwin"
         self.input_rgb_dir = self.output_dir / "input_rgb"
         self.frames_path = self.output_dir / "frames.jsonl"
         self.input_frames_path = self.output_dir / "input_frames.jsonl"
@@ -1081,6 +1116,7 @@ class HeadlessCaptureWriter:
         self.rgb_dir.mkdir(parents=True, exist_ok=True)
         self.trajectory_dir.mkdir(parents=True, exist_ok=True)
         self.mask_dir.mkdir(parents=True, exist_ok=True)
+        self.prepared_phystwin_dir.mkdir(parents=True, exist_ok=True)
         self.input_rgb_dir.mkdir(parents=True, exist_ok=True)
         self.frames_path.write_text("", encoding="utf-8")
         self.input_frames_path.write_text("", encoding="utf-8")
@@ -1197,6 +1233,7 @@ class HeadlessCaptureWriter:
         rgb_path = self.rgb_dir / f"{seq_name}.png"
         query_path = self.trajectory_dir / f"{seq_name}.npz"
         mask_path = self.mask_dir / f"{seq_name}.npz"
+        prepared_phystwin_path = self.prepared_phystwin_dir / f"{seq_name}.npz"
         _bgr_to_pil_rgb(mask_packet.color_bgr).save(rgb_path)
         np.save(
             depth_path,
@@ -1236,6 +1273,35 @@ class HeadlessCaptureWriter:
             saved_pcd_source=np.asarray([self.saved_pcd_source]),
             coordinate_frame=np.asarray([str(packet.coordinate_frame or self.pcd_coordinate_frame)]),
         )
+        prepared_phystwin_frame_path: str | None = None
+        if tracker_packet is not None:
+            c2w = np.asarray(self._metadata_payload.get("camera_to_world_c2w", np.eye(4)), dtype=np.float32).reshape(4, 4)
+            full_tracks_yx, full_visibility = _full_tracker_arrays_for_prepared_frame(tracker_packet)
+            mask_frame = {
+                "object": np.asarray(mask_packet.object_mask, dtype=bool),
+                "controller": np.asarray(mask_packet.controller_mask, dtype=bool),
+                "hand_a": np.asarray(_mask_packet_hand_a_mask(mask_packet), dtype=bool),
+                "hand_b": np.asarray(_mask_packet_hand_b_mask(mask_packet), dtype=bool),
+            }
+            prepared = prepare_phystwin_frame(
+                seq=int(packet.seq),
+                rgb_frame=np.ascontiguousarray(mask_packet.color_bgr[:, :, ::-1], dtype=np.uint8),
+                depth_m=np.asarray(depth_m, dtype=np.float32),
+                mask_frame=mask_frame,
+                tracks_yx=full_tracks_yx,
+                visibility=full_visibility,
+                query_points_yx=np.asarray(tracker_packet.query_points_yx, dtype=np.float32),
+                intrinsics=packet.intrinsics,
+                c2w=c2w,
+                mask_radius_outlier_filter=bool(self._metadata_payload.get("mask_radius_outlier_filter", True)),
+                mask_radius_outlier_radius_m=float(self._metadata_payload.get("mask_radius_outlier_radius_m", 0.01)),
+                mask_radius_outlier_nb_points=int(self._metadata_payload.get("mask_radius_outlier_nb_points", 40)),
+                source_timestamp_s=packet.source_timestamp_s,
+                source_frame_index=packet.source_frame_index,
+                source_step=packet.source_step,
+            )
+            write_prepared_phystwin_frame(prepared_phystwin_path, prepared)
+            prepared_phystwin_frame_path = self._relative(prepared_phystwin_path)
         pair_process_done_s = (
             max(float(packet.process_done_perf_s), float(tracker_packet.process_done_perf_s))
             if tracker_packet is not None
@@ -1310,6 +1376,8 @@ class HeadlessCaptureWriter:
             "timing": asdict(packet.timing),
             "filter_telemetry": asdict(packet.filter_telemetry),
         }
+        if prepared_phystwin_frame_path is not None:
+            row["prepared_phystwin_frame_path"] = prepared_phystwin_frame_path
         line = json.dumps(row, sort_keys=True)
         with self._lock:
             with self.frames_path.open("a", encoding="utf-8") as handle:
