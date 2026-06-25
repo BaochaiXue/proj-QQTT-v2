@@ -40,7 +40,7 @@ warmup_gpu_mode=dual
 demo32_cuda_visible_devices=0
 shape_prior_device=cuda:1
 write_final_pcd=false
-futurephystwin_base_path=/home/xinjie/FuturePhysTwin/data/demo_v4_chunks
+futurephystwin_base_path=result/demo_v4/futurephystwin_chunks
 ```
 
 Run `python demo_v4/realtime_futurephystwin_chunks.py --dry-run` to print the
@@ -55,11 +55,12 @@ demo_2_max     Demo v4 launcher, Demo 3.2 realtime runtime, EdgeTAM, TAPNext++
 phystwin-max   long-lived SAM3D shape-prior worker
 ```
 
-External model repos and checkpoints stay outside this repo. The common local
-SAM3D root is:
+Demo runtime code and lightweight configs live under `vendor/demo_runtime/`.
+Heavy checkpoint payloads live under `vendor/demo_runtime/checkpoints/`, which
+is intentionally gitignored.
 
 ```text
-/home/xinjie/external/sam-3d-objects
+vendor/demo_runtime/sam-3d-objects
 ```
 
 ## Quick Start
@@ -74,7 +75,6 @@ CUDA_VISIBLE_DEVICES=1 \
 conda run -n phystwin-max --no-capture-output \
   python services/shape_prior_remote/server.py \
   --bind tcp://127.0.0.1:7103 \
-  --sam3d-root /home/xinjie/external/sam-3d-objects \
   --device cuda:0 \
   --preload-models \
   --debug
@@ -88,7 +88,6 @@ conda run -n demo_2_max --no-capture-output \
   --realtime-gpu-mode single \
   --warmup-gpu-mode dual \
   --shape-prior-endpoint tcp://127.0.0.1:7103 \
-  --futurephystwin-base-path /home/xinjie/FuturePhysTwin/data/demo_v4_chunks \
   --case-prefix demo_v4
 ```
 
@@ -235,7 +234,7 @@ shape-prior status, and validation metadata.
 List ready chunks:
 
 ```bash
-find /home/xinjie/FuturePhysTwin/data/demo_v4_chunks \
+find result/demo_v4/futurephystwin_chunks \
   -maxdepth 2 -name READY -print | sort
 ```
 
@@ -246,7 +245,7 @@ python - <<'PY'
 import json
 from pathlib import Path
 
-base = Path("/home/xinjie/FuturePhysTwin/data/demo_v4_chunks")
+base = Path("result/demo_v4/futurephystwin_chunks")
 summary = json.loads((base / "demo_v4_chunks_manifest.json").read_text())
 print("chunks:", summary["chunk_count"])
 print("stop:", summary.get("demo32_stop_reason"))
@@ -263,7 +262,7 @@ Validate a published chunk:
 conda run -n demo_2_max --no-capture-output python - <<'PY'
 from demo_v4.futurephystwin_chunk_writer import validate_futurephystwin_case
 
-case = "/home/xinjie/FuturePhysTwin/data/demo_v4_chunks/demo_v4_chunk_0001"
+case = "result/demo_v4/futurephystwin_chunks/demo_v4_chunk_0001"
 print(validate_futurephystwin_case(case, require_ready=True))
 PY
 ```
@@ -288,7 +287,7 @@ PY
 
 | Option | Default | Use |
 | --- | --- | --- |
-| `--futurephystwin-base-path` | `/home/xinjie/FuturePhysTwin/data/demo_v4_chunks` | Published chunk cases and run manifest. |
+| `--futurephystwin-base-path` | `result/demo_v4/futurephystwin_chunks` | Published chunk cases and run manifest. |
 | `--case-prefix` | `demo_v4` | Prefix for chunk names and the run manifest. |
 | `--demo32-capture-dir` | auto under output base | Intermediate Demo 3.2 headless capture directory. |
 | `--source-headless-capture` | unset | Rechunk an existing capture instead of launching Demo 3.2. |
