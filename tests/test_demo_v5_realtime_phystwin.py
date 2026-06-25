@@ -106,6 +106,28 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
                 self.assertNotIn("from demo_v4", text)
                 self.assertNotIn("import demo_v4", text)
 
+    def test_demo_v5_does_not_keep_shadow_quality_modules(self) -> None:
+        shadow_modules = {
+            "contracts.py",
+            "controller_selection.py",
+            "fps_sampling.py",
+            "motion_filter.py",
+            "object_sampling.py",
+            "session_topology.py",
+            "timing.py",
+            "topology_assembly.py",
+            "topology_warmup.py",
+            "tracking_samples.py",
+        }
+
+        present = {
+            path.name
+            for path in (REPO_ROOT / "demo_v5").glob("*.py")
+            if path.name in shadow_modules
+        }
+
+        self.assertEqual(present, set())
+
     def test_defaults_route_realtime_to_gpu0_and_continuous_optimization_to_gpu1(self) -> None:
         args = demo_v5.build_parser().parse_args(["--dry-run"])
         chunk_frame_count = demo_v5.resolve_chunk_frame_count(args)

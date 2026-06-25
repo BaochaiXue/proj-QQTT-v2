@@ -262,14 +262,13 @@ leave it unset so first-order optimization uses the configured
 
 Demo v5 keeps fixed streaming topology selectors for the whole online session.
 Object and controller columns keep fixed query ids across chunks. If a controller or object
-anchor is lost, Demo v5 holds the last finite point, marks the active query id
-as `-1`, and clears visibility/motion-valid flags instead of replacing that
+anchor is lost, Demo v5 first tries a bounded KNN motion revive from nearby
+direct anchors in the same fixed topology. A revived point keeps the original
+sample/query id and is marked `revived` in the trace. If the local support is
+not strong enough, Demo v5 holds the last finite point, marks the active query
+id as `-1`, and clears visibility/motion-valid flags instead of replacing that
 column with a new physical query. That preserves optimizer topology and avoids
 quality loss from identity swaps.
-
-KNN/LBS revive can be added later, but any revive path must keep the same fixed
-sample id and must stay bounded enough to preserve the realtime publication
-cadence.
 
 ## Validation
 

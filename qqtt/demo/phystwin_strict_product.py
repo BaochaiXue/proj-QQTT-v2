@@ -638,8 +638,76 @@ def _last_valid_aligned_values(
     return np.ascontiguousarray(output, dtype=arr.dtype)
 
 
+def _revive_lost_anchors_from_neighbor_motion(
+    *,
+    previous_points: np.ndarray,
+    current_points: np.ndarray,
+    current_valid: np.ndarray,
+    direct_mask: np.ndarray,
+    lost_indices: np.ndarray,
+    neighbor_radius_m: float = 0.011,
+    min_neighbors: int = 2,
+    max_neighbors: int = 4,
+) -> dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    previous = np.asarray(previous_points, dtype=np.float32)
+    current = np.asarray(current_points, dtype=np.float32)
+    valid = np.asarray(current_valid, dtype=bool)
+    direct = np.asarray(direct_mask, dtype=bool).reshape(-1)
+    lost = np.asarray(lost_indices, dtype=np.int64).reshape(-1)
+    if previous.ndim != 2 or previous.shape[-1] != 3:
+        raise ValueError("previous_points must have shape N,3")
+    if current.ndim != 3 or current.shape[1:] != previous.shape:
+        raise ValueError("current_points must have shape T,N,3 matching previous_points")
+    if valid.shape != current.shape[:2]:
+        raise ValueError("current_valid must have shape T,N")
+    frame_count = int(current.shape[0])
+    anchor_count = int(previous.shape[0])
+    if direct.shape[0] != anchor_count:
+        raise ValueError("direct_mask must match anchor count")
+    if anchor_count == 0 or frame_count == 0:
+        return {}
+
+    previous_finite = np.isfinite(previous).all(axis=1) & (np.linalg.norm(previous, axis=1) > 1e-9)
+    current_finite = np.isfinite(current).all(axis=(0, 2)) & np.all(np.linalg.norm(current, axis=2) > 1e-9, axis=0)
+    direct_all_valid = direct & previous_finite & current_finite & np.all(valid, axis=0)
+    direct_indices = np.flatnonzero(direct_all_valid)
+    if direct_indices.size < int(min_neighbors):
+        return {}
+
+    revived: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    for anchor_idx_value in lost:
+        anchor_idx = int(anchor_idx_value)
+        if anchor_idx < 0 or anchor_idx >= anchor_count or not bool(previous_finite[anchor_idx]):
+            continue
+        distances = np.linalg.norm(previous[direct_indices] - previous[anchor_idx], axis=1)
+        near_mask = distances <= float(neighbor_radius_m)
+        if int(np.count_nonzero(near_mask)) < int(min_neighbors):
+            continue
+        near_indices = direct_indices[near_mask]
+        near_distances = distances[near_mask]
+        order = np.argsort(near_distances, kind="stable")[: int(max_neighbors)]
+        support = near_indices[order]
+        support_distances = near_distances[order]
+        if support.size < int(min_neighbors):
+            continue
+        weights = 1.0 / np.maximum(support_distances.astype(np.float32), np.float32(1e-6))
+        weights = weights / np.sum(weights)
+        displacements = current[:, support, :] - previous[support][None, :, :]
+        revived_points = previous[anchor_idx][None, :] + np.einsum("tnc,n->tc", displacements, weights)
+        revived_points = np.ascontiguousarray(revived_points, dtype=np.float32)
+        finite = np.isfinite(revived_points).all(axis=1) & (np.linalg.norm(revived_points, axis=1) > 1e-9)
+        if not bool(np.all(finite)):
+            continue
+        revived[anchor_idx] = (
+            revived_points,
+            np.ascontiguousarray(support, dtype=np.int64),
+            np.ascontiguousarray(weights, dtype=np.float32),
+        )
+    return revived
+
+
 class StreamingControllerAnchorSelector:
-    """Keep controller handle order stable across Demo v4 online chunks."""
+    """Keep controller handle order stable across online chunks."""
 
     def __init__(
         self,
@@ -734,7 +802,26 @@ class StreamingControllerAnchorSelector:
             used_candidates.add(int(candidate_idx))
             direct_mask[anchor_idx] = True
 
-        for anchor_idx in np.flatnonzero(~direct_mask):
+        lost_indices = np.flatnonzero(~direct_mask)
+        current_valid = _valid_point_time_mask(output, output_visibilities) & output_motions_valid
+        revived = _revive_lost_anchors_from_neighbor_motion(
+            previous_points=self._last_points,
+            current_points=output,
+            current_valid=current_valid,
+            direct_mask=direct_mask,
+            lost_indices=lost_indices,
+        )
+        for anchor_idx, (revived_points, _support, _weights) in revived.items():
+            output[:, anchor_idx, :] = revived_points
+            output_visibilities[:, anchor_idx] = True
+            output_motions_valid[:, anchor_idx] = True
+            active_query_indices[anchor_idx] = int(self._initial_query_indices[anchor_idx])
+            statuses[anchor_idx] = "revived"
+
+        revived_mask = np.zeros((self.count,), dtype=bool)
+        if revived:
+            revived_mask[np.asarray(sorted(revived), dtype=np.int64)] = True
+        for anchor_idx in np.flatnonzero((~direct_mask) & (~revived_mask)):
             held = np.repeat(self._last_points[int(anchor_idx)][None, :], frame_count, axis=0)
             output[:, anchor_idx, :] = held
             active_query_indices[anchor_idx] = -1
@@ -886,7 +973,7 @@ def _object_volume_sample_indices(
 
 
 class StreamingObjectAnchorSelector:
-    """Keep object topology stable across Demo v4 online chunks."""
+    """Keep object topology stable across online chunks."""
 
     def __init__(
         self,
@@ -991,7 +1078,31 @@ class StreamingObjectAnchorSelector:
             direct_mask[anchor_idx] = True
             used_candidates.add(int(candidate_idx))
 
-        for anchor_idx in np.flatnonzero(~direct_mask):
+        lost_indices = np.flatnonzero(~direct_mask)
+        current_valid = _valid_point_time_mask(output_points, output_visibilities) & output_motions_valid
+        revived = _revive_lost_anchors_from_neighbor_motion(
+            previous_points=self._last_points,
+            current_points=output_points,
+            current_valid=current_valid,
+            direct_mask=direct_mask,
+            lost_indices=lost_indices,
+        )
+        for anchor_idx, (revived_points, support, weights) in revived.items():
+            output_points[:, anchor_idx, :] = revived_points
+            output_colors[:, anchor_idx, :] = np.einsum(
+                "tnc,n->tc",
+                output_colors[:, support, :],
+                weights,
+            ).astype(np.float32)
+            output_visibilities[:, anchor_idx] = True
+            output_motions_valid[:, anchor_idx] = True
+            active_query_indices[anchor_idx] = int(self._initial_query_indices[anchor_idx])
+            statuses[anchor_idx] = "revived"
+
+        revived_mask = np.zeros((anchor_count,), dtype=bool)
+        if revived:
+            revived_mask[np.asarray(sorted(revived), dtype=np.int64)] = True
+        for anchor_idx in np.flatnonzero((~direct_mask) & (~revived_mask)):
             output_points[:, anchor_idx, :] = np.repeat(self._last_points[int(anchor_idx)][None, :], frame_count, axis=0)
             output_colors[:, anchor_idx, :] = np.repeat(self._last_colors[int(anchor_idx)][None, :], frame_count, axis=0)
             active_query_indices[anchor_idx] = -1

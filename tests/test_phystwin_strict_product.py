@@ -299,6 +299,38 @@ class PhysTwinStrictProductTest(unittest.TestCase):
             np.repeat(first["controller_points"][-1:, lost_anchor_idx, :], 2, axis=0),
         )
 
+    def test_streaming_controller_anchor_selector_revives_lost_anchor_from_neighbor_motion(self) -> None:
+        query_ids = np.array([510, 511, 512], dtype=np.int64)
+        first_points = np.zeros((2, 3, 3), dtype=np.float32)
+        first_points[:, :, 0] = np.array([0.000, 0.010, 0.020], dtype=np.float32)
+        first_points[:, :, 2] = -0.10
+        selector = strict.StreamingControllerAnchorSelector(count=3)
+        first = selector.select(_filtered_controller_track(first_points, query_ids=query_ids))
+        selected_ids = np.asarray(first["controller_anchor_query_indices"], dtype=np.int64)
+        lost_anchor_idx = int(np.flatnonzero(selected_ids == 511)[0])
+        lost_source_idx = int(np.flatnonzero(query_ids == 511)[0])
+        second_points = first_points + np.array([0.050, 0.020, 0.000], dtype=np.float32)
+        second_points[:, lost_source_idx, :] = 0.0
+        controller_mask = np.ones((3,), dtype=bool)
+        controller_mask[lost_source_idx] = False
+
+        second = selector.select(
+            _filtered_controller_track(
+                second_points,
+                query_ids=query_ids,
+                controller_mask=controller_mask,
+            )
+        )
+
+        self.assertEqual(str(second["controller_anchor_status"][lost_anchor_idx]), "revived")
+        self.assertEqual(int(second["controller_anchor_active_query_indices"][lost_anchor_idx]), 511)
+        self.assertEqual(int(second["controller_fps_indices"][lost_anchor_idx]), -1)
+        np.testing.assert_array_equal(second["controller_anchor_query_indices"], selected_ids)
+        expected = first["controller_points"][-1, lost_anchor_idx] + np.array([0.050, 0.020, 0.000], dtype=np.float32)
+        np.testing.assert_allclose(second["controller_points"][:, lost_anchor_idx, :], np.repeat(expected[None], 2, axis=0))
+        self.assertTrue(np.all(second["controller_visibilities"][:, lost_anchor_idx]))
+        self.assertTrue(np.all(second["controller_motions_valid"][:, lost_anchor_idx]))
+
     def test_streaming_object_anchor_selector_reuses_first_chunk_volume_sample_query_ids(self) -> None:
         query_ids = np.arange(300, 306, dtype=np.int64)
         first_points = np.zeros((2, len(query_ids), 3), dtype=np.float32)
@@ -351,6 +383,30 @@ class PhysTwinStrictProductTest(unittest.TestCase):
         )
         self.assertFalse(np.any(second["object_visibilities"][:, lost_anchor_idx]))
         self.assertFalse(np.any(second["object_motions_valid"][:, lost_anchor_idx]))
+
+    def test_streaming_object_anchor_selector_revives_lost_anchor_from_neighbor_motion(self) -> None:
+        query_ids = np.array([610, 611, 612], dtype=np.int64)
+        first_points = np.zeros((2, 3, 3), dtype=np.float32)
+        first_points[:, :, 0] = np.array([0.000, 0.010, 0.020], dtype=np.float32)
+        first_points[:, :, 2] = -0.10
+        selector = strict.StreamingObjectAnchorSelector(volume_sample_size=0.001)
+        first = selector.select(_filtered_object_track(first_points, query_ids=query_ids))
+        selected_ids = np.asarray(first["object_anchor_query_indices"], dtype=np.int64)
+        lost_anchor_idx = int(np.flatnonzero(selected_ids == 611)[0])
+        keep_mask = query_ids != 611
+        second_query_ids = query_ids[keep_mask]
+        second_points = first_points[:, keep_mask, :] + np.array([0.040, -0.015, 0.000], dtype=np.float32)
+
+        second = selector.select(_filtered_object_track(second_points, query_ids=second_query_ids))
+
+        self.assertEqual(str(second["object_anchor_status"][lost_anchor_idx]), "revived")
+        self.assertEqual(int(second["object_anchor_active_query_indices"][lost_anchor_idx]), 611)
+        self.assertEqual(int(second["object_volume_sample_indices"][lost_anchor_idx]), -1)
+        np.testing.assert_array_equal(second["object_anchor_query_indices"], selected_ids)
+        expected = first["object_points"][-1, lost_anchor_idx] + np.array([0.040, -0.015, 0.000], dtype=np.float32)
+        np.testing.assert_allclose(second["object_points"][:, lost_anchor_idx, :], np.repeat(expected[None], 2, axis=0))
+        self.assertTrue(np.all(second["object_visibilities"][:, lost_anchor_idx]))
+        self.assertTrue(np.all(second["object_motions_valid"][:, lost_anchor_idx]))
 
     def test_motion_filter_matches_reference_neighbor_semantics(self) -> None:
         rng = np.random.default_rng(7)
