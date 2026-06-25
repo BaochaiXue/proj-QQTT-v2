@@ -1909,6 +1909,16 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
             )
             self.assertEqual(int(trajectory["object_query_count"][0]), 1)
 
+    def test_repo_relative_path_text_keeps_repo_paths_relative(self) -> None:
+        repo_path = demo.REPO_ROOT / "result" / "demo_v4" / "futurephystwin_chunks"
+        self.assertEqual(
+            demo._repo_relative_path_text(repo_path),
+            "result/demo_v4/futurephystwin_chunks",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            outside_path = Path(tmp) / "capture"
+            self.assertEqual(demo._repo_relative_path_text(outside_path), str(outside_path))
+
     def test_open3d_panel_viewport_layer_plan_separates_pcd_and_tracking(self) -> None:
         plan = demo.open3d_panel_viewport_layer_plan()
 

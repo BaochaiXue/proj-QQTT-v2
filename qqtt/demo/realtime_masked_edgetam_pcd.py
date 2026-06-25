@@ -34,6 +34,21 @@ REPO_ROOT = _resolve_repo_root()
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+
+def _repo_relative_path_text(path: str | Path | None) -> str | None:
+    if path is None:
+        return None
+    original = Path(path)
+    try:
+        resolved = original.expanduser().resolve()
+    except OSError:
+        return str(path)
+    try:
+        return str(resolved.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(path)
+
+
 from qqtt.demo.realtime_single_camera_pointcloud import (  # noqa: E402
     CameraIntrinsics,
     CoalescedPostGate,
@@ -1120,7 +1135,7 @@ class HeadlessCaptureWriter:
         payload["tracking_background_default"] = "target-union"
         payload["input_rgb_timeline"] = "input_frames.jsonl"
         payload["startup_hold_s"] = float(payload.get("startup_hold_s") or 0.0)
-        payload["output_dir"] = str(self.output_dir)
+        payload["output_dir"] = _repo_relative_path_text(self.output_dir)
         self._metadata_payload = payload
         self._write_metadata_payload(payload)
 
@@ -4455,7 +4470,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             replay_fps = float(self.recording_source.effective_fps)
             recording_fps = float(self.recording_source.recording_fps)
             frame_count = int(self.recording_source.frame_count)
-            recording_case = str(self.recording_source.case_path)
+            recording_case = _repo_relative_path_text(self.recording_source.case_path)
         frame_selection_policy = (
             FAKE_LIVE_FRAME_SELECTION_POLICY if str(self.args.input_source) == INPUT_SOURCE_FAKE_LIVE else None
         )
@@ -4483,7 +4498,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "phystwin_strict_output_dir": (
                 None
                 if getattr(self.args, "phystwin_strict_output_dir", None) is None
-                else str(self.args.phystwin_strict_output_dir)
+                else _repo_relative_path_text(self.args.phystwin_strict_output_dir)
             ),
             "compatibility_target": (
                 COMPATIBILITY_TARGET_PHYSTWIN
@@ -4562,7 +4577,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "coordinate_frame": self._pcd_coordinate_frame(),
             "pcd_coordinate_frame": self._pcd_coordinate_frame(),
             "camera_coordinate_frame": COORDINATE_FRAME,
-            "table_calibration_path": None if self.table_calibration_path is None else str(self.table_calibration_path),
+            "table_calibration_path": _repo_relative_path_text(self.table_calibration_path),
             "table_world_frame_kind": TABLE_WORLD_FRAME_KIND if self._table_world_enabled() else None,
             "table_z_m": TABLE_Z_M if self._table_world_enabled() else None,
             "table_z_above_direction": str(self.args.table_z_above_direction),
@@ -4714,8 +4729,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
         manifest = finalize_headless_capture(self.headless_capture_writer.output_dir, output_dir=output_dir)
         self.headless_capture_writer.update_metadata(
             {
-                "phystwin_strict_output_dir": str(output_dir),
-                "phystwin_strict_manifest": str(output_dir / "manifest.json"),
+                "phystwin_strict_output_dir": _repo_relative_path_text(output_dir),
+                "phystwin_strict_manifest": _repo_relative_path_text(output_dir / "manifest.json"),
                 "phystwin_strict_frame_count": int(manifest.get("frame_count", 0)),
                 "phystwin_strict_query_count": int(manifest.get("query_count", 0)),
             }
@@ -5228,7 +5243,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "input_source": self.args.input_source,
             "demo_visual_mode": str(self.args.demo_visual_mode),
             "recording_case": (
-                str(self.args.recording_case) if _is_replay_input_source(str(self.args.input_source)) else None
+                _repo_relative_path_text(self.args.recording_case) if _is_replay_input_source(str(self.args.input_source)) else None
             ),
             "replay_fps": (
                 self.recording_source.effective_fps
@@ -5272,7 +5287,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "pcd_mode": self.args.pcd_mode,
             "pcd_coordinate_frame": self._pcd_coordinate_frame(),
             "camera_coordinate_frame": COORDINATE_FRAME,
-            "table_calibration_path": None if self.table_calibration_path is None else str(self.table_calibration_path),
+            "table_calibration_path": _repo_relative_path_text(self.table_calibration_path),
             "table_world_frame_kind": TABLE_WORLD_FRAME_KIND if self._table_world_enabled() else None,
             "table_z_m": TABLE_Z_M if self._table_world_enabled() else None,
             "table_z_above_direction": str(self.args.table_z_above_direction),
@@ -5299,7 +5314,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "headless_capture_enabled": headless_capture_enabled(self.args),
             "headless_prepared_only": bool(getattr(self.args, "headless_prepared_only", False)),
             "headless_capture_dir": (
-                str(self.args.headless_capture_dir) if headless_capture_enabled(self.args) else None
+                _repo_relative_path_text(self.args.headless_capture_dir) if headless_capture_enabled(self.args) else None
             ),
             "saved_pcd_source": (
                 headless_capture_saved_pcd_source(self.args) if headless_capture_enabled(self.args) else None
@@ -5330,7 +5345,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "phystwin_strict_output_dir": (
                 None
                 if getattr(self.args, "phystwin_strict_output_dir", None) is None
-                else str(self.args.phystwin_strict_output_dir)
+                else _repo_relative_path_text(self.args.phystwin_strict_output_dir)
             ),
             "compatibility_target": (
                 COMPATIBILITY_TARGET_PHYSTWIN
