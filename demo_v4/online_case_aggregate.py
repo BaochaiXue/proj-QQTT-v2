@@ -12,6 +12,7 @@ import numpy as np
 from demo_v4.pickle_compat import dump_pickle_legacy_numpy
 from demo_v4.futurephystwin_chunk_writer import (
     FUTUREPHYSTWIN_FINAL_DATA_KEYS,
+    FUTUREPHYSTWIN_TOPOLOGY_KEYS,
     FUTUREPHYSTWIN_TRACK_PROCESS_KEYS,
     validate_futurephystwin_case,
 )
@@ -25,10 +26,17 @@ FINAL_TIME_KEYS = (
     "object_visibilities",
 )
 FINAL_STATIC_KEYS = (
+    "controller_fps_indices",
+    "controller_selected_query_ids",
+    "controller_sample_query_ids",
+    "object_sample_indices",
+    "object_selected_query_ids",
+    "object_sample_query_ids",
+    *FUTUREPHYSTWIN_TOPOLOGY_KEYS,
     "surface_points",
     "interior_points",
 )
-FINAL_FIRST_STATIC_KEYS = ("controller_mask",)
+FINAL_FIRST_STATIC_KEYS: tuple[str, ...] = ()
 TRACK_TIME_KEYS = (
     "controller_points",
     "object_colors",
@@ -36,7 +44,7 @@ TRACK_TIME_KEYS = (
     "object_points",
     "object_visibilities",
 )
-TRACK_STATIC_KEYS = ()
+TRACK_STATIC_KEYS = FUTUREPHYSTWIN_TOPOLOGY_KEYS
 TRACK_FIRST_STATIC_KEYS = ("controller_mask",)
 METADATA_INVARIANT_KEYS = (
     "fps",
@@ -116,6 +124,12 @@ def _split_payload(frame_count: int) -> dict[str, Any]:
 def _arrays_match(left: Any, right: Any) -> bool:
     left_arr = np.asarray(left)
     right_arr = np.asarray(right)
+    if left_arr.shape != right_arr.shape and left_arr.size == 1 and right_arr.size == 1:
+        if not (
+            np.issubdtype(left_arr.dtype, np.number)
+            and np.issubdtype(right_arr.dtype, np.number)
+        ):
+            return str(left_arr.item()) == str(right_arr.item())
     if left_arr.shape != right_arr.shape:
         return False
     if np.issubdtype(left_arr.dtype, np.number) and np.issubdtype(right_arr.dtype, np.number):
@@ -126,6 +140,12 @@ def _arrays_match(left: Any, right: Any) -> bool:
 def _require_matching_value(name: str, expected: Any, actual: Any) -> None:
     if not _arrays_match(expected, actual):
         raise ValueError(f"aggregate chunk invariant mismatch for {name}")
+
+
+def _static_invariant_value(key: str, value: Any) -> Any:
+    if key in {"topology_version", "topology_hash"}:
+        return str(np.asarray(value).item() if isinstance(value, np.ndarray) else value)
+    return np.ascontiguousarray(np.asarray(value))
 
 
 def _require_payload_keys(payload: Mapping[str, Any], keys: Sequence[str], *, label: str) -> None:
@@ -140,10 +160,10 @@ def _concatenate_payloads(
     time_keys: Sequence[str],
     static_keys: Sequence[str],
     label: str,
-) -> dict[str, np.ndarray]:
+) -> dict[str, Any]:
     if not payloads:
         raise ValueError(f"cannot aggregate empty {label} payload list")
-    combined: dict[str, np.ndarray] = {}
+    combined: dict[str, Any] = {}
     for key in time_keys:
         arrays = [np.ascontiguousarray(np.asarray(payload[key])) for payload in payloads]
         tail_shape = arrays[0].shape[1:]
@@ -157,9 +177,9 @@ def _concatenate_payloads(
                 )
         combined[key] = np.ascontiguousarray(np.concatenate(arrays, axis=0))
     for key in static_keys:
-        first = np.ascontiguousarray(np.asarray(payloads[0][key]))
+        first = _static_invariant_value(key, payloads[0][key])
         for chunk_idx, payload in enumerate(payloads[1:], start=1):
-            value = np.asarray(payload[key])
+            value = _static_invariant_value(key, payload[key])
             if not _arrays_match(first, value):
                 raise ValueError(f"aggregate static invariant mismatch for {label}.{key} at chunk {chunk_idx}")
         combined[key] = first
@@ -209,11 +229,11 @@ def _validate_chunk_cases(chunk_cases: Sequence[Path]) -> None:
             first_metadata = metadata
             first_calibrate = calibrate
             first_final_static = {
-                key: np.ascontiguousarray(np.asarray(final_data[key]))
+                key: _static_invariant_value(key, final_data[key])
                 for key in FINAL_STATIC_KEYS
             }
             first_track_static = {
-                key: np.ascontiguousarray(np.asarray(track_process[key]))
+                key: _static_invariant_value(key, track_process[key])
                 for key in TRACK_STATIC_KEYS
             }
         else:
@@ -379,6 +399,7 @@ def _aggregate_manifest(
     frame_count: int,
     ready: bool,
     copied_counts: Mapping[str, int],
+    final_data: Mapping[str, Any],
 ) -> dict[str, Any]:
     return {
         "case_dir": str(aggregate_case),
@@ -390,6 +411,16 @@ def _aggregate_manifest(
         "copied_color_frame_files": int(copied_counts.get("color", 0)),
         "copied_pcd_frame_files": int(copied_counts.get("pcd", 0)),
         "copied_depth_frame_files": int(copied_counts.get("depth", 0)),
+        "topology_version": str(
+            np.asarray(final_data["topology_version"]).item()
+            if isinstance(final_data["topology_version"], np.ndarray)
+            else final_data["topology_version"]
+        ),
+        "topology_hash": str(
+            np.asarray(final_data["topology_hash"]).item()
+            if isinstance(final_data["topology_hash"], np.ndarray)
+            else final_data["topology_hash"]
+        ),
     }
 
 
@@ -440,6 +471,7 @@ def build_aggregate_case_from_chunk_cases(
         frame_count=frame_count,
         ready=ready,
         copied_counts=copied_counts,
+        final_data=final_data,
     )
     _atomic_json_dump(manifest, target / "manifest.json")
     if ready:

@@ -25,6 +25,9 @@ DEFAULT_TRACKING_PRODUCT_BACKEND = TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY
 COMPATIBILITY_TARGET_PHYSTWIN = "PhysTwin"
 PHYSTWIN_STRICT_EXECUTION_MODE = "workstation_strict"
 PHYSTWIN_COMPATIBILITY_PATH_NAME = "cotracker"
+QUERY_SEMANTIC_NONE = np.int8(0)
+QUERY_SEMANTIC_OBJECT = np.int8(1)
+QUERY_SEMANTIC_CONTROLLER = np.int8(2)
 
 
 @dataclass(frozen=True)
@@ -396,6 +399,8 @@ def build_track_process_input(
     processed_masks: Sequence[Sequence[Mapping[str, Any]]],
     pcd_points: np.ndarray,
     pcd_colors: np.ndarray,
+    query_ids: np.ndarray | None = None,
+    query_semantic_labels: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     tracks = np.asarray(tracks_yx, dtype=np.float32)
     vis = np.asarray(visibility, dtype=bool)
@@ -412,14 +417,38 @@ def build_track_process_input(
     if len(processed_masks) != tracks.shape[0] or points_grid.shape[0] != tracks.shape[0]:
         raise ValueError("processed_masks, pcd_points, and tracks must share T")
 
-    first = normalize_processed_mask_frame(processed_masks[0][0])
-    yy0, xx0, in_bounds0 = _round_tracks_to_indices(tracks[0], first["object"].shape)
-    object_label = np.zeros((tracks.shape[1],), dtype=bool)
-    controller_label = np.zeros((tracks.shape[1],), dtype=bool)
-    visible0 = vis[0] & in_bounds0
-    if np.any(visible0):
-        object_label[visible0] = first["object"][yy0[visible0], xx0[visible0]]
-        controller_label[visible0] = first["controller"][yy0[visible0], xx0[visible0]]
+    query_count = int(tracks.shape[1])
+    if query_ids is None:
+        query_id_arr = np.arange(query_count, dtype=np.int64)
+    else:
+        query_id_arr = np.asarray(query_ids, dtype=np.int64).reshape(-1)
+        if query_id_arr.shape[0] != query_count:
+            raise ValueError("query_ids must match track query count")
+
+    if query_semantic_labels is None:
+        first = normalize_processed_mask_frame(processed_masks[0][0])
+        yy0, xx0, in_bounds0 = _round_tracks_to_indices(tracks[0], first["object"].shape)
+        object_label = np.zeros((query_count,), dtype=bool)
+        controller_label = np.zeros((query_count,), dtype=bool)
+        visible0 = vis[0] & in_bounds0
+        if np.any(visible0):
+            object_label[visible0] = first["object"][yy0[visible0], xx0[visible0]]
+            controller_label[visible0] = first["controller"][yy0[visible0], xx0[visible0]]
+        semantic_labels = np.zeros((query_count,), dtype=np.int8)
+        semantic_labels[object_label] = QUERY_SEMANTIC_OBJECT
+        semantic_labels[controller_label] = QUERY_SEMANTIC_CONTROLLER
+    else:
+        semantic_labels = np.asarray(query_semantic_labels, dtype=np.int8).reshape(-1)
+        if semantic_labels.shape[0] != query_count:
+            raise ValueError("query_semantic_labels must match track query count")
+        valid_labels = np.isin(
+            semantic_labels,
+            np.array([QUERY_SEMANTIC_NONE, QUERY_SEMANTIC_OBJECT, QUERY_SEMANTIC_CONTROLLER], dtype=np.int8),
+        )
+        if not bool(np.all(valid_labels)):
+            raise ValueError("query_semantic_labels must contain only 0, 1, or 2")
+        object_label = semantic_labels == QUERY_SEMANTIC_OBJECT
+        controller_label = semantic_labels == QUERY_SEMANTIC_CONTROLLER
 
     semantic_vis = np.array(vis, dtype=bool, copy=True)
     for frame_idx in range(tracks.shape[0]):
@@ -457,6 +486,8 @@ def build_track_process_input(
     object_indices = np.flatnonzero(object_label)
     controller_indices = np.flatnonzero(controller_label)
     return {
+        "query_ids": np.ascontiguousarray(query_id_arr, dtype=np.int64),
+        "query_semantic_labels": np.ascontiguousarray(semantic_labels, dtype=np.int8),
         "query_is_object": object_label,
         "query_is_controller": controller_label,
         "object_query_indices": object_indices.astype(np.int64),
@@ -812,6 +843,7 @@ class StreamingControllerAnchorSelector:
         result["controller_motions_valid"] = np.ascontiguousarray(output_motions_valid, dtype=bool)
         result["controller_fps_indices"] = np.ascontiguousarray(np.asarray(selected, dtype=np.int64))
         result["controller_anchor_query_indices"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
+        result["controller_sample_query_ids"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
         result["controller_anchor_active_query_indices"] = np.ascontiguousarray(
             np.asarray(active_query_indices, dtype=np.int64)
         )
@@ -1037,12 +1069,18 @@ class StreamingObjectAnchorSelector:
         active_query_indices: np.ndarray,
     ) -> dict[str, np.ndarray]:
         assert self._initial_query_indices is not None
+        if "object_query_indices" in result and "object_candidate_query_ids" not in result:
+            result["object_candidate_query_ids"] = np.ascontiguousarray(
+                np.asarray(result["object_query_indices"], dtype=np.int64).reshape(-1)
+            )
         result["object_points"] = np.ascontiguousarray(output_points, dtype=np.float32)
         result["object_colors"] = np.ascontiguousarray(output_colors, dtype=np.float32)
         result["object_visibilities"] = np.ascontiguousarray(output_visibilities, dtype=bool)
         result["object_motions_valid"] = np.ascontiguousarray(output_motions_valid, dtype=bool)
         result["object_query_indices"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
         result["object_volume_sample_indices"] = np.ascontiguousarray(np.asarray(selected, dtype=np.int64))
+        result["object_sample_query_ids"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
+        result["object_selected_query_ids"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
         result["object_anchor_query_indices"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
         result["object_anchor_active_query_indices"] = np.ascontiguousarray(np.asarray(active_query_indices, dtype=np.int64))
         result["object_anchor_status"] = np.asarray(statuses, dtype="<U8")
@@ -1051,6 +1089,7 @@ class StreamingObjectAnchorSelector:
 
 def select_final_controller_points(track_data: Mapping[str, np.ndarray], *, count: int = 30) -> dict[str, np.ndarray]:
     result = {key: np.asarray(value).copy() for key, value in track_data.items()}
+    original_controller_count = int(np.asarray(result["controller_points"]).shape[1])
     mask = np.asarray(result.get("controller_mask", np.ones((result["controller_points"].shape[1],), dtype=bool)), dtype=bool)
     valid_indices = np.flatnonzero(mask)
     candidates = result["controller_points"][:, valid_indices, :]
@@ -1058,6 +1097,14 @@ def select_final_controller_points(track_data: Mapping[str, np.ndarray], *, coun
     final_indices = valid_indices[sample_indices]
     result["controller_points"] = np.ascontiguousarray(result["controller_points"][:, final_indices, :], dtype=np.float32)
     result["controller_fps_indices"] = np.asarray(final_indices, dtype=np.int64)
+    controller_query_indices = np.asarray(
+        result.get("controller_query_indices", np.arange(original_controller_count, dtype=np.int64)),
+        dtype=np.int64,
+    ).reshape(-1)
+    selected_query_ids = np.full((len(final_indices),), -1, dtype=np.int64)
+    valid = (final_indices >= 0) & (final_indices < controller_query_indices.shape[0])
+    selected_query_ids[valid] = controller_query_indices[final_indices[valid]]
+    result["controller_sample_query_ids"] = np.ascontiguousarray(selected_query_ids, dtype=np.int64)
     return result
 
 

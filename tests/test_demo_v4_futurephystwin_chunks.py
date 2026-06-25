@@ -88,6 +88,9 @@ def _track_process_data(frame_count: int) -> dict[str, np.ndarray]:
         "object_motions_valid": np.ones((frame_count, 4), dtype=bool),
         "controller_points": controller_points,
         "controller_mask": np.ones((30,), dtype=bool),
+        "controller_fps_indices": np.arange(30, dtype=np.int64),
+        "controller_query_indices": np.arange(30, dtype=np.int64) + 1000,
+        "object_query_indices": np.arange(4, dtype=np.int64) + 2000,
     }
 
 
@@ -108,6 +111,30 @@ def _futurephystwin_chunk(frame_count: int = 3) -> FuturePhysTwinChunk:
         depth_backend="native-realsense",
         depth_source_internal="realsense",
     )
+
+
+def _assert_topology_contract(
+    testcase: unittest.TestCase,
+    payload: dict[str, object],
+    *,
+    check_point_counts: bool = True,
+) -> None:
+    for key in chunk_writer.FUTUREPHYSTWIN_TOPOLOGY_KEYS:
+        testcase.assertIn(key, payload)
+    testcase.assertEqual(payload["topology_version"], "demo_v4_session_topology_v1")
+    testcase.assertEqual(np.asarray(payload["query_ids"], dtype=np.int64).ndim, 1)
+    testcase.assertEqual(np.asarray(payload["query_semantic_labels"], dtype=np.int8).ndim, 1)
+    testcase.assertEqual(np.asarray(payload["query_ids"]).shape, np.asarray(payload["query_semantic_labels"]).shape)
+    if check_point_counts:
+        testcase.assertEqual(
+            np.asarray(payload["object_sample_query_ids"], dtype=np.int64).shape[0],
+            np.asarray(payload["object_points"]).shape[1],
+        )
+        testcase.assertEqual(
+            np.asarray(payload["controller_sample_query_ids"], dtype=np.int64).shape[0],
+            np.asarray(payload["controller_points"]).shape[1],
+        )
+    testcase.assertRegex(str(payload["topology_hash"]), r"^[0-9a-f]{64}$")
 
 
 class FuturePhysTwinChunkWriterTest(unittest.TestCase):
@@ -258,7 +285,111 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
                 static_data = pickle.load(handle)
             for key in chunk_writer.FUTUREPHYSTWIN_FINAL_DATA_KEYS:
                 self.assertIn(key, static_data)
-            np.testing.assert_array_equal(static_data["controller_mask"], controller_mask)
+            self.assertNotIn("controller_mask", static_data)
+            np.testing.assert_array_equal(static_data["controller_fps_indices"], first["controller_fps_indices"])
+            np.testing.assert_array_equal(
+                static_data["controller_selected_query_ids"],
+                first["controller_query_indices"][first["controller_fps_indices"]],
+            )
+            np.testing.assert_array_equal(static_data["object_sample_indices"], np.arange(4, dtype=np.int64))
+            np.testing.assert_array_equal(static_data["object_selected_query_ids"], first["object_query_indices"])
+            _assert_topology_contract(self, static_data)
+
+            for key in chunk_writer.FUTUREPHYSTWIN_TOPOLOGY_KEYS:
+                self.assertIn(key, chunk)
+            self.assertEqual(manifest["topology_version"], "demo_v4_session_topology_v1")
+            self.assertEqual(manifest["topology_hash"], static_data["topology_hash"])
+
+    def test_futurephystwin_final_data_drops_orphan_controller_mask_and_saves_mappings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = Path(tmp)
+            frame_count = 2
+            track = _track_process_data(frame_count)
+            candidate_count = 90
+            final_indices = np.linspace(0, candidate_count - 1, 30, dtype=np.int64)
+            candidate_mask = np.zeros((candidate_count,), dtype=bool)
+            candidate_mask[final_indices] = True
+            track["controller_mask"] = candidate_mask
+            track["controller_fps_indices"] = final_indices
+            track["controller_query_indices"] = np.arange(candidate_count, dtype=np.int64) + 7000
+            track["object_query_indices"] = np.arange(track["object_points"].shape[1], dtype=np.int64) + 8000
+
+            write_futurephystwin_chunk_case(
+                base_path,
+                "demo_v4_chunk",
+                replace(_futurephystwin_chunk(frame_count=frame_count), track_process_data=track),
+            )
+
+            case_dir = base_path / "demo_v4_chunk"
+            with (case_dir / "final_data.pkl").open("rb") as handle:
+                final_data = pickle.load(handle)
+            self.assertNotIn("controller_mask", final_data)
+            self.assertEqual(final_data["controller_points"].shape, (frame_count, 30, 3))
+            np.testing.assert_array_equal(final_data["controller_fps_indices"], final_indices)
+            np.testing.assert_array_equal(
+                final_data["controller_selected_query_ids"],
+                track["controller_query_indices"][final_indices],
+            )
+            np.testing.assert_array_equal(final_data["object_sample_indices"], np.array([0, 2, 3], dtype=np.int64))
+            np.testing.assert_array_equal(
+                final_data["object_selected_query_ids"],
+                track["object_query_indices"][final_data["object_sample_indices"]],
+            )
+            _assert_topology_contract(self, final_data)
+            np.testing.assert_array_equal(final_data["controller_sample_query_ids"], final_data["controller_selected_query_ids"])
+            np.testing.assert_array_equal(final_data["object_sample_query_ids"], final_data["object_selected_query_ids"])
+
+            with (case_dir / "track_process_data.pkl").open("rb") as handle:
+                track_process = pickle.load(handle)
+            np.testing.assert_array_equal(track_process["controller_mask"], candidate_mask)
+            np.testing.assert_array_equal(track_process["controller_candidate_mask"], candidate_mask)
+            np.testing.assert_array_equal(track_process["controller_fps_indices"], final_indices)
+            np.testing.assert_array_equal(track_process["controller_candidate_query_ids"], track["controller_query_indices"])
+            _assert_topology_contract(self, track_process, check_point_counts=False)
+            validate_futurephystwin_case(case_dir)
+
+    def test_writer_emits_topology_contract_to_chunk_static_online_and_manifest(self) -> None:
+        from demo_v4.online_chunk_output import DemoV4OnlineOutputWriter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = Path(tmp)
+            manifest = write_futurephystwin_chunk_case(
+                base_path,
+                "demo_v4_chunk_0001",
+                _futurephystwin_chunk(frame_count=2),
+            )
+            case_dir = base_path / "demo_v4_chunk_0001"
+
+            with (case_dir / "final_data.pkl").open("rb") as handle:
+                final_data = pickle.load(handle)
+            with (case_dir / "track_process_data.pkl").open("rb") as handle:
+                track_process = pickle.load(handle)
+
+            _assert_topology_contract(self, final_data)
+            _assert_topology_contract(self, track_process, check_point_counts=False)
+            self.assertEqual(manifest["topology_version"], final_data["topology_version"])
+            self.assertEqual(manifest["topology_hash"], final_data["topology_hash"])
+
+            writer = DemoV4OnlineOutputWriter(
+                base_path=base_path,
+                case_name="demo_v4",
+                chunk_size=2,
+                num_frames_total=2,
+            )
+            result = writer.commit_case_chunk(case_dir, source_frame_indices=[0, 1])
+            writer.finish()
+
+            with Path(result["online_chunk_path"]).open("rb") as handle:
+                online_chunk = pickle.load(handle)
+            with Path(result["static_data_path"]).open("rb") as handle:
+                static_data = pickle.load(handle)
+            aggregate_manifest = json.loads((base_path / "data" / "demo_v4" / "manifest.json").read_text(encoding="utf-8"))
+            online_manifest = json.loads((base_path / "online_data" / "demo_v4" / "manifest.json").read_text(encoding="utf-8"))
+
+            _assert_topology_contract(self, online_chunk)
+            _assert_topology_contract(self, static_data)
+            self.assertEqual(aggregate_manifest["topology_hash"], final_data["topology_hash"])
+            self.assertEqual(online_manifest["topology_hash"], final_data["topology_hash"])
 
     def test_online_writer_builds_full_received_frame_numbered_aggregate_case(self) -> None:
         from demo_v4.online_chunk_output import DemoV4OnlineOutputWriter
@@ -325,7 +456,9 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
 
             with (aggregate / "final_data.pkl").open("rb") as handle:
                 final_data = pickle.load(handle)
-            self.assertIn("controller_mask", final_data)
+            self.assertNotIn("controller_mask", final_data)
+            self.assertIn("controller_selected_query_ids", final_data)
+            _assert_topology_contract(self, final_data)
             self.assertEqual(final_data["object_points"].shape[0], 4)
             self.assertEqual(final_data["controller_points"].shape[0], 4)
 
@@ -343,6 +476,7 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             self.assertEqual(online_chunk["start_frame"], 2)
             self.assertEqual(online_chunk["end_frame"], 4)
             self.assertEqual(online_chunk["source_frame_indices"], [12, 13])
+            _assert_topology_contract(self, online_chunk)
 
     def test_online_aggregate_rejects_cross_chunk_metadata_mismatch(self) -> None:
         from demo_v4.online_chunk_output import DemoV4OnlineOutputWriter
@@ -368,6 +502,43 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
 
             writer.commit_case_chunk(base_path / "demo_v4_chunk_0001")
             with self.assertRaisesRegex(ValueError, "fps"):
+                writer.commit_case_chunk(base_path / "demo_v4_chunk_0002")
+
+    def test_online_aggregate_rejects_cross_chunk_topology_sample_id_mismatch(self) -> None:
+        from demo_v4.online_chunk_output import DemoV4OnlineOutputWriter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = Path(tmp)
+            write_futurephystwin_chunk_case(
+                base_path,
+                "demo_v4_chunk_0001",
+                _futurephystwin_chunk(frame_count=2),
+            )
+            write_futurephystwin_chunk_case(
+                base_path,
+                "demo_v4_chunk_0002",
+                _futurephystwin_chunk(frame_count=2),
+            )
+            second_final_path = base_path / "demo_v4_chunk_0002" / "final_data.pkl"
+            with second_final_path.open("rb") as handle:
+                second_final = pickle.load(handle)
+            self.assertIn("controller_sample_query_ids", second_final)
+            second_final["controller_sample_query_ids"] = np.asarray(
+                second_final["controller_sample_query_ids"],
+                dtype=np.int64,
+            ).copy()
+            second_final["controller_sample_query_ids"][0] += 999
+            with second_final_path.open("wb") as handle:
+                pickle.dump(second_final, handle)
+
+            writer = DemoV4OnlineOutputWriter(
+                base_path=base_path,
+                case_name="demo_v4",
+                chunk_size=2,
+                num_frames_total=4,
+            )
+            writer.commit_case_chunk(base_path / "demo_v4_chunk_0001")
+            with self.assertRaisesRegex(ValueError, "controller_sample_query_ids|topology"):
                 writer.commit_case_chunk(base_path / "demo_v4_chunk_0002")
 
     def test_demo_v4_can_decouple_source_pacing_from_output_fps(self) -> None:
@@ -733,18 +904,12 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
 
             with (case_dir / "final_data.pkl").open("rb") as handle:
                 final_data = pickle.load(handle)
-            self.assertEqual(set(final_data), {
-                "controller_mask",
-                "controller_points",
-                "object_colors",
-                "object_motions_valid",
-                "object_points",
-                "object_visibilities",
-                "surface_points",
-                "interior_points",
-            })
+            self.assertEqual(set(final_data), set(chunk_writer.FUTUREPHYSTWIN_FINAL_DATA_KEYS))
+            _assert_topology_contract(self, final_data)
             self.assertEqual(final_data["object_points"].shape[0], frame_count)
             self.assertEqual(final_data["controller_points"].shape, (frame_count, 30, 3))
+            np.testing.assert_array_equal(final_data["controller_selected_query_ids"], np.arange(30, dtype=np.int64) + 1000)
+            np.testing.assert_array_equal(final_data["object_selected_query_ids"], np.array([2000, 2002, 2003], dtype=np.int64))
             np.testing.assert_allclose(final_data["surface_points"], surface_points)
             np.testing.assert_allclose(final_data["interior_points"], interior_points)
 
@@ -752,6 +917,7 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
                 track_process = pickle.load(handle)
             self.assertIn("controller_mask", track_process)
             self.assertEqual(track_process["controller_mask"].shape, (30,))
+            _assert_topology_contract(self, track_process, check_point_counts=False)
 
             metadata = json.loads((case_dir / "metadata.json").read_text(encoding="utf-8"))
             self.assertEqual(metadata["fps"], 5)
@@ -776,11 +942,14 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             case_dir.mkdir()
             frame_count = 1
             final_data = {
-                "controller_mask": np.ones((30,), dtype=bool),
                 "controller_points": np.zeros((frame_count, 30, 3), dtype=np.float32),
+                "controller_fps_indices": np.arange(30, dtype=np.int64),
+                "controller_selected_query_ids": np.arange(30, dtype=np.int64),
                 "object_colors": np.zeros((frame_count, 1, 3), dtype=np.float32),
                 "object_motions_valid": np.ones((frame_count, 1), dtype=bool),
                 "object_points": np.zeros((frame_count, 1, 3), dtype=np.float32),
+                "object_sample_indices": np.zeros((1,), dtype=np.int64),
+                "object_selected_query_ids": np.zeros((1,), dtype=np.int64),
                 "object_visibilities": np.ones((frame_count, 1), dtype=bool),
                 "interior_points": np.zeros((0, 3), dtype=np.float32),
             }
@@ -789,6 +958,44 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "surface_points"):
                 validate_futurephystwin_case(case_dir)
+
+    def test_headless_bridge_reuses_session_semantic_labels_for_later_chunks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = self._write_minimal_headless_capture(root / "capture", frame_count=4)
+            height, width = 8, 40
+            empty = np.zeros((height, width), dtype=bool)
+            for seq in (2, 3):
+                np.savez(
+                    capture / "masks" / f"{seq:06d}.npz",
+                    object_mask=empty,
+                    controller_mask=empty,
+                    hand_a_mask=empty,
+                    hand_b_mask=empty,
+                )
+
+            manifests = write_chunks_from_headless_capture(
+                capture,
+                base_path=root / "cases",
+                case_prefix="demo_v4_semantic_topology",
+                chunk_frame_count=2,
+                surface_points=np.array([[0.0, 0.0, -0.02]], dtype=np.float64),
+                interior_points=np.array([[0.01, 0.0, -0.03]], dtype=np.float64),
+                mask_radius_outlier_filter=False,
+            )
+
+            self.assertEqual(len(manifests), 2)
+            with (root / "cases" / "demo_v4_semantic_topology_chunk_0001" / "final_data.pkl").open("rb") as handle:
+                first_final = pickle.load(handle)
+            with (root / "cases" / "demo_v4_semantic_topology_chunk_0002" / "final_data.pkl").open("rb") as handle:
+                second_final = pickle.load(handle)
+
+            expected_labels = np.array([1] * 6 + [2] * 32, dtype=np.int8)
+            np.testing.assert_array_equal(first_final["query_ids"], np.arange(38, dtype=np.int64))
+            np.testing.assert_array_equal(first_final["query_semantic_labels"], expected_labels)
+            np.testing.assert_array_equal(second_final["query_ids"], first_final["query_ids"])
+            np.testing.assert_array_equal(second_final["query_semantic_labels"], first_final["query_semantic_labels"])
+            self.assertEqual(second_final["topology_hash"], first_final["topology_hash"])
 
     def test_headless_capture_bridge_writes_multiple_futurephystwin_chunks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -835,10 +1042,9 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
                 static_data = pickle.load(handle)
             self.assertEqual(static_data["object_points"].shape[0], 4)
             self.assertEqual(static_data["controller_points"].shape[0], 4)
-            self.assertIn("controller_mask", static_data)
-            self.assertEqual(static_data["controller_mask"].ndim, 1)
-            self.assertEqual(static_data["controller_mask"].dtype, np.dtype(bool))
-            self.assertGreaterEqual(static_data["controller_mask"].shape[0], static_data["controller_points"].shape[1])
+            self.assertNotIn("controller_mask", static_data)
+            self.assertIn("controller_selected_query_ids", static_data)
+            self.assertIn("object_selected_query_ids", static_data)
             np.testing.assert_allclose(static_data["surface_points"], np.array([[0.0, 0.0, -0.02]], dtype=np.float64))
             np.testing.assert_allclose(static_data["interior_points"], np.array([[0.01, 0.0, -0.03]], dtype=np.float64))
             aggregate_dir = base_path / "data" / "demo_v4_capture"

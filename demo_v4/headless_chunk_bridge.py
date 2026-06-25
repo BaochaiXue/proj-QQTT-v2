@@ -394,6 +394,45 @@ def _object_anchor_manifest_fields(track_process_data: Mapping[str, Any]) -> dic
     }
 
 
+def _track_input_with_session_topology(
+    *,
+    tracks_yx: np.ndarray,
+    visibility: np.ndarray,
+    processed_masks: Sequence[Sequence[Mapping[str, Any]]],
+    pcd_points: np.ndarray,
+    pcd_colors: np.ndarray,
+    session_query_topology: dict[str, np.ndarray] | None,
+) -> dict[str, np.ndarray]:
+    query_ids = None
+    query_semantic_labels = None
+    if session_query_topology is not None and "query_ids" in session_query_topology:
+        query_ids = session_query_topology["query_ids"]
+        query_semantic_labels = session_query_topology["query_semantic_labels"]
+    track_input = strict.build_track_process_input(
+        tracks_yx=tracks_yx,
+        visibility=visibility,
+        processed_masks=processed_masks,
+        pcd_points=pcd_points,
+        pcd_colors=pcd_colors,
+        query_ids=query_ids,
+        query_semantic_labels=query_semantic_labels,
+    )
+    if session_query_topology is None:
+        return track_input
+    if "query_ids" not in session_query_topology:
+        session_query_topology["query_ids"] = np.ascontiguousarray(track_input["query_ids"], dtype=np.int64)
+        session_query_topology["query_semantic_labels"] = np.ascontiguousarray(
+            track_input["query_semantic_labels"],
+            dtype=np.int8,
+        )
+        return track_input
+    if not np.array_equal(session_query_topology["query_ids"], track_input["query_ids"]):
+        raise ValueError("Demo v4 session query_ids changed across chunks")
+    if not np.array_equal(session_query_topology["query_semantic_labels"], track_input["query_semantic_labels"]):
+        raise ValueError("Demo v4 session query_semantic_labels changed across chunks")
+    return track_input
+
+
 def _chunk_payload_from_rows(
     capture_dir: Path,
     metadata: Mapping[str, Any],
@@ -410,6 +449,7 @@ def _chunk_payload_from_rows(
     write_final_pcd: bool = True,
     object_anchor_selector: strict.StreamingObjectAnchorSelector | None = None,
     controller_anchor_selector: strict.StreamingControllerAnchorSelector | None = None,
+    session_query_topology: dict[str, np.ndarray] | None = None,
 ) -> FuturePhysTwinChunk:
     c2w = _camera_to_world(metadata)
     intrinsics = _intrinsics_matrix(metadata)
@@ -466,12 +506,13 @@ def _chunk_payload_from_rows(
 
     pcd_points_arr = np.stack(pcd_points, axis=0)
     pcd_colors_arr = np.stack(pcd_colors, axis=0)
-    track_input = strict.build_track_process_input(
+    track_input = _track_input_with_session_topology(
         tracks_yx=tracks_yx,
         visibility=tracker_visibility,
         processed_masks=processed_masks,
         pcd_points=pcd_points_arr,
         pcd_colors=pcd_colors_arr,
+        session_query_topology=session_query_topology,
     )
     filtered = strict.apply_phystwin_motion_filters(track_input)
     if object_anchor_selector is not None:
@@ -542,6 +583,7 @@ def _chunk_payload_from_prepared_frames(
     write_final_pcd: bool = True,
     object_anchor_selector: strict.StreamingObjectAnchorSelector | None = None,
     controller_anchor_selector: strict.StreamingControllerAnchorSelector | None = None,
+    session_query_topology: dict[str, np.ndarray] | None = None,
 ) -> FuturePhysTwinChunk:
     if not frames:
         raise ValueError("prepared PhysTwin chunk requires at least one frame")
@@ -573,12 +615,13 @@ def _chunk_payload_from_prepared_frames(
     tracker_visibility = np.stack(visibility, axis=0)
     pcd_points_arr = np.stack(pcd_points, axis=0)
     pcd_colors_arr = np.stack(pcd_colors, axis=0)
-    track_input = strict.build_track_process_input(
+    track_input = _track_input_with_session_topology(
         tracks_yx=tracks_yx,
         visibility=tracker_visibility,
         processed_masks=processed_masks,
         pcd_points=pcd_points_arr,
         pcd_colors=pcd_colors_arr,
+        session_query_topology=session_query_topology,
     )
     filtered = strict.apply_phystwin_motion_filters(track_input)
     if object_anchor_selector is not None:
@@ -643,6 +686,7 @@ def _write_chunk_from_rows(
     online_writer: DemoV4OnlineOutputWriter | None = None,
     object_anchor_selector: strict.StreamingObjectAnchorSelector | None = None,
     controller_anchor_selector: strict.StreamingControllerAnchorSelector | None = None,
+    session_query_topology: dict[str, np.ndarray] | None = None,
 ) -> dict[str, Any]:
     case_name = f"{case_prefix}_chunk_{chunk_index:04d}"
     source_window_start_s = float(row_start) / float(fps)
@@ -662,6 +706,7 @@ def _write_chunk_from_rows(
             write_final_pcd=bool(write_final_pcd),
             object_anchor_selector=object_anchor_selector,
             controller_anchor_selector=controller_anchor_selector,
+            session_query_topology=session_query_topology,
         )
         materialization_source = "prepared_phystwin_frame"
         legacy_reprocess_count = 0
@@ -681,6 +726,7 @@ def _write_chunk_from_rows(
             write_final_pcd=bool(write_final_pcd),
             object_anchor_selector=object_anchor_selector,
             controller_anchor_selector=controller_anchor_selector,
+            session_query_topology=session_query_topology,
         )
         materialization_source = "legacy_reprocess"
         legacy_reprocess_count = len(rows)
@@ -801,6 +847,7 @@ def write_chunks_from_headless_capture(
         )
     object_anchor_selector = strict.StreamingObjectAnchorSelector(volume_sample_size=0.005)
     controller_anchor_selector = strict.StreamingControllerAnchorSelector(count=30)
+    session_query_topology: dict[str, np.ndarray] = {}
     for row_idx, row in enumerate(_iter_jsonl(capture / "frames.jsonl")):
         if max_chunks is not None and len(manifests) >= int(max_chunks):
             break
@@ -839,6 +886,7 @@ def write_chunks_from_headless_capture(
             online_writer=online_writer,
             object_anchor_selector=object_anchor_selector,
             controller_anchor_selector=controller_anchor_selector,
+            session_query_topology=session_query_topology,
         )
         manifests.append(manifest)
         if on_chunk_written is not None:
@@ -925,6 +973,7 @@ def stream_chunks_from_headless_capture(
         )
     object_anchor_selector = strict.StreamingObjectAnchorSelector(volume_sample_size=0.005)
     controller_anchor_selector = strict.StreamingControllerAnchorSelector(count=30)
+    session_query_topology: dict[str, np.ndarray] = {}
 
     while True:
         if max_chunks is not None and len(manifests) >= int(max_chunks):
@@ -979,6 +1028,7 @@ def stream_chunks_from_headless_capture(
                 online_writer=online_writer,
                 object_anchor_selector=object_anchor_selector,
                 controller_anchor_selector=controller_anchor_selector,
+                session_query_topology=session_query_topology,
             )
             manifests.append(manifest)
             if on_chunk_written is not None:

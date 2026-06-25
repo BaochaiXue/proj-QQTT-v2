@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -16,13 +17,32 @@ from PIL import Image
 from demo_v4.pickle_compat import dump_pickle_legacy_numpy
 
 
+FUTUREPHYSTWIN_TOPOLOGY_VERSION = "demo_v4_session_topology_v1"
+FUTUREPHYSTWIN_TOPOLOGY_KEYS = (
+    "topology_version",
+    "topology_hash",
+    "query_ids",
+    "query_semantic_labels",
+    "object_sample_query_ids",
+    "controller_sample_query_ids",
+)
+
 FUTUREPHYSTWIN_FINAL_DATA_KEYS = (
-    "controller_mask",
     "controller_points",
+    "controller_fps_indices",
+    "controller_selected_query_ids",
+    "controller_sample_query_ids",
     "object_colors",
     "object_motions_valid",
     "object_points",
+    "object_sample_indices",
+    "object_selected_query_ids",
+    "object_sample_query_ids",
     "object_visibilities",
+    "topology_version",
+    "topology_hash",
+    "query_ids",
+    "query_semantic_labels",
     "surface_points",
     "interior_points",
 )
@@ -34,6 +54,28 @@ FUTUREPHYSTWIN_TRACK_PROCESS_KEYS = (
     "object_motions_valid",
     "object_points",
     "object_visibilities",
+)
+
+FUTUREPHYSTWIN_TRACK_PROCESS_TRACE_KEYS = (
+    "query_ids",
+    "query_semantic_labels",
+    "controller_fps_indices",
+    "controller_query_indices",
+    "controller_candidate_query_ids",
+    "controller_candidate_mask",
+    "controller_sample_query_ids",
+    "controller_anchor_query_indices",
+    "controller_anchor_active_query_indices",
+    "controller_anchor_status",
+    "object_query_indices",
+    "object_candidate_query_ids",
+    "object_volume_sample_indices",
+    "object_sample_indices",
+    "object_selected_query_ids",
+    "object_sample_query_ids",
+    "object_anchor_query_indices",
+    "object_anchor_active_query_indices",
+    "object_anchor_status",
 )
 
 DATA_PROCESS_SAM3D_METRICS = {
@@ -187,15 +229,163 @@ def _write_optional_pcd(case_dir: Path, chunk: FuturePhysTwinChunk, frame_count:
         )
 
 
-def _track_process_payload(track_process_data: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
-    payload: dict[str, np.ndarray] = {}
+def _int_vector(value: Any, *, default: np.ndarray | None = None) -> np.ndarray:
+    if value is None:
+        if default is None:
+            return np.empty((0,), dtype=np.int64)
+        return np.ascontiguousarray(np.asarray(default, dtype=np.int64).reshape(-1))
+    return np.ascontiguousarray(np.asarray(value, dtype=np.int64).reshape(-1))
+
+
+def _topology_hash(payload: Mapping[str, Any]) -> str:
+    digest = hashlib.sha256()
+    digest.update(FUTUREPHYSTWIN_TOPOLOGY_VERSION.encode("utf-8"))
+    for key in ("query_ids", "query_semantic_labels", "object_sample_query_ids", "controller_sample_query_ids"):
+        arr = np.ascontiguousarray(np.asarray(payload[key]))
+        digest.update(str(arr.dtype).encode("utf-8"))
+        digest.update(str(arr.shape).encode("utf-8"))
+        digest.update(arr.tobytes())
+    return digest.hexdigest()
+
+
+def _scalar_str(value: Any) -> str:
+    if isinstance(value, np.ndarray):
+        if value.shape == ():
+            return str(value.item())
+        if value.size == 1:
+            return str(value.reshape(-1)[0].item())
+    return str(value)
+
+
+def build_topology_payload(
+    track_process_data: Mapping[str, Any],
+    *,
+    object_sample_query_ids: np.ndarray | None = None,
+    controller_sample_query_ids: np.ndarray | None = None,
+) -> dict[str, Any]:
+    object_points = np.asarray(track_process_data.get("object_points", np.empty((0, 0, 3))))
+    controller_points = np.asarray(track_process_data.get("controller_points", np.empty((0, 0, 3))))
+    object_count = int(object_points.shape[1]) if object_points.ndim >= 2 else 0
+    controller_count = int(controller_points.shape[1]) if controller_points.ndim >= 2 else 0
+
+    if "query_ids" in track_process_data and "query_semantic_labels" in track_process_data:
+        query_ids = np.ascontiguousarray(np.asarray(track_process_data["query_ids"], dtype=np.int64).reshape(-1))
+        query_semantic_labels = np.ascontiguousarray(
+            np.asarray(track_process_data["query_semantic_labels"], dtype=np.int8).reshape(-1)
+        )
+        if query_ids.shape != query_semantic_labels.shape:
+            raise ValueError("query_ids and query_semantic_labels must have matching shape")
+    else:
+        object_query_ids = _int_vector(
+            track_process_data.get(
+                "object_candidate_query_ids",
+                track_process_data.get("object_query_indices"),
+            ),
+            default=np.arange(object_count, dtype=np.int64),
+        )
+        controller_query_ids = _int_vector(
+            track_process_data.get(
+                "controller_candidate_query_ids",
+                track_process_data.get("controller_query_indices"),
+            ),
+            default=np.arange(object_count, object_count + controller_count, dtype=np.int64),
+        )
+        query_ids = np.ascontiguousarray(np.concatenate([object_query_ids, controller_query_ids]), dtype=np.int64)
+        query_semantic_labels = np.ascontiguousarray(
+            np.concatenate(
+                [
+                    np.ones((object_query_ids.shape[0],), dtype=np.int8),
+                    np.full((controller_query_ids.shape[0],), 2, dtype=np.int8),
+                ]
+            ),
+            dtype=np.int8,
+        )
+    object_query_ids = _int_vector(
+        track_process_data.get(
+            "object_candidate_query_ids",
+            track_process_data.get("object_query_indices"),
+        ),
+        default=np.arange(object_count, dtype=np.int64),
+    )
+    controller_query_ids = _int_vector(
+        track_process_data.get(
+            "controller_candidate_query_ids",
+            track_process_data.get("controller_query_indices"),
+        ),
+        default=np.arange(controller_count, dtype=np.int64),
+    )
+
+    if object_sample_query_ids is None:
+        object_sample_query_ids = _int_vector(
+            track_process_data.get(
+                "object_anchor_query_indices",
+                track_process_data.get("object_selected_query_ids", object_query_ids),
+            )
+        )
+    if controller_sample_query_ids is None:
+        controller_sample_query_ids = _int_vector(
+            track_process_data.get(
+                "controller_anchor_query_indices",
+                track_process_data.get("controller_selected_query_ids"),
+            )
+        )
+        if controller_sample_query_ids.size == 0:
+            fps = _int_vector(
+                track_process_data.get("controller_fps_indices"),
+                default=np.arange(controller_count, dtype=np.int64),
+            )
+            controller_sample_query_ids = np.full(fps.shape, -1, dtype=np.int64)
+            valid = (fps >= 0) & (fps < controller_query_ids.shape[0])
+            controller_sample_query_ids[valid] = controller_query_ids[fps[valid]]
+
+    payload: dict[str, Any] = {
+        "topology_version": FUTUREPHYSTWIN_TOPOLOGY_VERSION,
+        "query_ids": query_ids,
+        "query_semantic_labels": query_semantic_labels,
+        "object_sample_query_ids": np.ascontiguousarray(np.asarray(object_sample_query_ids, dtype=np.int64).reshape(-1)),
+        "controller_sample_query_ids": np.ascontiguousarray(
+            np.asarray(controller_sample_query_ids, dtype=np.int64).reshape(-1)
+        ),
+    }
+    payload["topology_hash"] = _topology_hash(payload)
+    return payload
+
+
+def _track_process_payload(track_process_data: Mapping[str, np.ndarray]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
     for key in FUTUREPHYSTWIN_TRACK_PROCESS_KEYS:
         if key not in track_process_data:
             raise ValueError(f"track_process_data missing required key: {key}")
         payload[key] = np.ascontiguousarray(np.asarray(track_process_data[key]))
-    if "object_anchor_query_indices" in track_process_data:
-        payload["object_anchor_query_indices"] = np.ascontiguousarray(
-            np.asarray(track_process_data["object_anchor_query_indices"], dtype=np.int64).reshape(-1)
+    for key in FUTUREPHYSTWIN_TRACK_PROCESS_TRACE_KEYS:
+        if key not in track_process_data:
+            continue
+        arr = np.asarray(track_process_data[key])
+        if key.endswith("_status"):
+            payload[key] = np.asarray(arr, dtype="<U16").reshape(-1)
+        elif key.endswith("_mask"):
+            payload[key] = np.ascontiguousarray(arr.astype(bool).reshape(-1))
+        elif key == "query_semantic_labels":
+            payload[key] = np.ascontiguousarray(arr.astype(np.int8).reshape(-1))
+        else:
+            payload[key] = np.ascontiguousarray(arr.astype(np.int64).reshape(-1))
+    selected_controller_count = int(np.asarray(payload["controller_points"]).shape[1])
+    controller_mask_len = int(np.asarray(payload["controller_mask"]).reshape(-1).shape[0])
+    if (
+        "controller_mask" in payload
+        and "controller_candidate_mask" not in payload
+        and controller_mask_len != selected_controller_count
+    ):
+        payload["controller_candidate_mask"] = np.ascontiguousarray(
+            np.asarray(payload["controller_mask"], dtype=bool).reshape(-1)
+        )
+    if (
+        "controller_query_indices" in payload
+        and "controller_candidate_query_ids" not in payload
+        and controller_mask_len != selected_controller_count
+    ):
+        payload["controller_candidate_query_ids"] = np.ascontiguousarray(
+            np.asarray(payload["controller_query_indices"], dtype=np.int64).reshape(-1)
         )
     _validate_track_shapes(payload)
     return payload
@@ -251,16 +441,71 @@ def _final_data_payload(
             interior_points=interior_points,
             volume_sample_size=0.005,
         )
+    if "object_anchor_query_indices" in track_process:
+        object_sample_indices = indices
+    else:
+        object_sample_indices = np.asarray(
+            track_process.get("object_volume_sample_indices", indices),
+            dtype=np.int64,
+        ).reshape(-1)
+        if object_sample_indices.shape[0] != indices.shape[0]:
+            object_sample_indices = indices
+    object_query_indices = np.asarray(
+        track_process.get("object_query_indices", np.arange(object_points.shape[1], dtype=np.int64)),
+        dtype=np.int64,
+    ).reshape(-1)
+    if "object_anchor_query_indices" in track_process:
+        object_selected_query_ids = np.asarray(track_process["object_anchor_query_indices"], dtype=np.int64).reshape(-1)
+    elif object_query_indices.shape[0] == object_points.shape[1]:
+        object_selected_query_ids = object_query_indices[indices]
+    else:
+        object_selected_query_ids = indices
+
+    controller_points = np.asarray(track_process["controller_points"])
+    controller_count = int(controller_points.shape[1])
+    if "controller_anchor_query_indices" in track_process:
+        controller_fps_indices = np.arange(controller_count, dtype=np.int64)
+        controller_selected_query_ids = np.asarray(
+            track_process["controller_anchor_query_indices"],
+            dtype=np.int64,
+        ).reshape(-1)
+    else:
+        controller_fps_indices = np.asarray(
+            track_process.get("controller_fps_indices", np.arange(controller_count, dtype=np.int64)),
+            dtype=np.int64,
+        ).reshape(-1)
+        if controller_fps_indices.shape[0] != controller_count:
+            controller_fps_indices = np.arange(controller_count, dtype=np.int64)
+        candidate_count = int(max(controller_count, int(np.max(controller_fps_indices)) + 1 if controller_fps_indices.size else 0))
+        controller_query_indices = np.asarray(
+            track_process.get("controller_query_indices", np.arange(candidate_count, dtype=np.int64)),
+            dtype=np.int64,
+        ).reshape(-1)
+        controller_selected_query_ids = np.full((controller_count,), -1, dtype=np.int64)
+        valid = (controller_fps_indices >= 0) & (controller_fps_indices < controller_query_indices.shape[0])
+        controller_selected_query_ids[valid] = controller_query_indices[controller_fps_indices[valid]]
     final = {
-        "controller_mask": np.ascontiguousarray(np.asarray(track_process["controller_mask"], dtype=bool)),
-        "controller_points": np.ascontiguousarray(np.asarray(track_process["controller_points"], dtype=np.float64)),
+        "controller_points": np.ascontiguousarray(controller_points.astype(np.float64)),
+        "controller_fps_indices": np.ascontiguousarray(controller_fps_indices.astype(np.int64)),
+        "controller_selected_query_ids": np.ascontiguousarray(controller_selected_query_ids.astype(np.int64)),
+        "controller_sample_query_ids": np.ascontiguousarray(controller_selected_query_ids.astype(np.int64)),
         "object_points": np.ascontiguousarray(np.asarray(track_process["object_points"], dtype=np.float64)[:, indices, :]),
         "object_colors": np.ascontiguousarray(np.asarray(track_process["object_colors"], dtype=np.float64)[:, indices, :]),
         "object_visibilities": np.ascontiguousarray(np.asarray(track_process["object_visibilities"], dtype=bool)[:, indices]),
         "object_motions_valid": np.ascontiguousarray(np.asarray(track_process["object_motions_valid"], dtype=bool)[:, indices]),
+        "object_sample_indices": np.ascontiguousarray(object_sample_indices.astype(np.int64)),
+        "object_selected_query_ids": np.ascontiguousarray(object_selected_query_ids.astype(np.int64)),
+        "object_sample_query_ids": np.ascontiguousarray(object_selected_query_ids.astype(np.int64)),
         "surface_points": np.ascontiguousarray(np.asarray(surface_points, dtype=np.float64).reshape(-1, 3)),
         "interior_points": np.ascontiguousarray(np.asarray(interior_points, dtype=np.float64).reshape(-1, 3)),
     }
+    final.update(
+        build_topology_payload(
+            track_process,
+            object_sample_query_ids=final["object_sample_query_ids"],
+            controller_sample_query_ids=final["controller_sample_query_ids"],
+        )
+    )
     _validate_final_shapes(final)
     return final
 
@@ -399,14 +644,15 @@ def write_futurephystwin_chunk_case(
         (staging / "split.json").write_text(json.dumps(split, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
         track_process = _track_process_payload(chunk.track_process_data)
-        with (staging / "track_process_data.pkl").open("wb") as handle:
-            dump_pickle_legacy_numpy(track_process, handle)
-
         final_data = _final_data_payload(
             track_process,
             surface_points=chunk.surface_points,
             interior_points=chunk.interior_points,
         )
+        for key in FUTUREPHYSTWIN_TOPOLOGY_KEYS:
+            track_process[key] = final_data[key]
+        with (staging / "track_process_data.pkl").open("wb") as handle:
+            dump_pickle_legacy_numpy(track_process, handle)
         with (staging / "final_data.pkl").open("wb") as handle:
             dump_pickle_legacy_numpy(final_data, handle)
         final_data_written_wall_s = now_wall_s()
@@ -426,6 +672,8 @@ def write_futurephystwin_chunk_case(
             "data_process_sam3d_metrics": dict(DATA_PROCESS_SAM3D_METRICS),
             "publish_contract": "ready_marker_atomic_rename",
             "final_data_written_wall_s": float(final_data_written_wall_s),
+            "topology_version": _scalar_str(final_data["topology_version"]),
+            "topology_hash": _scalar_str(final_data["topology_hash"]),
         }
         manifest.update(_quality_manifest_fields(final_data, track_process))
         if manifest_extras is not None:
@@ -481,15 +729,92 @@ def _validate_track_shapes(payload: Mapping[str, np.ndarray]) -> None:
     controller_mask = np.asarray(payload["controller_mask"])
     if controller_mask.ndim != 1:
         raise ValueError("controller_mask must be a 1D mask over candidate controller points")
+    controller_mask_is_candidate_level = controller_mask.shape[0] != controller_points.shape[1]
+    if "controller_fps_indices" in payload:
+        fps = np.asarray(payload["controller_fps_indices"], dtype=np.int64).reshape(-1)
+        if fps.shape[0] != controller_points.shape[1]:
+            raise ValueError("controller_fps_indices must match selected controller point count")
+        if controller_mask_is_candidate_level and fps.size and np.any((fps >= controller_mask.shape[0]) | (fps < -1)):
+            raise ValueError("controller_fps_indices must index controller_mask candidates or be -1")
+    if "controller_query_indices" in payload:
+        query_ids = np.asarray(payload["controller_query_indices"], dtype=np.int64).reshape(-1)
+        if controller_mask_is_candidate_level and query_ids.shape[0] != controller_mask.shape[0]:
+            raise ValueError("controller_query_indices must match controller candidate count")
+    if "controller_candidate_query_ids" in payload:
+        query_ids = np.asarray(payload["controller_candidate_query_ids"], dtype=np.int64).reshape(-1)
+        if controller_mask_is_candidate_level and query_ids.shape[0] != controller_mask.shape[0]:
+            raise ValueError("controller_candidate_query_ids must match controller candidate count")
+    for key in ("object_volume_sample_indices", "object_anchor_query_indices"):
+        if key not in payload:
+            continue
+        arr = np.asarray(payload[key]).reshape(-1)
+        if arr.shape[0] != object_count:
+            raise ValueError(f"{key} must match object point count")
+
+
+def _validate_topology_payload(payload: Mapping[str, Any], *, label: str) -> None:
+    for key in FUTUREPHYSTWIN_TOPOLOGY_KEYS:
+        if key not in payload:
+            raise ValueError(f"{label} missing required topology key: {key}")
+    query_ids = np.asarray(payload["query_ids"], dtype=np.int64).reshape(-1)
+    query_semantic_labels = np.asarray(payload["query_semantic_labels"], dtype=np.int8).reshape(-1)
+    if query_ids.shape != query_semantic_labels.shape:
+        raise ValueError(f"{label} query_ids and query_semantic_labels must have matching shape")
+    if not bool(
+        np.all(
+            np.isin(
+                query_semantic_labels,
+                np.array([0, 1, 2], dtype=np.int8),
+            )
+        )
+    ):
+        raise ValueError(f"{label} query_semantic_labels must contain only 0, 1, or 2")
+    if _scalar_str(payload["topology_version"]) != FUTUREPHYSTWIN_TOPOLOGY_VERSION:
+        raise ValueError(f"{label} unsupported topology_version")
+    expected_hash = _topology_hash(payload)
+    if _scalar_str(payload["topology_hash"]) != expected_hash:
+        raise ValueError(f"{label} topology_hash does not match topology identity fields")
+
+
+def _topology_values_equal(left: Any, right: Any) -> bool:
+    if isinstance(left, str) or isinstance(right, str):
+        return str(left) == str(right)
+    return bool(np.array_equal(np.asarray(left), np.asarray(right)))
 
 
 def _validate_final_shapes(payload: Mapping[str, np.ndarray]) -> None:
+    for key in ("surface_points", "interior_points"):
+        if key not in payload:
+            raise ValueError(f"final_data.pkl missing required key: {key}")
     for key in FUTUREPHYSTWIN_FINAL_DATA_KEYS:
         if key not in payload:
             raise ValueError(f"final_data.pkl missing required key: {key}")
-    _validate_track_shapes(payload)
+    if "controller_mask" in payload:
+        raise ValueError("final_data.pkl must not contain candidate-level controller_mask")
     object_points = np.asarray(payload["object_points"], dtype=np.float64)
+    if object_points.ndim != 3 or object_points.shape[-1] != 3:
+        raise ValueError("object_points must have shape T,N,3")
+    frame_count, object_count, _ = object_points.shape
+    object_colors = np.asarray(payload["object_colors"], dtype=np.float64)
+    if object_colors.shape != object_points.shape:
+        raise ValueError("object_colors must match object_points shape")
+    for key in ("object_visibilities", "object_motions_valid"):
+        arr = np.asarray(payload[key])
+        if arr.shape != (frame_count, object_count):
+            raise ValueError(f"{key} must have shape T,N matching object_points")
     controller_points = np.asarray(payload["controller_points"], dtype=np.float64)
+    if controller_points.ndim != 3 or controller_points.shape[0] != frame_count or controller_points.shape[-1] != 3:
+        raise ValueError("controller_points must have shape T,M,3 matching object frame count")
+    controller_count = int(controller_points.shape[1])
+    for key in ("controller_fps_indices", "controller_selected_query_ids", "controller_sample_query_ids"):
+        arr = np.asarray(payload[key], dtype=np.int64).reshape(-1)
+        if arr.shape[0] != controller_count:
+            raise ValueError(f"{key} must match selected controller point count")
+    for key in ("object_sample_indices", "object_selected_query_ids", "object_sample_query_ids"):
+        arr = np.asarray(payload[key], dtype=np.int64).reshape(-1)
+        if arr.shape[0] != object_count:
+            raise ValueError(f"{key} must match object point count")
+    _validate_topology_payload(payload, label="final_data.pkl")
     if not np.isfinite(object_points).all() or not np.isfinite(controller_points).all():
         raise ValueError("object/controller points must be finite")
     if object_points.shape[1] and np.any(np.linalg.norm(object_points[0], axis=1) <= 1e-9):
@@ -543,6 +868,10 @@ def validate_futurephystwin_case(case_dir: str | Path, *, require_ready: bool = 
         if key not in track_process:
             raise ValueError(f"track_process_data.pkl missing required key: {key}")
     _validate_track_shapes(track_process)
+    _validate_topology_payload(track_process, label="track_process_data.pkl")
+    for key in FUTUREPHYSTWIN_TOPOLOGY_KEYS:
+        if not _topology_values_equal(final_data[key], track_process[key]):
+            raise ValueError(f"track_process_data.pkl topology key {key} does not match final_data.pkl")
 
     c2ws = _load_pickle(case / "calibrate.pkl")
     if len(c2ws) != 1 or np.asarray(c2ws[0]).shape != (4, 4):
@@ -573,9 +902,12 @@ def validate_futurephystwin_case(case_dir: str | Path, *, require_ready: bool = 
 
 __all__ = [
     "FUTUREPHYSTWIN_FINAL_DATA_KEYS",
+    "FUTUREPHYSTWIN_TOPOLOGY_KEYS",
+    "FUTUREPHYSTWIN_TOPOLOGY_VERSION",
     "FUTUREPHYSTWIN_TRACK_PROCESS_KEYS",
     "DATA_PROCESS_SAM3D_METRICS",
     "FuturePhysTwinChunk",
+    "build_topology_payload",
     "validate_futurephystwin_case",
     "write_futurephystwin_chunk_case",
 ]

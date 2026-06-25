@@ -156,6 +156,16 @@ visibility/motion-valid flags instead of silently replacing it with another
 track. Per-chunk manifests record the fixed anchor query ids, active query ids,
 and direct/missing counts.
 
+Every Demo v4 static and online payload also carries the explicit session
+topology contract consumed by `realtime_phystwin`: `query_ids`,
+`query_semantic_labels`, `object_sample_query_ids`,
+`controller_sample_query_ids`, `topology_version`, and `topology_hash`.
+`query_semantic_labels` are derived once from the first session frame
+(`0=none`, `1=object`, `2=controller`) and reused for later chunks. The
+`realtime_phystwin` online buffer rejects any chunk whose topology hash, query
+ids, semantic labels, or sampled object/controller ids differ from the static
+case or previously appended chunk.
+
 The per-window `<case-prefix>_chunk_XXXX/` directories remain diagnostic
 compatibility artifacts. Consumers that read those directories should only read
 ones containing `READY`. Demo v4 writes each diagnostic case under
@@ -441,7 +451,16 @@ object_colors
 object_visibilities
 object_motions_valid
 controller_points
-controller_mask
+controller_fps_indices
+controller_selected_query_ids
+controller_sample_query_ids
+object_sample_indices
+object_selected_query_ids
+object_sample_query_ids
+query_ids
+query_semantic_labels
+topology_version
+topology_hash
 surface_points
 interior_points
 ```

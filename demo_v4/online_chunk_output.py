@@ -8,6 +8,10 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
+from demo_v4.futurephystwin_chunk_writer import (
+    FUTUREPHYSTWIN_TOPOLOGY_KEYS,
+    build_topology_payload,
+)
 from demo_v4.online_case_aggregate import OnlineAggregateCaseWriter
 from demo_v4.pickle_compat import dump_pickle_legacy_numpy
 
@@ -29,7 +33,13 @@ STATIC_KEYS = (
 )
 
 FINAL_DATA_STATIC_KEYS = (
-    "controller_mask",
+    "controller_fps_indices",
+    "controller_selected_query_ids",
+    "controller_sample_query_ids",
+    "object_sample_indices",
+    "object_selected_query_ids",
+    "object_sample_query_ids",
+    *FUTUREPHYSTWIN_TOPOLOGY_KEYS,
 )
 
 
@@ -70,14 +80,74 @@ def _take_source_frames(value: Any, source_frame_indices: Sequence[int]) -> Any:
         return [value[int(idx)] for idx in source_frame_indices]
 
 
-def _as_controller_mask(data: Mapping[str, Any]) -> np.ndarray | None:
-    value = data.get("controller_mask")
+def _as_static_vector(data: Mapping[str, Any], key: str) -> np.ndarray | None:
+    value = data.get(key)
     if value is None:
         return None
-    mask = np.ascontiguousarray(np.asarray(value, dtype=bool))
-    if mask.ndim != 1:
-        raise ValueError(f"controller_mask must be 1D, got {mask.shape}")
-    return mask
+    return np.ascontiguousarray(np.asarray(value, dtype=np.int64).reshape(-1))
+
+
+def _static_mapping_vectors(data: Mapping[str, Any]) -> dict[str, Any]:
+    vectors: dict[str, Any] = {}
+    has_topology = all(key in data for key in FUTUREPHYSTWIN_TOPOLOGY_KEYS)
+    if has_topology:
+        for key in FUTUREPHYSTWIN_TOPOLOGY_KEYS:
+            value = data[key]
+            vectors[key] = value if isinstance(value, str) else np.ascontiguousarray(np.asarray(value))
+    controller_points = np.asarray(data["controller_points"])
+    controller_count = int(controller_points.shape[1])
+    controller_fps = _as_static_vector(data, "controller_fps_indices")
+    if controller_fps is None or controller_fps.shape[0] != controller_count:
+        controller_fps = np.arange(controller_count, dtype=np.int64)
+    vectors["controller_fps_indices"] = np.ascontiguousarray(controller_fps, dtype=np.int64)
+    selected_controller_ids = _as_static_vector(data, "controller_selected_query_ids")
+    if selected_controller_ids is None or selected_controller_ids.shape[0] != controller_count:
+        query_ids = _as_static_vector(data, "controller_query_indices")
+        selected_controller_ids = np.full((controller_count,), -1, dtype=np.int64)
+        if query_ids is not None:
+            valid = (controller_fps >= 0) & (controller_fps < query_ids.shape[0])
+            selected_controller_ids[valid] = query_ids[controller_fps[valid]]
+        else:
+            selected_controller_ids = controller_fps.copy()
+    vectors["controller_selected_query_ids"] = np.ascontiguousarray(selected_controller_ids, dtype=np.int64)
+    controller_sample_query_ids = _as_static_vector(data, "controller_sample_query_ids")
+    if controller_sample_query_ids is None or controller_sample_query_ids.shape[0] != controller_count:
+        controller_sample_query_ids = selected_controller_ids
+    vectors["controller_sample_query_ids"] = np.ascontiguousarray(controller_sample_query_ids, dtype=np.int64)
+
+    object_points = np.asarray(data["object_points"])
+    object_count = int(object_points.shape[1])
+    object_sample = _as_static_vector(data, "object_sample_indices")
+    if object_sample is None or object_sample.shape[0] != object_count:
+        object_sample = _as_static_vector(data, "object_volume_sample_indices")
+    if object_sample is None or object_sample.shape[0] != object_count:
+        object_sample = np.arange(object_count, dtype=np.int64)
+    vectors["object_sample_indices"] = np.ascontiguousarray(object_sample, dtype=np.int64)
+    selected_object_ids = _as_static_vector(data, "object_selected_query_ids")
+    if selected_object_ids is None or selected_object_ids.shape[0] != object_count:
+        query_ids = _as_static_vector(data, "object_anchor_query_indices")
+        if query_ids is None or query_ids.shape[0] != object_count:
+            query_ids = _as_static_vector(data, "object_query_indices")
+        if query_ids is not None and query_ids.shape[0] == object_count:
+            selected_object_ids = query_ids
+        elif query_ids is not None and object_sample.size and int(np.max(object_sample)) < query_ids.shape[0]:
+            selected_object_ids = query_ids[object_sample]
+        else:
+            selected_object_ids = object_sample.copy()
+    vectors["object_selected_query_ids"] = np.ascontiguousarray(selected_object_ids, dtype=np.int64)
+    object_sample_query_ids = _as_static_vector(data, "object_sample_query_ids")
+    if object_sample_query_ids is None or object_sample_query_ids.shape[0] != object_count:
+        object_sample_query_ids = selected_object_ids
+    vectors["object_sample_query_ids"] = np.ascontiguousarray(object_sample_query_ids, dtype=np.int64)
+    if not has_topology:
+        vectors.update(
+            build_topology_payload(
+                {**data, **vectors},
+                object_sample_query_ids=vectors["object_sample_query_ids"],
+                controller_sample_query_ids=vectors["controller_sample_query_ids"],
+            )
+        )
+    return vectors
 
 
 def build_online_chunk(
@@ -103,6 +173,7 @@ def build_online_chunk(
         value = data.get(key)
         if value is not None:
             chunk[key] = _take_source_frames(value, list(range(0, int(end_frame) - int(start_frame))))
+    chunk.update(_static_mapping_vectors(data))
     return chunk
 
 
@@ -135,7 +206,7 @@ class DemoV4OnlineOutputWriter:
         self.latest_committed_frame = 0
         self.version = 0
         self._time_arrays: dict[str, list[np.ndarray]] = {key: [] for key in TIME_KEYS}
-        self._static_arrays: dict[str, np.ndarray] = {}
+        self._static_arrays: dict[str, Any] = {}
         self._aggregate_writer = OnlineAggregateCaseWriter(self.static_case_dir)
         self.chunks_dir.mkdir(parents=True, exist_ok=True)
         self.static_case_dir.mkdir(parents=True, exist_ok=True)
@@ -228,9 +299,7 @@ class DemoV4OnlineOutputWriter:
             value = data.get(key)
             if value is not None:
                 self._static_arrays[key] = np.ascontiguousarray(np.asarray(value))
-        controller_mask = _as_controller_mask(data)
-        if controller_mask is not None:
-            self._static_arrays["controller_mask"] = controller_mask
+        self._static_arrays.update(_static_mapping_vectors(data))
         payload: dict[str, Any] = {}
         for key, values in self._time_arrays.items():
             if values:
@@ -251,6 +320,10 @@ class DemoV4OnlineOutputWriter:
             "chunk_size": int(self.chunk_size),
             "latest_committed_frame": int(self.latest_committed_frame + frame_count),
         }
+        if "topology_version" in self._static_arrays:
+            metadata["topology_version"] = str(self._static_arrays["topology_version"])
+        if "topology_hash" in self._static_arrays:
+            metadata["topology_hash"] = str(self._static_arrays["topology_hash"])
         atomic_json_dump(metadata, self.static_case_dir / "metadata.json")
 
     def _write_manifest(self, *, status: str) -> dict[str, Any]:
@@ -271,6 +344,12 @@ class DemoV4OnlineOutputWriter:
             "source_frame_step": int(self.source_frame_step),
             "online_num_frames_total": int(total),
         }
+        if "topology_version" in self._static_arrays:
+            value = self._static_arrays["topology_version"]
+            manifest["topology_version"] = str(np.asarray(value).item() if isinstance(value, np.ndarray) else value)
+        if "topology_hash" in self._static_arrays:
+            value = self._static_arrays["topology_hash"]
+            manifest["topology_hash"] = str(np.asarray(value).item() if isinstance(value, np.ndarray) else value)
         atomic_json_dump(manifest, self.online_dir / "manifest.json")
         return manifest
 
