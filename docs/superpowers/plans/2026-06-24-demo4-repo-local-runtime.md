@@ -35,6 +35,7 @@ rsync -a --delete --exclude .git --exclude __pycache__ --exclude '*.pyc' --exclu
 rsync -a --delete --exclude .git --exclude __pycache__ --exclude '*.pyc' --exclude wandb --exclude output --exclude outputs /home/xinjie/FuturePhysTwin/ vendor/demo_runtime/FuturePhysTwin/
 rsync -a --delete --exclude .git --exclude __pycache__ --exclude '*.pyc' --exclude output --exclude outputs /home/xinjie/Fast-FoundationStereo/ vendor/demo_runtime/Fast-FoundationStereo/
 rsync -a --delete --exclude .git --exclude __pycache__ --exclude '*.pyc' /home/xinjie/proj-QQTT-v2/external/tapnet/ vendor/demo_runtime/tapnet/
+rsync -aL --delete /home/xinjie/.cache/huggingface/hub/models--yonigozlan--EdgeTAM-hf/snapshots/c266ce53b3fc00f0f495b583f6a116c4e57f53bb/ vendor/demo_runtime/EdgeTAM-hf/
 ```
 
 Expected: destination trees contain code and weights but no `.git` directories.
@@ -54,7 +55,7 @@ Expected: checkpoint file exists at the repo-local path.
 Run:
 
 ```bash
-du -sh vendor/demo_runtime/sam-3d-objects vendor/demo_runtime/FuturePhysTwin vendor/demo_runtime/Fast-FoundationStereo vendor/demo_runtime/tapnet vendor/demo_runtime/checkpoints/tapnextpp/tapnextpp_ckpt.pt
+du -sh vendor/demo_runtime/sam-3d-objects vendor/demo_runtime/FuturePhysTwin vendor/demo_runtime/Fast-FoundationStereo vendor/demo_runtime/tapnet vendor/demo_runtime/EdgeTAM-hf vendor/demo_runtime/checkpoints/tapnextpp/tapnextpp_ckpt.pt
 ```
 
 Expected: sizes are recorded in `docs/generated/demo4_repo_local_runtime_assets.md`.
@@ -99,9 +100,11 @@ DEFAULT_FFS_MODEL_PATH = DEFAULT_FFS_REPO / "weights" / DEFAULT_FFS_MODEL_NAME /
 Change:
 
 ```python
-DEFAULT_TAPNET_REPO_DIR = REPO_ROOT / "vendor" / "demo_runtime" / "tapnet"
+DEFAULT_MODEL_ID = str(Path("vendor") / "demo_runtime" / "EdgeTAM-hf")
+DEFAULT_RUNTIME_ASSET_ROOT = Path("vendor") / "demo_runtime"
+DEFAULT_TAPNET_REPO_DIR = DEFAULT_RUNTIME_ASSET_ROOT / "tapnet"
 DEFAULT_TAPNEXTPP_CHECKPOINT = (
-    REPO_ROOT / "vendor" / "demo_runtime" / "checkpoints" / "tapnextpp" / "tapnextpp_ckpt.pt"
+    DEFAULT_RUNTIME_ASSET_ROOT / "checkpoints" / "tapnextpp" / "tapnextpp_ckpt.pt"
 )
 ```
 

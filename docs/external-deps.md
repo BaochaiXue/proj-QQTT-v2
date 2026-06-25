@@ -30,9 +30,10 @@ those copies.
 
 - Runtime role:
   - optional single-camera mask propagation in demo workflows
-- Demo runtime defaults should reference repo-local checkouts. External
-  checkouts may still be used as refresh sources and should be documented in
-  validation notes.
+- Default repo-local HF snapshot copy:
+  - `vendor/demo_runtime/EdgeTAM-hf`
+- External cache/source snapshots may still be used to refresh this local copy
+  and should be documented in validation notes.
 
 ## SAM3D Shape Prior Warmup
 

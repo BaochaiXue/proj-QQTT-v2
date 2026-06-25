@@ -125,7 +125,7 @@ from qqtt.tracking.backends.point_tracker_adapter import (  # noqa: E402
 from qqtt.tracking.sampling import PHYSTWIN_DENSE_QUERY_POINTS, sample_phystwin_dense  # noqa: E402
 
 
-DEFAULT_MODEL_ID = "yonigozlan/EdgeTAM-hf"
+DEFAULT_MODEL_ID = str(Path("vendor") / "demo_runtime" / "EdgeTAM-hf")
 DEFAULT_PROFILE = "848x480"
 DEFAULT_FPS = 60
 DEFAULT_DEVICE = "cuda"

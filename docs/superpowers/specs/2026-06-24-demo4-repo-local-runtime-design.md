@@ -30,6 +30,7 @@ vendor/demo_runtime/
   FuturePhysTwin/
   Fast-FoundationStereo/
   tapnet/
+  EdgeTAM-hf/
   checkpoints/tapnextpp/tapnextpp_ckpt.pt
 ```
 
@@ -56,6 +57,7 @@ The following defaults must be repo-local:
   - FFS model path under that repo
   - FFS subprocess Python default: relative `python`, not a user-home absolute
 - `qqtt/demo/realtime_masked_edgetam_pcd.py`
+  - EdgeTAM HF model: `vendor/demo_runtime/EdgeTAM-hf`
   - TAPNext++ repo: `vendor/demo_runtime/tapnet`
   - TAPNext++ checkpoint: `vendor/demo_runtime/checkpoints/tapnextpp/tapnextpp_ckpt.pt`
   - no parent-repo fallback

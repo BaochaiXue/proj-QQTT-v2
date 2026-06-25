@@ -21,16 +21,25 @@ The user explicitly approved continuing without design approval prompts.
 
 ## Checklist
 
-- [ ] Confirm branch and upstream workflow.
-- [ ] Copy external runtime assets into `vendor/demo_runtime/`.
-- [ ] Remove absolute or parent-repo fallback defaults from Demo 4, shape-prior
+- [x] Confirm branch and upstream workflow.
+- [x] Copy external runtime assets into `vendor/demo_runtime/`.
+- [x] Remove absolute or parent-repo fallback defaults from Demo 4, shape-prior
       worker, FFS defaults, and TAPNext++ defaults.
-- [ ] Update tests that assert old defaults.
-- [ ] Update Demo 4, Demo 3.2, external dependency, and hardware validation
+- [x] Update tests that assert old defaults.
+- [x] Update Demo 4, Demo 3.2, external dependency, and hardware validation
       docs.
-- [ ] Run focused parser/path tests.
-- [ ] Run only Demo 4 fake-live as final live validation.
-- [ ] Record copied asset state and validation outcomes under `docs/generated/`.
+- [x] Run focused parser/path tests.
+- [x] Run only Demo 4 fake-live as final live validation.
+- [x] Record copied asset state and validation outcomes under `docs/generated/`.
+
+## Validation Outcome
+
+- Focused tests passed: `89 tests`, `OK`.
+- Demo 4 fake-live launched with repo-local relative defaults.
+- GPU validation could not publish a chunk because this session has no CUDA
+  device access (`torch.cuda.is_available() == False`, `/dev/nvidia*` absent).
+- CPU fallback confirmed EdgeTAM loads from `vendor/demo_runtime/EdgeTAM-hf`
+  and then stops because upstream SAM 3.1 requires CUDA.
 
 ## Execution Notes
 

@@ -131,11 +131,13 @@ class Sam3dOnlyCliContractTest(unittest.TestCase):
         self.assertTrue(shape_prior_server.DEFAULT_FUTUREPHYSTWIN_ROOT.is_relative_to(vendor_root))
         self.assertTrue(masked_demo.DEFAULT_TAPNET_REPO_DIR.is_relative_to(vendor_root))
         self.assertTrue(masked_demo.DEFAULT_TAPNEXTPP_CHECKPOINT.is_relative_to(vendor_root))
+        self.assertTrue(Path(masked_demo.DEFAULT_MODEL_ID).is_relative_to(vendor_root))
         self.assertTrue(DEFAULT_FFS_REPO.is_relative_to(vendor_root))
         self.assertFalse(shape_prior_server.DEFAULT_SAM3D_ROOT.is_absolute())
         self.assertFalse(shape_prior_server.DEFAULT_FUTUREPHYSTWIN_ROOT.is_absolute())
         self.assertFalse(masked_demo.DEFAULT_TAPNET_REPO_DIR.is_absolute())
         self.assertFalse(masked_demo.DEFAULT_TAPNEXTPP_CHECKPOINT.is_absolute())
+        self.assertFalse(Path(masked_demo.DEFAULT_MODEL_ID).is_absolute())
         self.assertFalse(DEFAULT_FFS_REPO.is_absolute())
         self.assertEqual(DEFAULT_FFS_ENV_PYTHON, Path("python"))
 
