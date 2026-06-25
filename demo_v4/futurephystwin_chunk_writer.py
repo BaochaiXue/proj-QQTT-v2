@@ -312,7 +312,7 @@ def build_topology_payload(
             "controller_candidate_query_ids",
             track_process_data.get("controller_query_indices"),
         ),
-        default=np.arange(controller_count, dtype=np.int64),
+        default=np.arange(object_count, object_count + controller_count, dtype=np.int64),
     )
 
     if object_sample_query_ids is None:
@@ -477,8 +477,13 @@ def _final_data_payload(
         if controller_fps_indices.shape[0] != controller_count:
             controller_fps_indices = np.arange(controller_count, dtype=np.int64)
         candidate_count = int(max(controller_count, int(np.max(controller_fps_indices)) + 1 if controller_fps_indices.size else 0))
+        default_controller_query_indices = np.arange(
+            object_points.shape[1],
+            object_points.shape[1] + candidate_count,
+            dtype=np.int64,
+        )
         controller_query_indices = np.asarray(
-            track_process.get("controller_query_indices", np.arange(candidate_count, dtype=np.int64)),
+            track_process.get("controller_query_indices", default_controller_query_indices),
             dtype=np.int64,
         ).reshape(-1)
         controller_selected_query_ids = np.full((controller_count,), -1, dtype=np.int64)

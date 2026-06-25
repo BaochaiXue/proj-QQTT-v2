@@ -88,7 +88,7 @@ object/controller spring topology once from the initial frame.
   implementation.
 - Focused Demo v4/strict product/realtime online topology tests pass after
   implementation:
-  `70 passed`.
+  `71 passed`.
 - Demo v4 generated two online chunks and an aggregate static case with stable
   `topology_hash=3aee47f209b927f0e088ac3cc89c3949136556b2e5a5ed143e2e8644b936b16a`.
 - Aggregate `final_data.pkl` has `object_points=(50, 2005, 3)`,

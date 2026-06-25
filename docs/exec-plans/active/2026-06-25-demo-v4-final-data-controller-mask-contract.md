@@ -40,6 +40,6 @@ the final artifact, the mask no longer indexes anything in that file.
 - Incorporated into the Demo v4 stable topology payload contract work.
 - Focused Demo v4/strict product/realtime online topology tests pass with this
   contract:
-  `70 passed`.
+  `71 passed`.
 - Smoke validation passes:
   `302 tests OK`, `smoke checks passed`.

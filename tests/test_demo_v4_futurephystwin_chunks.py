@@ -138,6 +138,19 @@ def _assert_topology_contract(
 
 
 class FuturePhysTwinChunkWriterTest(unittest.TestCase):
+    def test_topology_fallback_offsets_controller_query_ids_after_object_ids(self) -> None:
+        track_process = {
+            "object_points": np.zeros((2, 3, 3), dtype=np.float32),
+            "controller_points": np.zeros((2, 4, 3), dtype=np.float32),
+            "controller_fps_indices": np.arange(4, dtype=np.int64),
+        }
+
+        topology = chunk_writer.build_topology_payload(track_process)
+
+        np.testing.assert_array_equal(topology["query_ids"], np.arange(7, dtype=np.int64))
+        np.testing.assert_array_equal(topology["object_sample_query_ids"], np.arange(3, dtype=np.int64))
+        np.testing.assert_array_equal(topology["controller_sample_query_ids"], np.arange(3, 7, dtype=np.int64))
+
     def test_demo_v4_parser_defaults_to_fake_live_35_frame_chunks_and_shape_prior(self) -> None:
         args = build_parser().parse_args(["--dry-run"])
 
