@@ -111,16 +111,16 @@ def _futurephystwin_chunk(frame_count: int = 3) -> FuturePhysTwinChunk:
 
 
 class FuturePhysTwinChunkWriterTest(unittest.TestCase):
-    def test_demo_v4_parser_defaults_to_fake_live_25_frame_chunks_and_shape_prior(self) -> None:
+    def test_demo_v4_parser_defaults_to_fake_live_35_frame_chunks_and_shape_prior(self) -> None:
         args = build_parser().parse_args(["--dry-run"])
 
         self.assertEqual(args.input_source, "fake-live")
         self.assertEqual(args.replay_fps, 5.0)
         self.assertIsNone(args.demo32_source_replay_fps)
         self.assertEqual(resolve_demo32_source_replay_fps(args), 5.0)
-        self.assertEqual(args.chunk_seconds, 5.0)
+        self.assertEqual(args.chunk_seconds, 7.0)
         self.assertIsNone(args.chunk_frame_count)
-        self.assertEqual(resolve_chunk_frame_count(args), 25)
+        self.assertEqual(resolve_chunk_frame_count(args), 35)
         self.assertTrue(args.shape_prior_warmup)
         self.assertEqual(args.depth_backend, "native-realsense")
         self.assertIsNone(args.max_chunks)
@@ -384,7 +384,7 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(resolve_chunk_frame_count(args), 25)
+        self.assertEqual(resolve_chunk_frame_count(args), 35)
         self.assertEqual(resolve_demo32_source_replay_fps(args), 5.2)
         self.assertEqual(_contract(args)["replay_fps"], 5.0)
         self.assertEqual(_contract(args)["demo32_source_replay_fps"], 5.2)
@@ -399,7 +399,7 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
         )
         self.assertEqual(command[command.index("--replay-fps") + 1], "5.2")
         self.assertEqual(command[command.index("--lossless-input-fps") + 1], "5.2")
-        self.assertEqual(command[command.index("--duration-s") + 1], "15.423")
+        self.assertEqual(command[command.index("--duration-s") + 1], "21.192")
 
     def test_demo_v4_chunk_frame_count_override_keeps_valid_time_contract(self) -> None:
         args = build_parser().parse_args(

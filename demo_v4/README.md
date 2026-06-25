@@ -43,7 +43,7 @@ This default path uses:
 input source:        fake-live
 depth backend:       native-realsense
 output FPS:          5
-chunk length:        5 seconds = 25 frames
+chunk length:        7 seconds = 35 frames
 shape prior:         enabled, remote worker
 Demo 3.2 GPU:        CUDA_VISIBLE_DEVICES=0
 shape-prior GPU:     cuda:1
@@ -69,7 +69,7 @@ Demo 3.2 fake-live camera
 ```
 
 Demo v4 derives the frame count from time: `round(--replay-fps *
---chunk-seconds)`. The default is `round(5 * 5) = 25` frames. Prefer changing
+--chunk-seconds)`. The default is `round(5 * 7) = 35` frames. Prefer changing
 `--chunk-seconds` for operator runs; use `--chunk-frame-count` only when you
 need an explicit test/debug override.
 
@@ -294,7 +294,7 @@ python demo_v4/realtime_futurephystwin_chunks.py --dry-run
 | `--input-source {fake-live,live}` | `fake-live` | Choose replay-like fake camera input or live camera input for Demo 3.2. |
 | `--replay-fps` | `5.0` | Logical FPS written to chunk `metadata.json` and used for chunk window math. |
 | `--demo32-source-replay-fps` | unset | Optional Demo 3.2 fake-live pacing FPS. Leave unset for normal runs; use values like `5.2` only for cadence stress tests. |
-| `--chunk-seconds` | `5.0` | Preferred way to change chunk duration. |
+| `--chunk-seconds` | `7.0` | Preferred way to change chunk duration. |
 | `--chunk-frame-count` | unset | Explicit frame-count override. Still requires positive `--chunk-seconds` and `--replay-fps`. |
 | `--max-chunks` | unset | Stop after N chunks for debug runs. Omit for a full source run. |
 | `--capture-extra-seconds` | `10.0` | Extra Demo 3.2 runtime for max-chunk runs so startup/warmup latency does not cut capture short. |
@@ -424,9 +424,9 @@ READY
 ```
 
 For the aggregate online-primary case, `<frame>` is the global received-frame
-index within Demo v4's published stream. For example, with 25-frame chunks,
-`chunk_0001` writes `color/0/0.png` through `color/0/24.png`, and `chunk_0002`
-continues at `color/0/25.png`. Optional `pcd` and `depth` frame files use the
+index within Demo v4's published stream. For example, with 35-frame chunks,
+`chunk_0001` writes `color/0/0.png` through `color/0/34.png`, and `chunk_0002`
+continues at `color/0/35.png`. Optional `pcd` and `depth` frame files use the
 same received-frame index.
 
 `final_data.pkl` contains:

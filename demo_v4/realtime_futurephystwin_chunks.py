@@ -27,7 +27,7 @@ from demo_v4.online_case_aggregate import migrate_legacy_online_static_case
 DEFAULT_FUTUREPHYSTWIN_BASE_PATH = Path("result/demo_v4/futurephystwin_chunks")
 DEFAULT_INPUT_SOURCE = "fake-live"
 DEFAULT_REPLAY_FPS = 5.0
-DEFAULT_CHUNK_SECONDS = 5.0
+DEFAULT_CHUNK_SECONDS = 7.0
 DEFAULT_CHUNK_POLL_INTERVAL_S = 0.001
 DEFAULT_DEMO32_LOSSLESS_INPUT_FPS = 5.0
 DEFAULT_CASE_PREFIX = "demo_v4"

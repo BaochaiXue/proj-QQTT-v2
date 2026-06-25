@@ -85,7 +85,7 @@ if __name__ == "__main__":
     parser.add_argument("--train_frame", type=int, default=None)
     parser.add_argument("--iterations", type=int, default=None)
     parser.add_argument("--batch_size", type=int, default=1)
-    parser.add_argument("--segment_len", type=int, default=32)
+    parser.add_argument("--segment_len", type=int, default=35)
     parser.add_argument("--segment_stride", type=int, default=16)
     parser.add_argument("--poll_sec", type=float, default=1.0)
     parser.add_argument("--recent_window_count", type=int, default=8)
