@@ -9,7 +9,10 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from demo_v5.pickle_compat import dump_pickle_legacy_numpy
+from demo_v5.atomic_io import (
+    atomic_json_dump as _atomic_json_dump,
+    atomic_pickle_dump as _atomic_pickle_dump,
+)
 from demo_v5.futurephystwin_chunk_writer import (
     FUTUREPHYSTWIN_FINAL_DATA_KEYS,
     FUTUREPHYSTWIN_TOPOLOGY_KEYS,
@@ -54,6 +57,7 @@ METADATA_INVARIANT_KEYS = (
     "camera_count",
     "demo_version",
     "runtime_product_name",
+    "runtime_contract",
     "reference_pipeline",
     "depth_backend",
     "depth_source_internal",
@@ -75,29 +79,6 @@ GENERATED_DIRS = (
     "pcd",
     "depth",
 )
-
-
-def _atomic_pickle_dump(obj: Any, path: str | Path) -> None:
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = target.with_name(target.name + ".tmp")
-    with tmp_path.open("wb") as handle:
-        dump_pickle_legacy_numpy(obj, handle)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp_path, target)
-
-
-def _atomic_json_dump(obj: Mapping[str, Any], path: str | Path) -> None:
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = target.with_name(target.name + ".tmp")
-    with tmp_path.open("w", encoding="utf-8") as handle:
-        json.dump(dict(obj), handle, indent=2, sort_keys=True)
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp_path, target)
 
 
 def _load_pickle(path: Path) -> Any:

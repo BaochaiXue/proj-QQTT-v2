@@ -1,31 +1,19 @@
 from __future__ import annotations
 
-import json
-import os
 from pathlib import Path
 import pickle
 from typing import Any, Mapping, Sequence
 
 import numpy as np
 
+from demo_v5.atomic_io import atomic_json_dump, atomic_pickle_dump
+from demo_v5.data_keys import TIME_KEYS
 from demo_v5.futurephystwin_chunk_writer import (
+    DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
     FUTUREPHYSTWIN_TOPOLOGY_KEYS,
     build_topology_payload,
 )
 from demo_v5.online_case_aggregate import OnlineAggregateCaseWriter
-from demo_v5.pickle_compat import dump_pickle_legacy_numpy
-
-
-TIME_KEYS = (
-    "object_points",
-    "object_colors",
-    "object_visibilities",
-    "object_motions_valid",
-    "controller_points",
-    "asap_object_points_filled",
-    "asap_surface_points",
-    "asap_interior_points",
-)
 
 STATIC_KEYS = (
     "surface_points",
@@ -41,29 +29,6 @@ FINAL_DATA_STATIC_KEYS = (
     "object_sample_query_ids",
     *FUTUREPHYSTWIN_TOPOLOGY_KEYS,
 )
-
-
-def atomic_pickle_dump(obj: Any, path: str | Path) -> None:
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = target.with_name(target.name + ".tmp")
-    with tmp_path.open("wb") as handle:
-        dump_pickle_legacy_numpy(obj, handle)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp_path, target)
-
-
-def atomic_json_dump(obj: Mapping[str, Any], path: str | Path) -> None:
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = target.with_name(target.name + ".tmp")
-    with tmp_path.open("w", encoding="utf-8") as handle:
-        json.dump(dict(obj), handle, indent=2, sort_keys=True)
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp_path, target)
 
 
 def _infer_frame_count(data: Mapping[str, Any]) -> int:
@@ -318,6 +283,7 @@ class DemoV5OnlineOutputWriter:
             "case_name": self.case_name,
             "demo_version": "demo_v5",
             "runtime_product_name": "demo_v5_realtime_camera_final_data",
+            "runtime_contract": DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
             "reference_pipeline": "data_process_sam3d",
             "online_dir": str(self.online_dir),
             "chunk_size": int(self.chunk_size),
@@ -337,6 +303,7 @@ class DemoV5OnlineOutputWriter:
             "case_name": self.case_name,
             "demo_version": "demo_v5",
             "runtime_product_name": "demo_v5_realtime_camera_final_data",
+            "runtime_contract": DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
             "reference_pipeline": "data_process_sam3d",
             "status": str(status),
             "chunk_size": int(self.chunk_size),

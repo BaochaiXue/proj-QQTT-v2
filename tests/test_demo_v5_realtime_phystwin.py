@@ -12,7 +12,12 @@ from unittest import mock
 import numpy as np
 
 from demo_v5 import headless_chunk_bridge
-from demo_v5.futurephystwin_chunk_writer import FuturePhysTwinChunk, write_futurephystwin_chunk_case
+from demo_v5.futurephystwin_chunk_writer import (
+    FuturePhysTwinChunk,
+    build_topology_payload,
+    validate_futurephystwin_case,
+    write_futurephystwin_chunk_case,
+)
 from demo_v5.online_case_aggregate import build_aggregate_case_from_chunk_cases
 import demo_v5.realtime_futurephystwin_chunks as demo_v5
 
@@ -108,9 +113,11 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
 
     def test_demo_v5_does_not_keep_shadow_quality_modules(self) -> None:
         shadow_modules = {
+            "anchor_recovery.py",
             "contracts.py",
             "controller_selection.py",
             "fps_sampling.py",
+            "knn_recovery.py",
             "motion_filter.py",
             "object_sampling.py",
             "session_topology.py",
@@ -238,9 +245,84 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
             self.assertEqual(aggregate_metadata["demo_version"], "demo_v5")
             self.assertEqual(aggregate_metadata["runtime_product_name"], "demo_v5_realtime_camera_final_data")
             self.assertEqual(aggregate_metadata["reference_pipeline"], "data_process_sam3d")
+            self.assertEqual(aggregate_metadata["runtime_contract"], "data_process_sam3d_realtime_final_data_v1")
             with (aggregate_dir / "final_data.pkl").open("rb") as handle:
                 final_data = pickle.load(handle)
             self.assertEqual(final_data["object_points"].shape[0], 4)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_validate_rejects_object_sample_ids_with_controller_semantics(self) -> None:
+        root = Path("result/test_demo_v5_unit_sample_semantics_object")
+        shutil.rmtree(root, ignore_errors=True)
+        try:
+            case_dir = root / "cases" / "demo_v5_semantics_chunk_0001"
+            write_futurephystwin_chunk_case(
+                root / "cases",
+                "demo_v5_semantics_chunk_0001",
+                _tiny_futurephystwin_chunk(chunk_index=0),
+            )
+            with (case_dir / "final_data.pkl").open("rb") as handle:
+                final_data = pickle.load(handle)
+            with (case_dir / "track_process_data.pkl").open("rb") as handle:
+                track_process = pickle.load(handle)
+            final_data["object_sample_query_ids"] = np.asarray(
+                final_data["object_sample_query_ids"],
+                dtype=np.int64,
+            ).copy()
+            final_data["object_sample_query_ids"][0] = int(final_data["controller_sample_query_ids"][0])
+            topology = build_topology_payload(
+                final_data,
+                object_sample_query_ids=final_data["object_sample_query_ids"],
+                controller_sample_query_ids=final_data["controller_sample_query_ids"],
+            )
+            for payload in (final_data, track_process):
+                for key, value in topology.items():
+                    payload[key] = value
+            with (case_dir / "final_data.pkl").open("wb") as handle:
+                pickle.dump(final_data, handle)
+            with (case_dir / "track_process_data.pkl").open("wb") as handle:
+                pickle.dump(track_process, handle)
+
+            with self.assertRaisesRegex(ValueError, "object_sample_query_ids.*object semantic"):
+                validate_futurephystwin_case(case_dir)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_validate_rejects_controller_sample_ids_with_object_semantics(self) -> None:
+        root = Path("result/test_demo_v5_unit_sample_semantics_controller")
+        shutil.rmtree(root, ignore_errors=True)
+        try:
+            case_dir = root / "cases" / "demo_v5_semantics_chunk_0001"
+            write_futurephystwin_chunk_case(
+                root / "cases",
+                "demo_v5_semantics_chunk_0001",
+                _tiny_futurephystwin_chunk(chunk_index=0),
+            )
+            with (case_dir / "final_data.pkl").open("rb") as handle:
+                final_data = pickle.load(handle)
+            with (case_dir / "track_process_data.pkl").open("rb") as handle:
+                track_process = pickle.load(handle)
+            final_data["controller_sample_query_ids"] = np.asarray(
+                final_data["controller_sample_query_ids"],
+                dtype=np.int64,
+            ).copy()
+            final_data["controller_sample_query_ids"][0] = int(final_data["object_sample_query_ids"][0])
+            topology = build_topology_payload(
+                final_data,
+                object_sample_query_ids=final_data["object_sample_query_ids"],
+                controller_sample_query_ids=final_data["controller_sample_query_ids"],
+            )
+            for payload in (final_data, track_process):
+                for key, value in topology.items():
+                    payload[key] = value
+            with (case_dir / "final_data.pkl").open("wb") as handle:
+                pickle.dump(final_data, handle)
+            with (case_dir / "track_process_data.pkl").open("wb") as handle:
+                pickle.dump(track_process, handle)
+
+            with self.assertRaisesRegex(ValueError, "controller_sample_query_ids.*controller semantic"):
+                validate_futurephystwin_case(case_dir)
         finally:
             shutil.rmtree(root, ignore_errors=True)
 

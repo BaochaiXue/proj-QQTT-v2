@@ -18,6 +18,7 @@ from demo_v5.pickle_compat import dump_pickle_legacy_numpy
 
 
 FUTUREPHYSTWIN_TOPOLOGY_VERSION = "demo_v4_session_topology_v1"
+DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION = "data_process_sam3d_realtime_final_data_v1"
 FUTUREPHYSTWIN_TOPOLOGY_KEYS = (
     "topology_version",
     "topology_hash",
@@ -79,6 +80,7 @@ FUTUREPHYSTWIN_TRACK_PROCESS_TRACE_KEYS = (
 )
 
 DATA_PROCESS_SAM3D_METRICS = {
+    "runtime_contract": DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
     "mask_radius_outlier_filter_source": "data_process_sam3d/data_process_mask.py::process_pcd_mask",
     "mask_radius_outlier_radius_m": 0.01,
     "mask_radius_outlier_nb_points": 40,
@@ -571,6 +573,7 @@ def _metadata_payload(chunk: FuturePhysTwinChunk, frame_count: int, width_height
         "camera_count": 1,
         "demo_version": "demo_v5",
         "runtime_product_name": "demo_v5_realtime_camera_final_data",
+        "runtime_contract": DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
         "reference_pipeline": "data_process_sam3d",
         "depth_backend": str(chunk.depth_backend),
         "depth_source_internal": str(chunk.depth_source_internal),
@@ -676,6 +679,8 @@ def write_futurephystwin_chunk_case(
             "interior_point_count": int(final_data["interior_points"].shape[0]),
             "depth_backend": str(chunk.depth_backend),
             "depth_source_internal": str(chunk.depth_source_internal),
+            "runtime_contract": DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
+            "chunk_continuity_contract": "stable_topology_hash_and_contiguous_frames",
             "data_process_sam3d_metrics": dict(DATA_PROCESS_SAM3D_METRICS),
             "publish_contract": "ready_marker_atomic_rename",
             "final_data_written_wall_s": float(final_data_written_wall_s),
@@ -778,9 +783,45 @@ def _validate_topology_payload(payload: Mapping[str, Any], *, label: str) -> Non
         raise ValueError(f"{label} query_semantic_labels must contain only 0, 1, or 2")
     if _scalar_str(payload["topology_version"]) != FUTUREPHYSTWIN_TOPOLOGY_VERSION:
         raise ValueError(f"{label} unsupported topology_version")
+    _validate_topology_sample_semantics(payload, label=label)
     expected_hash = _topology_hash(payload)
     if _scalar_str(payload["topology_hash"]) != expected_hash:
         raise ValueError(f"{label} topology_hash does not match topology identity fields")
+
+
+def _validate_topology_sample_semantics(payload: Mapping[str, Any], *, label: str) -> None:
+    query_ids = np.asarray(payload["query_ids"], dtype=np.int64).reshape(-1)
+    query_semantic_labels = np.asarray(payload["query_semantic_labels"], dtype=np.int8).reshape(-1)
+    unique_query_ids, counts = np.unique(query_ids, return_counts=True)
+    duplicate_ids = unique_query_ids[counts > 1]
+    if duplicate_ids.size:
+        raise ValueError(f"{label} query_ids must be unique; duplicates={duplicate_ids[:5].tolist()}")
+    label_by_query_id = {
+        int(query_id): int(semantic_label)
+        for query_id, semantic_label in zip(query_ids.tolist(), query_semantic_labels.tolist())
+    }
+
+    def require_sample_semantics(key: str, expected_label: int, semantic_name: str) -> None:
+        sample_ids = np.asarray(payload[key], dtype=np.int64).reshape(-1)
+        if sample_ids.size == 0:
+            return
+        unique_sample_ids, sample_counts = np.unique(sample_ids, return_counts=True)
+        duplicate_sample_ids = unique_sample_ids[sample_counts > 1]
+        if duplicate_sample_ids.size:
+            raise ValueError(f"{label} {key} must be unique; duplicates={duplicate_sample_ids[:5].tolist()}")
+        missing = [int(value) for value in sample_ids.tolist() if int(value) not in label_by_query_id]
+        if missing:
+            raise ValueError(f"{label} {key} contains ids not present in query_ids: {missing[:5]}")
+        wrong = [
+            int(value)
+            for value in sample_ids.tolist()
+            if label_by_query_id[int(value)] != int(expected_label)
+        ]
+        if wrong:
+            raise ValueError(f"{label} {key} must reference {semantic_name} semantic queries; wrong_ids={wrong[:5]}")
+
+    require_sample_semantics("object_sample_query_ids", int(1), "object")
+    require_sample_semantics("controller_sample_query_ids", int(2), "controller")
 
 
 def _topology_values_equal(left: Any, right: Any) -> bool:
@@ -909,6 +950,7 @@ def validate_futurephystwin_case(case_dir: str | Path, *, require_ready: bool = 
 
 __all__ = [
     "FUTUREPHYSTWIN_FINAL_DATA_KEYS",
+    "DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION",
     "FUTUREPHYSTWIN_TOPOLOGY_KEYS",
     "FUTUREPHYSTWIN_TOPOLOGY_VERSION",
     "FUTUREPHYSTWIN_TRACK_PROCESS_KEYS",

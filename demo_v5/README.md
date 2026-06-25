@@ -217,6 +217,27 @@ topology_hash
 The topology version remains `demo_v4_session_topology_v1` because
 `realtime_phystwin` already validates that wire contract.
 
+Every Demo v5 case metadata also carries:
+
+```text
+runtime_contract = data_process_sam3d_realtime_final_data_v1
+```
+
+That contract is enforced by the active writer/validator, not by a side helper:
+
+```text
+object_sample_query_ids     must reference query_semantic_labels == object
+controller_sample_query_ids must reference query_semantic_labels == controller
+topology_hash               is recomputed from query ids, semantic labels, and sample ids
+chunk continuity            requires stable topology_hash and contiguous online frame ranges
+```
+
+This keeps Demo v5 final_data semantically aligned with
+`data_process_sam3d`: first-frame semantic ownership, per-frame mask/depth
+gating, SAM3D-style neighbor motion filtering, 5 mm object volume sampling,
+controller FPS handles, and shape-prior surface/interior points are the data
+product consumed by `realtime_phystwin`.
+
 ## Common Variants
 
 Use external or already-running SAM3D worker:
