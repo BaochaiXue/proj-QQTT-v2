@@ -20,6 +20,8 @@ aligned-case data product.
 - `demo_v3_1/realtime_single_camera_realsense_masked_pcd.py`
 - `demo_v3_2/realtime_single_camera_ffs_masked_pcd.py`
 - `demo_v3_3/realtime_single_camera_ffs_masked_pcd.py`
+- `demo_v4/realtime_futurephystwin_chunks.py`
+- `demo_v5/realtime_futurephystwin_chunks.py`
 
 ## Shared Packages
 
@@ -80,6 +82,11 @@ aligned-case data product.
   `world_z_stats.jsonl` for offline RGB overlay sweeps.
 - `services/ffs_remote/`: single-camera remote FFS depth request/response
   protocol and server/client utilities.
+- `demo_v4/`: isolated FuturePhysTwin-compatible chunk writer for Demo 3.2
+  realtime/headless artifacts.
+- `demo_v5/`: isolated continuous online optimization orchestration that
+  reuses the Demo v4-compatible chunk contract and starts repo-local
+  `realtime_phystwin` as a single continuous online consumer.
 
 ## Dependency Flow
 
@@ -142,7 +149,8 @@ guards that formal runtime code does not import those experiment packages.
 
 ## Removed Historical Surface
 
-This branch no longer carries old three-camera demo folders, dual-GPU demo
-runtimes, tracker backend registries, staged multi-view demo protocols, or
-batch-size-specific demo helper scripts. Use `main` for the protected
-multi-camera baseline.
+This branch no longer carries old three-camera demo folders, historical
+dual-GPU demo runtimes, tracker backend registries, staged multi-view demo
+protocols, or batch-size-specific demo helper scripts. The Demo v5 warmup/online
+optimization GPU split is an explicit isolated single-camera diagnostic
+carveout. Use `main` for the protected multi-camera baseline.

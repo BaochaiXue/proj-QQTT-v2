@@ -1844,6 +1844,20 @@ def depth_backend_label(args: argparse.Namespace) -> str:
     return str(args.depth_source)
 
 
+def runtime_metadata_identity(args: argparse.Namespace) -> dict[str, str]:
+    payload: dict[str, str] = {}
+    product_name = getattr(args, "runtime_product_name", None)
+    if product_name is not None and str(product_name).strip():
+        payload["runtime_product_name"] = str(product_name).strip()
+    demo_version = getattr(args, "metadata_demo_version", None)
+    if demo_version is not None and str(demo_version).strip():
+        payload["demo_version"] = str(demo_version).strip()
+    reference_pipeline = getattr(args, "metadata_reference_pipeline", None)
+    if reference_pipeline is not None and str(reference_pipeline).strip():
+        payload["reference_pipeline"] = str(reference_pipeline).strip()
+    return payload
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -2061,8 +2075,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--demo-visual-mode",
         choices=DEMO_VISUAL_MODES,
         default=DEFAULT_DEMO_VISUAL_MODE,
-        help="Visual presentation hint forwarded from Demo 3.2 wrappers.",
+        help="Visual presentation hint forwarded from single-camera wrappers.",
     )
+    parser.add_argument("--runtime-product-name", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--metadata-demo-version", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--metadata-reference-pipeline", default=None, help=argparse.SUPPRESS)
     parser.add_argument(
         "--view-mode",
         choices=VIEW_MODES,
@@ -4475,6 +4492,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             FAKE_LIVE_FRAME_SELECTION_POLICY if str(self.args.input_source) == INPUT_SOURCE_FAKE_LIVE else None
         )
         return {
+            **runtime_metadata_identity(self.args),
             "input_source": str(self.args.input_source),
             "recording_case": recording_case,
             "replay_fps": replay_fps,
@@ -5229,6 +5247,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         model, compile_metadata = hf_stream._apply_compile_mode(model, self.args.compile_mode)
         processor = hf_stream.Sam2VideoProcessor.from_pretrained(self.args.model_id)
         metadata = {
+            **runtime_metadata_identity(self.args),
             "edge_model": self.args.model_id,
             "demo_preset": self.args.demo_preset,
             "compile_mode": self.args.compile_mode,

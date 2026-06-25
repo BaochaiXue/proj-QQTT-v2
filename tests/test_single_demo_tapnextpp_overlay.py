@@ -1248,6 +1248,12 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
                 "--pcd-filter-preset",
                 "original",
                 "--headless-prepared-only",
+                "--runtime-product-name",
+                "demo_v5_realtime_camera_final_data",
+                "--metadata-demo-version",
+                "demo_v5",
+                "--metadata-reference-pipeline",
+                "data_process_sam3d",
             ]
         )
         demo.apply_demo_preset(args)
@@ -1262,6 +1268,9 @@ class SingleDemoTapNextOverlayTest(unittest.TestCase):
         metadata = runtime._build_headless_capture_metadata()
 
         self.assertTrue(metadata["headless_prepared_only"])
+        self.assertEqual(metadata["runtime_product_name"], "demo_v5_realtime_camera_final_data")
+        self.assertEqual(metadata["demo_version"], "demo_v5")
+        self.assertEqual(metadata["reference_pipeline"], "data_process_sam3d")
 
     def test_same_seq_pairer_holds_later_complete_pair_until_missing_seq_arrives(self) -> None:
         pairer = demo.SameSeqPairer(max_backlog_frames=4)

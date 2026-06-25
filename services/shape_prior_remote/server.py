@@ -54,6 +54,7 @@ DEFAULT_SAM3D_ROOT = DEFAULT_RUNTIME_ASSET_ROOT / "sam-3d-objects"
 DEFAULT_FUTUREPHYSTWIN_ROOT = DEFAULT_RUNTIME_ASSET_ROOT / "FuturePhysTwin"
 DEFAULT_UPSCALER_ROOT = DEFAULT_RUNTIME_ASSET_ROOT / "stable-diffusion-x4-upscaler"
 DEFAULT_UPSCALE_CATEGORY = "stuffed animal"
+DEFAULT_MAX_OBSERVATION_TO_ALIGNED_P95_M = ShapeAlignmentConfig().max_observation_to_aligned_p95_m
 _WARMUP_IMAGE_SIZE = 64
 
 
@@ -240,7 +241,11 @@ def _request_mask_metadata(request: ShapePriorRequest) -> dict[str, int]:
     }
 
 
-def _alignment_config_from_request(request: ShapePriorRequest) -> ShapeAlignmentConfig:
+def _alignment_config_from_request(
+    request: ShapePriorRequest,
+    *,
+    max_observation_to_aligned_p95_m: float | None = None,
+) -> ShapeAlignmentConfig:
     metadata = dict(request.metadata)
     above_direction = str(metadata.get("table_z_above_direction", "negative"))
     if above_direction not in {"positive", "negative"}:
@@ -248,6 +253,11 @@ def _alignment_config_from_request(request: ShapePriorRequest) -> ShapeAlignment
     return ShapeAlignmentConfig(
         table_z_m=float(metadata.get("table_z_m", 0.0)),
         above_direction=above_direction,
+        max_observation_to_aligned_p95_m=(
+            DEFAULT_MAX_OBSERVATION_TO_ALIGNED_P95_M
+            if max_observation_to_aligned_p95_m is None
+            else float(max_observation_to_aligned_p95_m)
+        ),
     )
 
 
@@ -283,6 +293,7 @@ class ShapePriorSam3DWorker:
         max_points: int,
         upscale_category: str = DEFAULT_UPSCALE_CATEGORY,
         echo_observation: bool = False,
+        max_observation_to_aligned_p95_m: float = DEFAULT_MAX_OBSERVATION_TO_ALIGNED_P95_M,
     ) -> None:
         self.sam3d_root = Path(sam3d_root).expanduser()
         self.config = Path(config).expanduser() if config is not None else None
@@ -291,6 +302,7 @@ class ShapePriorSam3DWorker:
         self.max_points = int(max_points)
         self.upscale_category = str(upscale_category)
         self.echo_observation = bool(echo_observation)
+        self.max_observation_to_aligned_p95_m = float(max_observation_to_aligned_p95_m)
         self._inference: Any | None = None
         self._upscaler: Any | None = None
         self._model_load_ms = 0.0
@@ -533,7 +545,10 @@ class ShapePriorSam3DWorker:
                 aligned = align_canonical_shape_to_observation(
                     canonical,
                     observation,
-                    config=_alignment_config_from_request(request),
+                    config=_alignment_config_from_request(
+                        request,
+                        max_observation_to_aligned_p95_m=self.max_observation_to_aligned_p95_m,
+                    ),
                 )
                 align_ms = _elapsed_ms(align_start_s)
                 if not aligned.valid:
@@ -620,7 +635,7 @@ def _prepare_worker_startup(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Long-lived remote SAM3D shape-prior worker for Demo 3.2.")
+    parser = argparse.ArgumentParser(description="Long-lived remote SAM3D shape-prior worker for single-camera demos.")
     parser.add_argument("--bind", default="tcp://0.0.0.0:7100", help="ZeroMQ REP bind endpoint.")
     parser.add_argument("--sam3d-root", type=Path, default=DEFAULT_SAM3D_ROOT)
     parser.add_argument("--futurephystwin-root", type=Path, default=DEFAULT_FUTUREPHYSTWIN_ROOT)
@@ -628,6 +643,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-points", type=int, default=60000)
+    parser.add_argument(
+        "--max-observation-to-aligned-p95-m",
+        type=float,
+        default=DEFAULT_MAX_OBSERVATION_TO_ALIGNED_P95_M,
+        help="Maximum observation-to-aligned shape-prior p95 distance accepted by single-view alignment.",
+    )
     parser.add_argument(
         "--upscale-category",
         default=DEFAULT_UPSCALE_CATEGORY,
@@ -669,6 +690,7 @@ def main(argv: list[str] | None = None) -> int:
         max_points=int(args.max_points),
         upscale_category=str(args.upscale_category),
         echo_observation=bool(args.echo_observation),
+        max_observation_to_aligned_p95_m=float(args.max_observation_to_aligned_p95_m),
     )
     try:
         startup_metadata = _prepare_worker_startup(

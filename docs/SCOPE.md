@@ -40,6 +40,12 @@ remain a diagnostic layer around that data product.
   `color/0`, `mask`, `pcd`, and tracking compatibility files for
   FuturePhysTwin acceptance testing. These chunk cases are demo/diagnostic
   artifacts and are not part of the formal recording/alignment data product.
+- isolated Demo v5 realtime FuturePhysTwin online optimization orchestration
+  under `demo_v5/`; this may consume the Demo v4-compatible online chunk
+  product, keep one continuous aggregate online case, and launch repo-local
+  `realtime_phystwin` zero-order plus first-order optimization as a demo
+  diagnostic. It must use relative paths for portability and must not change
+  the formal recording/alignment data product.
 - manual hardware validation documentation
 - deterministic tests and scope guards for the kept workflow
 
@@ -55,8 +61,8 @@ remain a diagnostic layer around that data product.
   preprocessing carveouts listed above
 - scene / point-cloud modeling beyond aligned packaging and sanctioned realtime demo/diagnostic views
 - `final_data.pkl` outside the isolated Demo v4 FuturePhysTwin chunk
-  preprocessing carveout
-- inverse physics
+  preprocessing carveout and Demo v5 online optimization carveout
+- inverse physics outside the isolated Demo v5 realtime optimization carveout
 - Warp simulation
 - Gaussian Splatting
 - rendering evaluation
@@ -76,10 +82,10 @@ If a file, dependency, CLI, or README section exists only to support downstream
 physics, formal shape priors, tracking backends, reconstruction/rendering
 evaluation, robot control, or simulation/manipulation pipelines, it does not
 belong in this branch unless it is part of an explicitly isolated demo
-diagnostic carveout. The shape-prior exceptions are the isolated Demo 3.2 SAM3D
-warmup diagnostic path and the isolated Demo v4 FuturePhysTwin chunk
-preprocessing path; both are explicitly outside the formal recording/alignment
-data product.
+diagnostic carveout. The current exceptions are the isolated Demo 3.2 SAM3D
+warmup diagnostic path, the isolated Demo v4 FuturePhysTwin chunk preprocessing
+path, and the isolated Demo v5 realtime online optimization path; all are
+explicitly outside the formal recording/alignment data product.
 
 Experiment-only FFS depth diagnostics are allowed only when they consume
 aligned cases, write diagnostic artifacts outside formal case directories, and

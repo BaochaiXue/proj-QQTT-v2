@@ -8,11 +8,11 @@ from typing import Any, Callable, Iterator, Mapping, Sequence
 import numpy as np
 from PIL import Image
 
-from demo_v4.futurephystwin_chunk_writer import (
+from demo_v5.futurephystwin_chunk_writer import (
     FuturePhysTwinChunk,
     write_futurephystwin_chunk_case,
 )
-from demo_v4.online_chunk_output import DemoV4OnlineOutputWriter
+from demo_v5.online_chunk_output import DemoV5OnlineOutputWriter
 from qqtt.demo.pcd_postprocess import _detect_radius_outlier_indices
 from qqtt.demo import phystwin_strict_product as strict
 
@@ -276,6 +276,14 @@ def _has_shape_points(surface_points: np.ndarray, interior_points: np.ndarray) -
     return int(np.asarray(surface_points).reshape(-1, 3).shape[0]) + int(np.asarray(interior_points).reshape(-1, 3).shape[0]) > 0
 
 
+def _shape_prior_terminal_error(metadata: Mapping[str, Any]) -> str | None:
+    status = str(metadata.get("shape_prior_status") or "").strip().lower()
+    if status not in {"failed", "unavailable", "disabled"}:
+        return None
+    detail = metadata.get("shape_prior_error") or metadata.get("error") or "no surface/interior points became ready"
+    return f"shape prior {status}: {detail}"
+
+
 def _read_json_file_stable(
     path: Path,
     *,
@@ -326,9 +334,12 @@ def _shape_points_for_chunk(
         )
         if explicit_points or not bool(require_shape_prior) or _has_shape_points(shape_surface, shape_interior):
             return metadata, shape_surface, shape_interior
+        terminal_error = _shape_prior_terminal_error(metadata)
+        if terminal_error is not None:
+            raise RuntimeError(terminal_error)
         if time.monotonic() >= deadline:
             raise RuntimeError(
-                "shape prior is required for Demo v4 final_data chunks, but no surface/interior points became ready"
+                "shape prior is required for Demo v5 final_data chunks, but no surface/interior points became ready"
             )
         if before_poll is not None:
             before_poll()
@@ -427,9 +438,9 @@ def _track_input_with_session_topology(
         )
         return track_input
     if not np.array_equal(session_query_topology["query_ids"], track_input["query_ids"]):
-        raise ValueError("Demo v4 session query_ids changed across chunks")
+        raise ValueError("Demo v5 session query_ids changed across chunks")
     if not np.array_equal(session_query_topology["query_semantic_labels"], track_input["query_semantic_labels"]):
-        raise ValueError("Demo v4 session query_semantic_labels changed across chunks")
+        raise ValueError("Demo v5 session query_semantic_labels changed across chunks")
     return track_input
 
 
@@ -683,7 +694,7 @@ def _write_chunk_from_rows(
     prepared_frames: Sequence[strict.PreparedPhysTwinFrame | None] | None = None,
     backlog_chunks: Callable[[], int] | None = None,
     write_final_pcd: bool = True,
-    online_writer: DemoV4OnlineOutputWriter | None = None,
+    online_writer: DemoV5OnlineOutputWriter | None = None,
     object_anchor_selector: strict.StreamingObjectAnchorSelector | None = None,
     controller_anchor_selector: strict.StreamingControllerAnchorSelector | None = None,
     session_query_topology: dict[str, np.ndarray] | None = None,
@@ -794,7 +805,7 @@ def write_chunks_from_headless_capture(
     capture_dir: str | Path,
     *,
     base_path: str | Path,
-    case_prefix: str = "demo_v4",
+    case_prefix: str = "demo_v5",
     chunk_frame_count: int = 25,
     fps: int = 5,
     max_chunks: int | None = None,
@@ -822,7 +833,7 @@ def write_chunks_from_headless_capture(
         surface_points=surface_points,
         interior_points=interior_points,
     )
-    serials = metadata.get("serial_numbers") or ["demo-v4-single-camera"]
+    serials = metadata.get("serial_numbers") or ["demo-v5-single-camera"]
     serial_number = str(serials[0])
 
     manifests: list[dict[str, Any]] = []
@@ -835,7 +846,7 @@ def write_chunks_from_headless_capture(
     frames_path = capture / "frames.jsonl"
     online_writer = None
     if bool(write_online_output):
-        online_writer = DemoV4OnlineOutputWriter(
+        online_writer = DemoV5OnlineOutputWriter(
             base_path=base_path,
             case_name=str(online_case_name or case_prefix),
             chunk_size=chunk_size,
@@ -922,7 +933,7 @@ def stream_chunks_from_headless_capture(
     capture_dir: str | Path,
     *,
     base_path: str | Path,
-    case_prefix: str = "demo_v4",
+    case_prefix: str = "demo_v5",
     chunk_frame_count: int = 25,
     fps: int = 5,
     max_chunks: int | None = None,
@@ -949,7 +960,7 @@ def stream_chunks_from_headless_capture(
         capture_finished=capture_finished,
         poll_interval_s=float(poll_interval_s),
     )
-    serials = metadata.get("serial_numbers") or ["demo-v4-single-camera"]
+    serials = metadata.get("serial_numbers") or ["demo-v5-single-camera"]
     serial_number = str(serials[0])
     frames_path = capture / "frames.jsonl"
     manifests: list[dict[str, Any]] = []
@@ -963,7 +974,7 @@ def stream_chunks_from_headless_capture(
     wall_time_origin_s = time.monotonic()
     online_writer = None
     if bool(write_online_output):
-        online_writer = DemoV4OnlineOutputWriter(
+        online_writer = DemoV5OnlineOutputWriter(
             base_path=base_path,
             case_name=str(online_case_name or case_prefix),
             chunk_size=chunk_size,

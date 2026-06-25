@@ -14,7 +14,7 @@ import uuid
 import numpy as np
 from PIL import Image
 
-from demo_v4.pickle_compat import dump_pickle_legacy_numpy
+from demo_v5.pickle_compat import dump_pickle_legacy_numpy
 
 
 FUTUREPHYSTWIN_TOPOLOGY_VERSION = "demo_v4_session_topology_v1"
@@ -120,7 +120,7 @@ class FuturePhysTwinChunk:
     pcd_points: np.ndarray | None = None
     pcd_colors: np.ndarray | None = None
     fps: int = 5
-    serial_number: str = "demo-v4-single-camera"
+    serial_number: str = "demo-v5-single-camera"
     depth_backend: str = ""
     depth_source_internal: str = ""
     chunk_index: int | None = None
@@ -558,7 +558,7 @@ def _metadata_payload(chunk: FuturePhysTwinChunk, frame_count: int, width_height
     if intrinsics.shape == (3, 3):
         intrinsics = intrinsics.reshape(1, 3, 3)
     if intrinsics.shape != (1, 3, 3):
-        raise ValueError(f"intrinsics must have shape 3,3 or 1,3,3 for single-camera Demo v4; got {intrinsics.shape}")
+        raise ValueError(f"intrinsics must have shape 3,3 or 1,3,3 for single-camera Demo v5; got {intrinsics.shape}")
     width, height = width_height
     return {
         "fps": int(chunk.fps),
@@ -569,7 +569,9 @@ def _metadata_payload(chunk: FuturePhysTwinChunk, frame_count: int, width_height
         "intrinsics": intrinsics.astype(float).tolist(),
         "serial_numbers": [str(chunk.serial_number)],
         "camera_count": 1,
-        "demo_version": "demo_v4",
+        "demo_version": "demo_v5",
+        "runtime_product_name": "demo_v5_realtime_camera_final_data",
+        "reference_pipeline": "data_process_sam3d",
         "depth_backend": str(chunk.depth_backend),
         "depth_source_internal": str(chunk.depth_source_internal),
     }

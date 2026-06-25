@@ -118,6 +118,13 @@ class Sam3dOnlyCliContractTest(unittest.TestCase):
         self.assertTrue(args.preload_models)
         self.assertTrue(args.warmup_models)
 
+    def test_shape_prior_worker_parser_accepts_alignment_coverage_override(self) -> None:
+        args = shape_prior_server.build_parser().parse_args(
+            ["--max-observation-to-aligned-p95-m", "0.06"]
+        )
+
+        self.assertEqual(args.max_observation_to_aligned_p95_m, 0.06)
+
     def test_shape_prior_worker_warmup_args_imply_preload_args(self) -> None:
         args = shape_prior_server.parse_args(["--warmup-models"])
 
@@ -1459,6 +1466,25 @@ class RuntimeShapePriorIntegrationTest(unittest.TestCase):
 class SingleViewShapeAlignmentTest(unittest.TestCase):
     def test_alignment_config_defaults_to_negative_table_z_direction(self) -> None:
         self.assertEqual(ShapeAlignmentConfig().above_direction, "negative")
+
+    def test_alignment_config_accepts_observation_coverage_override(self) -> None:
+        request = shape_prior_server.ShapePriorRequest(
+            metadata={"table_z_m": 0.0, "table_z_above_direction": "negative"},
+            rgb_u8=np.zeros((2, 2, 3), dtype=np.uint8),
+            object_mask=np.ones((2, 2), dtype=bool),
+            object_observation_mask=np.ones((2, 2), dtype=bool),
+            controller_mask=np.zeros((2, 2), dtype=bool),
+            depth_color_m=np.ones((2, 2), dtype=np.float32),
+            k_color=np.eye(3, dtype=np.float32),
+            camera_to_world_c2w=np.eye(4, dtype=np.float32),
+        )
+
+        config = shape_prior_server._alignment_config_from_request(
+            request,
+            max_observation_to_aligned_p95_m=0.06,
+        )
+
+        self.assertEqual(config.max_observation_to_aligned_p95_m, 0.06)
 
     def test_align_canonical_shape_to_observation_recovers_scale_and_translation(self) -> None:
         canonical = np.array(

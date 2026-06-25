@@ -9,8 +9,8 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from demo_v4.pickle_compat import dump_pickle_legacy_numpy
-from demo_v4.futurephystwin_chunk_writer import (
+from demo_v5.pickle_compat import dump_pickle_legacy_numpy
+from demo_v5.futurephystwin_chunk_writer import (
     FUTUREPHYSTWIN_FINAL_DATA_KEYS,
     FUTUREPHYSTWIN_TOPOLOGY_KEYS,
     FUTUREPHYSTWIN_TRACK_PROCESS_KEYS,
@@ -53,6 +53,8 @@ METADATA_INVARIANT_KEYS = (
     "serial_numbers",
     "camera_count",
     "demo_version",
+    "runtime_product_name",
+    "reference_pipeline",
     "depth_backend",
     "depth_source_internal",
 )
@@ -407,7 +409,7 @@ def _aggregate_manifest(
         "chunk_case_count": int(len(chunk_cases)),
         "source_chunk_cases": [str(path) for path in chunk_cases],
         "ready": bool(ready),
-        "frame_index_semantics": "received_demo_v4_stream_index",
+        "frame_index_semantics": "received_demo_v5_stream_index",
         "copied_color_frame_files": int(copied_counts.get("color", 0)),
         "copied_pcd_frame_files": int(copied_counts.get("pcd", 0)),
         "copied_depth_frame_files": int(copied_counts.get("depth", 0)),

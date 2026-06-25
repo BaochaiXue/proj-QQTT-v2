@@ -8,12 +8,12 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from demo_v4.futurephystwin_chunk_writer import (
+from demo_v5.futurephystwin_chunk_writer import (
     FUTUREPHYSTWIN_TOPOLOGY_KEYS,
     build_topology_payload,
 )
-from demo_v4.online_case_aggregate import OnlineAggregateCaseWriter
-from demo_v4.pickle_compat import dump_pickle_legacy_numpy
+from demo_v5.online_case_aggregate import OnlineAggregateCaseWriter
+from demo_v5.pickle_compat import dump_pickle_legacy_numpy
 
 
 TIME_KEYS = (
@@ -177,7 +177,7 @@ def build_online_chunk(
     return chunk
 
 
-class DemoV4OnlineOutputWriter:
+class DemoV5OnlineOutputWriter:
     def __init__(
         self,
         *,
@@ -316,6 +316,9 @@ class DemoV4OnlineOutputWriter:
         atomic_pickle_dump(payload, self.static_data_path)
         metadata = {
             "case_name": self.case_name,
+            "demo_version": "demo_v5",
+            "runtime_product_name": "demo_v5_realtime_camera_final_data",
+            "reference_pipeline": "data_process_sam3d",
             "online_dir": str(self.online_dir),
             "chunk_size": int(self.chunk_size),
             "latest_committed_frame": int(self.latest_committed_frame + frame_count),
@@ -332,6 +335,9 @@ class DemoV4OnlineOutputWriter:
         source_end = int(self.source_start_frame) + int(total) * int(self.source_frame_step)
         manifest = {
             "case_name": self.case_name,
+            "demo_version": "demo_v5",
+            "runtime_product_name": "demo_v5_realtime_camera_final_data",
+            "reference_pipeline": "data_process_sam3d",
             "status": str(status),
             "chunk_size": int(self.chunk_size),
             "num_frames_total": int(total),
@@ -358,7 +364,11 @@ __all__ = [
     "TIME_KEYS",
     "STATIC_KEYS",
     "DemoV4OnlineOutputWriter",
+    "DemoV5OnlineOutputWriter",
     "atomic_json_dump",
     "atomic_pickle_dump",
     "build_online_chunk",
 ]
+
+
+DemoV4OnlineOutputWriter = DemoV5OnlineOutputWriter

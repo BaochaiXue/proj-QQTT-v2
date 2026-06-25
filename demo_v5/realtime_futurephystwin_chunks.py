@@ -6,8 +6,10 @@ import json
 import math
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
+import time
 from datetime import datetime
 from typing import Sequence
 
@@ -20,17 +22,18 @@ if REPO_ROOT_STR in sys.path:
     sys.path.remove(REPO_ROOT_STR)
 sys.path.insert(0, REPO_ROOT_STR)
 
-from demo_v4.headless_chunk_bridge import stream_chunks_from_headless_capture, write_chunks_from_headless_capture
-from demo_v4.online_case_aggregate import migrate_legacy_online_static_case
+from demo_v5.headless_chunk_bridge import stream_chunks_from_headless_capture, write_chunks_from_headless_capture
+from demo_v5.online_case_aggregate import migrate_legacy_online_static_case
 
 
-DEFAULT_FUTUREPHYSTWIN_BASE_PATH = Path("result/demo_v4/futurephystwin_chunks")
+DEFAULT_FUTUREPHYSTWIN_BASE_PATH = Path("result/demo_v5/futurephystwin_chunks")
+DEFAULT_REALTIME_PHYSTWIN_ROOT = Path("realtime_phystwin")
 DEFAULT_INPUT_SOURCE = "fake-live"
 DEFAULT_REPLAY_FPS = 5.0
 DEFAULT_CHUNK_SECONDS = 7.0
 DEFAULT_CHUNK_POLL_INTERVAL_S = 0.001
-DEFAULT_DEMO32_LOSSLESS_INPUT_FPS = 5.0
-DEFAULT_CASE_PREFIX = "demo_v4"
+DEFAULT_CAMERA_LOSSLESS_INPUT_FPS = 5.0
+DEFAULT_CASE_PREFIX = "demo_v5"
 DEFAULT_DEPTH_BACKEND = "native-realsense"
 DEFAULT_MAX_CHUNKS: int | None = None
 DEFAULT_CAPTURE_EXTRA_SECONDS = 10.0
@@ -40,7 +43,7 @@ DEFAULT_MASK_RADIUS_OUTLIER_NB_POINTS = 40
 DEFAULT_REALTIME_GPU_MODE = "single"
 DEFAULT_WARMUP_GPU_MODE = "dual"
 DEFAULT_GPU_MODE = DEFAULT_REALTIME_GPU_MODE
-GPU_MODE_DEMO32_CUDA_VISIBLE_DEVICES = {
+GPU_MODE_CAMERA_CUDA_VISIBLE_DEVICES = {
     "single": "0",
     "dual": "1",
 }
@@ -48,33 +51,51 @@ GPU_MODE_SHAPE_PRIOR_DEVICE = {
     "single": "cuda:0",
     "dual": "cuda:1",
 }
-DEFAULT_DEMO32_DEVICE = "cuda"
-DEFAULT_DEMO32_TRACKER_DEVICE = "cuda"
-DEFAULT_DEMO32_DTYPE = "bfloat16"
+DEFAULT_CAMERA_DEVICE = "cuda"
+DEFAULT_CAMERA_TRACKER_DEVICE = "cuda"
+DEFAULT_CAMERA_DTYPE = "bfloat16"
+DEFAULT_SHAPE_PRIOR_WORKER_MODE = "managed"
+DEFAULT_SHAPE_PRIOR_WORKER_CONDA_ENV = "phystwin-max"
+DEFAULT_SHAPE_PRIOR_WORKER_DEVICE = "cuda:0"
+DEFAULT_SHAPE_PRIOR_WORKER_STARTUP_GRACE_S = 0.0
+DEFAULT_SHAPE_PRIOR_WORKER_MAX_OBSERVATION_TO_ALIGNED_P95_M = 0.06
+DEFAULT_OPTIMIZATION_MODE = "continuous"
+DEFAULT_OPTIMIZATION_CUDA_VISIBLE_DEVICES = "1"
+DEFAULT_OPTIMIZATION_DEVICE = "cuda:0"
+DEFAULT_OPTIMIZATION_ZERO_ITERATIONS = 10
+DEFAULT_OPTIMIZATION_BATCH_SIZE = 4
+DEFAULT_OPTIMIZATION_SEGMENT_STRIDE = 16
+DEFAULT_OPTIMIZATION_POLL_SEC = 1.0
+DEFAULT_OPTIMIZATION_RECENT_WINDOW_COUNT = 8
+DEFAULT_OPTIMIZATION_SEED = 42
+DEFAULT_OPTIMIZATION_EXPERIMENTS_DIR = "experiments_online_v5"
+DEFAULT_OPTIMIZATION_ZERO_EXPERIMENTS_DIR = "experiments_online_v5_cma"
+DEFAULT_OPTIMIZATION_START_GRACE_S = 2.0
+DEFAULT_TABLE_CALIBRATE_PATH = Path("table_calibrate.pkl")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Demo v4 realtime FuturePhysTwin chunk preprocessor. The first "
-            "implementation can convert Demo 3.2 headless captures into "
-            "FuturePhysTwin-consumable chunk case roots."
+            "Demo v5 realtime FuturePhysTwin runner. It turns Demo v5 "
+            "single-camera fake/live capture into one online FuturePhysTwin "
+            "case and can launch continuous realtime_phystwin optimization."
         )
     )
     parser.add_argument(
         "--input-source",
         choices=("fake-live", "live"),
         default=DEFAULT_INPUT_SOURCE,
-        help="Camera source mode used when Demo v4 launches its own capture.",
+        help="Camera source mode used when Demo v5 launches its own capture.",
     )
     parser.add_argument("--replay-fps", type=float, default=DEFAULT_REPLAY_FPS)
     parser.add_argument(
-        "--demo32-source-replay-fps",
+        "--camera-source-replay-fps",
         type=float,
         default=None,
         help=(
-            "Optional Demo 3.2 fake-live pacing FPS. When omitted, Demo 3.2 uses "
-            "--replay-fps; Demo v4 output metadata/window math still use --replay-fps."
+            "Optional Demo v5 fake-live pacing FPS. When omitted, Demo v5 uses "
+            "--replay-fps; Demo v5 output metadata/window math still use --replay-fps."
         ),
     )
     parser.add_argument("--chunk-seconds", type=float, default=DEFAULT_CHUNK_SECONDS)
@@ -95,7 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--case-prefix", default=DEFAULT_CASE_PREFIX)
     parser.add_argument(
         "--gpu-mode",
-        choices=tuple(GPU_MODE_DEMO32_CUDA_VISIBLE_DEVICES),
+        choices=tuple(GPU_MODE_CAMERA_CUDA_VISIBLE_DEVICES),
         default=DEFAULT_REALTIME_GPU_MODE,
         help=(
             "Backward-compatible realtime GPU routing preset. Prefer "
@@ -104,9 +125,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--realtime-gpu-mode",
-        choices=tuple(GPU_MODE_DEMO32_CUDA_VISIBLE_DEVICES),
+        choices=tuple(GPU_MODE_CAMERA_CUDA_VISIBLE_DEVICES),
         default=None,
-        help="GPU routing preset for the Demo 3.2 camera/fake-camera -> final-data realtime subprocess.",
+        help="GPU routing preset for the Demo v5 camera/fake-camera -> final-data realtime subprocess.",
     )
     parser.add_argument(
         "--warmup-gpu-mode",
@@ -115,48 +136,48 @@ def build_parser() -> argparse.ArgumentParser:
         help="GPU routing preset for SAM3D shape-prior warmup device selection.",
     )
     parser.add_argument(
-        "--demo32-cuda-visible-devices",
+        "--camera-cuda-visible-devices",
         default=None,
-        help="Explicit CUDA_VISIBLE_DEVICES override for the Demo 3.2 subprocess.",
+        help="Explicit CUDA_VISIBLE_DEVICES override for the Demo v5 subprocess.",
     )
     parser.add_argument(
-        "--demo32-device",
-        default=DEFAULT_DEMO32_DEVICE,
-        help="Segmentation/runtime device passed to Demo 3.2 inside the subprocess CUDA namespace.",
+        "--camera-device",
+        default=DEFAULT_CAMERA_DEVICE,
+        help="Segmentation/runtime device passed to Demo v5 inside the subprocess CUDA namespace.",
     )
     parser.add_argument(
-        "--demo32-tracker-device",
-        default=DEFAULT_DEMO32_TRACKER_DEVICE,
-        help="TAPNext++ tracker device passed to Demo 3.2 inside the subprocess CUDA namespace.",
+        "--camera-tracker-device",
+        default=DEFAULT_CAMERA_TRACKER_DEVICE,
+        help="TAPNext++ tracker device passed to Demo v5 inside the subprocess CUDA namespace.",
     )
     parser.add_argument(
-        "--demo32-dtype",
+        "--camera-dtype",
         choices=("bfloat16", "float16", "float32"),
-        default=DEFAULT_DEMO32_DTYPE,
-        help="Segmentation/runtime dtype passed to Demo 3.2 inside the subprocess CUDA namespace.",
+        default=DEFAULT_CAMERA_DTYPE,
+        help="Segmentation/runtime dtype passed to Demo v5 inside the subprocess CUDA namespace.",
     )
     parser.add_argument(
-        "--demo32-lossless-max-backlog-seconds",
+        "--camera-lossless-max-backlog-seconds",
         type=float,
         default=None,
         help=(
-            "Optional strict lossless replay backlog window passed to Demo 3.2. "
-            "Omit it to keep Demo 3.2 defaults."
+            "Optional strict lossless replay backlog window passed to Demo v5. "
+            "Omit it to keep Demo v5 defaults."
         ),
     )
     parser.add_argument(
-        "--demo32-headless-prepared-only",
-        dest="demo32_headless_prepared_only",
+        "--camera-headless-prepared-only",
+        dest="camera_headless_prepared_only",
         action="store_true",
-        help="Ask Demo 3.2 to write only prepared PhysTwin frames needed by Demo v4 chunking.",
+        help="Ask Demo v5 to write only prepared PhysTwin frames needed by Demo v5 chunking.",
     )
     parser.add_argument(
-        "--demo32-legacy-headless-artifacts",
-        dest="demo32_headless_prepared_only",
+        "--camera-legacy-headless-artifacts",
+        dest="camera_headless_prepared_only",
         action="store_false",
-        help="Keep Demo 3.2 legacy per-frame headless artifacts in addition to prepared PhysTwin frames.",
+        help="Keep Demo v5 legacy per-frame headless artifacts in addition to prepared PhysTwin frames.",
     )
-    parser.set_defaults(demo32_headless_prepared_only=True)
+    parser.set_defaults(camera_headless_prepared_only=True)
     parser.add_argument(
         "--max-chunks",
         type=int,
@@ -170,19 +191,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--capture-extra-seconds",
         type=float,
         default=DEFAULT_CAPTURE_EXTRA_SECONDS,
-        help="Extra Demo 3.2 runtime beyond max_chunks*chunk_seconds to absorb startup/warmup latency.",
+        help="Extra Demo v5 runtime beyond max_chunks*chunk_seconds to absorb startup/warmup latency.",
     )
     parser.add_argument(
-        "--demo32-capture-dir",
+        "--camera-capture-dir",
         type=Path,
         default=None,
-        help="Headless capture directory for the Demo 3.2 realtime subprocess.",
+        help="Headless capture directory for the Demo v5 realtime subprocess.",
     )
     parser.add_argument(
         "--source-headless-capture",
         type=Path,
         default=None,
-        help="Existing Demo 3.2 headless capture directory to chunk without launching capture.",
+        help="Existing Demo v5 headless capture directory to chunk without launching capture.",
     )
     parser.add_argument("--surface-points-npy", type=Path, default=None)
     parser.add_argument("--interior-points-npy", type=Path, default=None)
@@ -203,7 +224,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--shape-prior-warmup",
         dest="shape_prior_warmup",
         action="store_true",
-        help="Keep SAM3D shape-prior warmup enabled for Demo v4 capture.",
+        help="Keep SAM3D shape-prior warmup enabled for Demo v5 capture.",
     )
     parser.add_argument(
         "--no-shape-prior-warmup",
@@ -233,7 +254,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--shape-prior-chunk-wait-timeout-s",
         type=float,
         default=300.0,
-        help="How long Demo v4 waits for required shape-prior structure points before writing final_data chunks.",
+        help="How long Demo v5 waits for required shape-prior structure points before writing final_data chunks.",
     )
     parser.add_argument(
         "--shape-prior-device",
@@ -257,6 +278,82 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mask-radius-outlier-radius-m", type=float, default=DEFAULT_MASK_RADIUS_OUTLIER_RADIUS_M)
     parser.add_argument("--mask-radius-outlier-nb-points", type=int, default=DEFAULT_MASK_RADIUS_OUTLIER_NB_POINTS)
     parser.add_argument(
+        "--shape-prior-worker-mode",
+        choices=("managed", "external", "disabled"),
+        default=DEFAULT_SHAPE_PRIOR_WORKER_MODE,
+        help=(
+            "SAM3D worker lifecycle for remote-worker warmup. managed starts "
+            "services/shape_prior_remote/server.py and releases it before GPU1 "
+            "optimization starts."
+        ),
+    )
+    parser.add_argument("--shape-prior-worker-conda-env", default=DEFAULT_SHAPE_PRIOR_WORKER_CONDA_ENV)
+    parser.add_argument("--shape-prior-worker-cuda-visible-devices", default=None)
+    parser.add_argument("--shape-prior-worker-device", default=DEFAULT_SHAPE_PRIOR_WORKER_DEVICE)
+    parser.add_argument(
+        "--shape-prior-worker-startup-grace-s",
+        type=float,
+        default=DEFAULT_SHAPE_PRIOR_WORKER_STARTUP_GRACE_S,
+    )
+    parser.add_argument("--shape-prior-worker-sam3d-root", type=Path, default=None)
+    parser.add_argument("--shape-prior-worker-futurephystwin-root", type=Path, default=None)
+    parser.add_argument("--shape-prior-worker-config", type=Path, default=None)
+    parser.add_argument(
+        "--shape-prior-worker-max-observation-to-aligned-p95-m",
+        type=float,
+        default=DEFAULT_SHAPE_PRIOR_WORKER_MAX_OBSERVATION_TO_ALIGNED_P95_M,
+        help=(
+            "Managed SAM3D worker alignment coverage tolerance. Demo v5 uses "
+            "0.06m for the current stuffed-animal single-view warmup path."
+        ),
+    )
+    parser.add_argument(
+        "--shape-prior-worker-preload-models",
+        dest="shape_prior_worker_preload_models",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--no-shape-prior-worker-preload-models",
+        dest="shape_prior_worker_preload_models",
+        action="store_false",
+    )
+    parser.set_defaults(shape_prior_worker_preload_models=True)
+    parser.add_argument("--shape-prior-worker-warmup-models", action="store_true")
+    parser.add_argument("--shape-prior-worker-debug", action="store_true")
+    parser.add_argument(
+        "--optimization-mode",
+        choices=("continuous", "disabled"),
+        default=DEFAULT_OPTIMIZATION_MODE,
+        help="continuous starts one realtime_phystwin zero-order then first-order process for the whole online stream.",
+    )
+    parser.add_argument("--realtime-phystwin-root", type=Path, default=DEFAULT_REALTIME_PHYSTWIN_ROOT)
+    parser.add_argument("--optimization-conda-env", default=None)
+    parser.add_argument("--optimization-cuda-visible-devices", default=DEFAULT_OPTIMIZATION_CUDA_VISIBLE_DEVICES)
+    parser.add_argument("--optimization-device", default=DEFAULT_OPTIMIZATION_DEVICE)
+    parser.add_argument("--optimization-experiments-dir", default=DEFAULT_OPTIMIZATION_EXPERIMENTS_DIR)
+    parser.add_argument("--optimization-zero-experiments-dir", default=DEFAULT_OPTIMIZATION_ZERO_EXPERIMENTS_DIR)
+    parser.add_argument("--optimization-zero-iterations", type=int, default=DEFAULT_OPTIMIZATION_ZERO_ITERATIONS)
+    parser.add_argument("--optimization-iterations", type=int, default=None)
+    parser.add_argument("--optimization-batch-size", type=int, default=DEFAULT_OPTIMIZATION_BATCH_SIZE)
+    parser.add_argument("--optimization-zero-batch-size", type=int, default=None)
+    parser.add_argument("--optimization-segment-stride", type=int, default=DEFAULT_OPTIMIZATION_SEGMENT_STRIDE)
+    parser.add_argument("--optimization-poll-sec", type=float, default=DEFAULT_OPTIMIZATION_POLL_SEC)
+    parser.add_argument("--optimization-recent-window-count", type=int, default=DEFAULT_OPTIMIZATION_RECENT_WINDOW_COUNT)
+    parser.add_argument("--optimization-seed", type=int, default=DEFAULT_OPTIMIZATION_SEED)
+    parser.add_argument("--optimization-start-grace-s", type=float, default=DEFAULT_OPTIMIZATION_START_GRACE_S)
+    parser.add_argument("--optimization-train-frame", type=int, default=None)
+    parser.add_argument("--optimization-checkpoint-interval", type=int, default=None)
+    parser.add_argument("--optimization-wait-timeout-s", type=float, default=0.0)
+    parser.add_argument("--optimization-wandb-mode", default="offline")
+    parser.add_argument("--optimization-realtime-vis", action="store_true")
+    parser.add_argument("--optimization-realtime-vis-dir", default=None)
+    parser.add_argument("--optimization-no-sample-recent", action="store_true")
+    parser.add_argument(
+        "--optimization-stop-when-finished",
+        action="store_true",
+        help="Ask first-order online training to stop early after the stream is finished. Off by default to preserve quality.",
+    )
+    parser.add_argument(
         "--shape-prior-skip-route-visualizations",
         dest="shape_prior_skip_route_visualizations",
         action="store_true",
@@ -267,7 +364,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
     )
     parser.set_defaults(shape_prior_skip_route_visualizations=True)
-    parser.add_argument("--dry-run", action="store_true", help="Print resolved Demo v4 contract and exit.")
+    parser.add_argument("--dry-run", action="store_true", help="Print resolved Demo v5 contract and exit.")
     return parser
 
 
@@ -287,11 +384,11 @@ def resolve_chunk_frame_count(args: argparse.Namespace) -> int:
     return value
 
 
-def resolve_demo32_source_replay_fps(args: argparse.Namespace) -> float:
-    value = args.demo32_source_replay_fps
+def resolve_camera_source_replay_fps(args: argparse.Namespace) -> float:
+    value = args.camera_source_replay_fps
     fps = float(args.replay_fps if value is None else value)
     if not math.isfinite(fps) or fps <= 0.0:
-        raise ValueError("Demo 3.2 source replay fps must be positive")
+        raise ValueError("Demo v5 source replay fps must be positive")
     return fps
 
 
@@ -300,7 +397,7 @@ def resolve_realtime_gpu_mode(args: argparse.Namespace) -> str:
     if value is None:
         value = getattr(args, "gpu_mode", DEFAULT_REALTIME_GPU_MODE)
     value = str(value)
-    if value not in GPU_MODE_DEMO32_CUDA_VISIBLE_DEVICES:
+    if value not in GPU_MODE_CAMERA_CUDA_VISIBLE_DEVICES:
         raise ValueError(f"unsupported realtime gpu mode: {value!r}")
     return value
 
@@ -312,12 +409,12 @@ def resolve_warmup_gpu_mode(args: argparse.Namespace) -> str:
     return value
 
 
-def resolve_demo32_cuda_visible_devices(args: argparse.Namespace) -> str:
-    override = None if args.demo32_cuda_visible_devices is None else str(args.demo32_cuda_visible_devices).strip()
+def resolve_camera_cuda_visible_devices(args: argparse.Namespace) -> str:
+    override = None if args.camera_cuda_visible_devices is None else str(args.camera_cuda_visible_devices).strip()
     if override:
         return override
     try:
-        return GPU_MODE_DEMO32_CUDA_VISIBLE_DEVICES[resolve_realtime_gpu_mode(args)]
+        return GPU_MODE_CAMERA_CUDA_VISIBLE_DEVICES[resolve_realtime_gpu_mode(args)]
     except KeyError as exc:
         raise ValueError(f"unsupported realtime gpu mode: {resolve_realtime_gpu_mode(args)!r}") from exc
 
@@ -330,6 +427,151 @@ def resolve_shape_prior_device(args: argparse.Namespace) -> str:
         return GPU_MODE_SHAPE_PRIOR_DEVICE[resolve_warmup_gpu_mode(args)]
     except KeyError as exc:
         raise ValueError(f"unsupported warmup gpu mode: {resolve_warmup_gpu_mode(args)!r}") from exc
+
+
+def resolve_shape_prior_worker_cuda_visible_devices(args: argparse.Namespace) -> str:
+    override = getattr(args, "shape_prior_worker_cuda_visible_devices", None)
+    if override is not None and str(override).strip():
+        return str(override).strip()
+    try:
+        return GPU_MODE_CAMERA_CUDA_VISIBLE_DEVICES[resolve_warmup_gpu_mode(args)]
+    except KeyError as exc:
+        raise ValueError(f"unsupported warmup gpu mode: {resolve_warmup_gpu_mode(args)!r}") from exc
+
+
+def resolve_optimization_cuda_visible_devices(args: argparse.Namespace) -> str:
+    value = str(getattr(args, "optimization_cuda_visible_devices", DEFAULT_OPTIMIZATION_CUDA_VISIBLE_DEVICES)).strip()
+    if not value:
+        raise ValueError("--optimization-cuda-visible-devices must be non-empty when optimization is enabled")
+    return value
+
+
+def resolve_optimization_device(args: argparse.Namespace) -> str:
+    value = str(getattr(args, "optimization_device", DEFAULT_OPTIMIZATION_DEVICE)).strip()
+    if not value:
+        raise ValueError("--optimization-device must be non-empty when optimization is enabled")
+    return value
+
+
+def _repo_path(path: str | Path) -> Path:
+    value = Path(path).expanduser()
+    if value.is_absolute():
+        return value
+    return REPO_ROOT / value
+
+
+def resolve_realtime_phystwin_root(args: argparse.Namespace) -> Path:
+    return Path(args.realtime_phystwin_root)
+
+
+def _resolved_realtime_phystwin_root(args: argparse.Namespace) -> Path:
+    return _repo_path(args.realtime_phystwin_root).resolve()
+
+
+def resolve_realtime_phystwin_base_path(args: argparse.Namespace) -> Path:
+    return Path(args.futurephystwin_base_path) / "data"
+
+
+def _relative_for_realtime_phystwin(args: argparse.Namespace, path: str | Path) -> str:
+    target = _repo_path(path).resolve()
+    start = _resolved_realtime_phystwin_root(args)
+    return os.path.relpath(target, start=start)
+
+
+def _python_command_prefix(conda_env: str | None) -> list[str]:
+    env_name = "" if conda_env is None else str(conda_env).strip()
+    if env_name:
+        return ["conda", "run", "-n", env_name, "--no-capture-output", "python"]
+    return ["python"]
+
+
+def build_shape_prior_worker_command(args: argparse.Namespace) -> list[str]:
+    command = [
+        *_python_command_prefix(getattr(args, "shape_prior_worker_conda_env", None)),
+        str(Path("services") / "shape_prior_remote" / "server.py"),
+        "--bind",
+        str(args.shape_prior_endpoint),
+        "--device",
+        str(args.shape_prior_worker_device),
+    ]
+    if args.shape_prior_worker_sam3d_root is not None:
+        command.extend(["--sam3d-root", str(args.shape_prior_worker_sam3d_root)])
+    if args.shape_prior_worker_futurephystwin_root is not None:
+        command.extend(["--futurephystwin-root", str(args.shape_prior_worker_futurephystwin_root)])
+    if args.shape_prior_worker_config is not None:
+        command.extend(["--config", str(args.shape_prior_worker_config)])
+    command.extend(
+        [
+            "--max-observation-to-aligned-p95-m",
+            str(float(args.shape_prior_worker_max_observation_to_aligned_p95_m)),
+        ]
+    )
+    if bool(args.shape_prior_worker_preload_models):
+        command.append("--preload-models")
+    if bool(args.shape_prior_worker_warmup_models):
+        command.append("--warmup-models")
+    if bool(args.shape_prior_worker_debug):
+        command.append("--debug")
+    return command
+
+
+def build_realtime_phystwin_optimization_command(
+    args: argparse.Namespace,
+    *,
+    chunk_frame_count: int,
+) -> list[str]:
+    command = [
+        *_python_command_prefix(getattr(args, "optimization_conda_env", None)),
+        "train_online_zero_then_first.py",
+        "--base_path",
+        _relative_for_realtime_phystwin(args, resolve_realtime_phystwin_base_path(args)),
+        "--online_dir",
+        _relative_for_realtime_phystwin(args, resolve_online_dir(args)),
+        "--case_name",
+        str(args.case_prefix),
+        "--experiments_dir",
+        str(args.optimization_experiments_dir),
+        "--zero_experiments_dir",
+        str(args.optimization_zero_experiments_dir),
+        "--static_data_path",
+        _relative_for_realtime_phystwin(args, resolve_static_data_path(args)),
+        "--device",
+        resolve_optimization_device(args),
+        "--zero_iterations",
+        str(int(args.optimization_zero_iterations)),
+        "--batch_size",
+        str(int(args.optimization_batch_size)),
+        "--segment_len",
+        str(int(chunk_frame_count)),
+        "--segment_stride",
+        str(int(args.optimization_segment_stride)),
+        "--poll_sec",
+        str(float(args.optimization_poll_sec)),
+        "--recent_window_count",
+        str(int(args.optimization_recent_window_count)),
+        "--seed",
+        str(int(args.optimization_seed)),
+    ]
+    if args.optimization_zero_batch_size is not None:
+        command.extend(["--zero_batch_size", str(int(args.optimization_zero_batch_size))])
+    if args.optimization_iterations is not None:
+        command.extend(["--iterations", str(int(args.optimization_iterations))])
+    if args.optimization_train_frame is not None:
+        command.extend(["--train_frame", str(int(args.optimization_train_frame))])
+    if args.optimization_checkpoint_interval is not None:
+        command.extend(["--checkpoint_interval", str(int(args.optimization_checkpoint_interval))])
+    if bool(args.optimization_realtime_vis):
+        command.append("--zero_realtime_vis")
+        command.append("--realtime_vis")
+    if args.optimization_realtime_vis_dir is not None:
+        vis_root = Path(args.optimization_realtime_vis_dir)
+        command.extend(["--zero_realtime_vis_dir", str(vis_root / "zero_order")])
+        command.extend(["--realtime_vis_dir", str(vis_root / "first_order")])
+    if bool(args.optimization_no_sample_recent):
+        command.append("--no_sample_recent")
+    if bool(args.optimization_stop_when_finished):
+        command.append("--stop_when_finished")
+    return command
 
 
 def _load_optional_points(path: Path | None) -> np.ndarray | None:
@@ -352,81 +594,165 @@ def resolve_static_data_path(args: argparse.Namespace) -> Path:
 
 
 def _contract(args: argparse.Namespace) -> dict[str, object]:
+    chunk_frame_count = int(resolve_chunk_frame_count(args))
     return {
-        "demo_version": "demo_v4",
+        "demo_version": "demo_v5",
         "input_source": str(args.input_source),
         "replay_fps": float(args.replay_fps),
-        "demo32_source_replay_fps": resolve_demo32_source_replay_fps(args),
-        "demo32_source_replay_fps_override": (
-            None if args.demo32_source_replay_fps is None else float(args.demo32_source_replay_fps)
+        "camera_source_replay_fps": resolve_camera_source_replay_fps(args),
+        "camera_source_replay_fps_override": (
+            None if args.camera_source_replay_fps is None else float(args.camera_source_replay_fps)
         ),
-        "demo32_lossless_input_fps": resolve_demo32_source_replay_fps(args),
+        "camera_lossless_input_fps": resolve_camera_source_replay_fps(args),
         "chunk_seconds": float(args.chunk_seconds),
         "chunk_poll_interval_s": float(args.chunk_poll_interval_s),
-        "chunk_frame_count": int(resolve_chunk_frame_count(args)),
+        "chunk_frame_count": chunk_frame_count,
         "futurephystwin_base_path": str(args.futurephystwin_base_path),
         "case_prefix": str(args.case_prefix),
         "output_format": "online-primary-static-case",
         "online_dir": str(resolve_online_dir(args)),
         "static_data_path": str(resolve_static_data_path(args)),
+        "realtime_phystwin_base_path": str(resolve_realtime_phystwin_base_path(args)),
         "max_chunks": args.max_chunks,
         "depth_backend": str(args.depth_backend),
         "capture_extra_seconds": float(args.capture_extra_seconds),
-        "demo32_capture_dir": None if args.demo32_capture_dir is None else str(args.demo32_capture_dir),
+        "camera_capture_dir": None if args.camera_capture_dir is None else str(args.camera_capture_dir),
         "gpu_mode": resolve_realtime_gpu_mode(args),
         "realtime_gpu_mode": resolve_realtime_gpu_mode(args),
         "warmup_gpu_mode": resolve_warmup_gpu_mode(args),
-        "demo32_cuda_visible_devices": resolve_demo32_cuda_visible_devices(args),
-        "demo32_cuda_visible_devices_override": (
-            None if args.demo32_cuda_visible_devices is None else str(args.demo32_cuda_visible_devices)
+        "camera_cuda_visible_devices": resolve_camera_cuda_visible_devices(args),
+        "camera_cuda_visible_devices_override": (
+            None if args.camera_cuda_visible_devices is None else str(args.camera_cuda_visible_devices)
         ),
-        "demo32_device": str(args.demo32_device),
-        "demo32_tracker_device": str(args.demo32_tracker_device),
-        "demo32_dtype": str(args.demo32_dtype),
-        "demo32_lossless_max_backlog_seconds": args.demo32_lossless_max_backlog_seconds,
-        "demo32_headless_prepared_only": bool(args.demo32_headless_prepared_only),
+        "camera_device": str(args.camera_device),
+        "camera_tracker_device": str(args.camera_tracker_device),
+        "camera_dtype": str(args.camera_dtype),
+        "camera_lossless_max_backlog_seconds": args.camera_lossless_max_backlog_seconds,
+        "camera_headless_prepared_only": bool(args.camera_headless_prepared_only),
         "shape_prior_warmup": bool(args.shape_prior_warmup),
         "shape_prior_start_policy": str(args.shape_prior_start_policy),
         "shape_prior_execution": str(args.shape_prior_execution),
         "shape_prior_endpoint": str(args.shape_prior_endpoint),
         "shape_prior_device": resolve_shape_prior_device(args),
         "shape_prior_device_override": None if args.shape_prior_device is None else str(args.shape_prior_device),
+        "shape_prior_worker_mode": str(args.shape_prior_worker_mode),
+        "shape_prior_worker_command": build_shape_prior_worker_command(args),
+        "shape_prior_worker_cuda_visible_devices": resolve_shape_prior_worker_cuda_visible_devices(args),
+        "shape_prior_worker_device": str(args.shape_prior_worker_device),
+        "shape_prior_worker_conda_env": str(args.shape_prior_worker_conda_env),
+        "shape_prior_worker_max_observation_to_aligned_p95_m": float(
+            args.shape_prior_worker_max_observation_to_aligned_p95_m
+        ),
+        "shape_prior_worker_released_before_optimization": bool(
+            str(args.shape_prior_worker_mode) == "managed" and str(args.optimization_mode) == "continuous"
+        ),
         "shape_prior_chunk_wait_timeout_s": float(args.shape_prior_chunk_wait_timeout_s),
         "mask_radius_outlier_filter": bool(args.mask_radius_outlier_filter),
         "mask_radius_outlier_radius_m": float(args.mask_radius_outlier_radius_m),
         "mask_radius_outlier_nb_points": int(args.mask_radius_outlier_nb_points),
         "write_final_pcd": bool(args.write_final_pcd),
         "source_headless_capture": None if args.source_headless_capture is None else str(args.source_headless_capture),
+        "optimization_mode": str(args.optimization_mode),
+        "optimization_command": build_realtime_phystwin_optimization_command(
+            args,
+            chunk_frame_count=chunk_frame_count,
+        ),
+        "optimization_cuda_visible_devices": resolve_optimization_cuda_visible_devices(args),
+        "optimization_device": resolve_optimization_device(args),
+        "optimization_start_policy": "after_first_committed_online_chunk",
+        "optimization_scope": "single_continuous_online_case",
+        "optimization_zero_iterations": int(args.optimization_zero_iterations),
+        "optimization_batch_size": int(args.optimization_batch_size),
+        "optimization_zero_batch_size": args.optimization_zero_batch_size,
+        "optimization_iterations": args.optimization_iterations,
+        "optimization_segment_len": chunk_frame_count,
+        "optimization_segment_stride": int(args.optimization_segment_stride),
+        "optimization_recent_window_count": int(args.optimization_recent_window_count),
+        "optimization_poll_sec": float(args.optimization_poll_sec),
+        "optimization_start_grace_s": float(args.optimization_start_grace_s),
+        "optimization_no_sample_recent": bool(args.optimization_no_sample_recent),
+        "optimization_stop_when_finished": bool(args.optimization_stop_when_finished),
+        "realtime_phystwin_root": str(resolve_realtime_phystwin_root(args)),
     }
 
 
-def _demo32_duration_s(args: argparse.Namespace, *, chunk_frame_count: int) -> float:
+def validate_runtime_args(args: argparse.Namespace, *, chunk_frame_count: int) -> None:
+    if float(args.chunk_poll_interval_s) <= 0.0:
+        raise ValueError("--chunk-poll-interval-s must be positive")
+    resolve_camera_source_replay_fps(args)
+    if int(chunk_frame_count) <= 0:
+        raise ValueError("chunk frame count must be positive")
+    if str(args.shape_prior_worker_mode) == "disabled" and bool(args.shape_prior_warmup):
+        raise ValueError("--shape-prior-worker-mode disabled requires --no-shape-prior-warmup")
+    if str(args.shape_prior_worker_mode) == "managed" and str(args.shape_prior_execution) != "remote-worker":
+        raise ValueError("managed shape-prior worker requires --shape-prior-execution remote-worker")
+    if float(args.shape_prior_worker_startup_grace_s) < 0.0:
+        raise ValueError("--shape-prior-worker-startup-grace-s must be non-negative")
+    if float(args.shape_prior_worker_max_observation_to_aligned_p95_m) <= 0.0:
+        raise ValueError("--shape-prior-worker-max-observation-to-aligned-p95-m must be positive")
+    if str(args.optimization_mode) == "continuous":
+        if args.source_headless_capture is not None:
+            raise ValueError("continuous optimization requires fake-live or live capture; use --optimization-mode disabled for source-headless conversion")
+        if int(args.optimization_zero_iterations) <= 0:
+            raise ValueError("--optimization-zero-iterations must be positive")
+        if int(args.optimization_batch_size) <= 0:
+            raise ValueError("--optimization-batch-size must be positive")
+        if int(args.optimization_segment_stride) <= 0:
+            raise ValueError("--optimization-segment-stride must be positive")
+        if float(args.optimization_poll_sec) < 0.0:
+            raise ValueError("--optimization-poll-sec must be non-negative")
+        if float(args.optimization_start_grace_s) < 0.0:
+            raise ValueError("--optimization-start-grace-s must be non-negative")
+        if int(args.optimization_recent_window_count) <= 0:
+            raise ValueError("--optimization-recent-window-count must be positive")
+        if args.optimization_zero_batch_size is not None and int(args.optimization_zero_batch_size) <= 0:
+            raise ValueError("--optimization-zero-batch-size must be positive")
+        if args.optimization_iterations is not None and int(args.optimization_iterations) <= 0:
+            raise ValueError("--optimization-iterations must be positive")
+        if args.optimization_wait_timeout_s is not None and float(args.optimization_wait_timeout_s) < 0.0:
+            raise ValueError("--optimization-wait-timeout-s must be non-negative")
+        root = _resolved_realtime_phystwin_root(args)
+        if not (root / "train_online_zero_then_first.py").is_file():
+            raise ValueError(f"realtime_phystwin root is missing train_online_zero_then_first.py: {root}")
+        resolve_optimization_cuda_visible_devices(args)
+        resolve_optimization_device(args)
+
+
+def _camera_duration_s(args: argparse.Namespace, *, chunk_frame_count: int) -> float:
     if args.max_chunks is None:
         return 0.0
-    fps = resolve_demo32_source_replay_fps(args)
+    fps = resolve_camera_source_replay_fps(args)
     if fps <= 0.0:
         fps = DEFAULT_REPLAY_FPS
     return (float(args.max_chunks) * float(chunk_frame_count) / fps) + float(args.capture_extra_seconds)
 
 
-def build_demo32_realtime_command(
+def build_camera_realtime_command(
     args: argparse.Namespace,
     *,
     capture_dir: Path,
     profile_json: Path,
     chunk_frame_count: int,
 ) -> list[str]:
-    script = Path("demo_v3_2") / "realtime_single_camera_ffs_masked_pcd.py"
-    demo32_source_replay_fps = resolve_demo32_source_replay_fps(args)
+    script = Path("demo_v5") / "realtime_camera_final_data.py"
+    camera_source_replay_fps = resolve_camera_source_replay_fps(args)
+    if str(args.depth_backend) == "ir-ffs":
+        depth_source = "ffs"
+    elif str(args.depth_backend) == "native-realsense":
+        depth_source = "realsense"
+    else:
+        raise ValueError(f"unsupported depth backend: {args.depth_backend!r}")
     command = [
-        sys.executable,
+        "python",
         str(script),
         "--input-source",
         str(args.input_source),
-        "--depth-backend",
+        "--depth-source",
+        depth_source,
+        "--depth-backend-label",
         str(args.depth_backend),
         "--duration-s",
-        f"{_demo32_duration_s(args, chunk_frame_count=chunk_frame_count):.3f}",
+        f"{_camera_duration_s(args, chunk_frame_count=chunk_frame_count):.3f}",
         "--render-mode",
         "none",
         "--headless-capture-dir",
@@ -435,29 +761,47 @@ def build_demo32_realtime_command(
         "phystwin-strict-tracking",
         "--track-mode",
         "controller-object",
+        "--pcd-mode",
+        "masked",
         "--tracker-backend",
         "tapnextpp",
+        "--tracker-overlay-max-points",
+        "0",
         "--demo-visual-mode",
         "tracking",
         "--replay-fps",
-        str(demo32_source_replay_fps),
+        str(camera_source_replay_fps),
         "--device",
-        str(args.demo32_device),
+        str(args.camera_device),
         "--dtype",
-        str(args.demo32_dtype),
+        str(args.camera_dtype),
         "--tracker-device",
-        str(args.demo32_tracker_device),
+        str(args.camera_tracker_device),
+        "--enable-pcd-filter",
+        "--pcd-filter-mode",
+        "sync",
+        "--pcd-filter-preset",
+        "original",
+        "--table-calibrate",
+        str(DEFAULT_TABLE_CALIBRATE_PATH),
+        "--enable-table-z-filter",
+        "--runtime-product-name",
+        "demo_v5_realtime_camera_final_data",
+        "--metadata-demo-version",
+        "demo_v5",
+        "--metadata-reference-pipeline",
+        "data_process_sam3d",
     ]
-    if args.demo32_lossless_max_backlog_seconds is not None:
+    if args.camera_lossless_max_backlog_seconds is not None:
         command.extend(
             [
                 "--lossless-max-backlog-seconds",
-                str(float(args.demo32_lossless_max_backlog_seconds)),
+                str(float(args.camera_lossless_max_backlog_seconds)),
             ]
         )
-    if float(demo32_source_replay_fps) != float(DEFAULT_DEMO32_LOSSLESS_INPUT_FPS):
-        command.extend(["--lossless-input-fps", str(float(demo32_source_replay_fps))])
-    if bool(args.demo32_headless_prepared_only):
+    if float(camera_source_replay_fps) != float(DEFAULT_CAMERA_LOSSLESS_INPUT_FPS):
+        command.extend(["--lossless-input-fps", str(float(camera_source_replay_fps))])
+    if bool(args.camera_headless_prepared_only):
         command.append("--headless-prepared-only")
     if bool(args.shape_prior_warmup):
         command.extend(
@@ -487,24 +831,88 @@ def build_demo32_realtime_command(
 
 
 def _default_capture_dir(args: argparse.Namespace, base_path: Path) -> Path:
-    if args.demo32_capture_dir is not None:
-        return Path(args.demo32_capture_dir)
+    if args.camera_capture_dir is not None:
+        return Path(args.camera_capture_dir)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return base_path / f"{args.case_prefix}_demo32_capture_{stamp}"
+    return base_path / f"{args.case_prefix}_camera_capture_{stamp}"
 
 
 def _stop_process(process: subprocess.Popen[bytes]) -> int | None:
     if process.poll() is not None:
         return process.returncode
+    used_process_group = False
+    pid = getattr(process, "pid", None)
     try:
-        process.terminate()
+        if pid is not None:
+            os.killpg(os.getpgid(int(pid)), signal.SIGTERM)
+            used_process_group = True
+        else:
+            process.terminate()
         return process.wait(timeout=10)
     except Exception:
         try:
-            process.kill()
+            if pid is not None and used_process_group:
+                os.killpg(os.getpgid(int(pid)), signal.SIGKILL)
+            else:
+                process.kill()
             return process.wait(timeout=10)
         except Exception:
             return process.poll()
+
+
+def _start_managed_shape_prior_worker(args: argparse.Namespace) -> subprocess.Popen[bytes] | None:
+    if not bool(args.shape_prior_warmup):
+        return None
+    if str(args.shape_prior_worker_mode) != "managed":
+        return None
+    command = build_shape_prior_worker_command(args)
+    env = os.environ.copy()
+    cuda_visible_devices = resolve_shape_prior_worker_cuda_visible_devices(args)
+    if cuda_visible_devices:
+        env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
+    process = subprocess.Popen(command, cwd=REPO_ROOT, env=env, start_new_session=True)
+    grace_s = float(args.shape_prior_worker_startup_grace_s)
+    if grace_s > 0.0:
+        time.sleep(grace_s)
+    if process.poll() is not None:
+        raise RuntimeError(f"managed shape-prior worker exited during startup with code {process.returncode}")
+    return process
+
+
+def _optimization_env(args: argparse.Namespace) -> dict[str, str]:
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = resolve_optimization_cuda_visible_devices(args)
+    wandb_mode = str(getattr(args, "optimization_wandb_mode", "") or "").strip()
+    if wandb_mode:
+        env["WANDB_MODE"] = wandb_mode
+        if wandb_mode == "offline":
+            env.setdefault("WANDB_SILENT", "true")
+    return env
+
+
+def _start_continuous_optimization(
+    args: argparse.Namespace,
+    *,
+    chunk_frame_count: int,
+) -> subprocess.Popen[bytes]:
+    command = build_realtime_phystwin_optimization_command(args, chunk_frame_count=chunk_frame_count)
+    return subprocess.Popen(
+        command,
+        cwd=_resolved_realtime_phystwin_root(args),
+        env=_optimization_env(args),
+        start_new_session=True,
+    )
+
+
+def _wait_for_process(process: subprocess.Popen[bytes], *, timeout_s: float) -> int | None:
+    if process.poll() is not None:
+        return process.returncode
+    if float(timeout_s) <= 0.0:
+        return process.wait()
+    try:
+        return process.wait(timeout=float(timeout_s))
+    except subprocess.TimeoutExpired:
+        return None
 
 
 def select_validation_chunk_cases(manifests: Sequence[dict[str, object]]) -> list[str]:
@@ -547,9 +955,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     chunk_frame_count = resolve_chunk_frame_count(args)
-    if float(args.chunk_poll_interval_s) <= 0.0:
-        raise ValueError("--chunk-poll-interval-s must be positive")
-    resolve_demo32_source_replay_fps(args)
+    validate_runtime_args(args, chunk_frame_count=chunk_frame_count)
 
     if bool(args.dry_run):
         print(json.dumps(_contract(args), indent=2, sort_keys=True))
@@ -575,7 +981,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         final_migration = migrate_legacy_online_static_case(base_path, str(args.case_prefix))
         summary = {
-            "demo_version": "demo_v4",
+            "demo_version": "demo_v5",
             "mode": "source-headless-capture",
             "source_headless_capture": str(args.source_headless_capture),
             "futurephystwin_base_path": str(base_path),
@@ -588,6 +994,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "chunk_count": int(len(manifests)),
             "chunks": manifests,
             "write_final_pcd": bool(args.write_final_pcd),
+            "optimization_mode": str(args.optimization_mode),
+            "optimization_started": False,
+            "optimization_scope": "disabled_for_source_headless_conversion",
             "startup_legacy_static_case_migration": startup_migration,
             "final_legacy_static_case_migration": final_migration,
         }
@@ -600,17 +1009,51 @@ def main(argv: Sequence[str] | None = None) -> int:
     capture_dir = _default_capture_dir(args, base_path)
     capture_dir.mkdir(parents=True, exist_ok=True)
     profile_json = Path(args.shape_prior_profile_json) if args.shape_prior_profile_json is not None else capture_dir / "shape_prior_profile.json"
-    command = build_demo32_realtime_command(
+    command = build_camera_realtime_command(
         args,
         capture_dir=capture_dir,
         profile_json=profile_json,
         chunk_frame_count=chunk_frame_count,
     )
-    demo32_env = os.environ.copy()
-    cuda_visible_devices = resolve_demo32_cuda_visible_devices(args).strip()
+    camera_env = os.environ.copy()
+    cuda_visible_devices = resolve_camera_cuda_visible_devices(args).strip()
     if cuda_visible_devices:
-        demo32_env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
-    process = subprocess.Popen(command, env=demo32_env)
+        camera_env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
+    shape_prior_worker_process = _start_managed_shape_prior_worker(args)
+    shape_prior_worker_return_code: int | None = None
+    shape_prior_worker_released_before_optimization = False
+    optimization_process: subprocess.Popen[bytes] | None = None
+    optimization_started_manifest: dict[str, object] | None = None
+    optimization_start_wall_s: float | None = None
+    optimization_return_code: int | None = None
+    optimization_timed_out = False
+
+    def on_chunk_written(manifest: dict[str, object]) -> None:
+        nonlocal optimization_process
+        nonlocal optimization_started_manifest
+        nonlocal optimization_start_wall_s
+        nonlocal shape_prior_worker_process
+        nonlocal shape_prior_worker_return_code
+        nonlocal shape_prior_worker_released_before_optimization
+        if str(args.optimization_mode) != "continuous":
+            return
+        if optimization_process is not None:
+            return
+        if shape_prior_worker_process is not None:
+            shape_prior_worker_return_code = _stop_process(shape_prior_worker_process)
+            shape_prior_worker_process = None
+            shape_prior_worker_released_before_optimization = True
+            start_grace_s = float(args.optimization_start_grace_s)
+            if start_grace_s > 0.0:
+                time.sleep(start_grace_s)
+        optimization_process = _start_continuous_optimization(
+            args,
+            chunk_frame_count=chunk_frame_count,
+        )
+        optimization_started_manifest = dict(manifest)
+        optimization_start_wall_s = time.monotonic()
+
+    process = subprocess.Popen(command, env=camera_env, start_new_session=True)
     surface_points = _load_optional_points(args.surface_points_npy)
     interior_points = _load_optional_points(args.interior_points_npy)
     try:
@@ -631,47 +1074,69 @@ def main(argv: Sequence[str] | None = None) -> int:
             mask_radius_outlier_radius_m=float(args.mask_radius_outlier_radius_m),
             mask_radius_outlier_nb_points=int(args.mask_radius_outlier_nb_points),
             write_final_pcd=bool(args.write_final_pcd),
+            on_chunk_written=on_chunk_written,
         )
     finally:
         return_code = _stop_process(process)
+        if shape_prior_worker_process is not None:
+            shape_prior_worker_return_code = _stop_process(shape_prior_worker_process)
+            shape_prior_worker_process = None
+        if optimization_process is not None:
+            optimization_return_code = _wait_for_process(
+                optimization_process,
+                timeout_s=float(args.optimization_wait_timeout_s),
+            )
+            if optimization_return_code is None:
+                optimization_timed_out = True
+                optimization_return_code = _stop_process(optimization_process)
     final_migration = migrate_legacy_online_static_case(base_path, str(args.case_prefix))
     validation_cases = select_validation_chunk_cases(manifests) if len(manifests) >= 5 else []
     if args.max_chunks is not None and len(manifests) >= int(args.max_chunks):
         stop_reason = "max_chunks_reached"
     elif return_code == 0:
-        stop_reason = "demo32_completed"
+        stop_reason = "camera_completed"
     elif return_code is None:
-        stop_reason = "demo32_status_unknown"
+        stop_reason = "camera_status_unknown"
     else:
-        stop_reason = "demo32_exited_before_target"
+        stop_reason = "camera_exited_before_target"
     summary = {
-        "demo_version": "demo_v4",
+        "demo_version": "demo_v5",
         "mode": "full-fake-realtime-camera" if str(args.input_source) == "fake-live" else "full-live-camera",
         "gpu_mode": resolve_realtime_gpu_mode(args),
         "realtime_gpu_mode": resolve_realtime_gpu_mode(args),
         "warmup_gpu_mode": resolve_warmup_gpu_mode(args),
-        "demo32_command": command,
-        "demo32_cuda_visible_devices": cuda_visible_devices,
-        "demo32_cuda_visible_devices_override": (
-            None if args.demo32_cuda_visible_devices is None else str(args.demo32_cuda_visible_devices)
+        "camera_command": command,
+        "camera_cuda_visible_devices": cuda_visible_devices,
+        "camera_cuda_visible_devices_override": (
+            None if args.camera_cuda_visible_devices is None else str(args.camera_cuda_visible_devices)
         ),
-        "demo32_lossless_max_backlog_seconds": args.demo32_lossless_max_backlog_seconds,
-        "demo32_headless_prepared_only": bool(args.demo32_headless_prepared_only),
-        "demo32_source_replay_fps": resolve_demo32_source_replay_fps(args),
-        "demo32_source_replay_fps_override": (
-            None if args.demo32_source_replay_fps is None else float(args.demo32_source_replay_fps)
+        "camera_lossless_max_backlog_seconds": args.camera_lossless_max_backlog_seconds,
+        "camera_headless_prepared_only": bool(args.camera_headless_prepared_only),
+        "camera_source_replay_fps": resolve_camera_source_replay_fps(args),
+        "camera_source_replay_fps_override": (
+            None if args.camera_source_replay_fps is None else float(args.camera_source_replay_fps)
         ),
-        "demo32_lossless_input_fps": resolve_demo32_source_replay_fps(args),
+        "camera_lossless_input_fps": resolve_camera_source_replay_fps(args),
         "shape_prior_device": resolve_shape_prior_device(args),
         "shape_prior_device_override": None if args.shape_prior_device is None else str(args.shape_prior_device),
-        "demo32_return_code": return_code,
-        "demo32_stop_reason": stop_reason,
-        "demo32_capture_dir": str(capture_dir),
+        "shape_prior_worker_mode": str(args.shape_prior_worker_mode),
+        "shape_prior_worker_command": build_shape_prior_worker_command(args),
+        "shape_prior_worker_cuda_visible_devices": resolve_shape_prior_worker_cuda_visible_devices(args),
+        "shape_prior_worker_device": str(args.shape_prior_worker_device),
+        "shape_prior_worker_max_observation_to_aligned_p95_m": float(
+            args.shape_prior_worker_max_observation_to_aligned_p95_m
+        ),
+        "shape_prior_worker_return_code": shape_prior_worker_return_code,
+        "shape_prior_worker_released_before_optimization": shape_prior_worker_released_before_optimization,
+        "camera_return_code": return_code,
+        "camera_stop_reason": stop_reason,
+        "camera_capture_dir": str(capture_dir),
         "futurephystwin_base_path": str(base_path),
         "case_prefix": str(args.case_prefix),
         "output_format": "online-primary-static-case",
         "online_dir": str(resolve_online_dir(args)),
         "static_data_path": str(resolve_static_data_path(args)),
+        "realtime_phystwin_base_path": str(resolve_realtime_phystwin_base_path(args)),
         "chunk_frame_count": int(chunk_frame_count),
         "chunk_poll_interval_s": float(args.chunk_poll_interval_s),
         "max_chunks": args.max_chunks,
@@ -680,6 +1145,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         "validation_chunk_cases": validation_cases,
         "external_shape_prior_points": bool(surface_points is not None or interior_points is not None),
         "write_final_pcd": bool(args.write_final_pcd),
+        "optimization_mode": str(args.optimization_mode),
+        "optimization_started": optimization_started_manifest is not None,
+        "optimization_scope": "single_continuous_online_case",
+        "optimization_start_policy": "after_first_committed_online_chunk",
+        "optimization_started_from_chunk": optimization_started_manifest,
+        "optimization_start_wall_s": optimization_start_wall_s,
+        "optimization_command": build_realtime_phystwin_optimization_command(
+            args,
+            chunk_frame_count=chunk_frame_count,
+        ),
+        "optimization_cuda_visible_devices": resolve_optimization_cuda_visible_devices(args),
+        "optimization_device": resolve_optimization_device(args),
+        "optimization_return_code": optimization_return_code,
+        "optimization_timed_out": optimization_timed_out,
+        "optimization_zero_iterations": int(args.optimization_zero_iterations),
+        "optimization_batch_size": int(args.optimization_batch_size),
+        "optimization_zero_batch_size": args.optimization_zero_batch_size,
+        "optimization_iterations": args.optimization_iterations,
+        "optimization_segment_len": int(chunk_frame_count),
+        "optimization_segment_stride": int(args.optimization_segment_stride),
+        "optimization_recent_window_count": int(args.optimization_recent_window_count),
+        "optimization_poll_sec": float(args.optimization_poll_sec),
+        "optimization_start_grace_s": float(args.optimization_start_grace_s),
+        "optimization_stop_when_finished": bool(args.optimization_stop_when_finished),
         "startup_legacy_static_case_migration": startup_migration,
         "final_legacy_static_case_migration": final_migration,
     }
@@ -691,6 +1180,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return int(return_code)
     if args.max_chunks is not None and len(manifests) < int(args.max_chunks):
         return 1
+    if str(args.optimization_mode) == "continuous" and optimization_started_manifest is None:
+        return 1
+    if optimization_return_code not in (0, None):
+        return int(optimization_return_code)
     return 0
 
 
