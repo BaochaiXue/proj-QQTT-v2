@@ -1,2 +1,7 @@
 *
 !.gitignore
+
+# QQTT repo-local vendor snapshot: checkpoint configs and repo-local symlinks
+# are versioned here; large payload bytes live in vendor/demo_runtime/checkpoints/.
+!*/
+!*

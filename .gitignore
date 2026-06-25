@@ -151,3 +151,11 @@ non_rigid_matching/
 !tests/fixtures/
 !tests/fixtures/**
 docs/generated
+
+# Repo-local demo runtime vendor code is versioned. Keep only the central
+# heavyweight checkpoint payloads ignored; source trees, configs, and
+# repo-local symlinks under vendor/demo_runtime should be commit-visible.
+!/vendor/
+!/vendor/demo_runtime/
+!/vendor/demo_runtime/**
+/vendor/demo_runtime/checkpoints/

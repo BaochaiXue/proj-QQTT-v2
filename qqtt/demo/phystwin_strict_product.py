@@ -684,6 +684,50 @@ def _depth_path_for_row(capture_dir: Path, row: Mapping[str, Any]) -> Path:
     raise KeyError("headless capture row must contain depth_color_m_path or legacy ffs_depth_path")
 
 
+def _finalize_prepared_only_headless_capture(
+    capture: Path,
+    out: Path,
+    *,
+    metadata: Mapping[str, Any],
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    prepared_paths = [row.get("prepared_phystwin_frame_path") for row in rows]
+    missing = [idx for idx, value in enumerate(prepared_paths) if value is None]
+    if missing:
+        raise KeyError(
+            "prepared-only headless capture rows must contain prepared_phystwin_frame_path; "
+            f"missing row indices={missing[:5]}"
+        )
+    first_frame = load_prepared_phystwin_frame(capture / str(prepared_paths[0]))
+    manifest = {
+        "compatibility_target": COMPATIBILITY_TARGET_PHYSTWIN,
+        "tracking_product_backend": TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT,
+        "tracker_backend": "tapnextpp",
+        "mask_backend": "edgetam",
+        "depth_backend": str(metadata.get("depth_backend") or metadata.get("depth_source", "")),
+        "depth_source_internal": str(
+            metadata.get("depth_source_internal")
+            or metadata.get("depth_source")
+            or metadata.get("depth_backend", "")
+        ),
+        "execution_mode": PHYSTWIN_STRICT_EXECUTION_MODE,
+        "compatibility_path_name": PHYSTWIN_COMPATIBILITY_PATH_NAME,
+        "not_actual_cotracker": True,
+        "camera_count": 1,
+        "frame_count": int(len(rows)),
+        "query_count": int(first_frame.query_points_yx.shape[0]),
+        "headless_prepared_only": True,
+        "chunk_materialization_source": "prepared_phystwin_frame",
+        "prepared_frame_count": int(len(prepared_paths)),
+        "prepared_frames_dir": "prepared_phystwin",
+        "processed_masks_path": None,
+        "track_process_data_path": None,
+        "final_data_path": None,
+    }
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return manifest
+
+
 def _write_pcd_frames(
     output_dir: Path,
     rows: Sequence[Mapping[str, Any]],
@@ -905,6 +949,10 @@ def finalize_headless_capture(
     rows = _read_jsonl(capture / "frames.jsonl")
     if not rows:
         raise RuntimeError(f"no headless frames found in {capture / 'frames.jsonl'}")
+    if bool(metadata.get("headless_prepared_only")) or (
+        "prepared_phystwin_frame_path" in rows[0] and "mask_path" not in rows[0]
+    ):
+        return _finalize_prepared_only_headless_capture(capture, out, metadata=metadata, rows=rows)
 
     mask_frames = [_load_frame_masks(capture / str(row["mask_path"])) for row in rows]
     processed_mask_path = write_processed_masks(out, mask_frames)

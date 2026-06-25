@@ -420,6 +420,54 @@ class PhysTwinStrictProductTest(unittest.TestCase):
             self.assertEqual(manifest["frame_count"], 2)
             self.assertTrue((capture / "phystwin_like" / "final_data.pkl").is_file())
 
+    def test_finalize_headless_capture_accepts_prepared_only_rows(self) -> None:
+        import json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            capture = Path(tmp) / "capture"
+            (capture / "prepared_phystwin").mkdir(parents=True, exist_ok=True)
+            metadata = {
+                "headless_prepared_only": True,
+                "depth_backend": "native-realsense",
+                "depth_source_internal": "realsense",
+            }
+            (capture / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+            query_points = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+            rows = []
+            for seq in range(2):
+                frame = strict.PreparedPhysTwinFrame(
+                    seq=seq,
+                    rgb_frame=np.full((3, 4, 3), 120 + seq, dtype=np.uint8),
+                    processed_mask_frame={
+                        "object": np.ones((3, 4), dtype=bool),
+                        "controller": np.zeros((3, 4), dtype=bool),
+                    },
+                    pcd_points=np.zeros((3, 4, 3), dtype=np.float32),
+                    pcd_colors=np.zeros((3, 4, 3), dtype=np.uint8),
+                    tracks_yx=query_points,
+                    visibility=np.ones((2,), dtype=bool),
+                    query_points_yx=query_points,
+                )
+                path = capture / "prepared_phystwin" / f"{seq:06d}.npz"
+                strict.write_prepared_phystwin_frame(path, frame)
+                rows.append({"seq": seq, "prepared_phystwin_frame_path": f"prepared_phystwin/{seq:06d}.npz"})
+            with (capture / "frames.jsonl").open("w", encoding="utf-8") as handle:
+                for row in rows:
+                    handle.write(json.dumps(row) + "\n")
+
+            manifest = strict.finalize_headless_capture(capture)
+            out = capture / "phystwin_like"
+
+            self.assertTrue((out / "manifest.json").is_file())
+            self.assertEqual(manifest["headless_prepared_only"], True)
+            self.assertEqual(manifest["chunk_materialization_source"], "prepared_phystwin_frame")
+            self.assertEqual(manifest["depth_backend"], "native-realsense")
+            self.assertEqual(manifest["depth_source_internal"], "realsense")
+            self.assertEqual(manifest["frame_count"], 2)
+            self.assertEqual(manifest["query_count"], 2)
+            self.assertIsNone(manifest["final_data_path"])
+            self.assertFalse((out / "final_data.pkl").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

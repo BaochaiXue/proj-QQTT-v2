@@ -415,7 +415,7 @@ def build_demo32_realtime_command(
     profile_json: Path,
     chunk_frame_count: int,
 ) -> list[str]:
-    script = REPO_ROOT / "demo_v3_2" / "realtime_single_camera_ffs_masked_pcd.py"
+    script = Path("demo_v3_2") / "realtime_single_camera_ffs_masked_pcd.py"
     demo32_source_replay_fps = resolve_demo32_source_replay_fps(args)
     command = [
         sys.executable,

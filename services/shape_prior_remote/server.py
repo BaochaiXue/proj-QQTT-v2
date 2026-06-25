@@ -52,6 +52,7 @@ from services.shape_prior_remote.protocol import (  # noqa: E402
 DEFAULT_RUNTIME_ASSET_ROOT = Path("vendor") / "demo_runtime"
 DEFAULT_SAM3D_ROOT = DEFAULT_RUNTIME_ASSET_ROOT / "sam-3d-objects"
 DEFAULT_FUTUREPHYSTWIN_ROOT = DEFAULT_RUNTIME_ASSET_ROOT / "FuturePhysTwin"
+DEFAULT_UPSCALER_ROOT = DEFAULT_RUNTIME_ASSET_ROOT / "stable-diffusion-x4-upscaler"
 DEFAULT_UPSCALE_CATEGORY = "stuffed animal"
 _WARMUP_IMAGE_SIZE = 64
 
@@ -310,7 +311,7 @@ class ShapePriorSam3DWorker:
         import torch
 
         pipeline = StableDiffusionUpscalePipeline.from_pretrained(
-            "stabilityai/stable-diffusion-x4-upscaler",
+            str(DEFAULT_UPSCALER_ROOT),
             torch_dtype=torch.float16,
         )
         self._upscaler = pipeline.to(self.device)

@@ -1,4 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
+from pathlib import Path
+
 import torch
 from typing import Optional, Dict, Any
 import warnings
@@ -7,13 +9,23 @@ import torch.nn.functional as F
 from loguru import logger
 
 
+_DEMO_RUNTIME_ROOT = Path("vendor") / "demo_runtime"
+_DEFAULT_DINOV2_ROOT = _DEMO_RUNTIME_ROOT / "dinov2"
+_DEFAULT_DINOV2_WEIGHTS = (
+    _DEMO_RUNTIME_ROOT
+    / "checkpoints"
+    / "dinov2"
+    / "dinov2_vitl14_reg4_pretrain.pth"
+)
+
+
 class Dino(torch.nn.Module):
     def __init__(
         self,
         input_size: int = 224,
-        repo_or_dir: str = "facebookresearch/dinov2",
+        repo_or_dir: str = str(_DEFAULT_DINOV2_ROOT),
         dino_model: str = "dinov2_vitb14",
-        source: str = "github",
+        source: str = "local",
         backbone_kwargs: Optional[Dict[str, Any]] = None,
         normalize_images: bool = True,
         # for backward compatible
@@ -24,6 +36,15 @@ class Dino(torch.nn.Module):
         super().__init__()
         if backbone_kwargs is None:
             backbone_kwargs = {}
+        else:
+            backbone_kwargs = dict(backbone_kwargs)
+        if (
+            source == "local"
+            and Path(repo_or_dir).resolve() == _DEFAULT_DINOV2_ROOT.resolve()
+            and dino_model == "dinov2_vitl14_reg"
+            and "weights" not in backbone_kwargs
+        ):
+            backbone_kwargs["weights"] = str(_DEFAULT_DINOV2_WEIGHTS)
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")

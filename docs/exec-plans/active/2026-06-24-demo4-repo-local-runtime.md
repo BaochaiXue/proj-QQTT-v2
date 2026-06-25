@@ -34,12 +34,25 @@ The user explicitly approved continuing without design approval prompts.
 
 ## Validation Outcome
 
-- Focused tests passed: `89 tests`, `OK`.
-- Demo 4 fake-live launched with repo-local relative defaults.
-- GPU validation could not publish a chunk because this session has no CUDA
-  device access (`torch.cuda.is_available() == False`, `/dev/nvidia*` absent).
-- CPU fallback confirmed EdgeTAM loads from `vendor/demo_runtime/EdgeTAM-hf`
-  and then stops because upstream SAM 3.1 requires CUDA.
+- Focused tests passed: `101 tests`, `OK`.
+- Demo 4 fake-live completed one 25-frame chunk with default
+  `depth_backend=native-realsense`, realtime GPU0, shape-prior worker GPU1, and
+  repo-local relative runtime defaults.
+- The validated run wrote:
+  `result/demo_v4/repo_local_realsense_final_20260624/data/repo_local_realsense_final/final_data.pkl`.
+- Shape prior completed through real x4 upscaling, SAM3D inference,
+  single-view alignment, and data-process-compatible sampling:
+  700 surface points and 1000 interior points.
+- All 100 MB or larger model weight/cache files are now stored under
+  `vendor/demo_runtime/checkpoints/`; upstream-expected paths are repo-local
+  relative symlinks.
+- `--warmup-models` was attempted and failed on the local RTX 4090 with a
+  24 GB VRAM CUDA OOM during dummy SAM3D decode. The successful validation used
+  `--preload-models`, which still keeps model loading off the camera critical
+  path.
+- Optional gsplat layout post-optimization in `phystwin-max` logged a non-fatal
+  `nvcc`/`gsplat_cuda` extension issue; SAM3D still returned ready shape-prior
+  points and Demo 4 produced final data.
 
 ## Execution Notes
 

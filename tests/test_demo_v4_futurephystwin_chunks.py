@@ -156,6 +156,8 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             profile_json=Path("result/demo_v4/shape_profile.json"),
             chunk_frame_count=resolve_chunk_frame_count(args),
         )
+        self.assertEqual(command[1], "demo_v3_2/realtime_single_camera_ffs_masked_pcd.py")
+        self.assertFalse(Path(command[1]).is_absolute())
         self.assertEqual(command[command.index("--shape-prior-device") + 1], "cuda:1")
         self.assertEqual(command[command.index("--duration-s") + 1], "0.000")
 

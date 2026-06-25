@@ -50,6 +50,13 @@ those copies.
   - `vendor/demo_runtime/sam-3d-objects`
 - Default repo-local FuturePhysTwin checkout copy:
   - `vendor/demo_runtime/FuturePhysTwin`
+- Default repo-local Stable Diffusion x4 upscaler snapshot copy:
+  - `vendor/demo_runtime/stable-diffusion-x4-upscaler`
+- Default repo-local MoGe checkpoint path used by the SAM3D pipeline config:
+  - `vendor/demo_runtime/checkpoints/MoGe-vitl/model.pt`
+- Default repo-local DINOv2 torch-hub checkout and checkpoint:
+  - `vendor/demo_runtime/dinov2`
+  - `vendor/demo_runtime/checkpoints/dinov2/dinov2_vitl14_reg4_pretrain.pth`
 - Worker entrypoint in this repo:
 
 ```bash
@@ -64,6 +71,11 @@ python services/shape_prior_remote/server.py \
   SAM3D model, then run one deterministic dummy upscaler + SAM3D +
   mesh-conversion request before binding the endpoint. Report cold worker
   startup timing separately from warm request latency.
+- On 24 GB RTX 4090 systems the deterministic dummy SAM3D decode may OOM even
+  after preload. In that case use `--preload-models` for the validated
+  single-card realtime / dual-card warmup benchmark: model loading is still
+  outside the camera critical path, while the first real request records
+  upscaling/inference/alignment timings.
 - Demo 3.2 defaults to a 180000 ms shape-prior request timeout because each real
   request still runs x4 upscaling, SAM3D inference, single-view alignment, and
   data-process-compatible sampling.
@@ -80,10 +92,13 @@ python services/shape_prior_remote/server.py \
   --echo-observation
 ```
 
-SAM3D, Stable Diffusion x4 upscaler, PyTorch3D, Kaolin, checkpoints, and model
-weights are copied into `vendor/demo_runtime/` for the default Demo runtime
-path. Generated route videos and run outputs stay in ignored output locations.
-The Demo 3.2 process talks to the worker over the lightweight
+SAM3D, Stable Diffusion x4 upscaler, DINOv2, MoGe, PyTorch3D, Kaolin,
+checkpoints, and model weights are copied into `vendor/demo_runtime/` for the
+default Demo runtime path. All 100 MB or larger model weight/cache files live
+under `vendor/demo_runtime/checkpoints/`; upstream-expected source-tree
+locations are repo-local relative symlinks into that central checkpoints tree.
+Generated route videos and run outputs stay in ignored output locations. The
+Demo 3.2 process talks to the worker over the lightweight
 `services/shape_prior_remote` protocol; it does not import SAM3D or upscaler
 heavy dependencies.
 

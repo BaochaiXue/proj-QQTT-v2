@@ -11,3 +11,11 @@ weights/*
 !weights/.gitkeep
 output/
 .claude/
+
+# QQTT repo-local vendor snapshot: runtime source/config/small weights are
+# versioned here. Large payload bytes live only under
+# vendor/demo_runtime/checkpoints/ and are ignored by the repo root.
+!cfg.yaml
+!*.pth
+!weights/
+!weights/**

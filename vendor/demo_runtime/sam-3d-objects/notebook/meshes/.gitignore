@@ -1,2 +1,6 @@
 *
 !.gitignore
+
+# QQTT repo-local vendor snapshot: keep small notebook mesh assets visible.
+!*/
+!*

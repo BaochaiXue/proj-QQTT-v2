@@ -129,17 +129,51 @@ class Sam3dOnlyCliContractTest(unittest.TestCase):
 
         self.assertTrue(shape_prior_server.DEFAULT_SAM3D_ROOT.is_relative_to(vendor_root))
         self.assertTrue(shape_prior_server.DEFAULT_FUTUREPHYSTWIN_ROOT.is_relative_to(vendor_root))
+        self.assertTrue(shape_prior_server.DEFAULT_UPSCALER_ROOT.is_relative_to(vendor_root))
         self.assertTrue(masked_demo.DEFAULT_TAPNET_REPO_DIR.is_relative_to(vendor_root))
         self.assertTrue(masked_demo.DEFAULT_TAPNEXTPP_CHECKPOINT.is_relative_to(vendor_root))
         self.assertTrue(Path(masked_demo.DEFAULT_MODEL_ID).is_relative_to(vendor_root))
         self.assertTrue(DEFAULT_FFS_REPO.is_relative_to(vendor_root))
         self.assertFalse(shape_prior_server.DEFAULT_SAM3D_ROOT.is_absolute())
         self.assertFalse(shape_prior_server.DEFAULT_FUTUREPHYSTWIN_ROOT.is_absolute())
+        self.assertFalse(shape_prior_server.DEFAULT_UPSCALER_ROOT.is_absolute())
         self.assertFalse(masked_demo.DEFAULT_TAPNET_REPO_DIR.is_absolute())
         self.assertFalse(masked_demo.DEFAULT_TAPNEXTPP_CHECKPOINT.is_absolute())
         self.assertFalse(Path(masked_demo.DEFAULT_MODEL_ID).is_absolute())
         self.assertFalse(DEFAULT_FFS_REPO.is_absolute())
         self.assertEqual(DEFAULT_FFS_ENV_PYTHON, Path("python"))
+
+    def test_sam3d_dino_defaults_are_repo_local_and_checkpoint_centralized(self) -> None:
+        dino_path = (
+            REPO_ROOT
+            / "vendor"
+            / "demo_runtime"
+            / "sam-3d-objects"
+            / "sam3d_objects"
+            / "model"
+            / "backbone"
+            / "dit"
+            / "embedder"
+            / "dino.py"
+        )
+        vendor_root = Path("vendor") / "demo_runtime"
+        source = dino_path.read_text()
+
+        self.assertIn('_DEMO_RUNTIME_ROOT = Path("vendor") / "demo_runtime"', source)
+        self.assertIn('/ "checkpoints"', source)
+        self.assertIn('/ "dinov2"', source)
+        self.assertIn('/ "dinov2_vitl14_reg4_pretrain.pth"', source)
+        self.assertIn('repo_or_dir: str = str(_DEFAULT_DINOV2_ROOT)', source)
+        self.assertIn('source: str = "local"', source)
+        self.assertIn('backbone_kwargs["weights"] = str(_DEFAULT_DINOV2_WEIGHTS)', source)
+        self.assertNotIn('repo_or_dir: str = "facebookresearch/dinov2"', source)
+        self.assertNotIn('source: str = "github"', source)
+        self.assertFalse((vendor_root / "dinov2").is_absolute())
+        self.assertTrue(
+            (vendor_root / "checkpoints" / "dinov2" / "dinov2_vitl14_reg4_pretrain.pth").is_relative_to(
+                vendor_root / "checkpoints"
+            )
+        )
 
 
 class Demo32ShapePriorWrapperTest(unittest.TestCase):

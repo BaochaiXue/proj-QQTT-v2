@@ -234,3 +234,10 @@ sam2
 data_process_sam3d/groundedSAM_checkpoints
 data_process_sam3d/models/weights
 compare_visualization_videos_mesh
+
+# QQTT repo-local vendor snapshot: source, configs, assets, and small model
+# files are versioned here. Generated/sample data was removed from the vendor
+# copy; large runtime checkpoint payloads live only under
+# vendor/demo_runtime/checkpoints/ and are ignored by the repo root.
+!*/
+!*
