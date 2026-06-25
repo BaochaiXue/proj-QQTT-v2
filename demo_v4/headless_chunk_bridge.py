@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import pickle
 import time
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
@@ -635,10 +634,8 @@ def _write_chunk_from_rows(
         relative_wall_time_s=lambda: _relative_wall_s(float(wall_time_origin_s)),
     )
     if online_writer is not None:
-        with (Path(manifest["futurephystwin_case_root"]) / "final_data.pkl").open("rb") as handle:
-            final_data = pickle.load(handle)
-        online_result = online_writer.commit_final_data_chunk(
-            final_data,
+        online_result = online_writer.commit_case_chunk(
+            Path(manifest["futurephystwin_case_root"]),
             source_frame_indices=[
                 int(row.get("seq", row_start + offset))
                 for offset, row in enumerate(rows)

@@ -21,6 +21,7 @@ if REPO_ROOT_STR in sys.path:
 sys.path.insert(0, REPO_ROOT_STR)
 
 from demo_v4.headless_chunk_bridge import stream_chunks_from_headless_capture, write_chunks_from_headless_capture
+from demo_v4.online_case_aggregate import migrate_legacy_online_static_case
 
 
 DEFAULT_FUTUREPHYSTWIN_BASE_PATH = Path("result/demo_v4/futurephystwin_chunks")
@@ -556,6 +557,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     base_path = Path(args.futurephystwin_base_path)
     base_path.mkdir(parents=True, exist_ok=True)
+    startup_migration = migrate_legacy_online_static_case(base_path, str(args.case_prefix))
     if args.source_headless_capture is not None:
         manifests = write_chunks_from_headless_capture(
             args.source_headless_capture,
@@ -571,6 +573,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             mask_radius_outlier_nb_points=int(args.mask_radius_outlier_nb_points),
             write_final_pcd=bool(args.write_final_pcd),
         )
+        final_migration = migrate_legacy_online_static_case(base_path, str(args.case_prefix))
         summary = {
             "demo_version": "demo_v4",
             "mode": "source-headless-capture",
@@ -585,6 +588,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "chunk_count": int(len(manifests)),
             "chunks": manifests,
             "write_final_pcd": bool(args.write_final_pcd),
+            "startup_legacy_static_case_migration": startup_migration,
+            "final_legacy_static_case_migration": final_migration,
         }
         summary.update(_runtime_chunk_summary(manifests))
         summary_path = base_path / f"{args.case_prefix}_chunks_manifest.json"
@@ -629,6 +634,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     finally:
         return_code = _stop_process(process)
+    final_migration = migrate_legacy_online_static_case(base_path, str(args.case_prefix))
     validation_cases = select_validation_chunk_cases(manifests) if len(manifests) >= 5 else []
     if args.max_chunks is not None and len(manifests) >= int(args.max_chunks):
         stop_reason = "max_chunks_reached"
@@ -674,6 +680,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "validation_chunk_cases": validation_cases,
         "external_shape_prior_points": bool(surface_points is not None or interior_points is not None),
         "write_final_pcd": bool(args.write_final_pcd),
+        "startup_legacy_static_case_migration": startup_migration,
+        "final_legacy_static_case_migration": final_migration,
     }
     summary.update(_runtime_chunk_summary(manifests))
     summary_path = base_path / f"{args.case_prefix}_chunks_manifest.json"

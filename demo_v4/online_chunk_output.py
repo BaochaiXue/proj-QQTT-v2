@@ -8,6 +8,8 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
+from demo_v4.online_case_aggregate import OnlineAggregateCaseWriter
+
 
 TIME_KEYS = (
     "object_points",
@@ -23,6 +25,10 @@ TIME_KEYS = (
 STATIC_KEYS = (
     "surface_points",
     "interior_points",
+)
+
+FINAL_DATA_STATIC_KEYS = (
+    "controller_mask",
 )
 
 
@@ -61,6 +67,16 @@ def _take_source_frames(value: Any, source_frame_indices: Sequence[int]) -> Any:
         return value[source_frame_indices]
     except TypeError:
         return [value[int(idx)] for idx in source_frame_indices]
+
+
+def _as_controller_mask(data: Mapping[str, Any]) -> np.ndarray | None:
+    value = data.get("controller_mask")
+    if value is None:
+        return None
+    mask = np.ascontiguousarray(np.asarray(value, dtype=bool))
+    if mask.ndim != 1:
+        raise ValueError(f"controller_mask must be 1D, got {mask.shape}")
+    return mask
 
 
 def build_online_chunk(
@@ -119,6 +135,7 @@ class DemoV4OnlineOutputWriter:
         self.version = 0
         self._time_arrays: dict[str, list[np.ndarray]] = {key: [] for key in TIME_KEYS}
         self._static_arrays: dict[str, np.ndarray] = {}
+        self._aggregate_writer = OnlineAggregateCaseWriter(self.static_case_dir)
         self.chunks_dir.mkdir(parents=True, exist_ok=True)
         self.static_case_dir.mkdir(parents=True, exist_ok=True)
         self._write_manifest(status="recording")
@@ -168,9 +185,33 @@ class DemoV4OnlineOutputWriter:
             "online_manifest": manifest,
         }
 
+    def commit_case_chunk(
+        self,
+        case_dir: str | Path,
+        *,
+        source_frame_indices: Sequence[int] | None = None,
+        status: str = "recording",
+    ) -> dict[str, Any]:
+        chunk_case_dir = Path(case_dir)
+        with (chunk_case_dir / "final_data.pkl").open("rb") as handle:
+            final_data = pickle.load(handle)
+        result = self.commit_final_data_chunk(
+            final_data,
+            source_frame_indices=source_frame_indices,
+            status=status,
+        )
+        aggregate_manifest = self._aggregate_writer.add_chunk_case(chunk_case_dir)
+        result["aggregate_case_dir"] = str(self.static_case_dir)
+        result["aggregate_manifest"] = aggregate_manifest
+        return result
+
     def finish(self) -> dict[str, Any]:
+        aggregate_manifest = self._aggregate_writer.finish()
         self.version += 1
-        return self._write_manifest(status="finished")
+        manifest = self._write_manifest(status="finished")
+        if aggregate_manifest is not None:
+            manifest["aggregate_case_dir"] = str(self.static_case_dir)
+        return manifest
 
     def _append_static_data(self, data: Mapping[str, Any], *, frame_count: int) -> None:
         for key in TIME_KEYS:
@@ -185,10 +226,17 @@ class DemoV4OnlineOutputWriter:
             value = data.get(key)
             if value is not None:
                 self._static_arrays[key] = np.ascontiguousarray(np.asarray(value))
+        controller_mask = _as_controller_mask(data)
+        if controller_mask is not None:
+            self._static_arrays["controller_mask"] = controller_mask
         payload: dict[str, Any] = {}
         for key, values in self._time_arrays.items():
             if values:
                 payload[key] = np.ascontiguousarray(np.concatenate(values, axis=0))
+        for key in FINAL_DATA_STATIC_KEYS:
+            value = self._static_arrays.get(key)
+            if value is not None:
+                payload[key] = value
         for key in STATIC_KEYS:
             payload[key] = self._static_arrays.get(
                 key,
@@ -233,4 +281,3 @@ __all__ = [
     "atomic_pickle_dump",
     "build_online_chunk",
 ]
-

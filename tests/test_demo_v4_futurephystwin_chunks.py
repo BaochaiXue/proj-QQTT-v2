@@ -200,9 +200,12 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             )
 
             first = _track_process_data(2)
+            controller_mask = np.asarray(np.arange(30) % 3 != 0, dtype=bool)
+            first["controller_mask"] = controller_mask
             first["surface_points"] = np.array([[0.0, 0.0, -0.02]], dtype=np.float64)
             first["interior_points"] = np.array([[0.01, 0.0, -0.03]], dtype=np.float64)
             second = _track_process_data(2)
+            second["controller_mask"] = controller_mask
             second["surface_points"] = np.array([[0.0, 0.0, -0.02]], dtype=np.float64)
             second["interior_points"] = np.array([[0.01, 0.0, -0.03]], dtype=np.float64)
 
@@ -245,8 +248,81 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             self.assertIn("object_visibilities", chunk)
             self.assertIn("object_motions_valid", chunk)
             self.assertIn("controller_points", chunk)
+            self.assertNotIn("controller_mask", chunk)
             self.assertNotIn("surface_points", chunk)
             self.assertNotIn("interior_points", chunk)
+
+            static_path = base_path / "data" / "demo_v4" / "final_data.pkl"
+            with static_path.open("rb") as handle:
+                static_data = pickle.load(handle)
+            for key in chunk_writer.FUTUREPHYSTWIN_FINAL_DATA_KEYS:
+                self.assertIn(key, static_data)
+            np.testing.assert_array_equal(static_data["controller_mask"], controller_mask)
+
+    def test_online_writer_builds_full_received_frame_numbered_aggregate_case(self) -> None:
+        from demo_v4.online_chunk_output import DemoV4OnlineOutputWriter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = Path(tmp)
+            write_futurephystwin_chunk_case(
+                base_path,
+                "demo_v4_chunk_0001",
+                _futurephystwin_chunk(frame_count=2),
+            )
+            write_futurephystwin_chunk_case(
+                base_path,
+                "demo_v4_chunk_0002",
+                _futurephystwin_chunk(frame_count=2),
+            )
+            writer = DemoV4OnlineOutputWriter(
+                base_path=base_path,
+                case_name="demo_v4",
+                chunk_size=2,
+                num_frames_total=4,
+            )
+
+            writer.commit_case_chunk(
+                base_path / "demo_v4_chunk_0001",
+                source_frame_indices=[10, 11],
+                status="recording",
+            )
+            writer.commit_case_chunk(
+                base_path / "demo_v4_chunk_0002",
+                source_frame_indices=[12, 13],
+                status="recording",
+            )
+            writer.finish()
+
+            aggregate = base_path / "data" / "demo_v4"
+            summary = validate_futurephystwin_case(aggregate, require_ready=True)
+            self.assertTrue(summary["valid"])
+            self.assertEqual(summary["frame_count"], 4)
+            for received_frame_idx in range(4):
+                self.assertTrue(
+                    (aggregate / "color" / "0" / f"{received_frame_idx}.png").is_file()
+                )
+            self.assertFalse((aggregate / "color" / "0" / "4.png").exists())
+
+            with (aggregate / "final_data.pkl").open("rb") as handle:
+                final_data = pickle.load(handle)
+            self.assertIn("controller_mask", final_data)
+            self.assertEqual(final_data["object_points"].shape[0], 4)
+            self.assertEqual(final_data["controller_points"].shape[0], 4)
+
+            metadata = json.loads((aggregate / "metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["fps"], 5)
+            self.assertEqual(metadata["frame_num"], 4)
+            tracking = np.load(aggregate / "tracking" / "0.npz")
+            self.assertEqual(tracking["tracks"].shape[0], 4)
+            self.assertEqual(tracking["visibility"].shape[0], 4)
+
+            with (
+                base_path / "online_data" / "demo_v4" / "chunks" / "chunk_000001.pkl"
+            ).open("rb") as handle:
+                online_chunk = pickle.load(handle)
+            self.assertEqual(online_chunk["start_frame"], 2)
+            self.assertEqual(online_chunk["end_frame"], 4)
+            self.assertEqual(online_chunk["source_frame_indices"], [12, 13])
 
     def test_demo_v4_can_decouple_source_pacing_from_output_fps(self) -> None:
         args = build_parser().parse_args(
@@ -713,8 +789,55 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
                 static_data = pickle.load(handle)
             self.assertEqual(static_data["object_points"].shape[0], 4)
             self.assertEqual(static_data["controller_points"].shape[0], 4)
+            self.assertIn("controller_mask", static_data)
+            self.assertEqual(static_data["controller_mask"].ndim, 1)
+            self.assertEqual(static_data["controller_mask"].dtype, np.dtype(bool))
+            self.assertGreaterEqual(static_data["controller_mask"].shape[0], static_data["controller_points"].shape[1])
             np.testing.assert_allclose(static_data["surface_points"], np.array([[0.0, 0.0, -0.02]], dtype=np.float64))
             np.testing.assert_allclose(static_data["interior_points"], np.array([[0.01, 0.0, -0.03]], dtype=np.float64))
+            aggregate_dir = base_path / "data" / "demo_v4_capture"
+            aggregate_summary = validate_futurephystwin_case(aggregate_dir, require_ready=True)
+            self.assertTrue(aggregate_summary["valid"])
+            self.assertEqual(aggregate_summary["frame_count"], 4)
+            self.assertTrue((aggregate_dir / "color" / "0" / "0.png").is_file())
+            self.assertTrue((aggregate_dir / "color" / "0" / "1.png").is_file())
+            self.assertTrue((aggregate_dir / "color" / "0" / "2.png").is_file())
+            self.assertTrue((aggregate_dir / "color" / "0" / "3.png").is_file())
+
+    def test_legacy_online_static_case_migrates_from_ready_chunk_cases(self) -> None:
+        from demo_v4.online_case_aggregate import migrate_legacy_online_static_case
+        from demo_v4.online_chunk_output import DemoV4OnlineOutputWriter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = Path(tmp)
+            write_futurephystwin_chunk_case(
+                base_path,
+                "demo_v4_legacy_chunk_0001",
+                _futurephystwin_chunk(frame_count=2),
+            )
+            writer = DemoV4OnlineOutputWriter(
+                base_path=base_path,
+                case_name="demo_v4_legacy",
+                chunk_size=2,
+                num_frames_total=2,
+            )
+            first = _track_process_data(2)
+            first["surface_points"] = np.array([[0.0, 0.0, -0.02]], dtype=np.float64)
+            first["interior_points"] = np.array([[0.01, 0.0, -0.03]], dtype=np.float64)
+            writer.commit_final_data_chunk(first, source_frame_indices=[50, 51])
+
+            legacy_case = base_path / "data" / "demo_v4_legacy"
+            self.assertTrue((legacy_case / "final_data.pkl").is_file())
+            self.assertFalse((legacy_case / "calibrate.pkl").exists())
+
+            result = migrate_legacy_online_static_case(base_path, "demo_v4_legacy")
+
+            self.assertTrue(result["migrated"])
+            summary = validate_futurephystwin_case(legacy_case, require_ready=True)
+            self.assertTrue(summary["valid"])
+            self.assertEqual(summary["frame_count"], 2)
+            self.assertTrue((legacy_case / "color" / "0" / "0.png").is_file())
+            self.assertTrue((legacy_case / "color" / "0" / "1.png").is_file())
 
     def test_prepared_frame_helper_exports_chunk_compatible_arrays(self) -> None:
         height, width = 8, 40

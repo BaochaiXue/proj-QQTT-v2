@@ -110,15 +110,23 @@ object_colors
 object_visibilities
 object_motions_valid
 controller_points
+controller_mask
 ```
 
 `track_process_data.pkl` is after controller whole-window filtering and FPS 30.
-`final_data.pkl` additionally applies 5 mm first-frame object grid sampling.
+`final_data.pkl` additionally applies 5 mm first-frame object grid sampling and,
+for Demo v4 shape-prior outputs, includes `surface_points` and
+`interior_points`.
 
 Demo v4 FuturePhysTwin chunk roots add a top-level `READY` marker. Directory
 watchers and batch consumers must ignore any discovered case directory until
 that marker exists; producer-side temporary materialization lives under
 `<base>/.publishing/` and is not a consumable case root.
+
+Demo v4 online-primary aggregate cases under `<base>/data/<case>/` use the same
+received-frame numbering as aligned cases: per-frame files and time-axis rows
+are indexed `0, 1, 2, ...` in the order Demo v4 publishes frames. These indices
+do not refer to the fake-live source recording frame ids.
 
 ## Manifest
 

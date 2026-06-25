@@ -76,13 +76,25 @@ need an explicit test/debug override.
 ## Output Locations
 
 Demo v4 writes into `--futurephystwin-base-path`. The default consumer-facing
-layout matches `realtime_phystwin/scripts/fake_online_tracker.py`:
+layout combines a complete aggregate FuturePhysTwin-style case with the
+`realtime_phystwin/scripts/fake_online_tracker.py` online stream:
 
 ```text
 <base>/
   data/<case-prefix>/
+    READY
     final_data.pkl
+    track_process_data.pkl
+    calibrate.pkl
     metadata.json
+    split.json
+    color/0/0.png
+    color/0/1.png
+    ...
+    mask/processed_masks.pkl
+    tracking/0.npz
+    cotracker/0.npz
+    pcd/0.npz              # only with --write-final-pcd
 
   online_data/<case-prefix>/
     manifest.json
@@ -122,8 +134,13 @@ Use these paths with realtime_phystwin online scripts:
 ```
 
 `online_data/<case-prefix>/manifest.json` is atomically updated after each
-`chunks/chunk_*.pkl` file is committed. The static `final_data.pkl` contains the
-concatenated committed chunks plus `surface_points` and `interior_points`.
+`chunks/chunk_*.pkl` file is committed. The aggregate `data/<case-prefix>/`
+case is rebuilt from committed diagnostic chunks and gets `READY` only when the
+online stream finishes. Its per-frame artifacts use received-frame numbering:
+the first published frame is `0`, the next is `1`, and later chunks continue
+from the current aggregate frame count. That numbering is independent of any
+fake-live source frame number preserved for traceability in online chunk
+metadata.
 
 The per-window `<case-prefix>_chunk_XXXX/` directories remain diagnostic
 compatibility artifacts. Consumers that read those directories should only read
@@ -393,6 +410,11 @@ cotracker/0.npz
 manifest.json
 READY
 ```
+
+For the aggregate online-primary case, `<frame>` is the global received-frame
+index within Demo v4's published stream. For example, with 25-frame chunks,
+`chunk_0001` writes `color/0/0.png` through `color/0/24.png`, and `chunk_0002`
+continues at `color/0/25.png`.
 
 `final_data.pkl` contains:
 
