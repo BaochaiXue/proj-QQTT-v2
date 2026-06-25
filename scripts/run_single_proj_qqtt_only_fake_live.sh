@@ -37,6 +37,8 @@ WORKER_DEVICE="${QQTT_ONLY_WORKER_DEVICE:-cuda:0}"
 WORKER_PRELOAD_MODELS="${QQTT_ONLY_WORKER_PRELOAD_MODELS:-1}"
 WORKER_WARMUP_MODELS="${QQTT_ONLY_WORKER_WARMUP_MODELS:-1}"
 WORKER_DEBUG="${QQTT_ONLY_WORKER_DEBUG:-1}"
+AUTO_RELEASE_WORKER="${QQTT_ONLY_AUTO_RELEASE_WORKER:-1}"
+WORKER_RELEASE_POLL_S="${QQTT_ONLY_WORKER_RELEASE_POLL_S:-2}"
 LOG_DIR="${QQTT_ONLY_LOG_DIR:-${BASE_PATH}/logs}"
 
 mkdir -p "${LOG_DIR}"
@@ -61,14 +63,31 @@ is_endpoint_listening() {
 }
 
 worker_pid=""
-cleanup() {
+demo_pid=""
+worker_was_released="0"
+
+stop_managed_worker() {
+  local reason="${1:-cleanup}"
   if [[ -n "${worker_pid}" ]]; then
-    echo "[qqtt-only] stopping managed shape-prior worker pid=${worker_pid}"
+    echo "[qqtt-only] stopping managed shape-prior worker pid=${worker_pid} reason=${reason}"
     kill -- "-${worker_pid}" >/dev/null 2>&1 || true
     wait "${worker_pid}" >/dev/null 2>&1 || true
+    worker_pid=""
+    worker_was_released="1"
   fi
 }
+
+cleanup() {
+  if [[ -n "${demo_pid}" ]] && kill -0 "${demo_pid}" >/dev/null 2>&1; then
+    echo "[qqtt-only] stopping Demo v4 pid=${demo_pid}"
+    kill "${demo_pid}" >/dev/null 2>&1 || true
+    wait "${demo_pid}" >/dev/null 2>&1 || true
+  fi
+  stop_managed_worker "cleanup"
+}
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 start_worker_if_needed() {
   local should_start="0"
@@ -138,6 +157,77 @@ start_worker_if_needed() {
   exit 1
 }
 
+auto_release_enabled() {
+  case "${AUTO_RELEASE_WORKER}" in
+    1|true|yes)
+      return 0
+      ;;
+    0|false|no)
+      return 1
+      ;;
+    *)
+      echo "[qqtt-only] unsupported QQTT_ONLY_AUTO_RELEASE_WORKER=${AUTO_RELEASE_WORKER}" >&2
+      exit 2
+      ;;
+  esac
+}
+
+shape_prior_backed_chunk_ready() {
+  python - "${BASE_PATH}" "${CASE_PREFIX}" <<'PY'
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import sys
+
+base = Path(sys.argv[1])
+case_prefix = sys.argv[2]
+
+has_points = False
+for path in base.glob("**/shape_prior/points.npz"):
+    try:
+        if path.is_file() and path.stat().st_size > 0:
+            has_points = True
+            break
+    except OSError:
+        continue
+if not has_points:
+    raise SystemExit(1)
+
+for manifest_path in sorted(base.glob(f"{case_prefix}_chunk_*/manifest.json")):
+    if ".publishing" in manifest_path.parts:
+        continue
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        continue
+    if payload.get("shape_prior_complete") or payload.get("shape_prior_target_counts_met"):
+        print(str(manifest_path))
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+maybe_release_worker_after_shape_prior_chunk() {
+  if [[ -z "${worker_pid}" ]]; then
+    return
+  fi
+  if ! auto_release_enabled; then
+    return
+  fi
+  if ! kill -0 "${worker_pid}" >/dev/null 2>&1; then
+    worker_pid=""
+    return
+  fi
+
+  local ready_manifest
+  if ready_manifest="$(shape_prior_backed_chunk_ready 2>/dev/null)"; then
+    echo "[qqtt-only] shape-prior-backed chunk ready: ${ready_manifest}"
+    stop_managed_worker "shape-prior-backed-chunk-ready"
+  fi
+}
+
 start_worker_if_needed
 
 cmd=(
@@ -162,4 +252,28 @@ fi
 echo "[qqtt-only] running single_proj_qqtt only"
 echo "[qqtt-only] output: ${BASE_PATH}"
 echo "[qqtt-only] command: ${cmd[*]} $*"
-exec "${cmd[@]}" "$@"
+if [[ -n "${worker_pid}" ]] && auto_release_enabled; then
+  echo "[qqtt-only] managed worker will auto-stop after the first shape-prior-backed chunk"
+fi
+
+set +e
+"${cmd[@]}" "$@" &
+demo_pid="$!"
+demo_exit=0
+while true; do
+  demo_status="$(ps -p "${demo_pid}" -o stat= 2>/dev/null | tr -d '[:space:]')"
+  if [[ -z "${demo_status}" || "${demo_status}" == Z* ]]; then
+    wait "${demo_pid}"
+    demo_exit="$?"
+    demo_pid=""
+    break
+  fi
+  maybe_release_worker_after_shape_prior_chunk
+  sleep "${WORKER_RELEASE_POLL_S}"
+done
+set -e
+
+if [[ "${worker_was_released}" == "1" ]]; then
+  echo "[qqtt-only] managed shape-prior worker was released before wrapper exit"
+fi
+exit "${demo_exit}"
