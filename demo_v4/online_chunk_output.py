@@ -193,6 +193,7 @@ class DemoV4OnlineOutputWriter:
         status: str = "recording",
     ) -> dict[str, Any]:
         chunk_case_dir = Path(case_dir)
+        self._aggregate_writer.validate_next_chunk_case(chunk_case_dir)
         with (chunk_case_dir / "final_data.pkl").open("rb") as handle:
             final_data = pickle.load(handle)
         result = self.commit_final_data_chunk(

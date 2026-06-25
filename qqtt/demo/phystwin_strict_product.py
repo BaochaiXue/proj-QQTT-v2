@@ -798,6 +798,295 @@ class StreamingControllerAnchorSelector:
         return result
 
 
+def _object_volume_sample_indices(
+    object_points: np.ndarray,
+    *,
+    surface_points: np.ndarray | None = None,
+    interior_points: np.ndarray | None = None,
+    volume_sample_size: float = 0.005,
+) -> np.ndarray:
+    pts = np.asarray(object_points, dtype=np.float32)
+    if pts.ndim != 3 or pts.shape[-1] != 3:
+        raise ValueError("object_points must have shape T,N,3")
+    if pts.shape[1] == 0:
+        return np.empty((0,), dtype=np.int64)
+    voxel = float(volume_sample_size)
+    if voxel <= 0.0:
+        raise ValueError("volume_sample_size must be positive")
+    bound_inputs = [pts[0]]
+    for prior_points in (surface_points, interior_points):
+        if prior_points is None:
+            continue
+        prior = np.asarray(prior_points, dtype=np.float32).reshape(-1, 3)
+        if prior.size:
+            bound_inputs.append(prior)
+    min_bound = np.min(np.concatenate(bound_inputs, axis=0), axis=0)
+    seen: set[tuple[int, int, int]] = set()
+    keep: list[int] = []
+    for idx, point in enumerate(pts[0]):
+        grid_index = tuple(np.floor((point - min_bound) / np.float32(voxel)).astype(np.int64).tolist())
+        if grid_index in seen:
+            continue
+        seen.add(grid_index)
+        keep.append(int(idx))
+    return np.asarray(keep, dtype=np.int64)
+
+
+class StreamingObjectAnchorSelector:
+    """Keep object topology stable across Demo v4 online chunks."""
+
+    def __init__(
+        self,
+        *,
+        volume_sample_size: float = 0.005,
+        revive_knn: int = 4,
+    ) -> None:
+        if float(volume_sample_size) <= 0.0:
+            raise ValueError("volume_sample_size must be positive")
+        if int(revive_knn) <= 0:
+            raise ValueError("revive_knn must be positive")
+        self.volume_sample_size = float(volume_sample_size)
+        self.revive_knn = int(revive_knn)
+        self._initial_query_indices: np.ndarray | None = None
+        self._active_query_indices: np.ndarray | None = None
+        self._last_points: np.ndarray | None = None
+
+    @property
+    def initialized(self) -> bool:
+        return self._initial_query_indices is not None
+
+    def select(
+        self,
+        track_data: Mapping[str, np.ndarray],
+        *,
+        surface_points: np.ndarray | None = None,
+        interior_points: np.ndarray | None = None,
+    ) -> dict[str, np.ndarray]:
+        result = {key: np.asarray(value).copy() for key, value in track_data.items()}
+        points = np.asarray(result["object_points"], dtype=np.float32)
+        colors = np.asarray(result["object_colors"], dtype=np.float32)
+        visibilities = np.asarray(result["object_visibilities"], dtype=bool)
+        motions_valid = np.asarray(result["object_motions_valid"], dtype=bool)
+        if points.ndim != 3 or points.shape[-1] != 3:
+            raise ValueError("object_points must have shape T,N,3")
+        if colors.shape != points.shape:
+            raise ValueError("object_colors must match object_points")
+        if visibilities.shape != points.shape[:2] or motions_valid.shape != points.shape[:2]:
+            raise ValueError("object visibility arrays must match object_points")
+        frame_count, candidate_count, _ = points.shape
+        query_indices = self._query_indices(result, candidate_count)
+        valid_candidates = self._valid_candidate_mask(points, visibilities)
+
+        if not self.initialized:
+            valid_indices = np.flatnonzero(valid_candidates)
+            selected_local = _object_volume_sample_indices(
+                points[:, valid_indices, :],
+                surface_points=surface_points,
+                interior_points=interior_points,
+                volume_sample_size=self.volume_sample_size,
+            )
+            selected = np.ascontiguousarray(valid_indices[selected_local], dtype=np.int64)
+            output_points = np.ascontiguousarray(points[:, selected, :], dtype=np.float32)
+            initial_query_indices = np.ascontiguousarray(query_indices[selected], dtype=np.int64)
+            self._initial_query_indices = initial_query_indices
+            self._active_query_indices = initial_query_indices.copy()
+            self._last_points = np.ascontiguousarray(output_points[-1], dtype=np.float32)
+            return self._with_object_payload(
+                result,
+                selected=selected,
+                output_points=output_points,
+                output_colors=np.ascontiguousarray(colors[:, selected, :], dtype=np.float32),
+                output_visibilities=np.ascontiguousarray(visibilities[:, selected], dtype=bool),
+                output_motions_valid=np.ascontiguousarray(motions_valid[:, selected], dtype=bool),
+                statuses=np.asarray(["direct"] * len(selected)),
+                active_query_indices=initial_query_indices,
+            )
+
+        assert self._initial_query_indices is not None
+        assert self._active_query_indices is not None
+        assert self._last_points is not None
+        anchor_count = int(len(self._initial_query_indices))
+        output_points = np.zeros((frame_count, anchor_count, 3), dtype=np.float32)
+        output_colors = np.zeros((frame_count, anchor_count, 3), dtype=np.float32)
+        output_visibilities = np.zeros((frame_count, anchor_count), dtype=bool)
+        output_motions_valid = np.zeros((frame_count, anchor_count), dtype=bool)
+        selected = np.full((anchor_count,), -1, dtype=np.int64)
+        statuses = np.full((anchor_count,), "missing", dtype="<U8")
+        active_query_indices = self._active_query_indices.copy()
+        used_candidates: set[int] = set()
+        direct_mask = np.zeros((anchor_count,), dtype=bool)
+        query_to_candidate = {int(query_id): int(idx) for idx, query_id in enumerate(query_indices.tolist())}
+
+        for anchor_idx in range(anchor_count):
+            candidate_idx = self._direct_candidate_for_anchor(
+                anchor_idx,
+                query_to_candidate=query_to_candidate,
+                valid_candidates=valid_candidates,
+            )
+            if candidate_idx is None or candidate_idx in used_candidates:
+                continue
+            output_points[:, anchor_idx, :] = points[:, candidate_idx, :]
+            output_colors[:, anchor_idx, :] = colors[:, candidate_idx, :]
+            output_visibilities[:, anchor_idx] = visibilities[:, candidate_idx]
+            output_motions_valid[:, anchor_idx] = motions_valid[:, candidate_idx]
+            selected[anchor_idx] = int(candidate_idx)
+            active_query_indices[anchor_idx] = int(query_indices[candidate_idx])
+            statuses[anchor_idx] = "direct"
+            direct_mask[anchor_idx] = True
+            used_candidates.add(int(candidate_idx))
+
+        for anchor_idx in np.flatnonzero(~direct_mask):
+            predicted_first = self._predict_first_frame(anchor_idx, output_points, direct_mask)
+            revived = self._revive_from_neighbors(
+                points,
+                colors,
+                visibilities,
+                motions_valid,
+                valid_candidates,
+                used_candidates=used_candidates,
+                predicted_first=predicted_first,
+            )
+            output_points[:, anchor_idx, :] = revived["points"]
+            output_colors[:, anchor_idx, :] = revived["colors"]
+            output_visibilities[:, anchor_idx] = revived["visibilities"]
+            output_motions_valid[:, anchor_idx] = revived["motions_valid"]
+            candidate_idx = revived["candidate_idx"]
+            if candidate_idx is None:
+                statuses[anchor_idx] = "fallback"
+                active_query_indices[anchor_idx] = -1
+            else:
+                selected[anchor_idx] = int(candidate_idx)
+                active_query_indices[anchor_idx] = int(query_indices[candidate_idx])
+                statuses[anchor_idx] = "revived"
+                used_candidates.add(int(candidate_idx))
+
+        self._active_query_indices = np.ascontiguousarray(active_query_indices, dtype=np.int64)
+        self._last_points = np.ascontiguousarray(output_points[-1], dtype=np.float32)
+        return self._with_object_payload(
+            result,
+            selected=selected,
+            output_points=output_points,
+            output_colors=output_colors,
+            output_visibilities=output_visibilities,
+            output_motions_valid=output_motions_valid,
+            statuses=statuses,
+            active_query_indices=active_query_indices,
+        )
+
+    def _query_indices(self, result: Mapping[str, np.ndarray], candidate_count: int) -> np.ndarray:
+        value = result.get("object_query_indices")
+        if value is None:
+            return np.arange(candidate_count, dtype=np.int64)
+        query_indices = np.asarray(value, dtype=np.int64).reshape(-1)
+        if query_indices.shape[0] != int(candidate_count):
+            raise ValueError("object_query_indices must match object candidate count")
+        return np.ascontiguousarray(query_indices, dtype=np.int64)
+
+    def _valid_candidate_mask(self, points: np.ndarray, visibilities: np.ndarray) -> np.ndarray:
+        first_points = points[0]
+        return np.ascontiguousarray(
+            visibilities[0]
+            & np.isfinite(points).all(axis=(0, 2))
+            & np.isfinite(first_points).all(axis=1)
+            & (np.linalg.norm(first_points, axis=1) > 1e-9),
+            dtype=bool,
+        )
+
+    def _direct_candidate_for_anchor(
+        self,
+        anchor_idx: int,
+        *,
+        query_to_candidate: Mapping[int, int],
+        valid_candidates: np.ndarray,
+    ) -> int | None:
+        assert self._initial_query_indices is not None
+        assert self._active_query_indices is not None
+        for query_id in (
+            int(self._initial_query_indices[anchor_idx]),
+            int(self._active_query_indices[anchor_idx]),
+        ):
+            candidate_idx = query_to_candidate.get(query_id)
+            if candidate_idx is not None and bool(valid_candidates[candidate_idx]):
+                return int(candidate_idx)
+        return None
+
+    def _predict_first_frame(self, anchor_idx: int, output: np.ndarray, direct_mask: np.ndarray) -> np.ndarray:
+        assert self._last_points is not None
+        previous = np.asarray(self._last_points, dtype=np.float32)
+        base = previous[int(anchor_idx)]
+        direct_indices = np.flatnonzero(direct_mask)
+        if len(direct_indices) == 0:
+            return np.ascontiguousarray(base, dtype=np.float32)
+        direct_previous = previous[direct_indices]
+        direct_displacement = output[0, direct_indices, :] - direct_previous
+        distances = np.linalg.norm(direct_previous - base[None, :], axis=1)
+        order = np.argsort(distances)[: max(1, min(self.revive_knn, len(distances)))]
+        weights = 1.0 / np.maximum(distances[order], 1e-6)
+        weights = weights / np.sum(weights)
+        return np.ascontiguousarray(base + np.sum(direct_displacement[order] * weights[:, None], axis=0), dtype=np.float32)
+
+    def _revive_from_neighbors(
+        self,
+        points: np.ndarray,
+        colors: np.ndarray,
+        visibilities: np.ndarray,
+        motions_valid: np.ndarray,
+        valid_candidates: np.ndarray,
+        *,
+        used_candidates: set[int],
+        predicted_first: np.ndarray,
+    ) -> dict[str, np.ndarray | int | None]:
+        candidates = np.flatnonzero(valid_candidates)
+        if used_candidates:
+            candidates = np.asarray([idx for idx in candidates.tolist() if int(idx) not in used_candidates], dtype=np.int64)
+        if len(candidates) == 0:
+            return {
+                "points": np.repeat(np.asarray(predicted_first, dtype=np.float32)[None, :], points.shape[0], axis=0),
+                "colors": np.zeros((points.shape[0], 3), dtype=np.float32),
+                "visibilities": np.zeros((points.shape[0],), dtype=bool),
+                "motions_valid": np.zeros((points.shape[0],), dtype=bool),
+                "candidate_idx": None,
+            }
+        distances = np.linalg.norm(points[0, candidates, :] - np.asarray(predicted_first, dtype=np.float32)[None, :], axis=1)
+        order = np.argsort(distances)[: max(1, min(self.revive_knn, len(candidates)))]
+        selected = candidates[order]
+        weights = 1.0 / np.maximum(distances[order], 1e-6)
+        weights = weights / np.sum(weights)
+        trajectory = np.sum(points[:, selected, :] * weights[None, :, None], axis=1)
+        trajectory = trajectory + (np.asarray(predicted_first, dtype=np.float32) - trajectory[0])[None, :]
+        return {
+            "points": np.ascontiguousarray(trajectory, dtype=np.float32),
+            "colors": np.ascontiguousarray(np.sum(colors[:, selected, :] * weights[None, :, None], axis=1), dtype=np.float32),
+            "visibilities": np.ascontiguousarray(np.any(visibilities[:, selected], axis=1), dtype=bool),
+            "motions_valid": np.ascontiguousarray(np.any(motions_valid[:, selected], axis=1), dtype=bool),
+            "candidate_idx": int(selected[0]),
+        }
+
+    def _with_object_payload(
+        self,
+        result: dict[str, np.ndarray],
+        *,
+        selected: np.ndarray,
+        output_points: np.ndarray,
+        output_colors: np.ndarray,
+        output_visibilities: np.ndarray,
+        output_motions_valid: np.ndarray,
+        statuses: np.ndarray,
+        active_query_indices: np.ndarray,
+    ) -> dict[str, np.ndarray]:
+        assert self._initial_query_indices is not None
+        result["object_points"] = np.ascontiguousarray(output_points, dtype=np.float32)
+        result["object_colors"] = np.ascontiguousarray(output_colors, dtype=np.float32)
+        result["object_visibilities"] = np.ascontiguousarray(output_visibilities, dtype=bool)
+        result["object_motions_valid"] = np.ascontiguousarray(output_motions_valid, dtype=bool)
+        result["object_query_indices"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
+        result["object_volume_sample_indices"] = np.ascontiguousarray(np.asarray(selected, dtype=np.int64))
+        result["object_anchor_query_indices"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
+        result["object_anchor_active_query_indices"] = np.ascontiguousarray(np.asarray(active_query_indices, dtype=np.int64))
+        result["object_anchor_status"] = np.asarray(statuses, dtype="<U8")
+        return result
+
+
 def select_final_controller_points(track_data: Mapping[str, np.ndarray], *, count: int = 30) -> dict[str, np.ndarray]:
     result = {key: np.asarray(value).copy() for key, value in track_data.items()}
     mask = np.asarray(result.get("controller_mask", np.ones((result["controller_points"].shape[1],), dtype=bool)), dtype=bool)
@@ -1303,6 +1592,7 @@ __all__ = [
     "TRACKING_PRODUCT_BACKENDS",
     "StrictQuerySample",
     "StreamingControllerAnchorSelector",
+    "StreamingObjectAnchorSelector",
     "apply_depth_validity_to_mask_frame",
     "apply_phystwin_motion_filters",
     "apply_radius_outlier_to_mask_frame",

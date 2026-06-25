@@ -83,6 +83,31 @@ def _filtered_controller_track(
     }
 
 
+def _filtered_object_track(
+    points: np.ndarray,
+    *,
+    query_ids: np.ndarray | None = None,
+) -> dict[str, np.ndarray]:
+    pts = np.ascontiguousarray(np.asarray(points, dtype=np.float32))
+    if pts.ndim != 3 or pts.shape[-1] != 3:
+        raise ValueError("points must have shape T,N,3")
+    frame_count, point_count, _ = pts.shape
+    if query_ids is None:
+        query_ids = np.arange(point_count, dtype=np.int64)
+    return {
+        "object_points": pts,
+        "object_colors": np.ones_like(pts, dtype=np.float32),
+        "object_visibilities": np.ones((frame_count, point_count), dtype=bool),
+        "object_motions_valid": np.ones((frame_count, point_count), dtype=bool),
+        "object_query_indices": np.ascontiguousarray(np.asarray(query_ids, dtype=np.int64)),
+        "controller_points": np.zeros((frame_count, 0, 3), dtype=np.float32),
+        "controller_colors": np.zeros((frame_count, 0, 3), dtype=np.float32),
+        "controller_visibilities": np.zeros((frame_count, 0), dtype=bool),
+        "controller_motions_valid": np.zeros((frame_count, 0), dtype=bool),
+        "controller_mask": np.zeros((0,), dtype=bool),
+    }
+
+
 class PhysTwinStrictProductTest(unittest.TestCase):
     def test_first_frame_union_sampler_exports_txy_and_internal_yx(self) -> None:
         object_mask = np.zeros((3, 4), dtype=bool)
@@ -267,6 +292,27 @@ class PhysTwinStrictProductTest(unittest.TestCase):
                 second_points[:, lost_source_idx, :],
             )
         )
+
+    def test_streaming_object_anchor_selector_reuses_first_chunk_volume_sample_query_ids(self) -> None:
+        query_ids = np.arange(300, 306, dtype=np.int64)
+        first_points = np.zeros((2, len(query_ids), 3), dtype=np.float32)
+        first_points[0, :, 0] = np.array([0.00, 0.003, 0.012, 0.024, 0.036, 0.048], dtype=np.float32)
+        first_points[0, :, 2] = -0.10
+        first_points[1] = first_points[0] + np.array([0.001, 0.0, 0.0], dtype=np.float32)
+        second_points = first_points + np.array([0.05, 0.0, 0.0], dtype=np.float32)
+        second_points[:, :, 1] = np.linspace(0.0, 0.03, len(query_ids), dtype=np.float32)
+
+        selector = strict.StreamingObjectAnchorSelector(volume_sample_size=0.01)
+        first = selector.select(_filtered_object_track(first_points, query_ids=query_ids))
+        selected_ids = np.asarray(first["object_anchor_query_indices"], dtype=np.int64)
+        second = selector.select(_filtered_object_track(second_points, query_ids=query_ids))
+
+        self.assertGreaterEqual(len(selected_ids), 4)
+        np.testing.assert_array_equal(second["object_anchor_query_indices"], selected_ids)
+        self.assertEqual(second["object_points"].shape[1], len(selected_ids))
+        for anchor_idx, query_id in enumerate(selected_ids):
+            source_idx = int(np.flatnonzero(query_ids == query_id)[0])
+            np.testing.assert_allclose(second["object_points"][:, anchor_idx, :], second_points[:, source_idx, :])
 
     def test_motion_filter_matches_reference_neighbor_semantics(self) -> None:
         rng = np.random.default_rng(7)

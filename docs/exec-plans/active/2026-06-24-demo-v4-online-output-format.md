@@ -53,9 +53,10 @@ Existing per-window FuturePhysTwin case directories remain as diagnostics and co
 - Static `data/<case-prefix>/final_data.pkl` contains concatenated committed chunk arrays, the case-level
   1D candidate `controller_mask`, and static shape-prior arrays.
 - `data/<case-prefix>/` is rebuilt from committed diagnostic chunks as an aggregate case with calibration,
-  metadata, RGB, masks, tracking files, and `READY` after the online stream finishes.
+  metadata, RGB, masks, tracking files, optional `pcd`/`depth` frame files, and `READY` after the online
+  stream finishes.
 - Aggregate per-frame files and time-axis rows use received-frame numbering (`0, 1, 2, ...`), not fake-live
-  source recording frame ids.
+  source recording frame ids; optional `pcd`/`depth` filenames follow the same index.
 - Demo v4 attempts to migrate legacy thin static cases from existing READY diagnostic chunk cases.
 - Default chunk timing remains 5 seconds; `--chunk-seconds` and `--chunk-frame-count` retain current semantics.
 - Demo v4 summaries expose `online_dir` and `static_data_path`.

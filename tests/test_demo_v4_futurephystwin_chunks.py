@@ -1657,6 +1657,40 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
                 final_data = pickle.load(handle)
             self.assertEqual(final_data["object_points"].shape[1], 2)
 
+    def test_writer_preserves_preselected_streaming_object_anchors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = Path(tmp) / "cases"
+            frame_count = 2
+            track = _track_process_data(frame_count)
+            track["object_points"] = np.array(
+                [
+                    [[0.0000, 0.0, -0.02], [0.0010, 0.0, -0.02], [0.0020, 0.0, -0.02], [0.0030, 0.0, -0.02]],
+                    [[0.0010, 0.0, -0.02], [0.0020, 0.0, -0.02], [0.0030, 0.0, -0.02], [0.0040, 0.0, -0.02]],
+                ],
+                dtype=np.float64,
+            )
+            track["object_colors"] = np.ones((frame_count, 4, 3), dtype=np.float64)
+            track["object_visibilities"] = np.ones((frame_count, 4), dtype=bool)
+            track["object_motions_valid"] = np.ones((frame_count, 4), dtype=bool)
+            track["object_anchor_query_indices"] = np.array([10, 11, 12, 13], dtype=np.int64)
+            chunk = FuturePhysTwinChunk(
+                rgb_frames=_rgb_frames(frame_count),
+                processed_masks=_processed_masks(frame_count),
+                track_process_data=track,
+                intrinsics=np.eye(3, dtype=np.float32),
+                camera_to_world_c2w=np.eye(4, dtype=np.float32),
+                surface_points=np.empty((0, 3), dtype=np.float64),
+                interior_points=np.empty((0, 3), dtype=np.float64),
+                fps=5,
+            )
+
+            write_futurephystwin_chunk_case(base_path, "preselected_object", chunk)
+
+            with (base_path / "preselected_object" / "final_data.pkl").open("rb") as handle:
+                final_data = pickle.load(handle)
+            self.assertEqual(final_data["object_points"].shape[1], 4)
+            np.testing.assert_allclose(final_data["object_points"], track["object_points"])
+
     def test_single_view_sam3d_sampling_matches_data_process_sam3d_targets(self) -> None:
         vertices = np.array(
             [

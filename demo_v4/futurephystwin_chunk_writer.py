@@ -191,6 +191,10 @@ def _track_process_payload(track_process_data: Mapping[str, np.ndarray]) -> dict
         if key not in track_process_data:
             raise ValueError(f"track_process_data missing required key: {key}")
         payload[key] = np.ascontiguousarray(np.asarray(track_process_data[key]))
+    if "object_anchor_query_indices" in track_process_data:
+        payload["object_anchor_query_indices"] = np.ascontiguousarray(
+            np.asarray(track_process_data["object_anchor_query_indices"], dtype=np.int64).reshape(-1)
+        )
     _validate_track_shapes(payload)
     return payload
 
@@ -235,12 +239,16 @@ def _final_data_payload(
     surface_points: np.ndarray,
     interior_points: np.ndarray,
 ) -> dict[str, np.ndarray]:
-    indices = _sample_object_volume_indices(
-        track_process["object_points"],
-        surface_points=surface_points,
-        interior_points=interior_points,
-        volume_sample_size=0.005,
-    )
+    object_points = np.asarray(track_process["object_points"])
+    if "object_anchor_query_indices" in track_process:
+        indices = np.arange(object_points.shape[1], dtype=np.int64)
+    else:
+        indices = _sample_object_volume_indices(
+            object_points,
+            surface_points=surface_points,
+            interior_points=interior_points,
+            volume_sample_size=0.005,
+        )
     final = {
         "controller_mask": np.ascontiguousarray(np.asarray(track_process["controller_mask"], dtype=bool)),
         "controller_points": np.ascontiguousarray(np.asarray(track_process["controller_points"], dtype=np.float64)),

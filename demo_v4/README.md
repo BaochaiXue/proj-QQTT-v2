@@ -124,6 +124,7 @@ layout combines a complete aggregate FuturePhysTwin-style case with the
     tracking/0.npz
     cotracker/0.npz
     pcd/0.npz              # only with --write-final-pcd
+    depth/0/0.npy           # optional, when a diagnostic chunk exports depth
 ```
 
 Use these paths with realtime_phystwin online scripts:
@@ -416,6 +417,8 @@ color/0/<frame>.png
 mask/processed_masks.pkl
 tracking/0.npz
 cotracker/0.npz
+pcd/<frame>.npz             # optional
+depth/0/<frame>.npy         # optional
 manifest.json
 READY
 ```
@@ -423,7 +426,8 @@ READY
 For the aggregate online-primary case, `<frame>` is the global received-frame
 index within Demo v4's published stream. For example, with 25-frame chunks,
 `chunk_0001` writes `color/0/0.png` through `color/0/24.png`, and `chunk_0002`
-continues at `color/0/25.png`.
+continues at `color/0/25.png`. Optional `pcd` and `depth` frame files use the
+same received-frame index.
 
 `final_data.pkl` contains:
 
