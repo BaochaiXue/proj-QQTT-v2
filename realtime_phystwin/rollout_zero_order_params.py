@@ -61,8 +61,7 @@ def load_camera_config(base_path, case_name):
 
     with open(f"{base_path}/{case_name}/metadata.json", "r") as f:
         metadata = json.load(f)
-    cfg.intrinsics = np.array(metadata["intrinsics"])
-    cfg.WH = metadata["WH"]
+    cfg.apply_camera_metadata(metadata)
     cfg.overlay_path = f"{base_path}/{case_name}/color"
 
 

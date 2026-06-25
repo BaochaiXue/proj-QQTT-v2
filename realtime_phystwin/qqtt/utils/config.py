@@ -1,4 +1,5 @@
 from .misc import singleton
+import numpy as np
 import yaml
 
 
@@ -49,6 +50,19 @@ class Config:
 
         # Other parameters for visualization
         self.overlay_path = None
+
+    def set_fps(self, fps):
+        fps_value = float(fps)
+        if not np.isfinite(fps_value) or fps_value <= 0.0:
+            raise ValueError(f"FPS must be positive and finite, got {fps!r}")
+        self.FPS = int(fps_value) if fps_value.is_integer() else fps_value
+        self.num_substeps = round(1.0 / fps_value / float(self.dt))
+
+    def apply_camera_metadata(self, metadata):
+        self.intrinsics = np.array(metadata["intrinsics"])
+        self.WH = metadata["WH"]
+        if "fps" in metadata:
+            self.set_fps(metadata["fps"])
 
     def to_dict(self):
         # Convert the class to dictionary
