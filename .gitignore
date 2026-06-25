@@ -159,3 +159,4 @@ docs/generated
 !/vendor/demo_runtime/
 !/vendor/demo_runtime/**
 /vendor/demo_runtime/checkpoints/
+vendor/demo_runtime/checkpoints.zip

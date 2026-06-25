@@ -72,6 +72,16 @@ DEFAULT_OPTIMIZATION_EXPERIMENTS_DIR = "experiments_online_v5"
 DEFAULT_OPTIMIZATION_ZERO_EXPERIMENTS_DIR = "experiments_online_v5_cma"
 DEFAULT_OPTIMIZATION_START_GRACE_S = 2.0
 DEFAULT_TABLE_CALIBRATE_PATH = Path("table_calibrate.pkl")
+DEFAULT_SAM31_CHECKPOINT_PATH = Path("vendor/demo_runtime/checkpoints/sam31/sam3.1_multiplex.pt")
+SAM31_CHECKPOINT_ENV = "QQTT_SAM31_CHECKPOINT"
+
+
+def _apply_default_sam31_checkpoint_env(env: dict[str, str]) -> None:
+    if env.get(SAM31_CHECKPOINT_ENV):
+        return
+    checkpoint = REPO_ROOT / DEFAULT_SAM31_CHECKPOINT_PATH
+    if checkpoint.is_file():
+        env[SAM31_CHECKPOINT_ENV] = str(checkpoint)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -485,6 +495,58 @@ def _python_command_prefix(conda_env: str | None) -> list[str]:
     return ["python"]
 
 
+def _prepend_env_path(env: dict[str, str], key: str, path: Path) -> None:
+    value = str(path)
+    current = env.get(key, "")
+    parts = [item for item in current.split(os.pathsep) if item]
+    if value not in parts:
+        env[key] = value if not parts else value + os.pathsep + os.pathsep.join(parts)
+
+
+def _conda_env_prefix(conda_env: str | None) -> Path | None:
+    env_name = "" if conda_env is None else str(conda_env).strip()
+    if not env_name:
+        return None
+    candidates: list[Path] = []
+    current_prefix = os.environ.get("CONDA_PREFIX")
+    if current_prefix:
+        current = Path(current_prefix)
+        if current.name == env_name:
+            candidates.append(current)
+        if current.parent.name == "envs":
+            candidates.append(current.parent / env_name)
+    conda_exe = os.environ.get("CONDA_EXE")
+    if conda_exe:
+        exe = Path(conda_exe)
+        if len(exe.parents) >= 2:
+            candidates.append(exe.parents[1] / "envs" / env_name)
+    candidates.append(Path.home() / "miniconda3" / "envs" / env_name)
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _apply_shape_prior_worker_cuda_build_env(args: argparse.Namespace, env: dict[str, str]) -> None:
+    prefix = _conda_env_prefix(getattr(args, "shape_prior_worker_conda_env", None))
+    if prefix is None:
+        return
+    include_dir = prefix / "targets" / "x86_64-linux" / "include"
+    lib_dir = prefix / "targets" / "x86_64-linux" / "lib"
+    if include_dir.is_dir():
+        _prepend_env_path(env, "CPATH", include_dir)
+        _prepend_env_path(env, "CPLUS_INCLUDE_PATH", include_dir)
+    if lib_dir.is_dir():
+        _prepend_env_path(env, "LIBRARY_PATH", lib_dir)
+        _prepend_env_path(env, "LD_LIBRARY_PATH", lib_dir)
+    nvcc = prefix / "bin" / "nvcc"
+    env.setdefault("CUDA_HOME", str(prefix))
+    if nvcc.is_file():
+        env.setdefault("CUDACXX", str(nvcc))
+    env.setdefault("TORCH_CUDA_ARCH_LIST", "8.9")
+    env.setdefault("MAX_JOBS", "8")
+
+
 def build_shape_prior_worker_command(args: argparse.Namespace) -> list[str]:
     command = [
         *_python_command_prefix(getattr(args, "shape_prior_worker_conda_env", None)),
@@ -867,6 +929,7 @@ def _start_managed_shape_prior_worker(args: argparse.Namespace) -> subprocess.Po
         return None
     command = build_shape_prior_worker_command(args)
     env = os.environ.copy()
+    _apply_shape_prior_worker_cuda_build_env(args, env)
     cuda_visible_devices = resolve_shape_prior_worker_cuda_visible_devices(args)
     if cuda_visible_devices:
         env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
@@ -1016,6 +1079,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         chunk_frame_count=chunk_frame_count,
     )
     camera_env = os.environ.copy()
+    _apply_default_sam31_checkpoint_env(camera_env)
     cuda_visible_devices = resolve_camera_cuda_visible_devices(args).strip()
     if cuda_visible_devices:
         camera_env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
