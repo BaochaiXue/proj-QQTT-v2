@@ -138,16 +138,17 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
         self.assertEqual(_contract(args)["output_format"], "online-primary-static-case")
         self.assertEqual(
             _contract(args)["online_dir"],
-            "/home/xinjie/FuturePhysTwin/data/demo_v4_chunks/online_data/demo_v4",
+            "result/demo_v4/futurephystwin_chunks/online_data/demo_v4",
         )
         self.assertEqual(
             _contract(args)["static_data_path"],
-            "/home/xinjie/FuturePhysTwin/data/demo_v4_chunks/data/demo_v4/final_data.pkl",
+            "result/demo_v4/futurephystwin_chunks/data/demo_v4/final_data.pkl",
         )
         self.assertTrue(args.mask_radius_outlier_filter)
         self.assertEqual(args.mask_radius_outlier_radius_m, 0.01)
         self.assertEqual(args.mask_radius_outlier_nb_points, 40)
-        self.assertEqual(str(args.futurephystwin_base_path), "/home/xinjie/FuturePhysTwin/data/demo_v4_chunks")
+        self.assertEqual(str(args.futurephystwin_base_path), "result/demo_v4/futurephystwin_chunks")
+        self.assertFalse(args.futurephystwin_base_path.is_absolute())
 
         command = build_demo32_realtime_command(
             args,

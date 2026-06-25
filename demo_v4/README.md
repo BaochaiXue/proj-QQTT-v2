@@ -21,7 +21,6 @@ CUDA_VISIBLE_DEVICES=1 \
 conda run -n phystwin-max --no-capture-output \
   python services/shape_prior_remote/server.py \
   --bind tcp://127.0.0.1:7103 \
-  --sam3d-root /home/xinjie/external/sam-3d-objects \
   --device cuda:0 \
   --preload-models \
   --debug
@@ -35,7 +34,6 @@ conda run -n demo_2_max --no-capture-output \
   --realtime-gpu-mode single \
   --warmup-gpu-mode dual \
   --shape-prior-endpoint tcp://127.0.0.1:7103 \
-  --futurephystwin-base-path /home/xinjie/FuturePhysTwin/data/demo_v4_chunks \
   --case-prefix demo_v4
 ```
 
@@ -50,7 +48,7 @@ shape prior:         enabled, remote worker
 Demo 3.2 GPU:        CUDA_VISIBLE_DEVICES=0
 shape-prior GPU:     cuda:1
 dense pcd/ output:   disabled
-output base path:    /home/xinjie/FuturePhysTwin/data/demo_v4_chunks
+output base path:    result/demo_v4/futurephystwin_chunks
 ```
 
 For a short smoke run, add `--max-chunks 2`. When `--max-chunks` is used, Demo
@@ -142,7 +140,7 @@ shape-prior status, and validation metadata.
 List ready chunks:
 
 ```bash
-find /home/xinjie/FuturePhysTwin/data/demo_v4_chunks \
+find result/demo_v4/futurephystwin_chunks \
   -maxdepth 2 -name READY -print | sort
 ```
 
@@ -153,7 +151,7 @@ python - <<'PY'
 import json
 from pathlib import Path
 
-base = Path("/home/xinjie/FuturePhysTwin/data/demo_v4_chunks")
+base = Path("result/demo_v4/futurephystwin_chunks")
 summary = json.loads((base / "demo_v4_chunks_manifest.json").read_text())
 print("chunks:", summary["chunk_count"])
 print("online:", summary["online_dir"])
@@ -171,7 +169,7 @@ Validate one published chunk with the writer's built-in checker:
 python - <<'PY'
 from demo_v4.futurephystwin_chunk_writer import validate_futurephystwin_case
 
-case = "/home/xinjie/FuturePhysTwin/data/demo_v4_chunks/demo_v4_chunk_0001"
+case = "result/demo_v4/futurephystwin_chunks/demo_v4_chunk_0001"
 print(validate_futurephystwin_case(case, require_ready=True))
 PY
 ```
@@ -278,7 +276,7 @@ python demo_v4/realtime_futurephystwin_chunks.py --dry-run
 
 | Option | Default | Use |
 | --- | --- | --- |
-| `--futurephystwin-base-path` | `/home/xinjie/FuturePhysTwin/data/demo_v4_chunks` | Directory where chunk cases and the run manifest are published. |
+| `--futurephystwin-base-path` | `result/demo_v4/futurephystwin_chunks` | Directory where chunk cases and the run manifest are published. |
 | `--case-prefix` | `demo_v4` | Prefix for chunk case names and the top-level manifest. |
 | `--demo32-capture-dir` | auto under output base | Where the intermediate Demo 3.2 headless capture is written. |
 | `--source-headless-capture` | unset | Rechunk an existing Demo 3.2 capture instead of launching Demo 3.2. |
@@ -364,8 +362,8 @@ Useful worker options:
 | Option | Default | Use |
 | --- | --- | --- |
 | `--bind` | `tcp://0.0.0.0:7100` | ZeroMQ REP endpoint. Match Demo v4 `--shape-prior-endpoint`. |
-| `--sam3d-root` | local default | External SAM3D Objects checkout. |
-| `--futurephystwin-root` | local default | FuturePhysTwin checkout used by worker imports. |
+| `--sam3d-root` | `vendor/demo_runtime/sam-3d-objects` | Repo-local SAM3D Objects checkout copy. |
+| `--futurephystwin-root` | `vendor/demo_runtime/FuturePhysTwin` | Repo-local FuturePhysTwin checkout copy used by worker imports. |
 | `--config` | SAM3D default YAML | Explicit SAM3D pipeline config. |
 | `--device` | `cuda:0` | Device visible inside the worker process. |
 | `--max-points` | `60000` | Maximum observation/aligned point count returned by worker. |

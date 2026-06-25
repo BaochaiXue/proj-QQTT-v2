@@ -98,7 +98,7 @@ conda run -n demo_2_max --no-capture-output \
   --mode demo \
   --replay-fps 5 \
   --enable-pcd-filter \
-  --ffs-trt-model-dir /home/xinjie/proj-QQTT-v2/data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864
+  --ffs-trt-model-dir data/experiments/ffs_trt_4090_848x480_pad864_builderopt5/engines/model_20-30-48_iters_4_res_480x864
 ```
 
 The default Demo 3.2 fake-live case is
@@ -137,15 +137,13 @@ nearest-neighbor Chamfer/coverage metrics, and refines the selected similarity
 with nearest-neighbor ICP before table-Z validation.
 
 The default worker endpoint is `tcp://127.0.0.1:7100`. Start the worker on the
-SAM3D workstation with the external model checkout:
+SAM3D workstation with the repo-local runtime asset defaults:
 
 ```bash
 conda run -n <sam3d-env> --no-capture-output \
   python services/shape_prior_remote/server.py \
   --bind tcp://0.0.0.0:7100 \
-  --sam3d-root /home/xinjie/external/sam-3d-objects \
   --upscale-category "stuffed animal" \
-  --futurephystwin-root /home/xinjie/FuturePhysTwin \
   --preload-models \
   --warmup-models
 ```

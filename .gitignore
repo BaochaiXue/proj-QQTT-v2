@@ -91,6 +91,7 @@ wandb/
 # Downloaded third-party assets / checkpoints
 /external/
 /checkpoints/
+/vendor/demo_runtime/checkpoints
 /data_process/TRELLIS/
 /data_process/models/weights/
 /data_process/groundedSAM_checkpoints/

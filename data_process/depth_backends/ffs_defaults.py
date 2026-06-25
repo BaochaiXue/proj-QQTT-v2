@@ -6,9 +6,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_FFS_ENV_NAME = "FFS-SAM-RS"
-DEFAULT_FFS_ENV_PYTHON = Path("/home/zhangxinjie/miniconda3/envs/FFS-SAM-RS/bin/python")
+DEFAULT_FFS_ENV_PYTHON = Path("python")
 
-DEFAULT_FFS_REPO = (REPO_ROOT.parent / "Fast-FoundationStereo").resolve()
+DEFAULT_RUNTIME_ASSET_ROOT = Path("vendor") / "demo_runtime"
+DEFAULT_FFS_REPO = DEFAULT_RUNTIME_ASSET_ROOT / "Fast-FoundationStereo"
 DEFAULT_FFS_MODEL_NAME = "20-30-48"
 DEFAULT_FFS_MODEL_PATH = DEFAULT_FFS_REPO / "weights" / DEFAULT_FFS_MODEL_NAME / "model_best_bp2_serialize.pth"
 DEFAULT_FFS_SCALE = 1.0

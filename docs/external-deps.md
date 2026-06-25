@@ -1,15 +1,17 @@
 # External Dependencies
 
-External repos, checkpoints, TensorRT engines, SAM assets, and generated proof
-artifacts stay outside this repo. This file records source-of-truth locations
-for the single-camera branch.
+Demo runtime repos, checkpoints, SAM assets, and generated proof artifacts now
+use repo-local defaults for this single-camera branch. This file records the
+repo-local runtime locations and the external source locations used to refresh
+those copies.
 
 ## Fast-FoundationStereo
 
-- Default external repo: `../Fast-FoundationStereo`
+- Default repo-local runtime copy:
+  `vendor/demo_runtime/Fast-FoundationStereo`
 - Typical checkpoint family: `20-30-48`
 - Example checkpoint path:
-  - `../Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth`
+  - `vendor/demo_runtime/Fast-FoundationStereo/weights/20-30-48/model_best_bp2_serialize.pth`
 - Runtime roles:
   - `cameras_viewer_FFS.py`
   - `data_process/record_data_align.py --depth_backend ffs`
@@ -21,15 +23,16 @@ for the single-camera branch.
 - Runtime role:
   - single-camera masked PCD demo initialization
   - mask helper / visualization diagnostics
-- Keep checkpoints outside this repo. Prefer environment variables or explicit
-  CLI arguments when selecting local checkpoints.
+- Demo runtime defaults should reference repo-local checkpoints. Prefer
+  explicit CLI arguments only for diagnostics against alternate checkpoints.
 
 ## EdgeTAM
 
 - Runtime role:
   - optional single-camera mask propagation in demo workflows
-- Keep the external checkout outside this repo and document the path in the
-  relevant validation plan or local environment notes.
+- Demo runtime defaults should reference repo-local checkouts. External
+  checkouts may still be used as refresh sources and should be documented in
+  validation notes.
 
 ## SAM3D Shape Prior Warmup
 
@@ -42,18 +45,16 @@ for the single-camera branch.
     `data_process_sam3d/image_upscale.py`
   - SAM3D Objects single-view is the only supported shape-prior backend in this
     branch
-- Default external SAM3D Objects checkout:
-  - `/home/xinjie/external/sam-3d-objects`
-- Default FuturePhysTwin checkout reference:
-  - `/home/xinjie/FuturePhysTwin`
+- Default repo-local SAM3D Objects checkout copy:
+  - `vendor/demo_runtime/sam-3d-objects`
+- Default repo-local FuturePhysTwin checkout copy:
+  - `vendor/demo_runtime/FuturePhysTwin`
 - Worker entrypoint in this repo:
 
 ```bash
 python services/shape_prior_remote/server.py \
   --bind tcp://0.0.0.0:7100 \
-  --sam3d-root /home/xinjie/external/sam-3d-objects \
   --upscale-category "stuffed animal" \
-  --futurephystwin-root /home/xinjie/FuturePhysTwin \
   --preload-models \
   --warmup-models
 ```
@@ -78,9 +79,10 @@ python services/shape_prior_remote/server.py \
   --echo-observation
 ```
 
-SAM3D, Stable Diffusion x4 upscaler, PyTorch3D, Kaolin, checkpoints, generated
-route videos, and model weights remain external and must not be vendored into
-this repo. The Demo 3.2 process talks to the worker over the lightweight
+SAM3D, Stable Diffusion x4 upscaler, PyTorch3D, Kaolin, checkpoints, and model
+weights are copied into `vendor/demo_runtime/` for the default Demo runtime
+path. Generated route videos and run outputs stay in ignored output locations.
+The Demo 3.2 process talks to the worker over the lightweight
 `services/shape_prior_remote` protocol; it does not import SAM3D or upscaler
 heavy dependencies.
 

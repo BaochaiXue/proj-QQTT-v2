@@ -40,7 +40,7 @@ if str(REPO_ROOT) not in sys.path:
 try:
     from data_process.depth_backends import DEFAULT_FFS_REPO, DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR
 except ImportError:
-    DEFAULT_FFS_REPO = (REPO_ROOT.parent / "Fast-FoundationStereo").resolve()
+    DEFAULT_FFS_REPO = Path("vendor") / "demo_runtime" / "Fast-FoundationStereo"
     DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR = (
         REPO_ROOT
         / "data"

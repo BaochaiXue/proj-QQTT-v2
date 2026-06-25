@@ -59,8 +59,6 @@ strict tracking product.
 conda run -n <sam3d-env> --no-capture-output \
   python services/shape_prior_remote/server.py \
   --bind tcp://0.0.0.0:7100 \
-  --sam3d-root /home/xinjie/external/sam-3d-objects \
-  --futurephystwin-root /home/xinjie/FuturePhysTwin \
   --preload-models \
   --warmup-models
 ```

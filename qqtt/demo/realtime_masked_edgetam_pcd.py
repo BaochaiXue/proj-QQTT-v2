@@ -294,25 +294,10 @@ WARMUP_HUD_TEXT = (
 )
 
 
-def _first_existing_path(candidates: list[Path]) -> Path:
-    for candidate in candidates:
-        path = candidate.expanduser()
-        if path.exists():
-            return path
-    return candidates[0]
-
-
-DEFAULT_TAPNET_REPO_DIR = _first_existing_path(
-    [
-        REPO_ROOT / "external" / "tapnet",
-        REPO_ROOT.parent / "proj-QQTT-v2" / "external" / "tapnet",
-    ]
-)
-DEFAULT_TAPNEXTPP_CHECKPOINT = _first_existing_path(
-    [
-        REPO_ROOT / "checkpoints" / "tapnextpp" / "tapnextpp_ckpt.pt",
-        REPO_ROOT.parent / "proj-QQTT-v2" / "checkpoints" / "tapnextpp" / "tapnextpp_ckpt.pt",
-    ]
+DEFAULT_RUNTIME_ASSET_ROOT = Path("vendor") / "demo_runtime"
+DEFAULT_TAPNET_REPO_DIR = DEFAULT_RUNTIME_ASSET_ROOT / "tapnet"
+DEFAULT_TAPNEXTPP_CHECKPOINT = (
+    DEFAULT_RUNTIME_ASSET_ROOT / "checkpoints" / "tapnextpp" / "tapnextpp_ckpt.pt"
 )
 
 

@@ -18,10 +18,9 @@ Demo 4 fake-live.
 ## Recommended Design
 
 Use `vendor/demo_runtime/` as the repo-local runtime asset root. It is inside
-the repository and is not ignored as a whole like `/external/` or
-`/checkpoints/`. Large binary weights may remain untracked by extension ignore
-rules, but the files must exist in the worktree and runtime defaults must point
-at them.
+the repository worktree and is ignored as a local runtime payload so tens of GB
+of third-party source trees and weights are not committed to Git history. The
+files must exist in the worktree and runtime defaults must point at them.
 
 Repo-local layout:
 

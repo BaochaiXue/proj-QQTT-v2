@@ -23,7 +23,7 @@ sys.path.insert(0, REPO_ROOT_STR)
 from demo_v4.headless_chunk_bridge import stream_chunks_from_headless_capture, write_chunks_from_headless_capture
 
 
-DEFAULT_FUTUREPHYSTWIN_BASE_PATH = Path("/home/xinjie/FuturePhysTwin/data/demo_v4_chunks")
+DEFAULT_FUTUREPHYSTWIN_BASE_PATH = Path("result/demo_v4/futurephystwin_chunks")
 DEFAULT_INPUT_SOURCE = "fake-live"
 DEFAULT_REPLAY_FPS = 5.0
 DEFAULT_CHUNK_SECONDS = 5.0

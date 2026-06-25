@@ -49,8 +49,9 @@ from services.shape_prior_remote.protocol import (  # noqa: E402
 )
 
 
-DEFAULT_SAM3D_ROOT = Path("/home/xinjie/external/sam-3d-objects")
-DEFAULT_FUTUREPHYSTWIN_ROOT = Path("/home/xinjie/FuturePhysTwin")
+DEFAULT_RUNTIME_ASSET_ROOT = Path("vendor") / "demo_runtime"
+DEFAULT_SAM3D_ROOT = DEFAULT_RUNTIME_ASSET_ROOT / "sam-3d-objects"
+DEFAULT_FUTUREPHYSTWIN_ROOT = DEFAULT_RUNTIME_ASSET_ROOT / "FuturePhysTwin"
 DEFAULT_UPSCALE_CATEGORY = "stuffed animal"
 _WARMUP_IMAGE_SIZE = 64
 
