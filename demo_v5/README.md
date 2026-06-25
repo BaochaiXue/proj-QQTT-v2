@@ -18,9 +18,133 @@ Demo v5 fake/live camera on GPU0
 The optimization is one continuous online case. Demo v5 does not optimize each
 chunk as an independent case.
 
+## Install
+
+Demo v5 uses two Python environments by default:
+
+```text
+demo_2_max    camera/fake-camera, EdgeTAM, TAPNext++, online final_data,
+              realtime_phystwin zero-order and first-order optimization
+phystwin-max  managed SAM3D shape-prior warmup worker
+```
+
+On the validated lab workstation these environments already exist. Check them
+first:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v5/env/check_demo_v5_env.py --role main --require-cuda
+
+conda run -n phystwin-max --no-capture-output \
+  python demo_v5/env/check_demo_v5_env.py --role shape-prior --require-cuda
+```
+
+For a new machine, use the install materials under `demo_v5/env/`:
+
+```bash
+bash demo_v5/env/install_demo_v5_env.sh create
+```
+
+Or run the environment files manually:
+
+```bash
+conda env create -f demo_v5/env/environment-demo-v5-main.yml
+conda run -n demo_2_max --no-capture-output \
+  python -m pip install -r demo_v5/env/requirements-demo-v5-main.txt
+
+conda env create -f demo_v5/env/environment-demo-v5-shape-prior.yml
+conda run -n phystwin-max --no-capture-output \
+  python -m pip install -r demo_v5/env/requirements-demo-v5-shape-prior.txt
+```
+
+If the environments already exist, replace `conda env create` with
+`conda env update -f ... --prune`. GPU PyTorch, PyTorch3D, Kaolin, and Warp are
+CUDA-stack-sensitive; `demo_v5/env/validated-versions-20260625.txt` records the
+versions from the machine that passed the full Demo v5 E2E.
+
+Demo v5 also expects repo-local runtime assets:
+
+```text
+vendor/demo_runtime/EdgeTAM-hf
+vendor/demo_runtime/tapnet
+vendor/demo_runtime/checkpoints/tapnextpp/tapnextpp_ckpt.pt
+vendor/demo_runtime/sam-3d-objects
+vendor/demo_runtime/stable-diffusion-x4-upscaler
+vendor/demo_runtime/FuturePhysTwin
+realtime_phystwin/train_online_zero_then_first.py
+table_calibrate.pkl
+```
+
+The environment checker verifies these paths without downloading weights.
+
+## How To Run
+
+Always run from the repo root on `single-camera`:
+
+```bash
+git switch single-camera
+git pull --ff-only origin single-camera
+```
+
+Do a contract check before a live run:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v5/realtime_futurephystwin_chunks.py --dry-run
+```
+
+Run a short fake-live smoke:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v5/realtime_futurephystwin_chunks.py \
+  --futurephystwin-base-path result/demo_v5/smoke \
+  --case-prefix demo_v5_smoke \
+  --shape-prior-endpoint tcp://127.0.0.1:7107 \
+  --max-chunks 2 \
+  --capture-extra-seconds 80 \
+  --optimization-zero-iterations 1 \
+  --optimization-iterations 1 \
+  --optimization-wait-timeout-s 900
+```
+
+Run a quality fake-live validation:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v5/realtime_futurephystwin_chunks.py \
+  --futurephystwin-base-path result/demo_v5/full_fake_live \
+  --case-prefix demo_v5_full_fake_live \
+  --shape-prior-endpoint tcp://127.0.0.1:7108 \
+  --max-chunks 5 \
+  --capture-extra-seconds 120 \
+  --optimization-zero-iterations 10 \
+  --optimization-wait-timeout-s 3600
+```
+
+Run with the live RealSense camera:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v5/realtime_futurephystwin_chunks.py \
+  --input-source live \
+  --futurephystwin-base-path result/demo_v5/live \
+  --case-prefix demo_v5_live
+```
+
+The default warmup dual-GPU routing is:
+
+```text
+GPU0: Demo v5 fake/live camera, masks, tracking, final_data, online chunks
+GPU1: managed SAM3D warmup worker, then realtime_phystwin optimization
+```
+
+The managed SAM3D worker is intentionally stopped before optimization starts so
+GPU1 memory is available for `realtime_phystwin`.
+
 ## Default Contract
 
-Run from the repo root on the `single-camera` branch:
+The minimal default command is:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
@@ -93,45 +217,15 @@ topology_hash
 The topology version remains `demo_v4_session_topology_v1` because
 `realtime_phystwin` already validates that wire contract.
 
-## Common Runs
+## Common Variants
 
-Short contract check:
-
-```bash
-conda run -n demo_2_max --no-capture-output \
-  python demo_v5/realtime_futurephystwin_chunks.py --dry-run
-```
-
-Quick fake-live smoke with reduced optimizer work:
+Use external or already-running SAM3D worker:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
   python demo_v5/realtime_futurephystwin_chunks.py \
-  --futurephystwin-base-path result/demo_v5/smoke \
-  --case-prefix demo_v5_smoke \
-  --max-chunks 2 \
-  --optimization-zero-iterations 1 \
-  --optimization-iterations 1
-```
-
-Full fake-live quality run:
-
-```bash
-conda run -n demo_2_max --no-capture-output \
-  python demo_v5/realtime_futurephystwin_chunks.py \
-  --futurephystwin-base-path result/demo_v5/full_fake_live \
-  --case-prefix demo_v5_full_fake_live \
-  --max-chunks 7
-```
-
-Live camera run:
-
-```bash
-conda run -n demo_2_max --no-capture-output \
-  python demo_v5/realtime_futurephystwin_chunks.py \
-  --input-source live \
-  --futurephystwin-base-path result/demo_v5/live \
-  --case-prefix demo_v5_live
+  --shape-prior-worker-mode external \
+  --shape-prior-endpoint tcp://127.0.0.1:7100
 ```
 
 Convert an existing headless capture without optimization:
@@ -182,6 +276,12 @@ cadence.
 Deterministic checks:
 
 ```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v5/env/check_demo_v5_env.py --role main
+
+conda run -n phystwin-max --no-capture-output \
+  python demo_v5/env/check_demo_v5_env.py --role shape-prior
+
 conda run -n demo_2_max --no-capture-output \
   python -m unittest tests.test_demo_v5_realtime_phystwin
 

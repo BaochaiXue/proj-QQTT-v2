@@ -35,6 +35,12 @@ export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
 conda run -n demo_2_max --no-capture-output python scripts/harness/validation/run.py --profile smoke
 ```
 
+- Demo v5 install/check material lives in `demo_v5/env/`. Use
+  `demo_v5/env/environment-demo-v5-main.yml` plus
+  `demo_v5/env/requirements-demo-v5-main.txt` for the main process and
+  `demo_v5/env/environment-demo-v5-shape-prior.yml` plus
+  `demo_v5/env/requirements-demo-v5-shape-prior.txt` for the SAM3D worker.
+
 ## `FFS-SAM-RS`
 
 - Purpose: FFS/SAM/RealSense stack for viewer, static replay, and visualization
