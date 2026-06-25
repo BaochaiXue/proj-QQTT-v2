@@ -200,6 +200,9 @@ def _validate_chunk_cases(chunk_cases: Sequence[Path]) -> None:
         _require_payload_keys(track_process, FUTUREPHYSTWIN_TRACK_PROCESS_KEYS, label="track_process_data.pkl")
 
         metadata = _load_json(chunk_case / "metadata.json")
+        missing_metadata = [key for key in METADATA_INVARIANT_KEYS if key not in metadata]
+        if missing_metadata:
+            raise ValueError(f"metadata.json missing aggregate invariant keys: {missing_metadata}")
         calibrate = _load_calibrate_matrix(chunk_case)
         if first_metadata is None:
             first_metadata = metadata

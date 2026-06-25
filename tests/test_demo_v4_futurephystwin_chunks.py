@@ -1691,6 +1691,24 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             self.assertEqual(final_data["object_points"].shape[1], 4)
             np.testing.assert_allclose(final_data["object_points"], track["object_points"])
 
+    def test_writer_pickles_do_not_reference_numpy_private_core_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = Path(tmp) / "cases"
+            write_futurephystwin_chunk_case(
+                base_path,
+                "numpy_legacy_pickle",
+                _futurephystwin_chunk(frame_count=2),
+            )
+
+            for relative in (
+                "final_data.pkl",
+                "track_process_data.pkl",
+                "calibrate.pkl",
+                "mask/processed_masks.pkl",
+            ):
+                payload = (base_path / "numpy_legacy_pickle" / relative).read_bytes()
+                self.assertNotIn(b"numpy._core", payload, relative)
+
     def test_single_view_sam3d_sampling_matches_data_process_sam3d_targets(self) -> None:
         vertices = np.array(
             [
