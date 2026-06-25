@@ -25,6 +25,61 @@ STATIC_KEYS = (
     "interior_points",
 )
 
+TOPOLOGY_VERSION = "demo_v4_session_topology_v1"
+TOPOLOGY_KEYS = (
+    "query_ids",
+    "query_semantic_labels",
+    "object_sample_query_ids",
+    "controller_sample_query_ids",
+    "topology_version",
+    "topology_hash",
+)
+
+
+def _topology_array(value, *, key):
+    dtype = np.int8 if key == "query_semantic_labels" else np.int64
+    return np.ascontiguousarray(np.asarray(value, dtype=dtype).reshape(-1))
+
+
+def _extract_topology(payload, *, label):
+    missing = [key for key in TOPOLOGY_KEYS if key not in payload]
+    if missing:
+        raise KeyError(f"{label} missing topology fields: {missing}")
+    topology = {
+        "query_ids": _topology_array(payload["query_ids"], key="query_ids"),
+        "query_semantic_labels": _topology_array(
+            payload["query_semantic_labels"],
+            key="query_semantic_labels",
+        ),
+        "object_sample_query_ids": _topology_array(
+            payload["object_sample_query_ids"],
+            key="object_sample_query_ids",
+        ),
+        "controller_sample_query_ids": _topology_array(
+            payload["controller_sample_query_ids"],
+            key="controller_sample_query_ids",
+        ),
+        "topology_version": str(payload["topology_version"]),
+        "topology_hash": str(payload["topology_hash"]),
+    }
+    if topology["topology_version"] != TOPOLOGY_VERSION:
+        raise ValueError(
+            f"{label} unsupported topology_version={topology['topology_version']!r}"
+        )
+    if topology["query_ids"].shape != topology["query_semantic_labels"].shape:
+        raise ValueError(f"{label} query_ids and query_semantic_labels shape mismatch")
+    if not np.all(np.isin(topology["query_semantic_labels"], np.array([0, 1, 2], dtype=np.int8))):
+        raise ValueError(f"{label} query_semantic_labels must contain only 0, 1, or 2")
+    if len(topology["topology_hash"]) != 64:
+        raise ValueError(f"{label} topology_hash must be a sha256 hex digest")
+    return topology
+
+
+def _same_topology_value(left, right):
+    if isinstance(left, str) or isinstance(right, str):
+        return str(left) == str(right)
+    return bool(np.array_equal(np.asarray(left), np.asarray(right)))
+
 
 class OnlineChunkReader:
     """Polls a chunk directory written by the fake or real online tracker."""
@@ -107,6 +162,9 @@ class OnlineFrameBuffer:
         self._frame_count = 0
         self._synced_frame_count = -1
         self._loaded_any_chunk = False
+        self._topology = None
+        self.topology_version = None
+        self.topology_hash = None
 
         self._load_static_fallback(static_data_path)
         self._clear_tensor_attrs()
@@ -151,6 +209,8 @@ class OnlineFrameBuffer:
             value = data.get(key)
             if value is not None:
                 self._static[key] = value
+        if all(key in data for key in TOPOLOGY_KEYS):
+            self._set_topology(_extract_topology(data, label="static_data_path"))
 
     def _set_static_from_chunk(self, chunk):
         for key in STATIC_KEYS:
@@ -205,6 +265,41 @@ class OnlineFrameBuffer:
                         f"{prev_shape} to {value.shape[1:]}"
                     )
 
+    def _set_topology(self, topology):
+        self._topology = topology
+        self.topology_version = str(topology["topology_version"])
+        self.topology_hash = str(topology["topology_hash"])
+
+    def _validate_topology_point_counts(self, chunk, topology):
+        object_points = np.asarray(chunk["object_points"])
+        controller_points = np.asarray(chunk["controller_points"])
+        if object_points.ndim != 3:
+            raise ValueError("Online chunk object_points must have shape T,N,3")
+        if controller_points.ndim != 3:
+            raise ValueError("Online chunk controller_points must have shape T,N,3")
+        if int(topology["object_sample_query_ids"].shape[0]) != int(object_points.shape[1]):
+            raise ValueError(
+                "Online chunk object_sample_query_ids length "
+                f"{topology['object_sample_query_ids'].shape[0]} does not match "
+                f"object_points columns {object_points.shape[1]}"
+            )
+        if int(topology["controller_sample_query_ids"].shape[0]) != int(controller_points.shape[1]):
+            raise ValueError(
+                "Online chunk controller_sample_query_ids length "
+                f"{topology['controller_sample_query_ids'].shape[0]} does not match "
+                f"controller_points columns {controller_points.shape[1]}"
+            )
+
+    def _validate_chunk_topology(self, chunk):
+        topology = _extract_topology(chunk, label="Online chunk")
+        self._validate_topology_point_counts(chunk, topology)
+        if self._topology is None:
+            self._set_topology(topology)
+            return
+        for key in TOPOLOGY_KEYS:
+            if not _same_topology_value(self._topology[key], topology[key]):
+                raise ValueError(f"Online chunk topology mismatch for {key}")
+
     def append_chunks(self, chunks):
         if len(chunks) == 0:
             return 0
@@ -215,6 +310,7 @@ class OnlineFrameBuffer:
             chunk_len = end_frame - start_frame
             self._set_static_from_chunk(chunk)
             self._validate_chunk_shapes(chunk, chunk_len)
+            self._validate_chunk_topology(chunk)
 
             source_frame_indices = chunk.get("source_frame_indices")
             if source_frame_indices is None:

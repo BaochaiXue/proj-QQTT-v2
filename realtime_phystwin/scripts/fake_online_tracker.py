@@ -7,12 +7,15 @@ an atomic manifest after each chunk is committed.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import pickle
 import shutil
 import time
 from pathlib import Path
+
+import numpy as np
 
 
 TIME_KEYS = (
@@ -30,6 +33,66 @@ STATIC_KEYS = (
     "surface_points",
     "interior_points",
 )
+
+TOPOLOGY_VERSION = "demo_v4_session_topology_v1"
+TOPOLOGY_KEYS = (
+    "query_ids",
+    "query_semantic_labels",
+    "object_sample_query_ids",
+    "controller_sample_query_ids",
+    "topology_version",
+    "topology_hash",
+)
+
+
+def topology_hash(payload):
+    digest = hashlib.sha256()
+    digest.update(TOPOLOGY_VERSION.encode("utf-8"))
+    for key in ("query_ids", "query_semantic_labels", "object_sample_query_ids", "controller_sample_query_ids"):
+        arr = np.ascontiguousarray(np.asarray(payload[key]))
+        digest.update(str(arr.dtype).encode("utf-8"))
+        digest.update(str(arr.shape).encode("utf-8"))
+        digest.update(arr.tobytes())
+    return digest.hexdigest()
+
+
+def ensure_topology_contract(data):
+    if all(key in data for key in TOPOLOGY_KEYS):
+        return data
+    object_count = int(np.asarray(data["object_points"]).shape[1])
+    controller_count = int(np.asarray(data["controller_points"]).shape[1])
+    object_ids = np.asarray(
+        data.get("object_sample_query_ids", data.get("object_selected_query_ids", np.arange(object_count, dtype=np.int64))),
+        dtype=np.int64,
+    ).reshape(-1)
+    if object_ids.shape[0] != object_count:
+        object_ids = np.arange(object_count, dtype=np.int64)
+    controller_ids = np.asarray(
+        data.get(
+            "controller_sample_query_ids",
+            data.get(
+                "controller_selected_query_ids",
+                np.arange(object_count, object_count + controller_count, dtype=np.int64),
+            ),
+        ),
+        dtype=np.int64,
+    ).reshape(-1)
+    if controller_ids.shape[0] != controller_count:
+        controller_ids = np.arange(object_count, object_count + controller_count, dtype=np.int64)
+    query_ids = np.concatenate([object_ids, controller_ids]).astype(np.int64, copy=False)
+    query_semantic_labels = np.concatenate(
+        [
+            np.full((object_count,), 1, dtype=np.int8),
+            np.full((controller_count,), 2, dtype=np.int8),
+        ]
+    )
+    data["query_ids"] = np.ascontiguousarray(query_ids, dtype=np.int64)
+    data["query_semantic_labels"] = np.ascontiguousarray(query_semantic_labels, dtype=np.int8)
+    data["object_sample_query_ids"] = np.ascontiguousarray(object_ids, dtype=np.int64)
+    data["controller_sample_query_ids"] = np.ascontiguousarray(controller_ids, dtype=np.int64)
+    data["topology_version"] = TOPOLOGY_VERSION
+    data["topology_hash"] = topology_hash(data)
+    return data
 
 
 def atomic_pickle_dump(obj, path):
@@ -99,6 +162,7 @@ def build_chunk(
     include_static,
     source_frame_indices=None,
 ):
+    ensure_topology_contract(data)
     if source_frame_indices is None:
         source_frame_indices = list(range(int(start_frame), int(end_frame)))
     source_frame_indices = [int(idx) for idx in source_frame_indices]
@@ -115,6 +179,9 @@ def build_chunk(
         value = data.get(key)
         if value is not None:
             chunk[key] = take_source_frames(value, source_frame_indices)
+
+    for key in TOPOLOGY_KEYS:
+        chunk[key] = data[key]
 
     if include_static:
         for key in STATIC_KEYS:
@@ -251,6 +318,7 @@ def main():
 
     frame_count = infer_frame_count(data)
     validate_time_arrays(data, frame_count)
+    ensure_topology_contract(data)
 
     source_start_frame = max(0, int(args.start_frame))
     source_end_frame = (
@@ -273,6 +341,8 @@ def main():
         "source_end_frame": int(source_end_frame),
         "source_frame_step": int(args.frame_step),
         "online_num_frames_total": int(online_frame_count),
+        "topology_version": str(data["topology_version"]),
+        "topology_hash": str(data["topology_hash"]),
     }
 
     if args.clear_output and output_dir.exists():
