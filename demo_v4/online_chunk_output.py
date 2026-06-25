@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from demo_v4.online_case_aggregate import OnlineAggregateCaseWriter
+from demo_v4.pickle_compat import dump_pickle_legacy_numpy
 
 
 TIME_KEYS = (
@@ -37,7 +38,7 @@ def atomic_pickle_dump(obj: Any, path: str | Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = target.with_name(target.name + ".tmp")
     with tmp_path.open("wb") as handle:
-        pickle.dump(obj, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        dump_pickle_legacy_numpy(obj, handle)
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(tmp_path, target)

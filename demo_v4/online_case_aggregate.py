@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
+from demo_v4.pickle_compat import dump_pickle_legacy_numpy
 from demo_v4.futurephystwin_chunk_writer import (
     FUTUREPHYSTWIN_FINAL_DATA_KEYS,
     FUTUREPHYSTWIN_TRACK_PROCESS_KEYS,
@@ -71,7 +72,7 @@ def _atomic_pickle_dump(obj: Any, path: str | Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = target.with_name(target.name + ".tmp")
     with tmp_path.open("wb") as handle:
-        pickle.dump(obj, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        dump_pickle_legacy_numpy(obj, handle)
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(tmp_path, target)
