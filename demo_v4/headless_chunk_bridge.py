@@ -337,6 +337,31 @@ def _shape_points_for_chunk(
         time.sleep(max(0.0, float(poll_interval_s)))
 
 
+def _controller_anchor_manifest_fields(track_process_data: Mapping[str, Any]) -> dict[str, Any]:
+    if "controller_anchor_query_indices" not in track_process_data:
+        controller_points = np.asarray(track_process_data.get("controller_points", np.empty((0, 0, 3))))
+        return {
+            "controller_anchor_mode": "independent_fps",
+            "controller_anchor_count": int(controller_points.shape[1] if controller_points.ndim >= 2 else 0),
+        }
+    query_indices = np.asarray(track_process_data["controller_anchor_query_indices"], dtype=np.int64).reshape(-1)
+    active_indices = np.asarray(
+        track_process_data.get("controller_anchor_active_query_indices", query_indices),
+        dtype=np.int64,
+    ).reshape(-1)
+    statuses = np.asarray(track_process_data.get("controller_anchor_status", []), dtype=str).reshape(-1)
+    return {
+        "controller_anchor_mode": "streaming_stable",
+        "controller_anchor_count": int(len(query_indices)),
+        "controller_anchor_query_indices": [int(value) for value in query_indices.tolist()],
+        "controller_anchor_active_query_indices": [int(value) for value in active_indices.tolist()],
+        "controller_anchor_direct_count": int(np.count_nonzero(statuses == "direct")),
+        "controller_anchor_revived_count": int(np.count_nonzero(statuses == "revived")),
+        "controller_anchor_fallback_count": int(np.count_nonzero(statuses == "fallback")),
+        "controller_anchor_status": [str(value) for value in statuses.tolist()],
+    }
+
+
 def _chunk_payload_from_rows(
     capture_dir: Path,
     metadata: Mapping[str, Any],
@@ -351,6 +376,7 @@ def _chunk_payload_from_rows(
     mask_radius_outlier_radius_m: float,
     mask_radius_outlier_nb_points: int,
     write_final_pcd: bool = True,
+    controller_anchor_selector: strict.StreamingControllerAnchorSelector | None = None,
 ) -> FuturePhysTwinChunk:
     c2w = _camera_to_world(metadata)
     intrinsics = _intrinsics_matrix(metadata)
@@ -415,7 +441,10 @@ def _chunk_payload_from_rows(
         pcd_colors=pcd_colors_arr,
     )
     filtered = strict.apply_phystwin_motion_filters(track_input)
-    track_process = strict.select_final_controller_points(filtered, count=30)
+    if controller_anchor_selector is None:
+        track_process = strict.select_final_controller_points(filtered, count=30)
+    else:
+        track_process = controller_anchor_selector.select(filtered)
 
     return FuturePhysTwinChunk(
         rgb_frames=rgb_frames,
@@ -472,6 +501,7 @@ def _chunk_payload_from_prepared_frames(
     serial_number: str,
     chunk_index: int,
     write_final_pcd: bool = True,
+    controller_anchor_selector: strict.StreamingControllerAnchorSelector | None = None,
 ) -> FuturePhysTwinChunk:
     if not frames:
         raise ValueError("prepared PhysTwin chunk requires at least one frame")
@@ -511,7 +541,10 @@ def _chunk_payload_from_prepared_frames(
         pcd_colors=pcd_colors_arr,
     )
     filtered = strict.apply_phystwin_motion_filters(track_input)
-    track_process = strict.select_final_controller_points(filtered, count=30)
+    if controller_anchor_selector is None:
+        track_process = strict.select_final_controller_points(filtered, count=30)
+    else:
+        track_process = controller_anchor_selector.select(filtered)
 
     return FuturePhysTwinChunk(
         rgb_frames=rgb_frames,
@@ -562,6 +595,7 @@ def _write_chunk_from_rows(
     backlog_chunks: Callable[[], int] | None = None,
     write_final_pcd: bool = True,
     online_writer: DemoV4OnlineOutputWriter | None = None,
+    controller_anchor_selector: strict.StreamingControllerAnchorSelector | None = None,
 ) -> dict[str, Any]:
     case_name = f"{case_prefix}_chunk_{chunk_index:04d}"
     source_window_start_s = float(row_start) / float(fps)
@@ -579,6 +613,7 @@ def _write_chunk_from_rows(
             serial_number=serial_number,
             chunk_index=chunk_index,
             write_final_pcd=bool(write_final_pcd),
+            controller_anchor_selector=controller_anchor_selector,
         )
         materialization_source = "prepared_phystwin_frame"
         legacy_reprocess_count = 0
@@ -596,14 +631,16 @@ def _write_chunk_from_rows(
             mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
             mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
             write_final_pcd=bool(write_final_pcd),
+            controller_anchor_selector=controller_anchor_selector,
         )
         materialization_source = "legacy_reprocess"
         legacy_reprocess_count = len(rows)
     track_finalize_done_wall_s = max(_relative_wall_s(float(wall_time_origin_s)), window_closed_wall_s)
+    anchor_fields = _controller_anchor_manifest_fields(chunk.track_process_data)
 
     def manifest_extras() -> dict[str, Any]:
         backlog_count = 0 if backlog_chunks is None else int(backlog_chunks())
-        return {
+        payload = {
             "source_capture_dir": str(capture),
             "source_row_start": int(row_start),
             "source_row_end": int(row_end),
@@ -625,6 +662,8 @@ def _write_chunk_from_rows(
             "prepared_frame_count": int(prepared_count),
             "legacy_reprocess_frame_count": int(legacy_reprocess_count),
         }
+        payload.update(anchor_fields)
+        return payload
 
     manifest = write_futurephystwin_chunk_case(
         base_path,
@@ -710,6 +749,7 @@ def write_chunks_from_headless_capture(
                 max_chunks=max_chunks,
             ),
         )
+    controller_anchor_selector = strict.StreamingControllerAnchorSelector(count=30)
     for row_idx, row in enumerate(_iter_jsonl(capture / "frames.jsonl")):
         if max_chunks is not None and len(manifests) >= int(max_chunks):
             break
@@ -746,6 +786,7 @@ def write_chunks_from_headless_capture(
             ),
             write_final_pcd=bool(write_final_pcd),
             online_writer=online_writer,
+            controller_anchor_selector=controller_anchor_selector,
         )
         manifests.append(manifest)
         if on_chunk_written is not None:
@@ -830,6 +871,7 @@ def stream_chunks_from_headless_capture(
                 None if max_chunks is None else int(max_chunks) * int(chunk_size)
             ),
         )
+    controller_anchor_selector = strict.StreamingControllerAnchorSelector(count=30)
 
     while True:
         if max_chunks is not None and len(manifests) >= int(max_chunks):
@@ -882,6 +924,7 @@ def stream_chunks_from_headless_capture(
                 ),
                 write_final_pcd=bool(write_final_pcd),
                 online_writer=online_writer,
+                controller_anchor_selector=controller_anchor_selector,
             )
             manifests.append(manifest)
             if on_chunk_written is not None:

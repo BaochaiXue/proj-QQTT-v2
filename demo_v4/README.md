@@ -142,6 +142,15 @@ from the current aggregate frame count. That numbering is independent of any
 fake-live source frame number preserved for traceability in online chunk
 metadata.
 
+For continuous `realtime_phystwin` online optimization, Demo v4 keeps
+`final_data.pkl["controller_points"]` as a fixed ordered controller-anchor
+trajectory across chunks. Coordinates are expected to change over time; the
+contract is stable anchor identity/order, not byte-identical coordinates. The
+first chunk chooses anchors with the data-process-style controller FPS filter.
+Later chunks reuse those query ids when possible and revive missing anchors from
+nearby valid controller tracks with KNN/LBS-style interpolation. Per-chunk
+manifests record the anchor query ids plus direct, revived, and fallback counts.
+
 The per-window `<case-prefix>_chunk_XXXX/` directories remain diagnostic
 compatibility artifacts. Consumers that read those directories should only read
 ones containing `READY`. Demo v4 writes each diagnostic case under

@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from contextlib import redirect_stdout
 import io
 from unittest import mock
@@ -274,6 +275,14 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
                 "demo_v4_chunk_0002",
                 _futurephystwin_chunk(frame_count=2),
             )
+            for case_name, offset in (("demo_v4_chunk_0001", 0.0), ("demo_v4_chunk_0002", 10.0)):
+                depth_dir = base_path / case_name / "depth" / "0"
+                depth_dir.mkdir(parents=True)
+                for local_frame_idx in range(2):
+                    np.save(
+                        depth_dir / f"{local_frame_idx}.npy",
+                        np.full((4, 5), offset + float(local_frame_idx), dtype=np.float32),
+                    )
             writer = DemoV4OnlineOutputWriter(
                 base_path=base_path,
                 case_name="demo_v4",
@@ -286,14 +295,19 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
                 source_frame_indices=[10, 11],
                 status="recording",
             )
+            aggregate = base_path / "data" / "demo_v4"
+            self.assertFalse((aggregate / "READY").exists())
+            with self.assertRaisesRegex(ValueError, "READY"):
+                validate_futurephystwin_case(aggregate, require_ready=True)
+
             writer.commit_case_chunk(
                 base_path / "demo_v4_chunk_0002",
                 source_frame_indices=[12, 13],
                 status="recording",
             )
+            self.assertFalse((aggregate / "READY").exists())
             writer.finish()
 
-            aggregate = base_path / "data" / "demo_v4"
             summary = validate_futurephystwin_case(aggregate, require_ready=True)
             self.assertTrue(summary["valid"])
             self.assertEqual(summary["frame_count"], 4)
@@ -302,6 +316,12 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
                     (aggregate / "color" / "0" / f"{received_frame_idx}.png").is_file()
                 )
             self.assertFalse((aggregate / "color" / "0" / "4.png").exists())
+            self.assertTrue((aggregate / "depth" / "0" / "0.npy").is_file())
+            self.assertTrue((aggregate / "depth" / "0" / "3.npy").is_file())
+            np.testing.assert_allclose(
+                np.load(aggregate / "depth" / "0" / "2.npy"),
+                np.full((4, 5), 10.0, dtype=np.float32),
+            )
 
             with (aggregate / "final_data.pkl").open("rb") as handle:
                 final_data = pickle.load(handle)
@@ -323,6 +343,32 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             self.assertEqual(online_chunk["start_frame"], 2)
             self.assertEqual(online_chunk["end_frame"], 4)
             self.assertEqual(online_chunk["source_frame_indices"], [12, 13])
+
+    def test_online_aggregate_rejects_cross_chunk_metadata_mismatch(self) -> None:
+        from demo_v4.online_chunk_output import DemoV4OnlineOutputWriter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = Path(tmp)
+            write_futurephystwin_chunk_case(
+                base_path,
+                "demo_v4_chunk_0001",
+                _futurephystwin_chunk(frame_count=2),
+            )
+            write_futurephystwin_chunk_case(
+                base_path,
+                "demo_v4_chunk_0002",
+                replace(_futurephystwin_chunk(frame_count=2), fps=6),
+            )
+            writer = DemoV4OnlineOutputWriter(
+                base_path=base_path,
+                case_name="demo_v4",
+                chunk_size=2,
+                num_frames_total=4,
+            )
+
+            writer.commit_case_chunk(base_path / "demo_v4_chunk_0001")
+            with self.assertRaisesRegex(ValueError, "fps"):
+                writer.commit_case_chunk(base_path / "demo_v4_chunk_0002")
 
     def test_demo_v4_can_decouple_source_pacing_from_output_fps(self) -> None:
         args = build_parser().parse_args(
@@ -1069,6 +1115,49 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
 
             self.assertEqual(seen, ["demo_v4_stream_chunk_0001", "demo_v4_stream_chunk_0002"])
             self.assertEqual([item["chunk_ready_source_seq"] for item in manifests], [1, 3])
+
+    def test_headless_capture_bridge_keeps_controller_anchors_stable_and_revives_lost_query(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capture = self._write_minimal_headless_capture(root / "capture", frame_count=4)
+            first_controller_query_idx = 6
+            for seq in (2, 3):
+                trajectory_path = capture / "query_trajectory" / f"{seq:06d}.npz"
+                payload = np.load(trajectory_path, allow_pickle=False)
+                query_points = np.asarray(payload["query_points_yx"], dtype=np.float32)
+                active_indices = np.asarray(
+                    [idx for idx in range(len(query_points)) if idx != first_controller_query_idx],
+                    dtype=np.int64,
+                )
+                np.savez(
+                    trajectory_path,
+                    seq=np.asarray([seq], dtype=np.int64),
+                    query_points_yx=query_points,
+                    query_indices=active_indices,
+                    tracks_yx=query_points[active_indices],
+                    visibility=np.ones((len(active_indices),), dtype=bool),
+                )
+
+            manifests = write_chunks_from_headless_capture(
+                capture,
+                base_path=root / "cases",
+                case_prefix="demo_v4_stable_anchor",
+                chunk_frame_count=2,
+                surface_points=np.array([[0.0, 0.0, -0.02]], dtype=np.float64),
+                interior_points=np.array([[0.01, 0.0, -0.03]], dtype=np.float64),
+                mask_radius_outlier_filter=False,
+            )
+
+            self.assertEqual(len(manifests), 2)
+            self.assertEqual(manifests[0]["controller_anchor_mode"], "streaming_stable")
+            self.assertEqual(manifests[1]["controller_anchor_mode"], "streaming_stable")
+            self.assertEqual(
+                manifests[0]["controller_anchor_query_indices"],
+                manifests[1]["controller_anchor_query_indices"],
+            )
+            self.assertIn(first_controller_query_idx, manifests[0]["controller_anchor_query_indices"])
+            self.assertGreater(manifests[1]["controller_anchor_revived_count"], 0)
+            self.assertEqual(manifests[1]["controller_anchor_count"], 30)
 
     def test_streaming_bridge_tails_realtime_frames_until_capture_process_finishes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

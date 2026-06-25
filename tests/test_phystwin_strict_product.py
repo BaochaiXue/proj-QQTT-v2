@@ -55,6 +55,34 @@ def _reference_motion_valid_for_class(
     return motions_valid, global_mask.astype(bool, copy=False)
 
 
+def _filtered_controller_track(
+    points: np.ndarray,
+    *,
+    query_ids: np.ndarray | None = None,
+    controller_mask: np.ndarray | None = None,
+) -> dict[str, np.ndarray]:
+    pts = np.ascontiguousarray(np.asarray(points, dtype=np.float32))
+    if pts.ndim != 3 or pts.shape[-1] != 3:
+        raise ValueError("points must have shape T,N,3")
+    frame_count, point_count, _ = pts.shape
+    if query_ids is None:
+        query_ids = np.arange(point_count, dtype=np.int64)
+    if controller_mask is None:
+        controller_mask = np.ones((point_count,), dtype=bool)
+    return {
+        "object_points": np.zeros((frame_count, 0, 3), dtype=np.float32),
+        "object_colors": np.zeros((frame_count, 0, 3), dtype=np.float32),
+        "object_visibilities": np.zeros((frame_count, 0), dtype=bool),
+        "object_motions_valid": np.zeros((frame_count, 0), dtype=bool),
+        "controller_points": pts,
+        "controller_colors": np.ones_like(pts, dtype=np.float32),
+        "controller_visibilities": np.ones((frame_count, point_count), dtype=bool),
+        "controller_motions_valid": np.ones((frame_count, point_count), dtype=bool),
+        "controller_mask": np.ascontiguousarray(np.asarray(controller_mask, dtype=bool)),
+        "controller_query_indices": np.ascontiguousarray(np.asarray(query_ids, dtype=np.int64)),
+    }
+
+
 class PhysTwinStrictProductTest(unittest.TestCase):
     def test_first_frame_union_sampler_exports_txy_and_internal_yx(self) -> None:
         object_mask = np.zeros((3, 4), dtype=bool)
@@ -177,6 +205,68 @@ class PhysTwinStrictProductTest(unittest.TestCase):
 
         self.assertEqual(int(np.count_nonzero(filtered["controller_mask"])), 30)
         self.assertEqual(final_data["controller_points"].shape, (2, 30, 3))
+
+    def test_streaming_controller_anchor_selector_reuses_initial_query_ids(self) -> None:
+        query_ids = np.arange(100, 108, dtype=np.int64)
+        first_points = np.zeros((2, len(query_ids), 3), dtype=np.float32)
+        first_points[0, :, 0] = np.linspace(0.00, 0.07, len(query_ids), dtype=np.float32)
+        first_points[0, :, 2] = -0.10
+        first_points[1] = first_points[0] + np.array([0.01, 0.0, 0.0], dtype=np.float32)
+        second_points = np.zeros_like(first_points)
+        second_points[0, :, 0] = np.linspace(0.20, 0.27, len(query_ids), dtype=np.float32)[::-1]
+        second_points[0, :, 1] = np.linspace(0.00, 0.04, len(query_ids), dtype=np.float32)
+        second_points[0, :, 2] = -0.10
+        second_points[1] = second_points[0] + np.array([0.01, 0.0, 0.0], dtype=np.float32)
+
+        selector = strict.StreamingControllerAnchorSelector(count=3)
+        first = selector.select(_filtered_controller_track(first_points, query_ids=query_ids))
+        selected_ids = np.asarray(first["controller_anchor_query_indices"], dtype=np.int64)
+        second = selector.select(_filtered_controller_track(second_points, query_ids=query_ids))
+
+        self.assertEqual(second["controller_points"].shape, (2, 3, 3))
+        np.testing.assert_array_equal(second["controller_anchor_query_indices"], selected_ids)
+        np.testing.assert_array_equal(second["controller_anchor_status"], np.asarray(["direct", "direct", "direct"]))
+        for anchor_idx, query_id in enumerate(selected_ids):
+            source_idx = int(np.flatnonzero(query_ids == query_id)[0])
+            np.testing.assert_allclose(second["controller_points"][:, anchor_idx, :], second_points[:, source_idx, :])
+
+    def test_streaming_controller_anchor_selector_revives_lost_anchor_from_neighbors(self) -> None:
+        query_ids = np.arange(200, 208, dtype=np.int64)
+        first_points = np.zeros((2, len(query_ids), 3), dtype=np.float32)
+        first_points[0, :, 0] = np.linspace(0.00, 0.07, len(query_ids), dtype=np.float32)
+        first_points[0, :, 2] = -0.10
+        first_points[1] = first_points[0] + np.array([0.01, 0.0, 0.0], dtype=np.float32)
+        selector = strict.StreamingControllerAnchorSelector(count=3, revive_knn=1)
+        first = selector.select(_filtered_controller_track(first_points, query_ids=query_ids))
+        selected_ids = np.asarray(first["controller_anchor_query_indices"], dtype=np.int64)
+
+        second_points = first_points + np.array([0.03, 0.0, 0.0], dtype=np.float32)
+        lost_anchor_idx = 1
+        lost_query_id = int(selected_ids[lost_anchor_idx])
+        lost_source_idx = int(np.flatnonzero(query_ids == lost_query_id)[0])
+        controller_mask = np.ones((len(query_ids),), dtype=bool)
+        controller_mask[lost_source_idx] = False
+        second_points[:, lost_source_idx, :] = 0.0
+
+        second = selector.select(
+            _filtered_controller_track(
+                second_points,
+                query_ids=query_ids,
+                controller_mask=controller_mask,
+            )
+        )
+
+        self.assertEqual(second["controller_points"].shape, (2, 3, 3))
+        np.testing.assert_array_equal(second["controller_anchor_query_indices"], selected_ids)
+        self.assertEqual(str(second["controller_anchor_status"][lost_anchor_idx]), "revived")
+        self.assertTrue(np.isfinite(second["controller_points"]).all())
+        self.assertTrue(np.all(np.linalg.norm(second["controller_points"][:, lost_anchor_idx, :], axis=1) > 1e-9))
+        self.assertFalse(
+            np.allclose(
+                second["controller_points"][:, lost_anchor_idx, :],
+                second_points[:, lost_source_idx, :],
+            )
+        )
 
     def test_motion_filter_matches_reference_neighbor_semantics(self) -> None:
         rng = np.random.default_rng(7)

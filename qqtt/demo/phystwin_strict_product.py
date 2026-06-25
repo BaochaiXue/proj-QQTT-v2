@@ -579,6 +579,225 @@ def _farthest_point_sample_indices(points_xyz: np.ndarray, count: int) -> np.nda
     return np.asarray(selected, dtype=np.int64)
 
 
+class StreamingControllerAnchorSelector:
+    """Keep controller handle order stable across Demo v4 online chunks."""
+
+    def __init__(
+        self,
+        *,
+        count: int = 30,
+        revive_knn: int = 4,
+    ) -> None:
+        if int(count) < 0:
+            raise ValueError("count must be >= 0")
+        if int(revive_knn) <= 0:
+            raise ValueError("revive_knn must be positive")
+        self.count = int(count)
+        self.revive_knn = int(revive_knn)
+        self._initial_query_indices: np.ndarray | None = None
+        self._active_query_indices: np.ndarray | None = None
+        self._last_points: np.ndarray | None = None
+
+    @property
+    def initialized(self) -> bool:
+        return self._initial_query_indices is not None
+
+    def select(self, track_data: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
+        result = {key: np.asarray(value).copy() for key, value in track_data.items()}
+        points = np.asarray(result["controller_points"], dtype=np.float32)
+        if points.ndim != 3 or points.shape[-1] != 3:
+            raise ValueError("controller_points must have shape T,N,3")
+        frame_count, candidate_count, _ = points.shape
+        query_indices = self._query_indices(result, candidate_count)
+        valid_candidates = self._valid_candidate_mask(result, points)
+
+        if not self.initialized:
+            selected = self._initial_selection(points, valid_candidates)
+            output = np.ascontiguousarray(points[:, selected, :], dtype=np.float32)
+            initial_query_indices = np.ascontiguousarray(query_indices[selected], dtype=np.int64)
+            self._initial_query_indices = initial_query_indices
+            self._active_query_indices = initial_query_indices.copy()
+            self._last_points = np.ascontiguousarray(output[-1], dtype=np.float32)
+            return self._with_anchor_payload(
+                result,
+                output,
+                selected,
+                np.asarray(["direct"] * self.count),
+                active_query_indices=initial_query_indices,
+            )
+
+        assert self._initial_query_indices is not None
+        assert self._active_query_indices is not None
+        assert self._last_points is not None
+
+        output = np.zeros((frame_count, self.count, 3), dtype=np.float32)
+        selected = np.full((self.count,), -1, dtype=np.int64)
+        statuses = np.full((self.count,), "missing", dtype="<U8")
+        active_query_indices = self._active_query_indices.copy()
+        used_candidates: set[int] = set()
+        query_to_candidate = {int(query_id): int(idx) for idx, query_id in enumerate(query_indices.tolist())}
+
+        direct_mask = np.zeros((self.count,), dtype=bool)
+        for anchor_idx in range(self.count):
+            candidate_idx = self._direct_candidate_for_anchor(
+                anchor_idx,
+                query_to_candidate=query_to_candidate,
+                valid_candidates=valid_candidates,
+            )
+            if candidate_idx is None or candidate_idx in used_candidates:
+                continue
+            output[:, anchor_idx, :] = points[:, candidate_idx, :]
+            selected[anchor_idx] = int(candidate_idx)
+            active_query_indices[anchor_idx] = int(query_indices[candidate_idx])
+            statuses[anchor_idx] = "direct"
+            used_candidates.add(int(candidate_idx))
+            direct_mask[anchor_idx] = True
+
+        for anchor_idx in np.flatnonzero(~direct_mask):
+            predicted_first = self._predict_first_frame(anchor_idx, output, direct_mask)
+            revived, candidate_idx = self._revive_from_neighbors(
+                points,
+                valid_candidates,
+                used_candidates=used_candidates,
+                predicted_first=predicted_first,
+            )
+            output[:, anchor_idx, :] = revived
+            if candidate_idx is None:
+                statuses[anchor_idx] = "fallback"
+                active_query_indices[anchor_idx] = -1
+            else:
+                selected[anchor_idx] = int(candidate_idx)
+                active_query_indices[anchor_idx] = int(query_indices[candidate_idx])
+                statuses[anchor_idx] = "revived"
+                used_candidates.add(int(candidate_idx))
+
+        self._active_query_indices = np.ascontiguousarray(active_query_indices, dtype=np.int64)
+        self._last_points = np.ascontiguousarray(output[-1], dtype=np.float32)
+        return self._with_anchor_payload(
+            result,
+            output,
+            selected,
+            statuses,
+            active_query_indices=active_query_indices,
+        )
+
+    def _query_indices(self, result: Mapping[str, np.ndarray], candidate_count: int) -> np.ndarray:
+        value = result.get("controller_query_indices")
+        if value is None:
+            return np.arange(candidate_count, dtype=np.int64)
+        query_indices = np.asarray(value, dtype=np.int64).reshape(-1)
+        if query_indices.shape[0] != int(candidate_count):
+            raise ValueError(
+                "controller_query_indices must match controller candidate count; "
+                f"got {query_indices.shape[0]} for {candidate_count}"
+            )
+        return np.ascontiguousarray(query_indices, dtype=np.int64)
+
+    def _valid_candidate_mask(self, result: Mapping[str, np.ndarray], points: np.ndarray) -> np.ndarray:
+        candidate_count = points.shape[1]
+        mask = np.asarray(
+            result.get("controller_mask", np.ones((candidate_count,), dtype=bool)),
+            dtype=bool,
+        ).reshape(-1)
+        if mask.shape[0] != candidate_count:
+            raise ValueError("controller_mask must match controller candidate count")
+        finite = np.isfinite(points).all(axis=(0, 2))
+        nonzero = np.all(np.linalg.norm(points, axis=2) > 1e-9, axis=0)
+        return np.ascontiguousarray(mask & finite & nonzero, dtype=bool)
+
+    def _initial_selection(self, points: np.ndarray, valid_candidates: np.ndarray) -> np.ndarray:
+        valid_indices = np.flatnonzero(valid_candidates)
+        candidates = points[:, valid_indices, :]
+        sample_indices = _farthest_point_sample_indices(candidates[0], self.count)
+        return np.ascontiguousarray(valid_indices[sample_indices], dtype=np.int64)
+
+    def _direct_candidate_for_anchor(
+        self,
+        anchor_idx: int,
+        *,
+        query_to_candidate: Mapping[int, int],
+        valid_candidates: np.ndarray,
+    ) -> int | None:
+        assert self._initial_query_indices is not None
+        assert self._active_query_indices is not None
+        for query_id in (
+            int(self._initial_query_indices[anchor_idx]),
+            int(self._active_query_indices[anchor_idx]),
+        ):
+            candidate_idx = query_to_candidate.get(query_id)
+            if candidate_idx is not None and bool(valid_candidates[candidate_idx]):
+                return int(candidate_idx)
+        return None
+
+    def _predict_first_frame(
+        self,
+        anchor_idx: int,
+        output: np.ndarray,
+        direct_mask: np.ndarray,
+    ) -> np.ndarray:
+        assert self._last_points is not None
+        previous = np.asarray(self._last_points, dtype=np.float32)
+        base = previous[int(anchor_idx)]
+        direct_indices = np.flatnonzero(direct_mask)
+        if len(direct_indices) == 0:
+            return np.ascontiguousarray(base, dtype=np.float32)
+        direct_previous = previous[direct_indices]
+        direct_displacement = output[0, direct_indices, :] - direct_previous
+        distances = np.linalg.norm(direct_previous - base[None, :], axis=1)
+        order = np.argsort(distances)[: max(1, min(self.revive_knn, len(distances)))]
+        weights = 1.0 / np.maximum(distances[order], 1e-6)
+        weights = weights / np.sum(weights)
+        displacement = np.sum(direct_displacement[order] * weights[:, None], axis=0)
+        return np.ascontiguousarray(base + displacement.astype(np.float32), dtype=np.float32)
+
+    def _revive_from_neighbors(
+        self,
+        points: np.ndarray,
+        valid_candidates: np.ndarray,
+        *,
+        used_candidates: set[int],
+        predicted_first: np.ndarray,
+    ) -> tuple[np.ndarray, int | None]:
+        candidates = np.flatnonzero(valid_candidates)
+        if used_candidates:
+            candidates = np.asarray(
+                [int(idx) for idx in candidates.tolist() if int(idx) not in used_candidates],
+                dtype=np.int64,
+            )
+        if len(candidates) == 0:
+            held = np.repeat(np.asarray(predicted_first, dtype=np.float32)[None, :], points.shape[0], axis=0)
+            return np.ascontiguousarray(held, dtype=np.float32), None
+
+        candidate_first = points[0, candidates, :]
+        distances = np.linalg.norm(candidate_first - np.asarray(predicted_first, dtype=np.float32)[None, :], axis=1)
+        order = np.argsort(distances)[: max(1, min(self.revive_knn, len(candidates)))]
+        selected = candidates[order]
+        weights = 1.0 / np.maximum(distances[order], 1e-6)
+        weights = weights / np.sum(weights)
+        trajectory = np.sum(points[:, selected, :] * weights[None, :, None], axis=1)
+        trajectory = trajectory + (np.asarray(predicted_first, dtype=np.float32) - trajectory[0])[None, :]
+        return np.ascontiguousarray(trajectory, dtype=np.float32), int(selected[0])
+
+    def _with_anchor_payload(
+        self,
+        result: dict[str, np.ndarray],
+        output: np.ndarray,
+        selected: np.ndarray,
+        statuses: np.ndarray,
+        *,
+        active_query_indices: np.ndarray,
+    ) -> dict[str, np.ndarray]:
+        assert self._initial_query_indices is not None
+        result["controller_points"] = np.ascontiguousarray(output, dtype=np.float32)
+        result["controller_fps_indices"] = np.ascontiguousarray(np.asarray(selected, dtype=np.int64))
+        result["controller_anchor_query_indices"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
+        result["controller_anchor_active_query_indices"] = np.ascontiguousarray(
+            np.asarray(active_query_indices, dtype=np.int64)
+        )
+        result["controller_anchor_status"] = np.asarray(statuses, dtype="<U8")
+        return result
+
+
 def select_final_controller_points(track_data: Mapping[str, np.ndarray], *, count: int = 30) -> dict[str, np.ndarray]:
     result = {key: np.asarray(value).copy() for key, value in track_data.items()}
     mask = np.asarray(result.get("controller_mask", np.ones((result["controller_points"].shape[1],), dtype=bool)), dtype=bool)
@@ -1083,6 +1302,7 @@ __all__ = [
     "TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY",
     "TRACKING_PRODUCT_BACKENDS",
     "StrictQuerySample",
+    "StreamingControllerAnchorSelector",
     "apply_depth_validity_to_mask_frame",
     "apply_phystwin_motion_filters",
     "apply_radius_outlier_to_mask_frame",

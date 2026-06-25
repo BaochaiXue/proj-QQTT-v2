@@ -128,11 +128,33 @@ def _copy_optional_pcd_frames(source_case: Path, aggregate_case: Path, *, start_
             shutil.copy2(source_path, target_dir / f"{int(start_frame) + frame_idx}.npz")
 
 
+def _copy_optional_depth_frames(source_case: Path, aggregate_case: Path, *, start_frame: int, frame_count: int) -> None:
+    source_dir = source_case / "depth" / "0"
+    if not source_dir.is_dir():
+        return
+    target_dir = aggregate_case / "depth" / "0"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for frame_idx in range(int(frame_count)):
+        source_path = source_dir / f"{frame_idx}.npy"
+        if source_path.is_file():
+            shutil.copy2(source_path, target_dir / f"{int(start_frame) + frame_idx}.npy")
+
+
+def _check_metadata_compatible(existing: Mapping[str, Any], incoming: Mapping[str, Any]) -> None:
+    for key in ("fps", "serial_number", "camera_id"):
+        if key in existing and key in incoming and existing[key] != incoming[key]:
+            raise ValueError(
+                f"aggregate chunk metadata mismatch for {key}: "
+                f"{existing[key]!r} != {incoming[key]!r}"
+            )
+
+
 class OnlineAggregateCaseWriter:
     def __init__(self, case_dir: str | Path) -> None:
         self.case_dir = Path(case_dir)
         self.chunk_cases: list[Path] = []
         self._next_frame = 0
+        self._metadata_reference: dict[str, Any] | None = None
 
     def add_chunk_case(self, chunk_case_dir: str | Path) -> dict[str, Any]:
         source = Path(chunk_case_dir)
@@ -154,10 +176,15 @@ class OnlineAggregateCaseWriter:
         _append_processed_masks(source, self.case_dir)
         _append_tracking_npz(source, self.case_dir, name="tracking")
         _append_tracking_npz(source, self.case_dir, name="cotracker")
+        _copy_optional_depth_frames(source, self.case_dir, start_frame=start_frame, frame_count=frame_count)
         _copy_optional_pcd_frames(source, self.case_dir, start_frame=start_frame, frame_count=frame_count)
         _write_track_process_from_final_data(self.case_dir)
 
         source_metadata = json.loads((source / "metadata.json").read_text(encoding="utf-8"))
+        if self._metadata_reference is None:
+            self._metadata_reference = dict(source_metadata)
+        else:
+            _check_metadata_compatible(self._metadata_reference, source_metadata)
         total_frames = _frame_count_from_final_data(self.case_dir)
         source_metadata["frame_num"] = int(total_frames)
         source_metadata["end_step"] = int(total_frames)
@@ -166,7 +193,6 @@ class OnlineAggregateCaseWriter:
 
         self._next_frame += frame_count
         self.chunk_cases.append(source)
-        ready.write_text("ready\n", encoding="utf-8")
         return self._manifest(total_frames)
 
     def finish(self) -> dict[str, Any] | None:
