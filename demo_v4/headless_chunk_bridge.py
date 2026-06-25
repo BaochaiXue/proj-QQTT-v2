@@ -358,6 +358,7 @@ def _controller_anchor_manifest_fields(track_process_data: Mapping[str, Any]) ->
         "controller_anchor_direct_count": int(np.count_nonzero(statuses == "direct")),
         "controller_anchor_revived_count": int(np.count_nonzero(statuses == "revived")),
         "controller_anchor_fallback_count": int(np.count_nonzero(statuses == "fallback")),
+        "controller_anchor_missing_count": int(np.count_nonzero(statuses == "missing")),
         "controller_anchor_status": [str(value) for value in statuses.tolist()],
     }
 
@@ -383,10 +384,12 @@ def _object_anchor_manifest_fields(track_process_data: Mapping[str, Any]) -> dic
         "object_anchor_direct_count": int(np.count_nonzero(statuses == "direct")),
         "object_anchor_revived_count": int(np.count_nonzero(statuses == "revived")),
         "object_anchor_fallback_count": int(np.count_nonzero(statuses == "fallback")),
+        "object_anchor_missing_count": int(np.count_nonzero(statuses == "missing")),
         "object_anchor_status_summary": {
             "direct": int(np.count_nonzero(statuses == "direct")),
             "revived": int(np.count_nonzero(statuses == "revived")),
             "fallback": int(np.count_nonzero(statuses == "fallback")),
+            "missing": int(np.count_nonzero(statuses == "missing")),
         },
     }
 

@@ -1116,17 +1116,22 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
             self.assertEqual(seen, ["demo_v4_stream_chunk_0001", "demo_v4_stream_chunk_0002"])
             self.assertEqual([item["chunk_ready_source_seq"] for item in manifests], [1, 3])
 
-    def test_headless_capture_bridge_keeps_controller_anchors_stable_and_revives_lost_query(self) -> None:
+    def test_headless_capture_bridge_keeps_anchor_columns_stable_without_replacement(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             capture = self._write_minimal_headless_capture(root / "capture", frame_count=4)
+            first_object_query_idx = 0
             first_controller_query_idx = 6
             for seq in (2, 3):
                 trajectory_path = capture / "query_trajectory" / f"{seq:06d}.npz"
                 payload = np.load(trajectory_path, allow_pickle=False)
                 query_points = np.asarray(payload["query_points_yx"], dtype=np.float32)
                 active_indices = np.asarray(
-                    [idx for idx in range(len(query_points)) if idx != first_controller_query_idx],
+                    [
+                        idx
+                        for idx in range(len(query_points))
+                        if idx not in {first_object_query_idx, first_controller_query_idx}
+                    ],
                     dtype=np.int64,
                 )
                 np.savez(
@@ -1155,9 +1160,39 @@ class FuturePhysTwinChunkWriterTest(unittest.TestCase):
                 manifests[0]["controller_anchor_query_indices"],
                 manifests[1]["controller_anchor_query_indices"],
             )
+            self.assertEqual(
+                manifests[0]["object_anchor_query_indices"],
+                manifests[1]["object_anchor_query_indices"],
+            )
+            self.assertIn(first_object_query_idx, manifests[0]["object_anchor_query_indices"])
             self.assertIn(first_controller_query_idx, manifests[0]["controller_anchor_query_indices"])
-            self.assertGreater(manifests[1]["controller_anchor_revived_count"], 0)
+            self.assertEqual(manifests[1]["controller_anchor_revived_count"], 0)
+            self.assertIn("missing", manifests[1]["controller_anchor_status"])
+            self.assertGreater(manifests[1]["object_anchor_status_summary"]["missing"], 0)
             self.assertEqual(manifests[1]["controller_anchor_count"], 30)
+
+            chunk1 = root / "cases" / "demo_v4_stable_anchor_chunk_0001" / "final_data.pkl"
+            chunk2 = root / "cases" / "demo_v4_stable_anchor_chunk_0002" / "final_data.pkl"
+            with chunk1.open("rb") as handle:
+                first_final = pickle.load(handle)
+            with chunk2.open("rb") as handle:
+                second_final = pickle.load(handle)
+            self.assertEqual(first_final["object_points"].shape[1:], second_final["object_points"].shape[1:])
+            self.assertEqual(first_final["controller_points"].shape[1:], second_final["controller_points"].shape[1:])
+            lost_object_col = manifests[1]["object_anchor_query_indices"].index(first_object_query_idx)
+            self.assertFalse(np.any(second_final["object_visibilities"][:, lost_object_col]))
+            self.assertFalse(np.any(second_final["object_motions_valid"][:, lost_object_col]))
+
+            with (root / "cases" / "data" / "demo_v4_stable_anchor" / "final_data.pkl").open("rb") as handle:
+                aggregate_final = pickle.load(handle)
+            self.assertEqual(
+                aggregate_final["object_points"].shape,
+                (
+                    first_final["object_points"].shape[0] + second_final["object_points"].shape[0],
+                    first_final["object_points"].shape[1],
+                    3,
+                ),
+            )
 
     def test_streaming_bridge_tails_realtime_frames_until_capture_process_finishes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

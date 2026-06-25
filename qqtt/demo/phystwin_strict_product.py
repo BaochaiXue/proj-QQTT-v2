@@ -579,6 +579,34 @@ def _farthest_point_sample_indices(points_xyz: np.ndarray, count: int) -> np.nda
     return np.asarray(selected, dtype=np.int64)
 
 
+def _valid_point_time_mask(points: np.ndarray, visibilities: np.ndarray | None = None) -> np.ndarray:
+    pts = np.asarray(points, dtype=np.float32)
+    valid = np.isfinite(pts).all(axis=2) & (np.linalg.norm(pts, axis=2) > 1e-9)
+    if visibilities is not None:
+        valid &= np.asarray(visibilities, dtype=bool)
+    return np.ascontiguousarray(valid, dtype=bool)
+
+
+def _last_valid_aligned_values(
+    values: np.ndarray,
+    valid: np.ndarray,
+    previous: np.ndarray | None = None,
+) -> np.ndarray:
+    arr = np.asarray(values)
+    mask = np.asarray(valid, dtype=bool)
+    if arr.ndim != 3 or mask.shape != arr.shape[:2]:
+        raise ValueError("values must have shape T,N,C and valid must have shape T,N")
+    if previous is None:
+        output = np.ascontiguousarray(arr[-1]).copy()
+    else:
+        output = np.ascontiguousarray(np.asarray(previous, dtype=arr.dtype)).copy()
+    for col_idx in range(arr.shape[1]):
+        valid_frames = np.flatnonzero(mask[:, col_idx])
+        if len(valid_frames):
+            output[col_idx] = arr[int(valid_frames[-1]), col_idx]
+    return np.ascontiguousarray(output, dtype=arr.dtype)
+
+
 class StreamingControllerAnchorSelector:
     """Keep controller handle order stable across Demo v4 online chunks."""
 
@@ -586,14 +614,10 @@ class StreamingControllerAnchorSelector:
         self,
         *,
         count: int = 30,
-        revive_knn: int = 4,
     ) -> None:
         if int(count) < 0:
             raise ValueError("count must be >= 0")
-        if int(revive_knn) <= 0:
-            raise ValueError("revive_knn must be positive")
         self.count = int(count)
-        self.revive_knn = int(revive_knn)
         self._initial_query_indices: np.ndarray | None = None
         self._active_query_indices: np.ndarray | None = None
         self._last_points: np.ndarray | None = None
@@ -609,18 +633,40 @@ class StreamingControllerAnchorSelector:
             raise ValueError("controller_points must have shape T,N,3")
         frame_count, candidate_count, _ = points.shape
         query_indices = self._query_indices(result, candidate_count)
-        valid_candidates = self._valid_candidate_mask(result, points)
+        controller_mask = self._controller_mask(result, candidate_count)
+        controller_visibilities = self._controller_time_mask(
+            result,
+            "controller_visibilities",
+            frame_count=frame_count,
+            candidate_count=candidate_count,
+            default=True,
+        )
+        controller_motions_valid = self._controller_time_mask(
+            result,
+            "controller_motions_valid",
+            frame_count=frame_count,
+            candidate_count=candidate_count,
+            default=controller_mask,
+        )
+        selectable_candidates = self._selectable_candidate_mask(controller_mask, points)
 
         if not self.initialized:
-            selected = self._initial_selection(points, valid_candidates)
+            selected = self._initial_selection(points, selectable_candidates)
             output = np.ascontiguousarray(points[:, selected, :], dtype=np.float32)
+            output_visibilities = np.ascontiguousarray(controller_visibilities[:, selected], dtype=bool)
+            output_motions_valid = np.ascontiguousarray(controller_motions_valid[:, selected], dtype=bool)
             initial_query_indices = np.ascontiguousarray(query_indices[selected], dtype=np.int64)
             self._initial_query_indices = initial_query_indices
             self._active_query_indices = initial_query_indices.copy()
-            self._last_points = np.ascontiguousarray(output[-1], dtype=np.float32)
+            self._last_points = _last_valid_aligned_values(
+                output,
+                _valid_point_time_mask(output, output_visibilities),
+            )
             return self._with_anchor_payload(
                 result,
                 output,
+                output_visibilities,
+                output_motions_valid,
                 selected,
                 np.asarray(["direct"] * self.count),
                 active_query_indices=initial_query_indices,
@@ -631,6 +677,8 @@ class StreamingControllerAnchorSelector:
         assert self._last_points is not None
 
         output = np.zeros((frame_count, self.count, 3), dtype=np.float32)
+        output_visibilities = np.zeros((frame_count, self.count), dtype=bool)
+        output_motions_valid = np.zeros((frame_count, self.count), dtype=bool)
         selected = np.full((self.count,), -1, dtype=np.int64)
         statuses = np.full((self.count,), "missing", dtype="<U8")
         active_query_indices = self._active_query_indices.copy()
@@ -642,40 +690,35 @@ class StreamingControllerAnchorSelector:
             candidate_idx = self._direct_candidate_for_anchor(
                 anchor_idx,
                 query_to_candidate=query_to_candidate,
-                valid_candidates=valid_candidates,
+                valid_candidates=selectable_candidates,
             )
             if candidate_idx is None or candidate_idx in used_candidates:
                 continue
             output[:, anchor_idx, :] = points[:, candidate_idx, :]
+            output_visibilities[:, anchor_idx] = controller_visibilities[:, candidate_idx]
+            output_motions_valid[:, anchor_idx] = controller_motions_valid[:, candidate_idx]
             selected[anchor_idx] = int(candidate_idx)
             active_query_indices[anchor_idx] = int(query_indices[candidate_idx])
-            statuses[anchor_idx] = "direct"
+            statuses[anchor_idx] = "direct" if bool(controller_mask[candidate_idx]) else "missing"
             used_candidates.add(int(candidate_idx))
             direct_mask[anchor_idx] = True
 
         for anchor_idx in np.flatnonzero(~direct_mask):
-            predicted_first = self._predict_first_frame(anchor_idx, output, direct_mask)
-            revived, candidate_idx = self._revive_from_neighbors(
-                points,
-                valid_candidates,
-                used_candidates=used_candidates,
-                predicted_first=predicted_first,
-            )
-            output[:, anchor_idx, :] = revived
-            if candidate_idx is None:
-                statuses[anchor_idx] = "fallback"
-                active_query_indices[anchor_idx] = -1
-            else:
-                selected[anchor_idx] = int(candidate_idx)
-                active_query_indices[anchor_idx] = int(query_indices[candidate_idx])
-                statuses[anchor_idx] = "revived"
-                used_candidates.add(int(candidate_idx))
+            held = np.repeat(self._last_points[int(anchor_idx)][None, :], frame_count, axis=0)
+            output[:, anchor_idx, :] = held
+            active_query_indices[anchor_idx] = -1
 
         self._active_query_indices = np.ascontiguousarray(active_query_indices, dtype=np.int64)
-        self._last_points = np.ascontiguousarray(output[-1], dtype=np.float32)
+        self._last_points = _last_valid_aligned_values(
+            output,
+            _valid_point_time_mask(output, output_visibilities),
+            previous=self._last_points,
+        )
         return self._with_anchor_payload(
             result,
             output,
+            output_visibilities,
+            output_motions_valid,
             selected,
             statuses,
             active_query_indices=active_query_indices,
@@ -693,17 +736,40 @@ class StreamingControllerAnchorSelector:
             )
         return np.ascontiguousarray(query_indices, dtype=np.int64)
 
-    def _valid_candidate_mask(self, result: Mapping[str, np.ndarray], points: np.ndarray) -> np.ndarray:
-        candidate_count = points.shape[1]
+    def _controller_mask(self, result: Mapping[str, np.ndarray], candidate_count: int) -> np.ndarray:
         mask = np.asarray(
             result.get("controller_mask", np.ones((candidate_count,), dtype=bool)),
             dtype=bool,
         ).reshape(-1)
         if mask.shape[0] != candidate_count:
             raise ValueError("controller_mask must match controller candidate count")
+        return np.ascontiguousarray(mask, dtype=bool)
+
+    def _controller_time_mask(
+        self,
+        result: Mapping[str, np.ndarray],
+        key: str,
+        *,
+        frame_count: int,
+        candidate_count: int,
+        default: bool | np.ndarray,
+    ) -> np.ndarray:
+        value = result.get(key)
+        if value is None:
+            if isinstance(default, np.ndarray):
+                mask = np.repeat(np.asarray(default, dtype=bool)[None, :], frame_count, axis=0)
+            else:
+                mask = np.full((frame_count, candidate_count), bool(default), dtype=bool)
+            return np.ascontiguousarray(mask, dtype=bool)
+        mask = np.asarray(value, dtype=bool)
+        if mask.shape != (frame_count, candidate_count):
+            raise ValueError(f"{key} must have shape T,N matching controller_points")
+        return np.ascontiguousarray(mask, dtype=bool)
+
+    def _selectable_candidate_mask(self, controller_mask: np.ndarray, points: np.ndarray) -> np.ndarray:
         finite = np.isfinite(points).all(axis=(0, 2))
         nonzero = np.all(np.linalg.norm(points, axis=2) > 1e-9, axis=0)
-        return np.ascontiguousarray(mask & finite & nonzero, dtype=bool)
+        return np.ascontiguousarray(controller_mask & finite & nonzero, dtype=bool)
 
     def _initial_selection(self, points: np.ndarray, valid_candidates: np.ndarray) -> np.ndarray:
         valid_indices = np.flatnonzero(valid_candidates)
@@ -729,59 +795,12 @@ class StreamingControllerAnchorSelector:
                 return int(candidate_idx)
         return None
 
-    def _predict_first_frame(
-        self,
-        anchor_idx: int,
-        output: np.ndarray,
-        direct_mask: np.ndarray,
-    ) -> np.ndarray:
-        assert self._last_points is not None
-        previous = np.asarray(self._last_points, dtype=np.float32)
-        base = previous[int(anchor_idx)]
-        direct_indices = np.flatnonzero(direct_mask)
-        if len(direct_indices) == 0:
-            return np.ascontiguousarray(base, dtype=np.float32)
-        direct_previous = previous[direct_indices]
-        direct_displacement = output[0, direct_indices, :] - direct_previous
-        distances = np.linalg.norm(direct_previous - base[None, :], axis=1)
-        order = np.argsort(distances)[: max(1, min(self.revive_knn, len(distances)))]
-        weights = 1.0 / np.maximum(distances[order], 1e-6)
-        weights = weights / np.sum(weights)
-        displacement = np.sum(direct_displacement[order] * weights[:, None], axis=0)
-        return np.ascontiguousarray(base + displacement.astype(np.float32), dtype=np.float32)
-
-    def _revive_from_neighbors(
-        self,
-        points: np.ndarray,
-        valid_candidates: np.ndarray,
-        *,
-        used_candidates: set[int],
-        predicted_first: np.ndarray,
-    ) -> tuple[np.ndarray, int | None]:
-        candidates = np.flatnonzero(valid_candidates)
-        if used_candidates:
-            candidates = np.asarray(
-                [int(idx) for idx in candidates.tolist() if int(idx) not in used_candidates],
-                dtype=np.int64,
-            )
-        if len(candidates) == 0:
-            held = np.repeat(np.asarray(predicted_first, dtype=np.float32)[None, :], points.shape[0], axis=0)
-            return np.ascontiguousarray(held, dtype=np.float32), None
-
-        candidate_first = points[0, candidates, :]
-        distances = np.linalg.norm(candidate_first - np.asarray(predicted_first, dtype=np.float32)[None, :], axis=1)
-        order = np.argsort(distances)[: max(1, min(self.revive_knn, len(candidates)))]
-        selected = candidates[order]
-        weights = 1.0 / np.maximum(distances[order], 1e-6)
-        weights = weights / np.sum(weights)
-        trajectory = np.sum(points[:, selected, :] * weights[None, :, None], axis=1)
-        trajectory = trajectory + (np.asarray(predicted_first, dtype=np.float32) - trajectory[0])[None, :]
-        return np.ascontiguousarray(trajectory, dtype=np.float32), int(selected[0])
-
     def _with_anchor_payload(
         self,
         result: dict[str, np.ndarray],
         output: np.ndarray,
+        output_visibilities: np.ndarray,
+        output_motions_valid: np.ndarray,
         selected: np.ndarray,
         statuses: np.ndarray,
         *,
@@ -789,6 +808,8 @@ class StreamingControllerAnchorSelector:
     ) -> dict[str, np.ndarray]:
         assert self._initial_query_indices is not None
         result["controller_points"] = np.ascontiguousarray(output, dtype=np.float32)
+        result["controller_visibilities"] = np.ascontiguousarray(output_visibilities, dtype=bool)
+        result["controller_motions_valid"] = np.ascontiguousarray(output_motions_valid, dtype=bool)
         result["controller_fps_indices"] = np.ascontiguousarray(np.asarray(selected, dtype=np.int64))
         result["controller_anchor_query_indices"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
         result["controller_anchor_active_query_indices"] = np.ascontiguousarray(
@@ -839,17 +860,14 @@ class StreamingObjectAnchorSelector:
         self,
         *,
         volume_sample_size: float = 0.005,
-        revive_knn: int = 4,
     ) -> None:
         if float(volume_sample_size) <= 0.0:
             raise ValueError("volume_sample_size must be positive")
-        if int(revive_knn) <= 0:
-            raise ValueError("revive_knn must be positive")
         self.volume_sample_size = float(volume_sample_size)
-        self.revive_knn = int(revive_knn)
         self._initial_query_indices: np.ndarray | None = None
         self._active_query_indices: np.ndarray | None = None
         self._last_points: np.ndarray | None = None
+        self._last_colors: np.ndarray | None = None
 
     @property
     def initialized(self) -> bool:
@@ -875,10 +893,10 @@ class StreamingObjectAnchorSelector:
             raise ValueError("object visibility arrays must match object_points")
         frame_count, candidate_count, _ = points.shape
         query_indices = self._query_indices(result, candidate_count)
-        valid_candidates = self._valid_candidate_mask(points, visibilities)
+        selectable_candidates = self._selectable_candidate_mask(points, visibilities)
 
         if not self.initialized:
-            valid_indices = np.flatnonzero(valid_candidates)
+            valid_indices = np.flatnonzero(selectable_candidates)
             selected_local = _object_volume_sample_indices(
                 points[:, valid_indices, :],
                 surface_points=surface_points,
@@ -887,17 +905,22 @@ class StreamingObjectAnchorSelector:
             )
             selected = np.ascontiguousarray(valid_indices[selected_local], dtype=np.int64)
             output_points = np.ascontiguousarray(points[:, selected, :], dtype=np.float32)
+            output_colors = np.ascontiguousarray(colors[:, selected, :], dtype=np.float32)
+            output_visibilities = np.ascontiguousarray(visibilities[:, selected], dtype=bool)
+            output_motions_valid = np.ascontiguousarray(motions_valid[:, selected], dtype=bool)
+            output_valid = _valid_point_time_mask(output_points, output_visibilities)
             initial_query_indices = np.ascontiguousarray(query_indices[selected], dtype=np.int64)
             self._initial_query_indices = initial_query_indices
             self._active_query_indices = initial_query_indices.copy()
-            self._last_points = np.ascontiguousarray(output_points[-1], dtype=np.float32)
+            self._last_points = _last_valid_aligned_values(output_points, output_valid)
+            self._last_colors = _last_valid_aligned_values(output_colors, output_valid)
             return self._with_object_payload(
                 result,
                 selected=selected,
                 output_points=output_points,
-                output_colors=np.ascontiguousarray(colors[:, selected, :], dtype=np.float32),
-                output_visibilities=np.ascontiguousarray(visibilities[:, selected], dtype=bool),
-                output_motions_valid=np.ascontiguousarray(motions_valid[:, selected], dtype=bool),
+                output_colors=output_colors,
+                output_visibilities=output_visibilities,
+                output_motions_valid=output_motions_valid,
                 statuses=np.asarray(["direct"] * len(selected)),
                 active_query_indices=initial_query_indices,
             )
@@ -905,6 +928,7 @@ class StreamingObjectAnchorSelector:
         assert self._initial_query_indices is not None
         assert self._active_query_indices is not None
         assert self._last_points is not None
+        assert self._last_colors is not None
         anchor_count = int(len(self._initial_query_indices))
         output_points = np.zeros((frame_count, anchor_count, 3), dtype=np.float32)
         output_colors = np.zeros((frame_count, anchor_count, 3), dtype=np.float32)
@@ -921,7 +945,7 @@ class StreamingObjectAnchorSelector:
             candidate_idx = self._direct_candidate_for_anchor(
                 anchor_idx,
                 query_to_candidate=query_to_candidate,
-                valid_candidates=valid_candidates,
+                valid_candidates=selectable_candidates,
             )
             if candidate_idx is None or candidate_idx in used_candidates:
                 continue
@@ -931,37 +955,27 @@ class StreamingObjectAnchorSelector:
             output_motions_valid[:, anchor_idx] = motions_valid[:, candidate_idx]
             selected[anchor_idx] = int(candidate_idx)
             active_query_indices[anchor_idx] = int(query_indices[candidate_idx])
-            statuses[anchor_idx] = "direct"
+            statuses[anchor_idx] = "direct" if bool(visibilities[0, candidate_idx]) else "missing"
             direct_mask[anchor_idx] = True
             used_candidates.add(int(candidate_idx))
 
         for anchor_idx in np.flatnonzero(~direct_mask):
-            predicted_first = self._predict_first_frame(anchor_idx, output_points, direct_mask)
-            revived = self._revive_from_neighbors(
-                points,
-                colors,
-                visibilities,
-                motions_valid,
-                valid_candidates,
-                used_candidates=used_candidates,
-                predicted_first=predicted_first,
-            )
-            output_points[:, anchor_idx, :] = revived["points"]
-            output_colors[:, anchor_idx, :] = revived["colors"]
-            output_visibilities[:, anchor_idx] = revived["visibilities"]
-            output_motions_valid[:, anchor_idx] = revived["motions_valid"]
-            candidate_idx = revived["candidate_idx"]
-            if candidate_idx is None:
-                statuses[anchor_idx] = "fallback"
-                active_query_indices[anchor_idx] = -1
-            else:
-                selected[anchor_idx] = int(candidate_idx)
-                active_query_indices[anchor_idx] = int(query_indices[candidate_idx])
-                statuses[anchor_idx] = "revived"
-                used_candidates.add(int(candidate_idx))
+            output_points[:, anchor_idx, :] = np.repeat(self._last_points[int(anchor_idx)][None, :], frame_count, axis=0)
+            output_colors[:, anchor_idx, :] = np.repeat(self._last_colors[int(anchor_idx)][None, :], frame_count, axis=0)
+            active_query_indices[anchor_idx] = -1
 
         self._active_query_indices = np.ascontiguousarray(active_query_indices, dtype=np.int64)
-        self._last_points = np.ascontiguousarray(output_points[-1], dtype=np.float32)
+        output_valid = _valid_point_time_mask(output_points, output_visibilities)
+        self._last_points = _last_valid_aligned_values(
+            output_points,
+            output_valid,
+            previous=self._last_points,
+        )
+        self._last_colors = _last_valid_aligned_values(
+            output_colors,
+            output_valid,
+            previous=self._last_colors,
+        )
         return self._with_object_payload(
             result,
             selected=selected,
@@ -982,7 +996,7 @@ class StreamingObjectAnchorSelector:
             raise ValueError("object_query_indices must match object candidate count")
         return np.ascontiguousarray(query_indices, dtype=np.int64)
 
-    def _valid_candidate_mask(self, points: np.ndarray, visibilities: np.ndarray) -> np.ndarray:
+    def _selectable_candidate_mask(self, points: np.ndarray, visibilities: np.ndarray) -> np.ndarray:
         first_points = points[0]
         return np.ascontiguousarray(
             visibilities[0]
@@ -1009,58 +1023,6 @@ class StreamingObjectAnchorSelector:
             if candidate_idx is not None and bool(valid_candidates[candidate_idx]):
                 return int(candidate_idx)
         return None
-
-    def _predict_first_frame(self, anchor_idx: int, output: np.ndarray, direct_mask: np.ndarray) -> np.ndarray:
-        assert self._last_points is not None
-        previous = np.asarray(self._last_points, dtype=np.float32)
-        base = previous[int(anchor_idx)]
-        direct_indices = np.flatnonzero(direct_mask)
-        if len(direct_indices) == 0:
-            return np.ascontiguousarray(base, dtype=np.float32)
-        direct_previous = previous[direct_indices]
-        direct_displacement = output[0, direct_indices, :] - direct_previous
-        distances = np.linalg.norm(direct_previous - base[None, :], axis=1)
-        order = np.argsort(distances)[: max(1, min(self.revive_knn, len(distances)))]
-        weights = 1.0 / np.maximum(distances[order], 1e-6)
-        weights = weights / np.sum(weights)
-        return np.ascontiguousarray(base + np.sum(direct_displacement[order] * weights[:, None], axis=0), dtype=np.float32)
-
-    def _revive_from_neighbors(
-        self,
-        points: np.ndarray,
-        colors: np.ndarray,
-        visibilities: np.ndarray,
-        motions_valid: np.ndarray,
-        valid_candidates: np.ndarray,
-        *,
-        used_candidates: set[int],
-        predicted_first: np.ndarray,
-    ) -> dict[str, np.ndarray | int | None]:
-        candidates = np.flatnonzero(valid_candidates)
-        if used_candidates:
-            candidates = np.asarray([idx for idx in candidates.tolist() if int(idx) not in used_candidates], dtype=np.int64)
-        if len(candidates) == 0:
-            return {
-                "points": np.repeat(np.asarray(predicted_first, dtype=np.float32)[None, :], points.shape[0], axis=0),
-                "colors": np.zeros((points.shape[0], 3), dtype=np.float32),
-                "visibilities": np.zeros((points.shape[0],), dtype=bool),
-                "motions_valid": np.zeros((points.shape[0],), dtype=bool),
-                "candidate_idx": None,
-            }
-        distances = np.linalg.norm(points[0, candidates, :] - np.asarray(predicted_first, dtype=np.float32)[None, :], axis=1)
-        order = np.argsort(distances)[: max(1, min(self.revive_knn, len(candidates)))]
-        selected = candidates[order]
-        weights = 1.0 / np.maximum(distances[order], 1e-6)
-        weights = weights / np.sum(weights)
-        trajectory = np.sum(points[:, selected, :] * weights[None, :, None], axis=1)
-        trajectory = trajectory + (np.asarray(predicted_first, dtype=np.float32) - trajectory[0])[None, :]
-        return {
-            "points": np.ascontiguousarray(trajectory, dtype=np.float32),
-            "colors": np.ascontiguousarray(np.sum(colors[:, selected, :] * weights[None, :, None], axis=1), dtype=np.float32),
-            "visibilities": np.ascontiguousarray(np.any(visibilities[:, selected], axis=1), dtype=bool),
-            "motions_valid": np.ascontiguousarray(np.any(motions_valid[:, selected], axis=1), dtype=bool),
-            "candidate_idx": int(selected[0]),
-        }
 
     def _with_object_payload(
         self,
