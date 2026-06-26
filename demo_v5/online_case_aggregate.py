@@ -54,6 +54,10 @@ TRACK_OPTIONAL_TIME_KEYS = (
     "controller_anchor_confidence",
     "controller_anchor_failure_reason",
     "controller_anchor_bundle_support_count",
+    "controller_anchor_bundle_raw_visible_count",
+    "controller_anchor_bundle_depth_valid_count",
+    "controller_anchor_bundle_processed_mask_valid_count",
+    "controller_anchor_bundle_motion_valid_count",
     "controller_anchor_recovery_residual",
 )
 TRACK_STATIC_KEYS = FUTUREPHYSTWIN_TOPOLOGY_KEYS
@@ -83,6 +87,8 @@ GENERATED_FILES = (
     "split.json",
     "manifest.json",
     "READY",
+    "DEGRADED",
+    "INVALID",
 )
 GENERATED_DIRS = (
     "color",
@@ -220,7 +226,17 @@ def _load_tracking_payload(case_dir: Path, name: str) -> dict[str, np.ndarray]:
         }
 
 
-def _validate_chunk_cases(chunk_cases: Sequence[Path]) -> None:
+def _degraded_chunk_case_allowed(chunk_case: Path) -> bool:
+    if not (chunk_case / "DEGRADED").is_file():
+        return False
+    try:
+        manifest = _load_json(chunk_case / "manifest.json")
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return False
+    return str(manifest.get("controller_quality_status", "normal")) == "degraded"
+
+
+def _validate_chunk_cases(chunk_cases: Sequence[Path], *, allow_degraded: bool = False) -> None:
     """Ensure chunks can be concatenated without changing camera/query identity."""
     if not chunk_cases:
         raise ValueError("aggregate requires at least one READY chunk case")
@@ -230,7 +246,8 @@ def _validate_chunk_cases(chunk_cases: Sequence[Path]) -> None:
     first_final_static: dict[str, np.ndarray] = {}
     first_track_static: dict[str, np.ndarray] = {}
     for chunk_idx, chunk_case in enumerate(chunk_cases):
-        validate_futurephystwin_case(chunk_case, require_ready=True)
+        require_ready = not (bool(allow_degraded) and _degraded_chunk_case_allowed(chunk_case))
+        validate_futurephystwin_case(chunk_case, require_ready=require_ready)
         final_data = _load_pickle(chunk_case / "final_data.pkl")
         track_process = _load_pickle(chunk_case / "track_process_data.pkl")
         _require_payload_keys(final_data, FUTUREPHYSTWIN_FINAL_DATA_KEYS, label="final_data.pkl")
@@ -445,11 +462,12 @@ def build_aggregate_case_from_chunk_cases(
     aggregate_case: str | Path,
     *,
     ready: bool = False,
+    allow_degraded: bool = False,
 ) -> dict[str, Any]:
     """Rewrite data/<case> as the prefix aggregate of READY chunk cases."""
     cases = [Path(path) for path in chunk_cases]
     target = Path(aggregate_case)
-    _validate_chunk_cases(cases)
+    _validate_chunk_cases(cases, allow_degraded=bool(allow_degraded))
 
     final_payloads = [_load_pickle(case / "final_data.pkl") for case in cases]
     track_payloads = [_load_pickle(case / "track_process_data.pkl") for case in cases]
@@ -514,24 +532,35 @@ def build_aggregate_case_from_chunk_cases(
 class OnlineAggregateCaseWriter:
     """Incrementally rebuild the aggregate case after each committed chunk."""
 
-    def __init__(self, case_dir: str | Path) -> None:
+    def __init__(self, case_dir: str | Path, *, allow_degraded: bool = False) -> None:
         self.case_dir = Path(case_dir)
         self.chunk_cases: list[Path] = []
+        self.allow_degraded = bool(allow_degraded)
 
     def validate_next_chunk_case(self, chunk_case_dir: str | Path) -> None:
-        _validate_chunk_cases([*self.chunk_cases, Path(chunk_case_dir)])
+        _validate_chunk_cases([*self.chunk_cases, Path(chunk_case_dir)], allow_degraded=self.allow_degraded)
 
     def add_chunk_case(self, chunk_case_dir: str | Path) -> dict[str, Any]:
         source = Path(chunk_case_dir)
         candidate_cases = [*self.chunk_cases, source]
-        manifest = build_aggregate_case_from_chunk_cases(candidate_cases, self.case_dir, ready=False)
+        manifest = build_aggregate_case_from_chunk_cases(
+            candidate_cases,
+            self.case_dir,
+            ready=False,
+            allow_degraded=self.allow_degraded,
+        )
         self.chunk_cases = candidate_cases
         return manifest
 
     def finish(self) -> dict[str, Any] | None:
         if not self.chunk_cases:
             return None
-        return build_aggregate_case_from_chunk_cases(self.chunk_cases, self.case_dir, ready=True)
+        return build_aggregate_case_from_chunk_cases(
+            self.chunk_cases,
+            self.case_dir,
+            ready=True,
+            allow_degraded=self.allow_degraded,
+        )
 
 
 def _complete_ready_case(case_dir: Path) -> bool:

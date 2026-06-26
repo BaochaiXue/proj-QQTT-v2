@@ -424,6 +424,19 @@ def _controller_quality_invalid(manifest: Mapping[str, Any]) -> bool:
     return str(manifest.get("controller_quality_status", "normal")) == "invalid"
 
 
+def _controller_quality_online_publish_skip_reason(
+    manifest: Mapping[str, Any],
+    *,
+    allow_degraded_online: bool = False,
+) -> str | None:
+    status = str(manifest.get("controller_quality_status", "normal"))
+    if status == "invalid":
+        return "controller_quality_invalid"
+    if status == "degraded" and not bool(allow_degraded_online):
+        return "controller_quality_degraded"
+    return None
+
+
 def _object_anchor_manifest_fields(track_process_data: Mapping[str, Any]) -> dict[str, Any]:
     if "object_anchor_query_indices" not in track_process_data:
         object_points = np.asarray(track_process_data.get("object_points", np.empty((0, 0, 3))))
@@ -753,6 +766,7 @@ def _write_chunk_from_rows(
     backlog_chunks: Callable[[], int] | None = None,
     write_final_pcd: bool = True,
     online_writer: DemoV5OnlineOutputWriter | None = None,
+    allow_degraded_online: bool = False,
     object_anchor_selector: strict.StreamingObjectAnchorSelector | None = None,
     controller_anchor_selector: strict.StreamingControllerAnchorSelector | None = None,
     session_query_topology: dict[str, np.ndarray] | None = None,
@@ -843,11 +857,15 @@ def _write_chunk_from_rows(
         manifest_extras=manifest_extras,
         relative_wall_time_s=lambda: _relative_wall_s(float(wall_time_origin_s)),
     )
-    if _controller_quality_invalid(manifest):
+    skip_reason = _controller_quality_online_publish_skip_reason(
+        manifest,
+        allow_degraded_online=bool(allow_degraded_online),
+    )
+    if skip_reason is not None:
         manifest.update(
             {
                 "online_publish_skipped": True,
-                "online_publish_skip_reason": "controller_quality_invalid",
+                "online_publish_skip_reason": str(skip_reason),
             }
         )
         return manifest
@@ -891,6 +909,7 @@ def write_chunks_from_headless_capture(
     write_final_pcd: bool = True,
     write_online_output: bool = True,
     online_case_name: str | None = None,
+    allow_degraded_online: bool = False,
 ) -> list[dict[str, Any]]:
     """Convert a completed headless capture into chunk cases."""
     capture = Path(capture_dir)
@@ -929,6 +948,7 @@ def write_chunks_from_headless_capture(
                 chunk_size=chunk_size,
                 max_chunks=max_chunks,
             ),
+            allow_degraded=bool(allow_degraded_online),
         )
     object_anchor_selector = strict.StreamingObjectAnchorSelector(volume_sample_size=0.005)
     controller_anchor_selector = strict.StreamingControllerAnchorSelector(count=30)
@@ -969,6 +989,7 @@ def write_chunks_from_headless_capture(
             ),
             write_final_pcd=bool(write_final_pcd),
             online_writer=online_writer,
+            allow_degraded_online=bool(allow_degraded_online),
             object_anchor_selector=object_anchor_selector,
             controller_anchor_selector=controller_anchor_selector,
             session_query_topology=session_query_topology,
@@ -1027,6 +1048,7 @@ def stream_chunks_from_headless_capture(
     write_final_pcd: bool = True,
     write_online_output: bool = True,
     online_case_name: str | None = None,
+    allow_degraded_online: bool = False,
 ) -> list[dict[str, Any]]:
     """Tail a live headless capture and publish chunks as windows close."""
     capture = Path(capture_dir)
@@ -1058,6 +1080,7 @@ def stream_chunks_from_headless_capture(
             num_frames_total=(
                 None if max_chunks is None else int(max_chunks) * int(chunk_size)
             ),
+            allow_degraded=bool(allow_degraded_online),
         )
     object_anchor_selector = strict.StreamingObjectAnchorSelector(volume_sample_size=0.005)
     controller_anchor_selector = strict.StreamingControllerAnchorSelector(count=30)
@@ -1117,6 +1140,7 @@ def stream_chunks_from_headless_capture(
                 ),
                 write_final_pcd=bool(write_final_pcd),
                 online_writer=online_writer,
+                allow_degraded_online=bool(allow_degraded_online),
                 object_anchor_selector=object_anchor_selector,
                 controller_anchor_selector=controller_anchor_selector,
                 session_query_topology=session_query_topology,

@@ -717,33 +717,57 @@ def _revive_lost_anchors_from_neighbor_motion(
     return revived
 
 
-def _rigid_transform_from_points(source: np.ndarray, target: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
+def _rigid_transform_from_points(
+    source: np.ndarray,
+    target: np.ndarray,
+    *,
+    weights: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, float]:
     src = np.asarray(source, dtype=np.float64).reshape(-1, 3)
     dst = np.asarray(target, dtype=np.float64).reshape(-1, 3)
     if src.shape != dst.shape or src.shape[0] < 3:
         raise ValueError("rigid transform requires matching Nx3 source/target with N >= 3")
-    src_center = np.mean(src, axis=0)
-    dst_center = np.mean(dst, axis=0)
+    if weights is None:
+        w = np.full((src.shape[0],), 1.0 / float(src.shape[0]), dtype=np.float64)
+    else:
+        w = np.asarray(weights, dtype=np.float64).reshape(-1)
+        if w.shape[0] != src.shape[0] or not np.all(np.isfinite(w)) or float(np.sum(w)) <= 0.0:
+            raise ValueError("weights must be finite, positive, and match source point count")
+        w = w / np.sum(w)
+    src_center = np.sum(src * w[:, None], axis=0)
+    dst_center = np.sum(dst * w[:, None], axis=0)
     src_zero = src - src_center
     dst_zero = dst - dst_center
-    u, _s, vt = np.linalg.svd(src_zero.T @ dst_zero)
+    u, _s, vt = np.linalg.svd(src_zero.T @ (dst_zero * w[:, None]))
     rot = vt.T @ u.T
     if np.linalg.det(rot) < 0:
         vt[-1] *= -1
         rot = vt.T @ u.T
     trans = dst_center - rot @ src_center
-    residual = float(np.sqrt(np.mean(np.sum(((src @ rot.T) + trans - dst) ** 2, axis=1))))
+    residual = float(np.sqrt(np.sum(w * np.sum(((src @ rot.T) + trans - dst) ** 2, axis=1))))
     return rot.astype(np.float32), trans.astype(np.float32), residual
 
 
-def _translation_from_points(source: np.ndarray, target: np.ndarray) -> tuple[np.ndarray, float]:
+def _translation_from_points(
+    source: np.ndarray,
+    target: np.ndarray,
+    *,
+    weights: np.ndarray | None = None,
+) -> tuple[np.ndarray, float]:
     src = np.asarray(source, dtype=np.float64).reshape(-1, 3)
     dst = np.asarray(target, dtype=np.float64).reshape(-1, 3)
     if src.shape != dst.shape or src.shape[0] < 2:
         raise ValueError("translation recovery requires matching Nx3 source/target with N >= 2")
+    if weights is None:
+        w = np.full((src.shape[0],), 1.0 / float(src.shape[0]), dtype=np.float64)
+    else:
+        w = np.asarray(weights, dtype=np.float64).reshape(-1)
+        if w.shape[0] != src.shape[0] or not np.all(np.isfinite(w)) or float(np.sum(w)) <= 0.0:
+            raise ValueError("weights must be finite, positive, and match source point count")
+        w = w / np.sum(w)
     displacements = dst - src
     translation = np.median(displacements, axis=0)
-    residual = float(np.sqrt(np.mean(np.sum((displacements - translation[None, :]) ** 2, axis=1))))
+    residual = float(np.sqrt(np.sum(w * np.sum((displacements - translation[None, :]) ** 2, axis=1))))
     return translation.astype(np.float32), residual
 
 
@@ -836,13 +860,14 @@ class StreamingControllerAnchorSelector:
             candidate_count=candidate_count,
             default=controller_mask,
         )
+        controller_frame_motions_valid = self._frame_motion_valid(controller_motions_valid)
         selectable_candidates = self._selectable_candidate_mask(controller_mask, points)
 
         if not self.initialized:
             selected = self._initial_selection(points, selectable_candidates)
             output = np.ascontiguousarray(points[:, selected, :], dtype=np.float32)
             output_visibilities = np.ascontiguousarray(controller_visibilities[:, selected], dtype=bool)
-            output_motions_valid = np.ascontiguousarray(controller_motions_valid[:, selected], dtype=bool)
+            output_motions_valid = np.ascontiguousarray(controller_frame_motions_valid[:, selected], dtype=bool)
             initial_query_indices = np.ascontiguousarray(query_indices[selected], dtype=np.int64)
             self._initial_query_indices = initial_query_indices
             self._active_query_indices = initial_query_indices.copy()
@@ -852,6 +877,8 @@ class StreamingControllerAnchorSelector:
                 query_indices=query_indices,
                 selected=selected,
                 controller_mask=controller_mask,
+                raw_visible=controller_raw_visible,
+                depth_valid=controller_depth_valid,
                 measurement_valid=controller_measurement_valid,
             )
             self._last_points = _last_valid_aligned_values(
@@ -868,6 +895,10 @@ class StreamingControllerAnchorSelector:
             failure = np.full((frame_count, self.count), "none", dtype="<U40")
             source_query = np.repeat(initial_query_indices[None, :], frame_count, axis=0)
             support_count = np.zeros((frame_count, self.count), dtype=np.int64)
+            bundle_raw_count = np.zeros((frame_count, self.count), dtype=np.int64)
+            bundle_depth_count = np.zeros((frame_count, self.count), dtype=np.int64)
+            bundle_mask_count = np.zeros((frame_count, self.count), dtype=np.int64)
+            bundle_motion_count = np.zeros((frame_count, self.count), dtype=np.int64)
             residual = np.zeros((frame_count, self.count), dtype=np.float32)
             return self._with_anchor_payload(
                 result,
@@ -882,6 +913,10 @@ class StreamingControllerAnchorSelector:
                 confidence=confidence,
                 failure_reasons=failure,
                 bundle_support_count=support_count,
+                bundle_raw_visible_count=bundle_raw_count,
+                bundle_depth_valid_count=bundle_depth_count,
+                bundle_processed_mask_valid_count=bundle_mask_count,
+                bundle_motion_valid_count=bundle_motion_count,
                 recovery_residual=residual,
                 quality_status="normal",
             )
@@ -904,6 +939,10 @@ class StreamingControllerAnchorSelector:
         confidence = np.full((frame_count, self.count), 0.1, dtype=np.float32)
         source_query_ids = np.full((frame_count, self.count), -1, dtype=np.int64)
         support_counts = np.zeros((frame_count, self.count), dtype=np.int64)
+        bundle_raw_counts = np.zeros((frame_count, self.count), dtype=np.int64)
+        bundle_depth_counts = np.zeros((frame_count, self.count), dtype=np.int64)
+        bundle_mask_counts = np.zeros((frame_count, self.count), dtype=np.int64)
+        bundle_motion_counts = np.zeros((frame_count, self.count), dtype=np.int64)
         residuals = np.full((frame_count, self.count), np.inf, dtype=np.float32)
         active_query_indices = self._active_query_indices.copy()
         query_to_candidate = {int(query_id): int(idx) for idx, query_id in enumerate(query_indices.tolist())}
@@ -923,9 +962,13 @@ class StreamingControllerAnchorSelector:
                     raw_visible=controller_raw_visible,
                     processed_mask_valid=controller_processed_mask_valid,
                     depth_valid=controller_depth_valid,
-                    motions_valid=controller_motions_valid,
+                    frame_motions_valid=controller_frame_motions_valid,
                 )
                 support_counts[frame_idx, anchor_idx] = int(recovery["support_count"])
+                bundle_raw_counts[frame_idx, anchor_idx] = int(recovery["raw_visible_count"])
+                bundle_depth_counts[frame_idx, anchor_idx] = int(recovery["depth_valid_count"])
+                bundle_mask_counts[frame_idx, anchor_idx] = int(recovery["processed_mask_valid_count"])
+                bundle_motion_counts[frame_idx, anchor_idx] = int(recovery["motion_valid_count"])
                 residuals[frame_idx, anchor_idx] = float(recovery["residual"])
                 primary = self._primary_observation(
                     primary_idx,
@@ -936,7 +979,7 @@ class StreamingControllerAnchorSelector:
                     processed_mask_valid=controller_processed_mask_valid,
                     depth_valid=controller_depth_valid,
                     measurement_valid=controller_measurement_valid,
-                    motions_valid=controller_motions_valid,
+                    motions_valid=controller_frame_motions_valid,
                 )
                 failures[frame_idx, anchor_idx] = str(primary["failure_reason"])
                 source_query = int(self._initial_query_indices[anchor_idx])
@@ -1013,6 +1056,10 @@ class StreamingControllerAnchorSelector:
             confidence=confidence,
             failure_reasons=failures,
             bundle_support_count=support_counts,
+            bundle_raw_visible_count=bundle_raw_counts,
+            bundle_depth_valid_count=bundle_depth_counts,
+            bundle_processed_mask_valid_count=bundle_mask_counts,
+            bundle_motion_valid_count=bundle_motion_counts,
             recovery_residual=residuals,
             quality_status=quality_status,
         )
@@ -1065,6 +1112,17 @@ class StreamingControllerAnchorSelector:
             raise ValueError(f"{key} must have shape T,N matching controller_points")
         return np.ascontiguousarray(mask, dtype=bool)
 
+    def _frame_motion_valid(self, motions_valid: np.ndarray) -> np.ndarray:
+        motion = np.asarray(motions_valid, dtype=bool)
+        if motion.ndim != 2:
+            raise ValueError("motions_valid must have shape T,N")
+        out = np.array(motion, dtype=bool, copy=True)
+        if out.shape[0] == 1:
+            out[:] = True
+        elif out.shape[0] > 1:
+            out[-1] = out[-2]
+        return np.ascontiguousarray(out, dtype=bool)
+
     def _selectable_candidate_mask(self, controller_mask: np.ndarray, points: np.ndarray) -> np.ndarray:
         finite = np.isfinite(points).all(axis=(0, 2))
         nonzero = np.all(np.linalg.norm(points, axis=2) > 1e-9, axis=0)
@@ -1083,6 +1141,8 @@ class StreamingControllerAnchorSelector:
         query_indices: np.ndarray,
         selected: np.ndarray,
         controller_mask: np.ndarray,
+        raw_visible: np.ndarray,
+        depth_valid: np.ndarray,
         measurement_valid: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         bundle_ids = np.full((self.count, self.backup_query_count), -1, dtype=np.int64)
@@ -1091,11 +1151,12 @@ class StreamingControllerAnchorSelector:
             return bundle_ids, bundle_points
         first_points = np.asarray(points[0], dtype=np.float32)
         first_valid = (
-            np.asarray(controller_mask, dtype=bool)
-            & np.asarray(measurement_valid[0], dtype=bool)
+            np.asarray(raw_visible[0], dtype=bool)
+            & np.asarray(depth_valid[0], dtype=bool)
             & np.isfinite(first_points).all(axis=1)
             & (np.linalg.norm(first_points, axis=1) > 1e-9)
         )
+        strict_preference = np.asarray(controller_mask, dtype=bool) & np.asarray(measurement_valid[0], dtype=bool)
         selected_set = {int(idx) for idx in np.asarray(selected, dtype=np.int64).tolist()}
         for anchor_idx, source_idx in enumerate(np.asarray(selected, dtype=np.int64).tolist()):
             primary = first_points[int(source_idx)]
@@ -1104,7 +1165,12 @@ class StreamingControllerAnchorSelector:
             candidates = np.asarray([int(idx) for idx in candidates.tolist() if int(idx) not in selected_set], dtype=np.int64)
             if candidates.size < self.backup_min_count:
                 continue
-            order = np.argsort(distances[candidates], kind="stable")[: self.backup_query_count]
+            order = np.lexsort(
+                (
+                    distances[candidates],
+                    -strict_preference[candidates].astype(np.int64),
+                )
+            )[: self.backup_query_count]
             keep = candidates[order]
             if keep.size >= 3:
                 centered = first_points[keep] - np.mean(first_points[keep], axis=0, keepdims=True)
@@ -1169,7 +1235,7 @@ class StreamingControllerAnchorSelector:
         raw_visible: np.ndarray,
         processed_mask_valid: np.ndarray,
         depth_valid: np.ndarray,
-        motions_valid: np.ndarray,
+        frame_motions_valid: np.ndarray,
     ) -> dict[str, object]:
         assert self._bundle_query_ids is not None
         assert self._bundle_initial_points is not None
@@ -1177,35 +1243,54 @@ class StreamingControllerAnchorSelector:
         support_initial: list[np.ndarray] = []
         support_current: list[np.ndarray] = []
         support_query_ids: list[int] = []
+        support_weights: list[float] = []
+        raw_visible_count = 0
+        depth_valid_count = 0
+        processed_mask_valid_count = 0
+        motion_valid_count = 0
         for slot_idx, query_id in enumerate(self._bundle_query_ids[int(anchor_idx)].tolist()):
             if int(query_id) < 0:
                 continue
             candidate_idx = query_to_candidate.get(int(query_id))
             if candidate_idx is None:
                 continue
-            if not (
-                bool(raw_visible[frame_idx, candidate_idx])
-                and bool(processed_mask_valid[frame_idx, candidate_idx])
-                and bool(depth_valid[frame_idx, candidate_idx])
-                and bool(motions_valid[frame_idx, candidate_idx])
-            ):
-                continue
+            raw_ok = bool(raw_visible[frame_idx, candidate_idx])
+            depth_ok = bool(depth_valid[frame_idx, candidate_idx])
+            mask_ok = bool(processed_mask_valid[frame_idx, candidate_idx])
+            motion_ok = bool(frame_motions_valid[frame_idx, candidate_idx])
             current = np.asarray(raw_points[frame_idx, candidate_idx], dtype=np.float32)
-            if not (np.isfinite(current).all() and np.linalg.norm(current) > 1e-9):
+            current_finite = bool(np.isfinite(current).all() and np.linalg.norm(current) > 1e-9)
+            if raw_ok and current_finite:
+                raw_visible_count += 1
+            if raw_ok and depth_ok and current_finite:
+                depth_valid_count += 1
+            if raw_ok and depth_ok and current_finite and mask_ok:
+                processed_mask_valid_count += 1
+            if raw_ok and depth_ok and current_finite and motion_ok:
+                motion_valid_count += 1
+            if not (raw_ok and depth_ok and current_finite):
                 continue
+            weight = 1.0
+            if not mask_ok:
+                weight *= 0.6
+            if not motion_ok:
+                weight *= 0.6
             support_initial.append(np.asarray(self._bundle_initial_points[int(anchor_idx), int(slot_idx)], dtype=np.float32))
             support_current.append(current)
             support_query_ids.append(int(query_id))
+            support_weights.append(float(weight))
         support_count = len(support_initial)
         if support_count >= 3:
             src = np.stack(support_initial, axis=0)
             dst = np.stack(support_current, axis=0)
-            rot, trans, residual = _rigid_transform_from_points(src, dst)
+            weights = np.asarray(support_weights, dtype=np.float32)
+            rot, trans, residual = _rigid_transform_from_points(src, dst, weights=weights)
             predicted = rot @ np.asarray(self._anchor_initial_points[int(anchor_idx)], dtype=np.float32) + trans
         elif support_count >= 2:
             src = np.stack(support_initial, axis=0)
             dst = np.stack(support_current, axis=0)
-            translation, residual = _translation_from_points(src, dst)
+            weights = np.asarray(support_weights, dtype=np.float32)
+            translation, residual = _translation_from_points(src, dst, weights=weights)
             predicted = np.asarray(self._anchor_initial_points[int(anchor_idx)], dtype=np.float32) + translation
         else:
             return {
@@ -1213,29 +1298,43 @@ class StreamingControllerAnchorSelector:
                 "point": None,
                 "confidence": 0.1,
                 "support_count": support_count,
+                "raw_visible_count": raw_visible_count,
+                "depth_valid_count": depth_valid_count,
+                "processed_mask_valid_count": processed_mask_valid_count,
+                "motion_valid_count": motion_valid_count,
                 "residual": np.inf,
                 "source_query_id": -1,
             }
-        confidence = self._confidence_for_recovery(support_count=support_count, residual=residual)
+        mean_weight = float(np.mean(np.asarray(support_weights, dtype=np.float32))) if support_weights else 0.0
+        confidence = self._confidence_for_recovery(
+            support_count=support_count,
+            residual=residual,
+            mean_weight=mean_weight,
+        )
+        best_source_idx = int(np.argmax(np.asarray(support_weights, dtype=np.float32))) if support_weights else -1
         return {
             "available": bool(confidence >= 0.25),
             "point": np.asarray(predicted, dtype=np.float32),
             "confidence": float(confidence),
             "support_count": support_count,
+            "raw_visible_count": raw_visible_count,
+            "depth_valid_count": depth_valid_count,
+            "processed_mask_valid_count": processed_mask_valid_count,
+            "motion_valid_count": motion_valid_count,
             "residual": float(residual),
-            "source_query_id": support_query_ids[0] if support_query_ids else -1,
+            "source_query_id": support_query_ids[best_source_idx] if best_source_idx >= 0 else -1,
         }
 
-    def _confidence_for_recovery(self, *, support_count: int, residual: float) -> float:
+    def _confidence_for_recovery(self, *, support_count: int, residual: float, mean_weight: float = 1.0) -> float:
         if int(support_count) < 2 or not np.isfinite(float(residual)):
             return 0.1
         if float(residual) > 0.03:
             return 0.2
         if float(residual) < 0.015 and int(support_count) >= 4:
-            return 0.85
+            return float(0.85 * np.clip(float(mean_weight), 0.0, 1.0))
         if float(residual) < 0.015:
-            return 0.75
-        return 0.55
+            return float(0.75 * np.clip(float(mean_weight), 0.0, 1.0))
+        return float(0.55 * np.clip(float(mean_weight), 0.0, 1.0))
 
     def _recover_or_predict(
         self,
@@ -1329,6 +1428,10 @@ class StreamingControllerAnchorSelector:
         confidence: np.ndarray,
         failure_reasons: np.ndarray,
         bundle_support_count: np.ndarray,
+        bundle_raw_visible_count: np.ndarray,
+        bundle_depth_valid_count: np.ndarray,
+        bundle_processed_mask_valid_count: np.ndarray,
+        bundle_motion_valid_count: np.ndarray,
         recovery_residual: np.ndarray,
         quality_status: str,
     ) -> dict[str, np.ndarray]:
@@ -1356,6 +1459,18 @@ class StreamingControllerAnchorSelector:
         result["controller_anchor_failure_reason"] = np.asarray(failure_reasons, dtype="<U40")
         result["controller_anchor_bundle_support_count"] = np.ascontiguousarray(
             np.asarray(bundle_support_count, dtype=np.int64)
+        )
+        result["controller_anchor_bundle_raw_visible_count"] = np.ascontiguousarray(
+            np.asarray(bundle_raw_visible_count, dtype=np.int64)
+        )
+        result["controller_anchor_bundle_depth_valid_count"] = np.ascontiguousarray(
+            np.asarray(bundle_depth_valid_count, dtype=np.int64)
+        )
+        result["controller_anchor_bundle_processed_mask_valid_count"] = np.ascontiguousarray(
+            np.asarray(bundle_processed_mask_valid_count, dtype=np.int64)
+        )
+        result["controller_anchor_bundle_motion_valid_count"] = np.ascontiguousarray(
+            np.asarray(bundle_motion_valid_count, dtype=np.int64)
         )
         result["controller_anchor_recovery_residual"] = np.ascontiguousarray(
             np.asarray(recovery_residual, dtype=np.float32)

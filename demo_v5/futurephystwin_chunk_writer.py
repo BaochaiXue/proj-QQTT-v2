@@ -102,6 +102,10 @@ CONTROLLER_ANCHOR_TIME_KEYS = (
     "controller_anchor_confidence",
     "controller_anchor_failure_reason",
     "controller_anchor_bundle_support_count",
+    "controller_anchor_bundle_raw_visible_count",
+    "controller_anchor_bundle_depth_valid_count",
+    "controller_anchor_bundle_processed_mask_valid_count",
+    "controller_anchor_bundle_motion_valid_count",
     "controller_anchor_recovery_residual",
 )
 CONTROLLER_ANCHOR_STATIC_KEYS = (
@@ -785,6 +789,9 @@ def write_futurephystwin_chunk_case(
         if manifest_extras is not None:
             extras = manifest_extras() if callable(manifest_extras) else manifest_extras
             manifest.update(dict(extras))
+        quality_status = str(manifest.get("controller_quality_status", "normal"))
+        marker_name = "READY" if quality_status == "normal" else quality_status.upper()
+        manifest["publish_marker"] = marker_name
         timing_floor_s = max(
             float(manifest.get("window_closed_wall_s", 0.0) or 0.0),
             float(manifest.get("track_finalize_done_wall_s", 0.0) or 0.0),
@@ -796,7 +803,7 @@ def write_futurephystwin_chunk_case(
         atomic_rename_done_wall_s = max(now_wall_s(), validation_done_wall_s)
         apply_publish_timing(manifest, atomic_rename_done_wall_s=atomic_rename_done_wall_s)
         (staging / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        (staging / "READY").write_text("ready\n", encoding="utf-8")
+        (staging / marker_name).write_text(marker_name.lower() + "\n", encoding="utf-8")
         os.replace(staging, case)
         try:
             staging_root.rmdir()

@@ -122,6 +122,10 @@ def _with_anchor_diagnostics(chunk: FuturePhysTwinChunk, *, quality_status: str 
             "controller_anchor_confidence": np.ones((frame_count, anchor_count), dtype=np.float32),
             "controller_anchor_failure_reason": np.full((frame_count, anchor_count), "none", dtype="<U40"),
             "controller_anchor_bundle_support_count": np.full((frame_count, anchor_count), 3, dtype=np.int64),
+            "controller_anchor_bundle_raw_visible_count": np.full((frame_count, anchor_count), 3, dtype=np.int64),
+            "controller_anchor_bundle_depth_valid_count": np.full((frame_count, anchor_count), 3, dtype=np.int64),
+            "controller_anchor_bundle_processed_mask_valid_count": np.full((frame_count, anchor_count), 3, dtype=np.int64),
+            "controller_anchor_bundle_motion_valid_count": np.full((frame_count, anchor_count), 3, dtype=np.int64),
             "controller_anchor_recovery_residual": np.zeros((frame_count, anchor_count), dtype=np.float32),
             "controller_quality_status": str(quality_status),
         }
@@ -197,6 +201,8 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
         self.assertEqual(args.shape_prior_worker_mode, "managed")
         self.assertEqual(args.optimization_mode, "disabled")
         self.assertEqual(args.point_viewer_mode, "window")
+        self.assertFalse(args.allow_degraded_online)
+        self.assertTrue(demo_v5.build_parser().parse_args(["--allow-degraded-online"]).allow_degraded_online)
         self.assertEqual(demo_v5.resolve_point_viewer_cuda_visible_devices(args), "1")
         self.assertEqual(demo_v5.resolve_optimization_cuda_visible_devices(args), "1")
         self.assertEqual(demo_v5.resolve_optimization_device(args), "cuda:0")
@@ -400,6 +406,7 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
 
             self.assertEqual(track_process["controller_anchor_confidence"].shape, (2, 2))
             self.assertEqual(track_process["controller_anchor_bundle_query_ids"].shape, (2, 3))
+            self.assertEqual(track_process["controller_anchor_bundle_raw_visible_count"].shape, (2, 2))
             self.assertEqual(str(track_process["controller_quality_status"]), "normal")
 
             writer = DemoV5OnlineOutputWriter(base_path=base_path, case_name="diag", chunk_size=2)
@@ -418,6 +425,98 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
                 aggregate_track = pickle.load(handle)
             self.assertEqual(aggregate_track["controller_anchor_confidence"].shape, (2, 2))
             self.assertEqual(aggregate_track["controller_anchor_bundle_query_ids"].shape, (2, 3))
+            self.assertEqual(aggregate_track["controller_anchor_bundle_motion_valid_count"].shape, (2, 2))
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_controller_quality_markers_distinguish_ready_degraded_and_invalid(self) -> None:
+        root = Path("result/test_demo_v5_unit_quality_markers")
+        shutil.rmtree(root, ignore_errors=True)
+        try:
+            base_path = root / "cases"
+            cases = {}
+            for quality in ("normal", "degraded", "invalid"):
+                manifest = write_futurephystwin_chunk_case(
+                    base_path,
+                    f"{quality}_chunk_0001",
+                    _with_anchor_diagnostics(_tiny_futurephystwin_chunk(chunk_index=0), quality_status=quality),
+                )
+                cases[quality] = Path(manifest["futurephystwin_case_root"])
+                self.assertEqual(manifest["controller_quality_status"], quality)
+
+            self.assertTrue((cases["normal"] / "READY").is_file())
+            self.assertFalse((cases["normal"] / "DEGRADED").exists())
+            self.assertFalse((cases["normal"] / "INVALID").exists())
+            self.assertTrue((cases["degraded"] / "DEGRADED").is_file())
+            self.assertFalse((cases["degraded"] / "READY").exists())
+            self.assertTrue((cases["invalid"] / "INVALID").is_file())
+            self.assertFalse((cases["invalid"] / "READY").exists())
+            validate_futurephystwin_case(cases["normal"], require_ready=True)
+            with self.assertRaisesRegex(ValueError, "READY"):
+                validate_futurephystwin_case(cases["degraded"], require_ready=True)
+            with self.assertRaisesRegex(ValueError, "READY"):
+                validate_futurephystwin_case(cases["invalid"], require_ready=True)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_controller_quality_online_publish_policy_defaults_degraded_to_diagnostic_only(self) -> None:
+        self.assertIsNone(
+            headless_chunk_bridge._controller_quality_online_publish_skip_reason(
+                {"controller_quality_status": "normal"},
+                allow_degraded_online=False,
+            )
+        )
+        self.assertEqual(
+            headless_chunk_bridge._controller_quality_online_publish_skip_reason(
+                {"controller_quality_status": "degraded"},
+                allow_degraded_online=False,
+            ),
+            "controller_quality_degraded",
+        )
+        self.assertIsNone(
+            headless_chunk_bridge._controller_quality_online_publish_skip_reason(
+                {"controller_quality_status": "degraded"},
+                allow_degraded_online=True,
+            )
+        )
+        self.assertEqual(
+            headless_chunk_bridge._controller_quality_online_publish_skip_reason(
+                {"controller_quality_status": "invalid"},
+                allow_degraded_online=True,
+            ),
+            "controller_quality_invalid",
+        )
+
+    def test_allow_degraded_online_commits_degraded_marker_case(self) -> None:
+        root = Path("result/test_demo_v5_unit_allow_degraded_online")
+        shutil.rmtree(root, ignore_errors=True)
+        try:
+            base_path = root / "cases"
+            manifest = write_futurephystwin_chunk_case(
+                base_path,
+                "degraded_chunk_0001",
+                _with_anchor_diagnostics(_tiny_futurephystwin_chunk(chunk_index=0), quality_status="degraded"),
+            )
+            case_dir = Path(manifest["futurephystwin_case_root"])
+
+            default_writer = DemoV5OnlineOutputWriter(base_path=base_path, case_name="default", chunk_size=2)
+            with self.assertRaisesRegex(ValueError, "READY"):
+                default_writer.commit_case_chunk(case_dir)
+
+            allowed_writer = DemoV5OnlineOutputWriter(
+                base_path=base_path,
+                case_name="allowed",
+                chunk_size=2,
+                allow_degraded=True,
+            )
+            online_result = allowed_writer.commit_case_chunk(case_dir)
+            allowed_writer.finish()
+
+            self.assertTrue(Path(online_result["online_chunk_path"]).is_file())
+            self.assertTrue((base_path / "data" / "allowed" / "READY").is_file())
+            with (base_path / "data" / "allowed" / "track_process_data.pkl").open("rb") as handle:
+                aggregate_track = pickle.load(handle)
+            self.assertEqual(str(aggregate_track["controller_quality_status"]), "degraded")
         finally:
             shutil.rmtree(root, ignore_errors=True)
 

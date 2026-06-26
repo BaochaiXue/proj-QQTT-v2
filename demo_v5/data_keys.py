@@ -22,6 +22,10 @@ OPTIONAL_TIME_KEYS = (
     "controller_anchor_confidence",
     "controller_anchor_failure_reason",
     "controller_anchor_bundle_support_count",
+    "controller_anchor_bundle_raw_visible_count",
+    "controller_anchor_bundle_depth_valid_count",
+    "controller_anchor_bundle_processed_mask_valid_count",
+    "controller_anchor_bundle_motion_valid_count",
     "controller_anchor_recovery_residual",
 )
 

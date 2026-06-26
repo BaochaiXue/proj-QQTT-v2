@@ -39,6 +39,10 @@ TRACK_DIAGNOSTIC_KEYS = (
     "controller_anchor_confidence",
     "controller_anchor_failure_reason",
     "controller_anchor_bundle_support_count",
+    "controller_anchor_bundle_raw_visible_count",
+    "controller_anchor_bundle_depth_valid_count",
+    "controller_anchor_bundle_processed_mask_valid_count",
+    "controller_anchor_bundle_motion_valid_count",
     "controller_anchor_recovery_residual",
     "controller_anchor_bundle_query_ids",
     "controller_quality_status",
@@ -184,6 +188,7 @@ class DemoV5OnlineOutputWriter:
         num_frames_total: int | None = None,
         source_start_frame: int = 0,
         source_frame_step: int = 1,
+        allow_degraded: bool = False,
     ) -> None:
         if int(chunk_size) <= 0:
             raise ValueError("chunk_size must be positive")
@@ -195,6 +200,7 @@ class DemoV5OnlineOutputWriter:
         self.num_frames_total = None if num_frames_total is None else int(num_frames_total)
         self.source_start_frame = int(source_start_frame)
         self.source_frame_step = int(source_frame_step)
+        self.allow_degraded = bool(allow_degraded)
         self.online_dir = self.base_path / "online_data" / self.case_name
         self.chunks_dir = self.online_dir / "chunks"
         self.static_case_dir = self.base_path / "data" / self.case_name
@@ -204,7 +210,10 @@ class DemoV5OnlineOutputWriter:
         self.version = 0
         self._time_arrays: dict[str, list[np.ndarray]] = {key: [] for key in TIME_KEYS}
         self._static_arrays: dict[str, Any] = {}
-        self._aggregate_writer = OnlineAggregateCaseWriter(self.static_case_dir)
+        self._aggregate_writer = OnlineAggregateCaseWriter(
+            self.static_case_dir,
+            allow_degraded=self.allow_degraded,
+        )
         self.chunks_dir.mkdir(parents=True, exist_ok=True)
         self.static_case_dir.mkdir(parents=True, exist_ok=True)
         self._write_manifest(status="recording")

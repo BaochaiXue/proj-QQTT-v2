@@ -141,6 +141,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override chunk length in frames. Defaults to round(replay_fps * chunk_seconds).",
     )
+    parser.add_argument(
+        "--allow-degraded-online",
+        action="store_true",
+        help="Append degraded controller-quality chunks to online_data. Invalid chunks are always diagnostic-only.",
+    )
     parser.add_argument("--futurephystwin-base-path", type=Path, default=DEFAULT_FUTUREPHYSTWIN_BASE_PATH)
     parser.add_argument("--case-prefix", default=DEFAULT_CASE_PREFIX)
     parser.add_argument(
@@ -742,6 +747,7 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "chunk_seconds": float(args.chunk_seconds),
         "chunk_poll_interval_s": float(args.chunk_poll_interval_s),
         "chunk_frame_count": chunk_frame_count,
+        "allow_degraded_online": bool(args.allow_degraded_online),
         "futurephystwin_base_path": str(args.futurephystwin_base_path),
         "case_prefix": str(args.case_prefix),
         "output_format": "online-primary-static-case",
@@ -1182,6 +1188,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             mask_radius_outlier_radius_m=float(args.mask_radius_outlier_radius_m),
             mask_radius_outlier_nb_points=int(args.mask_radius_outlier_nb_points),
             write_final_pcd=bool(args.write_final_pcd),
+            allow_degraded_online=bool(args.allow_degraded_online),
         )
         final_migration = migrate_legacy_online_static_case(base_path, str(args.case_prefix))
         summary = {
@@ -1194,6 +1201,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "online_dir": str(resolve_online_dir(args)),
             "static_data_path": str(resolve_static_data_path(args)),
             "chunk_frame_count": int(chunk_frame_count),
+            "allow_degraded_online": bool(args.allow_degraded_online),
             "max_chunks": args.max_chunks,
             "chunk_count": int(len(manifests)),
             "chunks": manifests,
@@ -1304,6 +1312,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             mask_radius_outlier_nb_points=int(args.mask_radius_outlier_nb_points),
             write_final_pcd=bool(args.write_final_pcd),
             on_chunk_written=on_chunk_written,
+            allow_degraded_online=bool(args.allow_degraded_online),
         )
     finally:
         return_code = _stop_process(process)
@@ -1376,6 +1385,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "realtime_phystwin_base_path": str(resolve_realtime_phystwin_base_path(args)),
         "chunk_frame_count": int(chunk_frame_count),
         "chunk_poll_interval_s": float(args.chunk_poll_interval_s),
+        "allow_degraded_online": bool(args.allow_degraded_online),
         "max_chunks": args.max_chunks,
         "chunk_count": int(len(manifests)),
         "chunks": manifests,

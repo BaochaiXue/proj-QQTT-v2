@@ -362,6 +362,113 @@ class PhysTwinStrictProductTest(unittest.TestCase):
         )
         self.assertNotEqual(str(second["controller_quality_status"]), "invalid")
 
+    def test_controller_backup_bundle_initialization_uses_raw_depth_not_controller_mask(self) -> None:
+        query_ids = np.arange(900, 905, dtype=np.int64)
+        points = np.zeros((2, len(query_ids), 3), dtype=np.float32)
+        points[:, :, 0] = np.array([0.000, 0.006, 0.012, 0.018, 0.024], dtype=np.float32)
+        points[:, :, 2] = -0.10
+        controller_mask = np.array([True, False, False, False, False], dtype=bool)
+        selector = strict.StreamingControllerAnchorSelector(count=1, backup_query_count=4, backup_min_count=4)
+
+        first = selector.select(
+            _filtered_controller_track(
+                points,
+                query_ids=query_ids,
+                controller_mask=controller_mask,
+                raw_visible=np.ones((2, len(query_ids)), dtype=bool),
+                depth_valid=np.ones((2, len(query_ids)), dtype=bool),
+                measurement_valid=np.ones((2, len(query_ids)), dtype=bool),
+            )
+        )
+
+        bundle_ids = np.asarray(first["controller_anchor_bundle_query_ids"][0], dtype=np.int64)
+        self.assertEqual(np.count_nonzero(bundle_ids >= 0), 4)
+        self.assertTrue(set(bundle_ids.tolist()).issubset(set(query_ids[1:].tolist())))
+
+    def test_bundle_recovery_uses_processed_mask_as_weight_not_hard_gate(self) -> None:
+        query_ids = np.array([510, 511, 512], dtype=np.int64)
+        first_points = np.zeros((2, 3, 3), dtype=np.float32)
+        first_points[:, :, 0] = np.array([0.000, 0.008, 0.016], dtype=np.float32)
+        first_points[:, :, 2] = -0.10
+        selector = strict.StreamingControllerAnchorSelector(count=1, backup_query_count=2, backup_min_count=2)
+        first = selector.select(_filtered_controller_track(first_points, query_ids=query_ids))
+        primary_qid = int(first["controller_anchor_query_indices"][0])
+        primary_idx = int(np.flatnonzero(query_ids == primary_qid)[0])
+        second_points = first_points + np.array([0.050, 0.020, 0.000], dtype=np.float32)
+        processed_valid = np.zeros((2, 3), dtype=bool)
+        processed_valid[:, primary_idx] = False
+        measurement_valid = processed_valid.copy()
+        raw_points = second_points.copy()
+        filtered_points = second_points.copy()
+        filtered_points[:, primary_idx, :] = 0.0
+
+        second = selector.select(
+            _filtered_controller_track(
+                filtered_points,
+                query_ids=query_ids,
+                processed_mask_valid=processed_valid,
+                measurement_valid=measurement_valid,
+                raw_points=raw_points,
+            )
+        )
+
+        self.assertEqual(str(second["controller_anchor_observation_mode"][0, 0]), "mask_reject_primary_raw_accepted")
+        self.assertEqual(int(second["controller_anchor_bundle_support_count"][0, 0]), 2)
+        self.assertEqual(int(second["controller_anchor_bundle_processed_mask_valid_count"][0, 0]), 0)
+        self.assertGreater(float(second["controller_anchor_confidence"][0, 0]), 0.7)
+
+    def test_bundle_recovery_uses_motion_as_weight_not_hard_gate(self) -> None:
+        query_ids = np.array([610, 611, 612], dtype=np.int64)
+        first_points = np.zeros((2, 3, 3), dtype=np.float32)
+        first_points[:, :, 0] = np.array([0.000, 0.008, 0.016], dtype=np.float32)
+        first_points[:, :, 2] = -0.10
+        selector = strict.StreamingControllerAnchorSelector(count=1, backup_query_count=2, backup_min_count=2)
+        first = selector.select(_filtered_controller_track(first_points, query_ids=query_ids))
+        primary_qid = int(first["controller_anchor_query_indices"][0])
+        primary_idx = int(np.flatnonzero(query_ids == primary_qid)[0])
+        second_points = first_points + np.array([0.050, 0.020, 0.000], dtype=np.float32)
+        motions_valid = np.zeros((2, 3), dtype=bool)
+        raw_points = second_points.copy()
+        filtered_points = second_points.copy()
+        filtered_points[:, primary_idx, :] = 0.0
+
+        second = selector.select(
+            _filtered_controller_track(
+                filtered_points,
+                query_ids=query_ids,
+                motions_valid=motions_valid,
+                raw_points=raw_points,
+            )
+        )
+
+        self.assertEqual(str(second["controller_anchor_observation_mode"][0, 0]), "motion_reject_residual_ok")
+        self.assertEqual(int(second["controller_anchor_bundle_support_count"][0, 0]), 2)
+        self.assertEqual(int(second["controller_anchor_bundle_motion_valid_count"][0, 0]), 0)
+        self.assertGreater(float(second["controller_anchor_confidence"][0, 0]), 0.7)
+
+    def test_last_frame_uses_previous_transition_motion_validity(self) -> None:
+        query_ids = np.array([710, 711, 712], dtype=np.int64)
+        first_points = np.zeros((2, 3, 3), dtype=np.float32)
+        first_points[:, :, 0] = np.array([0.000, 0.008, 0.016], dtype=np.float32)
+        first_points[:, :, 2] = -0.10
+        selector = strict.StreamingControllerAnchorSelector(count=1, backup_query_count=2, backup_min_count=2)
+        selector.select(_filtered_controller_track(first_points, query_ids=query_ids))
+        second_points = first_points + np.array([0.050, 0.020, 0.000], dtype=np.float32)
+        motions_valid = np.ones((2, 3), dtype=bool)
+        motions_valid[-1, :] = False
+
+        second = selector.select(
+            _filtered_controller_track(
+                second_points,
+                query_ids=query_ids,
+                motions_valid=motions_valid,
+                raw_points=second_points,
+            )
+        )
+
+        self.assertEqual(str(second["controller_anchor_observation_mode"][1, 0]), "direct_valid")
+        self.assertEqual(float(second["controller_anchor_confidence"][1, 0]), 1.0)
+
     def test_streaming_controller_anchor_selector_accepts_primary_raw_when_mask_reject_residual_is_small(self) -> None:
         query_ids = np.array([510, 511, 512], dtype=np.int64)
         first_points = np.zeros((2, 3, 3), dtype=np.float32)
