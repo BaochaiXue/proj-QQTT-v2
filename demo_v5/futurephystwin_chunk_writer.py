@@ -1,3 +1,10 @@
+"""Write and validate Demo v5 FuturePhysTwin-compatible chunk cases.
+
+The writer produces the same file names realtime_phystwin expects
+(``final_data.pkl``, ``track_process_data.pkl``, ``tracking/0.npz``,
+``mask/processed_masks.pkl``, and camera metadata) while keeping Demo v5's
+session topology explicit in every chunk.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -240,6 +247,7 @@ def _int_vector(value: Any, *, default: np.ndarray | None = None) -> np.ndarray:
 
 
 def _topology_hash(payload: Mapping[str, Any]) -> str:
+    """Hash query identity fields that must stay stable across online chunks."""
     digest = hashlib.sha256()
     digest.update(FUTUREPHYSTWIN_TOPOLOGY_VERSION.encode("utf-8"))
     for key in ("query_ids", "query_semantic_labels", "object_sample_query_ids", "controller_sample_query_ids"):
@@ -265,6 +273,7 @@ def build_topology_payload(
     object_sample_query_ids: np.ndarray | None = None,
     controller_sample_query_ids: np.ndarray | None = None,
 ) -> dict[str, Any]:
+    """Build query-id metadata shared by final_data and track_process_data."""
     object_points = np.asarray(track_process_data.get("object_points", np.empty((0, 0, 3))))
     controller_points = np.asarray(track_process_data.get("controller_points", np.empty((0, 0, 3))))
     object_count = int(object_points.shape[1]) if object_points.ndim >= 2 else 0
@@ -354,6 +363,7 @@ def build_topology_payload(
 
 
 def _track_process_payload(track_process_data: Mapping[str, np.ndarray]) -> dict[str, Any]:
+    """Normalize strict tracking output into realtime_phystwin track payload."""
     payload: dict[str, Any] = {}
     for key in FUTUREPHYSTWIN_TRACK_PROCESS_KEYS:
         if key not in track_process_data:
@@ -400,6 +410,7 @@ def _sample_object_volume_indices(
     interior_points: np.ndarray | None = None,
     volume_sample_size: float = 0.005,
 ) -> np.ndarray:
+    """Choose first-frame object samples on the 5 mm occupancy grid."""
     pts = np.asarray(object_points, dtype=np.float64)
     if pts.ndim != 3 or pts.shape[-1] != 3:
         raise ValueError("object_points must have shape T,N,3")
@@ -433,6 +444,7 @@ def _final_data_payload(
     surface_points: np.ndarray,
     interior_points: np.ndarray,
 ) -> dict[str, np.ndarray]:
+    """Assemble the final_data.pkl contract consumed by realtime_phystwin."""
     object_points = np.asarray(track_process["object_points"])
     if "object_anchor_query_indices" in track_process:
         indices = np.arange(object_points.shape[1], dtype=np.int64)
@@ -556,6 +568,7 @@ def _quality_manifest_fields(
 
 
 def _metadata_payload(chunk: FuturePhysTwinChunk, frame_count: int, width_height: tuple[int, int]) -> dict[str, Any]:
+    """Write single-camera metadata in the shape expected by FuturePhysTwin."""
     intrinsics = np.asarray(chunk.intrinsics, dtype=np.float32)
     if intrinsics.shape == (3, 3):
         intrinsics = intrinsics.reshape(1, 3, 3)
@@ -598,6 +611,12 @@ def write_futurephystwin_chunk_case(
     *,
     relative_wall_time_s: Callable[[], float] | None = None,
 ) -> dict[str, Any]:
+    """Atomically publish one READY chunk case.
+
+    Files are first written under ``.publishing`` and validated there. Only after
+    validation succeeds does ``os.replace`` expose the case directory, so online
+    consumers never read a half-written ``final_data.pkl``.
+    """
     base = Path(base_path)
     base.mkdir(parents=True, exist_ok=True)
     local_wall_origin_s = time.monotonic()
@@ -659,6 +678,9 @@ def write_futurephystwin_chunk_case(
             surface_points=chunk.surface_points,
             interior_points=chunk.interior_points,
         )
+        # Keep the same topology hash in both payloads. This is the guard that
+        # lets the online aggregate concatenate chunks without changing query
+        # semantic identity under realtime_phystwin.
         for key in FUTUREPHYSTWIN_TOPOLOGY_KEYS:
             track_process[key] = final_data[key]
         with (staging / "track_process_data.pkl").open("wb") as handle:
@@ -724,6 +746,7 @@ def _load_pickle(path: Path) -> Any:
 
 
 def _validate_track_shapes(payload: Mapping[str, np.ndarray]) -> None:
+    """Validate the richer track_process_data.pkl payload before publishing."""
     object_points = _array("object_points", payload["object_points"], (3,))
     if object_points.ndim != 3:
         raise ValueError("object_points must have shape T,N,3")
@@ -831,6 +854,7 @@ def _topology_values_equal(left: Any, right: Any) -> bool:
 
 
 def _validate_final_shapes(payload: Mapping[str, np.ndarray]) -> None:
+    """Validate final_data.pkl shape, topology, and finite-point invariants."""
     for key in ("surface_points", "interior_points"):
         if key not in payload:
             raise ValueError(f"final_data.pkl missing required key: {key}")
@@ -883,6 +907,7 @@ def _validate_final_shapes(payload: Mapping[str, np.ndarray]) -> None:
 
 
 def validate_futurephystwin_case(case_dir: str | Path, *, require_ready: bool = False) -> dict[str, Any]:
+    """Check that a chunk or aggregate case is ready for realtime_phystwin."""
     case = Path(case_dir)
     if require_ready and not (case / "READY").is_file():
         raise ValueError(f"missing READY marker for FuturePhysTwin case: {case / 'READY'}")

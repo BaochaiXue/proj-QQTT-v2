@@ -1,8 +1,10 @@
-# Demo v5 Continuous Realtime FuturePhysTwin
+# Demo v5 Online Points Viewer
 
 Demo v5 is the single-camera realtime bridge from Demo v5 fake/live capture to
-one continuous `realtime_phystwin` online optimization run. It is a demo
-diagnostic carveout, not the formal recording/alignment data product.
+online FuturePhysTwin chunks. The default demo now opens a lightweight viewer
+for object points and controller points instead of starting
+`realtime_phystwin` optimization. It is a demo diagnostic carveout, not the
+formal recording/alignment data product.
 
 The default flow is:
 
@@ -12,11 +14,12 @@ Demo v5 fake/live camera on GPU0
   -> SAM3D shape-prior warmup worker on GPU1
   -> Demo v5 online FuturePhysTwin chunks at 5 FPS
   -> release the managed SAM3D worker
-  -> realtime_phystwin zero-order then first-order optimization on GPU1
+  -> online object/controller point viewer on GPU1
 ```
 
-The optimization is one continuous online case. Demo v5 does not optimize each
-chunk as an independent case.
+The viewer reads `online_data/<case>/chunks` chunk by chunk. It plays every
+frame in a committed chunk at the original `--replay-fps` value, then waits for
+the next chunk, so the default playback is the original 5 FPS stream.
 
 ## Install
 
@@ -24,7 +27,7 @@ Demo v5 uses two Python environments by default:
 
 ```text
 demo_2_max    camera/fake-camera, EdgeTAM, TAPNext++, online final_data,
-              realtime_phystwin zero-order and first-order optimization
+              online point viewer, optional realtime_phystwin optimization
 phystwin-max  managed SAM3D shape-prior warmup worker
 ```
 
@@ -102,24 +105,7 @@ conda run -n demo_2_max --no-capture-output \
   --case-prefix demo_v5_smoke \
   --shape-prior-endpoint tcp://127.0.0.1:7107 \
   --max-chunks 2 \
-  --capture-extra-seconds 80 \
-  --optimization-zero-iterations 1 \
-  --optimization-iterations 1 \
-  --optimization-wait-timeout-s 900
-```
-
-Run a quality fake-live validation:
-
-```bash
-conda run -n demo_2_max --no-capture-output \
-  python demo_v5/realtime_futurephystwin_chunks.py \
-  --futurephystwin-base-path result/demo_v5/full_fake_live \
-  --case-prefix demo_v5_full_fake_live \
-  --shape-prior-endpoint tcp://127.0.0.1:7108 \
-  --max-chunks 5 \
-  --capture-extra-seconds 120 \
-  --optimization-zero-iterations 10 \
-  --optimization-wait-timeout-s 3600
+  --capture-extra-seconds 80
 ```
 
 Run with the live RealSense camera:
@@ -132,15 +118,50 @@ conda run -n demo_2_max --no-capture-output \
   --case-prefix demo_v5_live
 ```
 
+If you want to reconnect continuous `realtime_phystwin` optimization instead
+of the viewer, disable the viewer and enable optimization explicitly:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v5/realtime_futurephystwin_chunks.py \
+  --futurephystwin-base-path result/demo_v5/full_fake_live \
+  --case-prefix demo_v5_full_fake_live \
+  --shape-prior-endpoint tcp://127.0.0.1:7108 \
+  --max-chunks 5 \
+  --capture-extra-seconds 120 \
+  --point-viewer-mode disabled \
+  --optimization-mode continuous \
+  --optimization-zero-iterations 1 \
+  --optimization-iterations 1 \
+  --optimization-wait-timeout-s 900
+```
+
+Run a quality fake-live optimization validation:
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v5/realtime_futurephystwin_chunks.py \
+  --futurephystwin-base-path result/demo_v5/full_fake_live \
+  --case-prefix demo_v5_full_fake_live \
+  --shape-prior-endpoint tcp://127.0.0.1:7108 \
+  --max-chunks 5 \
+  --capture-extra-seconds 120 \
+  --point-viewer-mode disabled \
+  --optimization-mode continuous \
+  --optimization-zero-iterations 10 \
+  --optimization-wait-timeout-s 3600
+```
+
 The default warmup dual-GPU routing is:
 
 ```text
 GPU0: Demo v5 fake/live camera, masks, tracking, final_data, online chunks
-GPU1: managed SAM3D warmup worker, then realtime_phystwin optimization
+GPU1: managed SAM3D warmup worker, then online point viewer
 ```
 
-The managed SAM3D worker is intentionally stopped before optimization starts so
-GPU1 memory is available for `realtime_phystwin`.
+The managed SAM3D worker is intentionally stopped before the viewer starts so
+GPU1 memory is available for the display process. If you enable optimization,
+the same release step happens before `realtime_phystwin`.
 
 ## Default Contract
 
@@ -159,16 +180,26 @@ logical FPS:                  5
 chunk length:                 7 seconds = 35 frames
 camera/final-data GPU:         physical GPU0
 managed SAM3D warmup GPU:      physical GPU1
-optimization GPU:              physical GPU1
+point viewer GPU:              physical GPU1
 shape-prior worker env:        phystwin-max
-optimization process env:      current Python environment
+point viewer env:              demo_2_max
 output base:                  result/demo_v5/futurephystwin_chunks
 case prefix:                  demo_v5
-optimization scope:            single continuous online case
+viewer playback:               chunk by chunk at 5 FPS
+optimization scope:            disabled by default
 ```
 
-Demo v5 keeps paths portable. The command passed to `realtime_phystwin` uses
-paths relative to its working directory:
+The viewer command reads the online and static case paths directly:
+
+```text
+--online-dir result/demo_v5/futurephystwin_chunks/online_data/demo_v5
+--case-dir result/demo_v5/futurephystwin_chunks/data/demo_v5
+--fps 5.0
+--object-color-mode rainbow
+```
+
+When optimization is enabled, Demo v5 keeps paths portable. The command passed
+to `realtime_phystwin` uses paths relative to its working directory:
 
 ```text
 --base_path ../result/demo_v5/futurephystwin_chunks/data

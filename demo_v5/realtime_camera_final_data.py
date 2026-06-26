@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Demo v5 camera subprocess entrypoint.
+
+This thin wrapper intentionally reuses the shared masked EdgeTAM/TAPNext++ PCD
+runtime. The parent Demo v5 runner controls GPU namespace, headless output, and
+shape-prior worker lifecycle.
+"""
 from __future__ import annotations
 
 from pathlib import Path

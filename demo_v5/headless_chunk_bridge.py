@@ -1,3 +1,10 @@
+"""Convert Demo v5 headless capture rows into realtime FuturePhysTwin chunks.
+
+The camera process appends ``frames.jsonl`` and prepared per-frame NPZ payloads.
+This bridge tails that stream, waits for the shape prior only at chunk materialize
+time, and publishes both per-window cases and the online aggregate output used
+by realtime_phystwin.
+"""
 from __future__ import annotations
 
 import json
@@ -28,6 +35,12 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 def _read_jsonl_from_offset(path: Path, offset: int) -> tuple[list[dict[str, Any]], int]:
+    """Read only newly appended complete JSONL rows.
+
+    ``frames.jsonl`` is written by another process. If the writer is in the
+    middle of a row, return the rows that were already complete and leave the
+    offset at the start of the partial line for the next poll.
+    """
     rows: list[dict[str, Any]] = []
     if not path.is_file():
         return rows, int(offset)
@@ -246,6 +259,12 @@ def _shape_points_from_capture(
     surface_points: np.ndarray | None,
     interior_points: np.ndarray | None,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Resolve surface/interior structure points for a chunk.
+
+    Explicit NPY overrides are treated as authoritative. Otherwise the latest
+    capture metadata points at the async SAM3D result produced by the camera
+    process.
+    """
     if surface_points is not None or interior_points is not None:
         return (
             np.empty((0, 3), dtype=np.float64)
@@ -318,6 +337,12 @@ def _shape_points_for_chunk(
     before_poll: Callable[[], None] | None,
     poll_interval_s: float,
 ) -> tuple[Mapping[str, Any], np.ndarray, np.ndarray]:
+    """Wait until required shape-prior points are available for final_data.
+
+    Demo v5 keeps capture realtime, but ``final_data.pkl`` must contain
+    structure points when shape-prior warmup is enabled. Waiting happens here,
+    after a source window has closed, not inside the camera/tracker loop.
+    """
     explicit_points = surface_points is not None or interior_points is not None
     deadline = time.monotonic() + max(0.0, float(shape_prior_wait_timeout_s))
     while True:
@@ -414,6 +439,7 @@ def _track_input_with_session_topology(
     pcd_colors: np.ndarray,
     session_query_topology: dict[str, np.ndarray] | None,
 ) -> dict[str, np.ndarray]:
+    """Build strict track input while preserving session-wide query identity."""
     query_ids = None
     query_semantic_labels = None
     if session_query_topology is not None and "query_ids" in session_query_topology:
@@ -462,6 +488,12 @@ def _chunk_payload_from_rows(
     controller_anchor_selector: strict.StreamingControllerAnchorSelector | None = None,
     session_query_topology: dict[str, np.ndarray] | None = None,
 ) -> FuturePhysTwinChunk:
+    """Materialize a chunk from legacy row artifacts.
+
+    This path is kept for older captures that did not write prepared PhysTwin
+    frame NPZs. New realtime runs usually use ``_chunk_payload_from_prepared_frames``
+    to avoid rebuilding dense PCD and masks from separate files.
+    """
     c2w = _camera_to_world(metadata)
     intrinsics = _intrinsics_matrix(metadata)
 
@@ -596,6 +628,7 @@ def _chunk_payload_from_prepared_frames(
     controller_anchor_selector: strict.StreamingControllerAnchorSelector | None = None,
     session_query_topology: dict[str, np.ndarray] | None = None,
 ) -> FuturePhysTwinChunk:
+    """Materialize a chunk from prepared per-frame NPZ payloads."""
     if not frames:
         raise ValueError("prepared PhysTwin chunk requires at least one frame")
     c2w = _camera_to_world(metadata)
@@ -699,6 +732,7 @@ def _write_chunk_from_rows(
     controller_anchor_selector: strict.StreamingControllerAnchorSelector | None = None,
     session_query_topology: dict[str, np.ndarray] | None = None,
 ) -> dict[str, Any]:
+    """Write one FuturePhysTwin case and optionally commit it to online output."""
     case_name = f"{case_prefix}_chunk_{chunk_index:04d}"
     source_window_start_s = float(row_start) / float(fps)
     source_window_end_s = float(row_end) / float(fps)
@@ -706,6 +740,9 @@ def _write_chunk_from_rows(
     prepared = list(prepared_frames or [])
     prepared_count = sum(1 for frame in prepared if frame is not None)
     if prepared and len(prepared) == len(rows) and prepared_count == len(rows):
+        # Prepared frames are the realtime path: RGB, masks, dense world PCD,
+        # full tracks, visibility, and query points are already synchronized by
+        # the camera process for the same source seq.
         chunk = _chunk_payload_from_prepared_frames(
             metadata,
             [frame for frame in prepared if frame is not None],
@@ -722,6 +759,8 @@ def _write_chunk_from_rows(
         materialization_source = "prepared_phystwin_frame"
         legacy_reprocess_count = 0
     else:
+        # Fallback for historical captures where Demo v5 has to reconstruct the
+        # strict product from image/depth/mask/trajectory sidecar files.
         chunk = _chunk_payload_from_rows(
             capture,
             metadata,
@@ -819,6 +858,7 @@ def write_chunks_from_headless_capture(
     write_online_output: bool = True,
     online_case_name: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Convert a completed headless capture into chunk cases."""
     capture = Path(capture_dir)
     if int(chunk_frame_count) <= 0:
         raise ValueError("chunk_frame_count must be positive")
@@ -952,6 +992,7 @@ def stream_chunks_from_headless_capture(
     write_online_output: bool = True,
     online_case_name: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Tail a live headless capture and publish chunks as windows close."""
     capture = Path(capture_dir)
     if int(chunk_frame_count) <= 0:
         raise ValueError("chunk_frame_count must be positive")
@@ -994,6 +1035,9 @@ def stream_chunks_from_headless_capture(
         rows, frames_offset = _read_jsonl_from_offset(frames_path, frames_offset)
         saw_new_rows = bool(rows)
         for row in rows:
+            # A chunk closes strictly by row count. Shape-prior readiness and
+            # final_data materialization are handled after this window boundary
+            # so source pacing remains tied to the camera/fake-camera stream.
             row_buffer.append(row)
             prepared_buffer.append(_prepared_frame_from_row(capture, row))
             next_row_idx += 1

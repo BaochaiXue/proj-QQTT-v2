@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+"""Demo v5 realtime orchestration entrypoint.
+
+This runner owns process boundaries, GPU routing, and artifact publication. The
+actual camera/tracker stack runs in ``demo_v5/realtime_camera_final_data.py``;
+SAM3D shape prior work can run in a separate managed worker; and optional
+realtime_phystwin optimization or point viewing starts only after a chunk has
+been atomically committed.
+"""
 from __future__ import annotations
 
 import argparse
@@ -59,7 +67,7 @@ DEFAULT_SHAPE_PRIOR_WORKER_CONDA_ENV = "phystwin-max"
 DEFAULT_SHAPE_PRIOR_WORKER_DEVICE = "cuda:0"
 DEFAULT_SHAPE_PRIOR_WORKER_STARTUP_GRACE_S = 0.0
 DEFAULT_SHAPE_PRIOR_WORKER_MAX_OBSERVATION_TO_ALIGNED_P95_M = 0.06
-DEFAULT_OPTIMIZATION_MODE = "continuous"
+DEFAULT_OPTIMIZATION_MODE = "disabled"
 DEFAULT_OPTIMIZATION_CUDA_VISIBLE_DEVICES = "1"
 DEFAULT_OPTIMIZATION_DEVICE = "cuda:0"
 DEFAULT_OPTIMIZATION_ZERO_ITERATIONS = 10
@@ -71,12 +79,22 @@ DEFAULT_OPTIMIZATION_SEED = 42
 DEFAULT_OPTIMIZATION_EXPERIMENTS_DIR = "experiments_online_v5"
 DEFAULT_OPTIMIZATION_ZERO_EXPERIMENTS_DIR = "experiments_online_v5_cma"
 DEFAULT_OPTIMIZATION_START_GRACE_S = 2.0
+DEFAULT_POINT_VIEWER_MODE = "window"
+DEFAULT_POINT_VIEWER_CONDA_ENV = "demo_2_max"
+DEFAULT_POINT_VIEWER_CUDA_VISIBLE_DEVICES = "1"
+DEFAULT_POINT_VIEWER_CAM_IDX = 0
+DEFAULT_POINT_VIEWER_POLL_SEC = 0.1
+DEFAULT_POINT_VIEWER_OBJECT_STRIDE = 1
+DEFAULT_POINT_VIEWER_OBJECT_RADIUS = 4
+DEFAULT_POINT_VIEWER_CONTROLLER_RADIUS = 7
+DEFAULT_POINT_VIEWER_OBJECT_COLOR_MODE = "rainbow"
 DEFAULT_TABLE_CALIBRATE_PATH = Path("table_calibrate.pkl")
 DEFAULT_SAM31_CHECKPOINT_PATH = Path("vendor/demo_runtime/checkpoints/sam31/sam3.1_multiplex.pt")
 SAM31_CHECKPOINT_ENV = "QQTT_SAM31_CHECKPOINT"
 
 
 def _apply_default_sam31_checkpoint_env(env: dict[str, str]) -> None:
+    """Prefer the vendored SAM 3.1 checkpoint without overriding callers."""
     if env.get(SAM31_CHECKPOINT_ENV):
         return
     checkpoint = REPO_ROOT / DEFAULT_SAM31_CHECKPOINT_PATH
@@ -89,7 +107,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Demo v5 realtime FuturePhysTwin runner. It turns Demo v5 "
             "single-camera fake/live capture into one online FuturePhysTwin "
-            "case and can launch continuous realtime_phystwin optimization."
+            "case and can launch an online point viewer or continuous "
+            "realtime_phystwin optimization."
         )
     )
     parser.add_argument(
@@ -336,6 +355,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_OPTIMIZATION_MODE,
         help="continuous starts one realtime_phystwin zero-order then first-order process for the whole online stream.",
     )
+    parser.add_argument(
+        "--point-viewer-mode",
+        choices=("window", "disabled"),
+        default=DEFAULT_POINT_VIEWER_MODE,
+        help="window launches the online object/controller point viewer after the first committed chunk.",
+    )
+    parser.add_argument("--point-viewer-conda-env", default=DEFAULT_POINT_VIEWER_CONDA_ENV)
+    parser.add_argument("--point-viewer-cuda-visible-devices", default=DEFAULT_POINT_VIEWER_CUDA_VISIBLE_DEVICES)
+    parser.add_argument("--point-viewer-cam-idx", type=int, default=DEFAULT_POINT_VIEWER_CAM_IDX)
+    parser.add_argument("--point-viewer-poll-sec", type=float, default=DEFAULT_POINT_VIEWER_POLL_SEC)
+    parser.add_argument("--point-viewer-object-stride", type=int, default=DEFAULT_POINT_VIEWER_OBJECT_STRIDE)
+    parser.add_argument("--point-viewer-object-radius", type=int, default=DEFAULT_POINT_VIEWER_OBJECT_RADIUS)
+    parser.add_argument("--point-viewer-controller-radius", type=int, default=DEFAULT_POINT_VIEWER_CONTROLLER_RADIUS)
+    parser.add_argument(
+        "--point-viewer-object-color-mode",
+        choices=("rainbow", "green", "object-colors"),
+        default=DEFAULT_POINT_VIEWER_OBJECT_COLOR_MODE,
+    )
     parser.add_argument("--realtime-phystwin-root", type=Path, default=DEFAULT_REALTIME_PHYSTWIN_ROOT)
     parser.add_argument("--optimization-conda-env", default=None)
     parser.add_argument("--optimization-cuda-visible-devices", default=DEFAULT_OPTIMIZATION_CUDA_VISIBLE_DEVICES)
@@ -420,6 +457,7 @@ def resolve_warmup_gpu_mode(args: argparse.Namespace) -> str:
 
 
 def resolve_camera_cuda_visible_devices(args: argparse.Namespace) -> str:
+    """Resolve the GPU namespace used by the camera/fake-camera subprocess."""
     override = None if args.camera_cuda_visible_devices is None else str(args.camera_cuda_visible_devices).strip()
     if override:
         return override
@@ -430,6 +468,7 @@ def resolve_camera_cuda_visible_devices(args: argparse.Namespace) -> str:
 
 
 def resolve_shape_prior_device(args: argparse.Namespace) -> str:
+    """Resolve the CUDA device name seen inside the shape-prior worker process."""
     override = getattr(args, "shape_prior_device", None)
     if override is not None and str(override).strip():
         return str(override).strip()
@@ -460,6 +499,13 @@ def resolve_optimization_device(args: argparse.Namespace) -> str:
     value = str(getattr(args, "optimization_device", DEFAULT_OPTIMIZATION_DEVICE)).strip()
     if not value:
         raise ValueError("--optimization-device must be non-empty when optimization is enabled")
+    return value
+
+
+def resolve_point_viewer_cuda_visible_devices(args: argparse.Namespace) -> str:
+    value = str(getattr(args, "point_viewer_cuda_visible_devices", DEFAULT_POINT_VIEWER_CUDA_VISIBLE_DEVICES)).strip()
+    if not value:
+        raise ValueError("--point-viewer-cuda-visible-devices must be non-empty when point viewer is enabled")
     return value
 
 
@@ -528,6 +574,7 @@ def _conda_env_prefix(conda_env: str | None) -> Path | None:
 
 
 def _apply_shape_prior_worker_cuda_build_env(args: argparse.Namespace, env: dict[str, str]) -> None:
+    """Expose conda CUDA headers/libs for workers that JIT-compile extensions."""
     prefix = _conda_env_prefix(getattr(args, "shape_prior_worker_conda_env", None))
     if prefix is None:
         return
@@ -636,6 +683,32 @@ def build_realtime_phystwin_optimization_command(
     return command
 
 
+def build_point_viewer_command(args: argparse.Namespace) -> list[str]:
+    command = [
+        *_python_command_prefix(getattr(args, "point_viewer_conda_env", None)),
+        str(Path("demo_v5") / "online_points_viewer.py"),
+        "--online-dir",
+        str(resolve_online_dir(args)),
+        "--case-dir",
+        str(Path(args.futurephystwin_base_path) / "data" / str(args.case_prefix)),
+        "--cam-idx",
+        str(int(args.point_viewer_cam_idx)),
+        "--fps",
+        str(float(args.replay_fps)),
+        "--poll-sec",
+        str(float(args.point_viewer_poll_sec)),
+        "--object-stride",
+        str(int(args.point_viewer_object_stride)),
+        "--object-radius",
+        str(int(args.point_viewer_object_radius)),
+        "--controller-radius",
+        str(int(args.point_viewer_controller_radius)),
+        "--object-color-mode",
+        str(args.point_viewer_object_color_mode),
+    ]
+    return command
+
+
 def _load_optional_points(path: Path | None) -> np.ndarray | None:
     if path is None:
         return None
@@ -708,12 +781,21 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "shape_prior_worker_released_before_optimization": bool(
             str(args.shape_prior_worker_mode) == "managed" and str(args.optimization_mode) == "continuous"
         ),
+        "shape_prior_worker_released_before_point_viewer": bool(
+            str(args.shape_prior_worker_mode) == "managed" and str(args.point_viewer_mode) == "window"
+        ),
         "shape_prior_chunk_wait_timeout_s": float(args.shape_prior_chunk_wait_timeout_s),
         "mask_radius_outlier_filter": bool(args.mask_radius_outlier_filter),
         "mask_radius_outlier_radius_m": float(args.mask_radius_outlier_radius_m),
         "mask_radius_outlier_nb_points": int(args.mask_radius_outlier_nb_points),
         "write_final_pcd": bool(args.write_final_pcd),
         "source_headless_capture": None if args.source_headless_capture is None else str(args.source_headless_capture),
+        "point_viewer_mode": str(args.point_viewer_mode),
+        "point_viewer_command": build_point_viewer_command(args),
+        "point_viewer_cuda_visible_devices": resolve_point_viewer_cuda_visible_devices(args),
+        "point_viewer_start_policy": "after_first_committed_online_chunk",
+        "point_viewer_fps": float(args.replay_fps),
+        "point_viewer_object_color_mode": str(args.point_viewer_object_color_mode),
         "optimization_mode": str(args.optimization_mode),
         "optimization_command": build_realtime_phystwin_optimization_command(
             args,
@@ -721,8 +803,12 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         ),
         "optimization_cuda_visible_devices": resolve_optimization_cuda_visible_devices(args),
         "optimization_device": resolve_optimization_device(args),
-        "optimization_start_policy": "after_first_committed_online_chunk",
-        "optimization_scope": "single_continuous_online_case",
+        "optimization_start_policy": (
+            "after_first_committed_online_chunk" if str(args.optimization_mode) == "continuous" else "disabled"
+        ),
+        "optimization_scope": (
+            "single_continuous_online_case" if str(args.optimization_mode) == "continuous" else "disabled"
+        ),
         "optimization_zero_iterations": int(args.optimization_zero_iterations),
         "optimization_batch_size": int(args.optimization_batch_size),
         "optimization_zero_batch_size": args.optimization_zero_batch_size,
@@ -752,6 +838,18 @@ def validate_runtime_args(args: argparse.Namespace, *, chunk_frame_count: int) -
         raise ValueError("--shape-prior-worker-startup-grace-s must be non-negative")
     if float(args.shape_prior_worker_max_observation_to_aligned_p95_m) <= 0.0:
         raise ValueError("--shape-prior-worker-max-observation-to-aligned-p95-m must be positive")
+    if str(args.point_viewer_mode) == "window":
+        if int(args.point_viewer_cam_idx) < 0:
+            raise ValueError("--point-viewer-cam-idx must be non-negative")
+        if float(args.point_viewer_poll_sec) <= 0.0:
+            raise ValueError("--point-viewer-poll-sec must be positive")
+        if int(args.point_viewer_object_stride) <= 0:
+            raise ValueError("--point-viewer-object-stride must be positive")
+        if int(args.point_viewer_object_radius) <= 0:
+            raise ValueError("--point-viewer-object-radius must be positive")
+        if int(args.point_viewer_controller_radius) <= 0:
+            raise ValueError("--point-viewer-controller-radius must be positive")
+        resolve_point_viewer_cuda_visible_devices(args)
     if str(args.optimization_mode) == "continuous":
         if args.source_headless_capture is not None:
             raise ValueError("continuous optimization requires fake-live or live capture; use --optimization-mode disabled for source-headless conversion")
@@ -796,6 +894,7 @@ def build_camera_realtime_command(
     profile_json: Path,
     chunk_frame_count: int,
 ) -> list[str]:
+    """Build the subprocess command that emits prepared PhysTwin frames."""
     script = Path("demo_v5") / "realtime_camera_final_data.py"
     camera_source_replay_fps = resolve_camera_source_replay_fps(args)
     if str(args.depth_backend) == "ir-ffs":
@@ -923,6 +1022,7 @@ def _stop_process(process: subprocess.Popen[bytes]) -> int | None:
 
 
 def _start_managed_shape_prior_worker(args: argparse.Namespace) -> subprocess.Popen[bytes] | None:
+    """Start the optional SAM3D worker under Demo v5 lifecycle control."""
     if not bool(args.shape_prior_warmup):
         return None
     if str(args.shape_prior_worker_mode) != "managed":
@@ -953,16 +1053,33 @@ def _optimization_env(args: argparse.Namespace) -> dict[str, str]:
     return env
 
 
+def _point_viewer_env(args: argparse.Namespace) -> dict[str, str]:
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = resolve_point_viewer_cuda_visible_devices(args)
+    return env
+
+
 def _start_continuous_optimization(
     args: argparse.Namespace,
     *,
     chunk_frame_count: int,
 ) -> subprocess.Popen[bytes]:
+    """Launch realtime_phystwin against the already-publishing online case."""
     command = build_realtime_phystwin_optimization_command(args, chunk_frame_count=chunk_frame_count)
     return subprocess.Popen(
         command,
         cwd=_resolved_realtime_phystwin_root(args),
         env=_optimization_env(args),
+        start_new_session=True,
+    )
+
+
+def _start_point_viewer(args: argparse.Namespace) -> subprocess.Popen[bytes]:
+    """Launch the lightweight online point viewer in the repo environment."""
+    return subprocess.Popen(
+        build_point_viewer_command(args),
+        cwd=REPO_ROOT,
+        env=_point_viewer_env(args),
         start_new_session=True,
     )
 
@@ -1086,6 +1203,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     shape_prior_worker_process = _start_managed_shape_prior_worker(args)
     shape_prior_worker_return_code: int | None = None
     shape_prior_worker_released_before_optimization = False
+    shape_prior_worker_released_before_point_viewer = False
+    point_viewer_process: subprocess.Popen[bytes] | None = None
+    point_viewer_started_manifest: dict[str, object] | None = None
+    point_viewer_start_wall_s: float | None = None
+    point_viewer_return_code: int | None = None
+    point_viewer_left_running = False
     optimization_process: subprocess.Popen[bytes] | None = None
     optimization_started_manifest: dict[str, object] | None = None
     optimization_start_wall_s: float | None = None
@@ -1093,15 +1216,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     optimization_timed_out = False
 
     def on_chunk_written(manifest: dict[str, object]) -> None:
+        nonlocal point_viewer_process
+        nonlocal point_viewer_started_manifest
+        nonlocal point_viewer_start_wall_s
         nonlocal optimization_process
         nonlocal optimization_started_manifest
         nonlocal optimization_start_wall_s
         nonlocal shape_prior_worker_process
         nonlocal shape_prior_worker_return_code
         nonlocal shape_prior_worker_released_before_optimization
-        if str(args.optimization_mode) != "continuous":
-            return
-        if optimization_process is not None:
+        nonlocal shape_prior_worker_released_before_point_viewer
+        # GPU1 is shared by the managed shape-prior worker and downstream tools.
+        # Release the worker after the first committed chunk has been published
+        # so the viewer/optimizer cannot fight SAM3D for memory.
+        if str(args.point_viewer_mode) == "window" and point_viewer_process is None:
+            if shape_prior_worker_process is not None:
+                shape_prior_worker_return_code = _stop_process(shape_prior_worker_process)
+                shape_prior_worker_process = None
+                shape_prior_worker_released_before_point_viewer = True
+            point_viewer_process = _start_point_viewer(args)
+            point_viewer_started_manifest = dict(manifest)
+            point_viewer_start_wall_s = time.monotonic()
+        if str(args.optimization_mode) != "continuous" or optimization_process is not None:
             return
         if shape_prior_worker_process is not None:
             shape_prior_worker_return_code = _stop_process(shape_prior_worker_process)
@@ -1110,6 +1246,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             start_grace_s = float(args.optimization_start_grace_s)
             if start_grace_s > 0.0:
                 time.sleep(start_grace_s)
+        elif shape_prior_worker_released_before_point_viewer:
+            shape_prior_worker_released_before_optimization = True
         optimization_process = _start_continuous_optimization(
             args,
             chunk_frame_count=chunk_frame_count,
@@ -1121,6 +1259,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     surface_points = _load_optional_points(args.surface_points_npy)
     interior_points = _load_optional_points(args.interior_points_npy)
     try:
+        # The bridge tails frames.jsonl and publishes fixed-size chunks while
+        # the camera subprocess is still running, so fake-live and live share the
+        # same realtime chunking path.
         manifests = stream_chunks_from_headless_capture(
             capture_dir,
             base_path=base_path,
@@ -1153,6 +1294,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             if optimization_return_code is None:
                 optimization_timed_out = True
                 optimization_return_code = _stop_process(optimization_process)
+        if point_viewer_process is not None:
+            point_viewer_return_code = point_viewer_process.poll()
+            point_viewer_left_running = point_viewer_return_code is None
     final_migration = migrate_legacy_online_static_case(base_path, str(args.case_prefix))
     validation_cases = select_validation_chunk_cases(manifests) if len(manifests) >= 5 else []
     if args.max_chunks is not None and len(manifests) >= int(args.max_chunks):
@@ -1192,6 +1336,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         "shape_prior_worker_return_code": shape_prior_worker_return_code,
         "shape_prior_worker_released_before_optimization": shape_prior_worker_released_before_optimization,
+        "shape_prior_worker_released_before_point_viewer": shape_prior_worker_released_before_point_viewer,
         "camera_return_code": return_code,
         "camera_stop_reason": stop_reason,
         "camera_capture_dir": str(capture_dir),
@@ -1209,10 +1354,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         "validation_chunk_cases": validation_cases,
         "external_shape_prior_points": bool(surface_points is not None or interior_points is not None),
         "write_final_pcd": bool(args.write_final_pcd),
+        "point_viewer_mode": str(args.point_viewer_mode),
+        "point_viewer_started": point_viewer_started_manifest is not None,
+        "point_viewer_start_policy": "after_first_committed_online_chunk",
+        "point_viewer_started_from_chunk": point_viewer_started_manifest,
+        "point_viewer_start_wall_s": point_viewer_start_wall_s,
+        "point_viewer_command": build_point_viewer_command(args),
+        "point_viewer_cuda_visible_devices": resolve_point_viewer_cuda_visible_devices(args),
+        "point_viewer_fps": float(args.replay_fps),
+        "point_viewer_object_color_mode": str(args.point_viewer_object_color_mode),
+        "point_viewer_return_code": point_viewer_return_code,
+        "point_viewer_left_running": point_viewer_left_running,
         "optimization_mode": str(args.optimization_mode),
         "optimization_started": optimization_started_manifest is not None,
-        "optimization_scope": "single_continuous_online_case",
-        "optimization_start_policy": "after_first_committed_online_chunk",
+        "optimization_scope": (
+            "single_continuous_online_case" if str(args.optimization_mode) == "continuous" else "disabled"
+        ),
+        "optimization_start_policy": (
+            "after_first_committed_online_chunk" if str(args.optimization_mode) == "continuous" else "disabled"
+        ),
         "optimization_started_from_chunk": optimization_started_manifest,
         "optimization_start_wall_s": optimization_start_wall_s,
         "optimization_command": build_realtime_phystwin_optimization_command(
@@ -1244,6 +1404,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return int(return_code)
     if args.max_chunks is not None and len(manifests) < int(args.max_chunks):
         return 1
+    if str(args.point_viewer_mode) == "window" and point_viewer_started_manifest is None:
+        return 1
+    if point_viewer_return_code not in (0, None):
+        return int(point_viewer_return_code)
     if str(args.optimization_mode) == "continuous" and optimization_started_manifest is None:
         return 1
     if optimization_return_code not in (0, None):

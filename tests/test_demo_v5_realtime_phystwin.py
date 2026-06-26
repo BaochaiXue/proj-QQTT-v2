@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import redirect_stdout
+import importlib
 import io
 import json
 import pickle
@@ -135,7 +136,7 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
 
         self.assertEqual(present, set())
 
-    def test_defaults_route_realtime_to_gpu0_and_continuous_optimization_to_gpu1(self) -> None:
+    def test_defaults_route_realtime_to_gpu0_and_point_viewer_to_gpu1(self) -> None:
         args = demo_v5.build_parser().parse_args(["--dry-run"])
         chunk_frame_count = demo_v5.resolve_chunk_frame_count(args)
 
@@ -150,16 +151,19 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
         self.assertEqual(demo_v5.resolve_camera_cuda_visible_devices(args), "0")
         self.assertEqual(demo_v5.resolve_shape_prior_worker_cuda_visible_devices(args), "1")
         self.assertEqual(args.shape_prior_worker_mode, "managed")
-        self.assertEqual(args.optimization_mode, "continuous")
+        self.assertEqual(args.optimization_mode, "disabled")
+        self.assertEqual(args.point_viewer_mode, "window")
+        self.assertEqual(demo_v5.resolve_point_viewer_cuda_visible_devices(args), "1")
         self.assertEqual(demo_v5.resolve_optimization_cuda_visible_devices(args), "1")
         self.assertEqual(demo_v5.resolve_optimization_device(args), "cuda:0")
 
         contract = demo_v5._contract(args)
 
         self.assertEqual(contract["demo_version"], "demo_v5")
-        self.assertEqual(contract["optimization_scope"], "single_continuous_online_case")
+        self.assertEqual(contract["optimization_scope"], "disabled")
         self.assertEqual(contract["optimization_segment_len"], 35)
-        self.assertEqual(contract["shape_prior_worker_released_before_optimization"], True)
+        self.assertEqual(contract["shape_prior_worker_released_before_optimization"], False)
+        self.assertEqual(contract["shape_prior_worker_released_before_point_viewer"], True)
         worker_command = contract["shape_prior_worker_command"]
         self.assertIn("--max-observation-to-aligned-p95-m", worker_command)
         self.assertEqual(worker_command[worker_command.index("--max-observation-to-aligned-p95-m") + 1], "0.06")
@@ -172,6 +176,19 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
                 "result/demo_v5/futurephystwin_chunks/data/demo_v5/final_data.pkl"
             )
         )
+        point_viewer_command = contract["point_viewer_command"]
+        self.assertEqual(point_viewer_command[:6], ["conda", "run", "-n", "demo_2_max", "--no-capture-output", "python"])
+        self.assertEqual(point_viewer_command[6], "demo_v5/online_points_viewer.py")
+        self.assertEqual(
+            point_viewer_command[point_viewer_command.index("--online-dir") + 1],
+            "result/demo_v5/futurephystwin_chunks/online_data/demo_v5",
+        )
+        self.assertEqual(
+            point_viewer_command[point_viewer_command.index("--case-dir") + 1],
+            "result/demo_v5/futurephystwin_chunks/data/demo_v5",
+        )
+        self.assertEqual(point_viewer_command[point_viewer_command.index("--fps") + 1], "5.0")
+        self.assertEqual(point_viewer_command[point_viewer_command.index("--object-color-mode") + 1], "rainbow")
         opt_command = contract["optimization_command"]
         self.assertEqual(opt_command[1], "train_online_zero_then_first.py")
         self.assertNotIn("--stop_when_finished", opt_command)
@@ -328,7 +345,7 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
 
     def test_source_headless_requires_optimization_disabled(self) -> None:
         with self.assertRaisesRegex(ValueError, "continuous optimization requires fake-live or live capture"):
-            demo_v5.main(["--dry-run", "--source-headless-capture", "existing_capture"])
+            demo_v5.main(["--dry-run", "--optimization-mode", "continuous", "--source-headless-capture", "existing_capture"])
 
     def test_failed_shape_prior_metadata_raises_without_polling_until_timeout(self) -> None:
         root = Path("result/test_demo_v5_unit_shape_prior_failed")
@@ -417,6 +434,10 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
                                 str(capture_dir),
                                 "--max-chunks",
                                 "2",
+                                "--optimization-mode",
+                                "continuous",
+                                "--point-viewer-mode",
+                                "disabled",
                                 "--optimization-zero-iterations",
                                 "1",
                                 "--optimization-iterations",
@@ -508,6 +529,10 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
                                 str(capture_dir),
                                 "--max-chunks",
                                 "1",
+                                "--optimization-mode",
+                                "continuous",
+                                "--point-viewer-mode",
+                                "disabled",
                                 "--optimization-zero-iterations",
                                 "1",
                                 "--optimization-iterations",
@@ -534,6 +559,96 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
             self.assertTrue(summary["optimization_started"])
         finally:
             shutil.rmtree(root, ignore_errors=True)
+
+    def test_default_point_viewer_starts_after_first_committed_online_chunk(self) -> None:
+        root = Path("result/test_demo_v5_unit_point_viewer")
+        shutil.rmtree(root, ignore_errors=True)
+        try:
+            capture_dir = root / "capture"
+            base_path = root / "cases"
+            popen_calls: list[tuple[list[str], dict[str, object]]] = []
+
+            def fake_popen(command, **kwargs):
+                popen_calls.append((list(command), dict(kwargs)))
+                return FakeProcess(returncode=0)
+
+            def fake_stream(_capture_dir_arg, **kwargs):
+                manifest = {
+                    "case_name": "demo_v5_rt_chunk_0001",
+                    "frame_count": 35,
+                    "futurephystwin_case_root": str(base_path / "demo_v5_rt_chunk_0001"),
+                    "online_chunk_path": str(base_path / "online_data" / "demo_v5_rt" / "chunks" / "chunk_000000.pkl"),
+                    "static_data_path": str(base_path / "data" / "demo_v5_rt" / "final_data.pkl"),
+                    "publish_wall_s": 7.0,
+                    "backlog_chunks": 0,
+                    "shape_prior_complete": True,
+                }
+                kwargs["on_chunk_written"](manifest)
+                return [manifest]
+
+            with mock.patch("demo_v5.realtime_futurephystwin_chunks.subprocess.Popen", side_effect=fake_popen):
+                with mock.patch("demo_v5.realtime_futurephystwin_chunks.stream_chunks_from_headless_capture", side_effect=fake_stream):
+                    with redirect_stdout(io.StringIO()) as stdout:
+                        exit_code = demo_v5.main(
+                            [
+                                "--shape-prior-worker-mode",
+                                "external",
+                                "--futurephystwin-base-path",
+                                str(base_path),
+                                "--case-prefix",
+                                "demo_v5_rt",
+                                "--camera-capture-dir",
+                                str(capture_dir),
+                                "--max-chunks",
+                                "1",
+                            ]
+                        )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(popen_calls), 2)
+            camera_command, _camera_kwargs = popen_calls[0]
+            viewer_command, viewer_kwargs = popen_calls[1]
+            self.assertIn("demo_v5/realtime_camera_final_data.py", camera_command[1])
+            self.assertEqual(viewer_command[:6], ["conda", "run", "-n", "demo_2_max", "--no-capture-output", "python"])
+            self.assertEqual(viewer_command[6], "demo_v5/online_points_viewer.py")
+            self.assertEqual(viewer_command[viewer_command.index("--online-dir") + 1], str(base_path / "online_data" / "demo_v5_rt"))
+            self.assertEqual(viewer_command[viewer_command.index("--case-dir") + 1], str(base_path / "data" / "demo_v5_rt"))
+            self.assertEqual(viewer_command[viewer_command.index("--fps") + 1], "5.0")
+            self.assertEqual(viewer_kwargs["env"]["CUDA_VISIBLE_DEVICES"], "1")
+            self.assertEqual(Path(viewer_kwargs["cwd"]), REPO_ROOT)
+            self.assertTrue(viewer_kwargs["start_new_session"])
+            summary = json.loads(stdout.getvalue())
+            self.assertEqual(summary["optimization_mode"], "disabled")
+            self.assertFalse(summary["optimization_started"])
+            self.assertTrue(summary["point_viewer_started"])
+            self.assertEqual(summary["point_viewer_started_from_chunk"]["case_name"], "demo_v5_rt_chunk_0001")
+            self.assertEqual(summary["point_viewer_return_code"], 0)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_online_points_viewer_projects_visible_world_points_to_pixels(self) -> None:
+        viewer = importlib.import_module("demo_v5.online_points_viewer")
+        points = np.array(
+            [
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 1.0],
+                [0.0, 1.0, 1.0],
+                [0.0, 0.0, -1.0],
+            ],
+            dtype=np.float64,
+        )
+        visibility = np.array([True, False, True, True], dtype=bool)
+        pixels, point_indices = viewer.project_world_points_to_pixels(
+            points,
+            intrinsic=np.eye(3, dtype=np.float64),
+            camera_to_world=np.eye(4, dtype=np.float64),
+            image_size=(4, 4),
+            visibility=visibility,
+            stride=1,
+        )
+
+        np.testing.assert_array_equal(pixels, np.array([[0, 0], [0, 1]], dtype=np.int32))
+        np.testing.assert_array_equal(point_indices, np.array([0, 2], dtype=np.int64))
 
 
 if __name__ == "__main__":

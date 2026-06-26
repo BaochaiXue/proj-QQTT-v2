@@ -1,3 +1,4 @@
+"""Publish Demo v5 chunks in the online format consumed by realtime_phystwin."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -124,6 +125,7 @@ def build_online_chunk(
     end_frame: int,
     source_frame_indices: Sequence[int] | None = None,
 ) -> dict[str, Any]:
+    """Create the small per-window payload stored under online_data/chunks."""
     if source_frame_indices is None:
         source_frame_indices = list(range(int(start_frame), int(end_frame)))
     indices = [int(idx) for idx in source_frame_indices]
@@ -143,6 +145,8 @@ def build_online_chunk(
 
 
 class DemoV5OnlineOutputWriter:
+    """Maintain online chunks and the continuously growing static case."""
+
     def __init__(
         self,
         *,
@@ -184,6 +188,7 @@ class DemoV5OnlineOutputWriter:
         source_frame_indices: Sequence[int] | None = None,
         status: str = "recording",
     ) -> dict[str, Any]:
+        """Append one final_data chunk and rewrite online metadata atomically."""
         frame_count = _infer_frame_count(data)
         start_frame = int(self.latest_committed_frame)
         end_frame = start_frame + int(frame_count)
@@ -229,6 +234,7 @@ class DemoV5OnlineOutputWriter:
         source_frame_indices: Sequence[int] | None = None,
         status: str = "recording",
     ) -> dict[str, Any]:
+        """Commit a validated chunk case and mirror it into the aggregate case."""
         chunk_case_dir = Path(case_dir)
         self._aggregate_writer.validate_next_chunk_case(chunk_case_dir)
         with (chunk_case_dir / "final_data.pkl").open("rb") as handle:
@@ -252,6 +258,7 @@ class DemoV5OnlineOutputWriter:
         return manifest
 
     def _append_static_data(self, data: Mapping[str, Any], *, frame_count: int) -> None:
+        """Update data/<case>/final_data.pkl as a prefix aggregate."""
         for key in TIME_KEYS:
             value = data.get(key)
             if value is None:

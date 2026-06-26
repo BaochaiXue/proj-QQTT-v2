@@ -1,3 +1,5 @@
+"""Shared final_data keys that vary along the online frame axis."""
+
 REQUIRED_TIME_KEYS = (
     "object_points",
     "object_colors",

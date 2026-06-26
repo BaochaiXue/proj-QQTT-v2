@@ -1,3 +1,4 @@
+"""Pickle helpers that keep Demo v5 artifacts readable by older NumPy stacks."""
 from __future__ import annotations
 
 import copyreg
@@ -21,6 +22,8 @@ def _reduce_ndarray_legacy_numpy(arr: np.ndarray) -> tuple[Any, ...]:
 
 
 class LegacyNumpyPickler(pickle.Pickler):
+    """Serialize ndarrays without relying on NumPy's private module names."""
+
     dispatch_table = copyreg.dispatch_table.copy()
     dispatch_table[np.ndarray] = _reduce_ndarray_legacy_numpy
 

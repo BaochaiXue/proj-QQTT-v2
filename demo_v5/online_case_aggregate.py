@@ -1,3 +1,4 @@
+"""Build the static data/<case> view from published Demo v5 chunk cases."""
 from __future__ import annotations
 
 import json
@@ -144,6 +145,7 @@ def _concatenate_payloads(
     static_keys: Sequence[str],
     label: str,
 ) -> dict[str, Any]:
+    """Concatenate time-varying arrays while enforcing static invariants."""
     if not payloads:
         raise ValueError(f"cannot aggregate empty {label} payload list")
     combined: dict[str, Any] = {}
@@ -189,6 +191,7 @@ def _load_tracking_payload(case_dir: Path, name: str) -> dict[str, np.ndarray]:
 
 
 def _validate_chunk_cases(chunk_cases: Sequence[Path]) -> None:
+    """Ensure chunks can be concatenated without changing camera/query identity."""
     if not chunk_cases:
         raise ValueError("aggregate requires at least one READY chunk case")
     first_metadata: dict[str, Any] | None = None
@@ -413,6 +416,7 @@ def build_aggregate_case_from_chunk_cases(
     *,
     ready: bool = False,
 ) -> dict[str, Any]:
+    """Rewrite data/<case> as the prefix aggregate of READY chunk cases."""
     cases = [Path(path) for path in chunk_cases]
     target = Path(aggregate_case)
     _validate_chunk_cases(cases)
@@ -468,6 +472,8 @@ def build_aggregate_case_from_chunk_cases(
 
 
 class OnlineAggregateCaseWriter:
+    """Incrementally rebuild the aggregate case after each committed chunk."""
+
     def __init__(self, case_dir: str | Path) -> None:
         self.case_dir = Path(case_dir)
         self.chunk_cases: list[Path] = []
@@ -497,6 +503,7 @@ def _complete_ready_case(case_dir: Path) -> bool:
 
 
 def migrate_legacy_online_static_case(base_path: str | Path, case_name: str) -> dict[str, Any]:
+    """Recover data/<case> when chunks exist but the aggregate is missing."""
     base = Path(base_path)
     aggregate_dir = base / "data" / str(case_name)
     chunk_cases = [
