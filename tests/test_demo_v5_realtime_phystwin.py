@@ -202,6 +202,11 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
         self.assertEqual(args.optimization_mode, "disabled")
         self.assertEqual(args.point_viewer_mode, "window")
         self.assertFalse(args.allow_degraded_online)
+        self.assertEqual(args.point_viewer_render_mode, "rgb-overlay")
+        self.assertEqual(
+            demo_v5.build_parser().parse_args(["--point-viewer-render-mode", "sam3d-final-data"]).point_viewer_render_mode,
+            "sam3d-final-data",
+        )
         self.assertTrue(demo_v5.build_parser().parse_args(["--allow-degraded-online"]).allow_degraded_online)
         self.assertEqual(demo_v5.resolve_point_viewer_cuda_visible_devices(args), "1")
         self.assertEqual(demo_v5.resolve_optimization_cuda_visible_devices(args), "1")
@@ -229,6 +234,7 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
         point_viewer_command = contract["point_viewer_command"]
         self.assertEqual(point_viewer_command[:6], ["conda", "run", "-n", "demo_2_max", "--no-capture-output", "python"])
         self.assertEqual(point_viewer_command[6], "demo_v5/online_points_viewer.py")
+        self.assertEqual(point_viewer_command[point_viewer_command.index("--render-mode") + 1], "rgb-overlay")
         self.assertEqual(
             point_viewer_command[point_viewer_command.index("--online-dir") + 1],
             "result/demo_v5/futurephystwin_chunks/online_data/demo_v5",
@@ -239,6 +245,9 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
         )
         self.assertEqual(point_viewer_command[point_viewer_command.index("--fps") + 1], "5.0")
         self.assertEqual(point_viewer_command[point_viewer_command.index("--object-color-mode") + 1], "rainbow")
+        sam3d_viewer_args = demo_v5.build_parser().parse_args(["--point-viewer-render-mode", "sam3d-final-data"])
+        sam3d_viewer_command = demo_v5.build_point_viewer_command(sam3d_viewer_args)
+        self.assertEqual(sam3d_viewer_command[sam3d_viewer_command.index("--render-mode") + 1], "sam3d-final-data")
         opt_command = contract["optimization_command"]
         self.assertEqual(opt_command[1], "train_online_zero_then_first.py")
         self.assertNotIn("--stop_when_finished", opt_command)
@@ -830,6 +839,7 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
             self.assertIn("demo_v5/realtime_camera_final_data.py", camera_command[1])
             self.assertEqual(viewer_command[:6], ["conda", "run", "-n", "demo_2_max", "--no-capture-output", "python"])
             self.assertEqual(viewer_command[6], "demo_v5/online_points_viewer.py")
+            self.assertEqual(viewer_command[viewer_command.index("--render-mode") + 1], "rgb-overlay")
             self.assertEqual(viewer_command[viewer_command.index("--online-dir") + 1], str(base_path / "online_data" / "demo_v5_rt"))
             self.assertEqual(viewer_command[viewer_command.index("--case-dir") + 1], str(base_path / "data" / "demo_v5_rt"))
             self.assertEqual(viewer_command[viewer_command.index("--fps") + 1], "5.0")
@@ -915,6 +925,113 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
 
         np.testing.assert_array_equal(pixels, np.array([[0, 0], [0, 1]], dtype=np.int32))
         np.testing.assert_array_equal(point_indices, np.array([0, 2], dtype=np.int64))
+
+    def test_online_points_viewer_uses_sam3d_marker_colors(self) -> None:
+        viewer = importlib.import_module("demo_v5.online_points_viewer")
+        import matplotlib.pyplot as plt
+
+        camera = viewer.CameraModel(
+            intrinsic=np.eye(3, dtype=np.float64),
+            camera_to_world=np.eye(4, dtype=np.float64),
+            image_size=(60, 60),
+            metadata_fps=5.0,
+        )
+        chunk = {
+            "chunk_id": 0,
+            "source_frame_indices": [0],
+            "query_ids": np.arange(16, dtype=np.int64),
+            "object_points": np.array([[[6.0, 6.0, 1.0], [12.0, 12.0, 1.0]]], dtype=np.float32),
+            "object_visibilities": np.ones((1, 2), dtype=bool),
+            "object_selected_query_ids": np.array([2, 9], dtype=np.int64),
+            "controller_points": np.array([[[20.0, 45.0, 1.0]]], dtype=np.float32),
+            "controller_anchor_source_query_id": np.array([[7]], dtype=np.int64),
+        }
+
+        image = viewer.render_chunk_frame(
+            chunk,
+            local_frame=0,
+            case_dir=Path("/nonexistent"),
+            camera=camera,
+            cam_idx=0,
+            use_background=False,
+            show_invisible_object_points=False,
+            object_stride=1,
+            object_radius=2,
+            controller_radius=5,
+            object_color_mode="rainbow",
+            controller_color=(0, 0, 255),
+            fps=5.0,
+        )
+
+        object_expected_bgr = (np.asarray(plt.cm.rainbow(0.0)[:3]) * 255.0).astype(np.uint8)[::-1]
+        controller_expected_bgr = np.array([0, 0, 255], dtype=np.uint8)
+        np.testing.assert_array_equal(image[6, 6], object_expected_bgr)
+        np.testing.assert_array_equal(image[45, 20], controller_expected_bgr)
+        controller_patch = image[38:53, 13:28]
+        self.assertFalse(np.any(np.all(controller_patch >= 235, axis=2)))
+
+    def test_online_points_viewer_writes_offline_rgb_overlay_video(self) -> None:
+        viewer = importlib.import_module("demo_v5.online_points_viewer")
+        root = Path("result/test_demo_v5_online_points_video")
+        shutil.rmtree(root, ignore_errors=True)
+        try:
+            online_dir = root / "online_data" / "case"
+            chunks_dir = online_dir / "chunks"
+            case_dir = root / "data" / "case"
+            chunks_dir.mkdir(parents=True)
+            case_dir.mkdir(parents=True)
+            (case_dir / "metadata.json").write_text(json.dumps({"WH": [64, 64], "fps": 5.0}), encoding="utf-8")
+            chunk = {
+                "chunk_id": 0,
+                "source_frame_indices": [0, 1],
+                "object_points": np.array(
+                    [
+                        [[10.0, 10.0, 1.0], [20.0, 20.0, 1.0]],
+                        [[11.0, 10.0, 1.0], [21.0, 20.0, 1.0]],
+                    ],
+                    dtype=np.float32,
+                ),
+                "object_visibilities": np.ones((2, 2), dtype=bool),
+                "controller_points": np.array(
+                    [
+                        [[30.0, 40.0, 1.0]],
+                        [[31.0, 40.0, 1.0]],
+                    ],
+                    dtype=np.float32,
+                ),
+            }
+            with (chunks_dir / "chunk_000000.pkl").open("wb") as handle:
+                pickle.dump(chunk, handle)
+            output_video = root / "offline.mp4"
+
+            exit_code = viewer.main(
+                [
+                    "--online-dir",
+                    str(online_dir),
+                    "--case-dir",
+                    str(case_dir),
+                    "--render-mode",
+                    "rgb-overlay",
+                    "--output-video",
+                    str(output_video),
+                    "--fps",
+                    "5",
+                    "--no-background",
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertTrue(output_video.is_file())
+            import cv2
+
+            cap = cv2.VideoCapture(str(output_video))
+            ok, _frame = cap.read()
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.release()
+            self.assertTrue(ok)
+            self.assertEqual(frame_count, 2)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
 
 if __name__ == "__main__":

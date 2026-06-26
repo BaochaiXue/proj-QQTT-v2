@@ -17,6 +17,11 @@ import numpy as np
 
 DEFAULT_WINDOW_NAME = "Demo v5 online points"
 DEFAULT_IMAGE_SIZE = (1280, 720)
+DEFAULT_OBJECT_RADIUS = 3
+DEFAULT_CONTROLLER_RADIUS = 6
+RENDER_MODE_RGB_OVERLAY = "rgb-overlay"
+RENDER_MODE_SAM3D_FINAL_DATA = "sam3d-final-data"
+RENDER_MODES = (RENDER_MODE_RGB_OVERLAY, RENDER_MODE_SAM3D_FINAL_DATA)
 
 
 @dataclass(frozen=True)
@@ -243,12 +248,84 @@ def parse_bgr_color(text: str) -> tuple[int, int, int]:
     return tuple(max(0, min(255, value)) for value in values)
 
 
-def _rainbow_colors(point_indices: np.ndarray) -> np.ndarray:
-    if point_indices.size == 0:
+def _sam3d_rainbow_colors_bgr(chunk: Mapping[str, Any], point_indices: np.ndarray) -> np.ndarray:
+    indices = np.asarray(point_indices, dtype=np.int64).reshape(-1)
+    if indices.size == 0:
         return np.empty((0, 3), dtype=np.uint8)
-    cv2 = _require_cv2()
-    values = np.asarray(point_indices % 256, dtype=np.uint8).reshape(-1, 1)
-    return cv2.applyColorMap(values, cv2.COLORMAP_TURBO).reshape(-1, 3)
+    object_points = chunk.get("object_points")
+    if object_points is None:
+        normalized = np.zeros((indices.shape[0],), dtype=np.float32)
+    else:
+        arr = np.asarray(object_points, dtype=np.float64)
+        if arr.ndim != 3 or arr.shape[0] == 0 or arr.shape[2] < 2:
+            normalized = np.zeros((indices.shape[0],), dtype=np.float32)
+        else:
+            y_values = np.asarray(arr[0, :, 1], dtype=np.float64).reshape(-1)
+            if y_values.size == 0:
+                normalized = np.zeros((indices.shape[0],), dtype=np.float32)
+            else:
+                finite = np.isfinite(y_values)
+                if np.any(finite):
+                    y_min = float(np.nanmin(y_values[finite]))
+                    y_max = float(np.nanmax(y_values[finite]))
+                    span = y_max - y_min
+                    if math.isfinite(span) and span > 1e-9:
+                        selected_y = y_values[np.clip(indices, 0, y_values.shape[0] - 1)]
+                        normalized = np.clip((selected_y - y_min) / span, 0.0, 1.0).astype(np.float32)
+                    else:
+                        normalized = np.zeros((indices.shape[0],), dtype=np.float32)
+                else:
+                    normalized = np.zeros((indices.shape[0],), dtype=np.float32)
+    try:
+        import matplotlib.pyplot as plt
+
+        rgb = np.asarray(plt.cm.rainbow(normalized)[:, :3], dtype=np.float32) * 255.0
+    except Exception:
+        rgb = np.stack(
+            [
+                255.0 * normalized,
+                255.0 * (1.0 - np.abs(normalized - 0.5) * 2.0),
+                255.0 * (1.0 - normalized),
+            ],
+            axis=1,
+        )
+    return np.ascontiguousarray(np.clip(rgb, 0, 255).astype(np.uint8)[:, ::-1], dtype=np.uint8)
+
+
+def _sam3d_rainbow_colors_rgb_float(object_points: np.ndarray, point_count: int) -> np.ndarray:
+    count = max(0, int(point_count))
+    if count == 0:
+        return np.empty((0, 3), dtype=np.float64)
+    arr = np.asarray(object_points, dtype=np.float64)
+    if arr.ndim != 3 or arr.shape[0] == 0 or arr.shape[1] < count or arr.shape[2] < 2:
+        normalized = np.zeros((count,), dtype=np.float64)
+    else:
+        y_values = np.asarray(arr[0, :count, 1], dtype=np.float64)
+        finite = np.isfinite(y_values)
+        if np.any(finite):
+            y_min = float(np.nanmin(y_values[finite]))
+            y_max = float(np.nanmax(y_values[finite]))
+            span = y_max - y_min
+            if math.isfinite(span) and span > 1e-9:
+                normalized = np.clip((y_values - y_min) / span, 0.0, 1.0)
+            else:
+                normalized = np.zeros((count,), dtype=np.float64)
+        else:
+            normalized = np.zeros((count,), dtype=np.float64)
+    try:
+        import matplotlib.pyplot as plt
+
+        return np.ascontiguousarray(np.asarray(plt.cm.rainbow(normalized)[:, :3], dtype=np.float64))
+    except Exception:
+        rgb = np.stack(
+            [
+                normalized,
+                1.0 - np.abs(normalized - 0.5) * 2.0,
+                1.0 - normalized,
+            ],
+            axis=1,
+        )
+        return np.ascontiguousarray(np.clip(rgb, 0.0, 1.0), dtype=np.float64)
 
 
 def object_point_colors(
@@ -272,20 +349,39 @@ def object_point_colors(
                         selected = selected * 255.0
                     selected = np.clip(selected, 0.0, 255.0).astype(np.uint8)
                     return selected[:, ::-1]
-    return _rainbow_colors(point_indices)
+    return _sam3d_rainbow_colors_bgr(chunk, point_indices)
 
 
-def _draw_points(image: np.ndarray, pixels: np.ndarray, colors: np.ndarray, *, radius: int) -> None:
+def controller_point_colors(
+    chunk: Mapping[str, Any],
+    *,
+    local_frame: int,
+    point_indices: np.ndarray,
+    fallback_color: tuple[int, int, int],
+) -> np.ndarray:
+    color = np.asarray(fallback_color, dtype=np.uint8).reshape(1, 3)
+    return np.tile(color, (point_indices.shape[0], 1))
+
+
+def _draw_sam3d_markers(
+    image: np.ndarray,
+    pixels: np.ndarray,
+    colors: np.ndarray,
+    *,
+    radius: int,
+) -> None:
     if pixels.size == 0:
         return
     cv2 = _require_cv2()
     draw_radius = max(int(radius), 1)
     for (x_value, y_value), color in zip(pixels, colors, strict=False):
+        center = (int(x_value), int(y_value))
+        color_bgr = tuple(int(value) for value in color)
         cv2.circle(
             image,
-            (int(x_value), int(y_value)),
+            center,
             draw_radius,
-            tuple(int(value) for value in color),
+            color_bgr,
             thickness=-1,
             lineType=cv2.LINE_AA,
         )
@@ -341,7 +437,7 @@ def render_chunk_frame(
                 visibility=visibility,
                 stride=object_stride,
             )
-            _draw_points(
+            _draw_sam3d_markers(
                 image,
                 object_pixels,
                 object_point_colors(
@@ -363,11 +459,17 @@ def render_chunk_frame(
                 image_size=image_size,
                 stride=1,
             )
-            controller_colors = np.tile(
-                np.asarray(controller_color, dtype=np.uint8).reshape(1, 3),
-                (controller_indices.shape[0], 1),
+            _draw_sam3d_markers(
+                image,
+                controller_pixels,
+                controller_point_colors(
+                    chunk,
+                    local_frame=int(local_frame),
+                    point_indices=controller_indices,
+                    fallback_color=controller_color,
+                ),
+                radius=controller_radius,
             )
-            _draw_points(image, controller_pixels, controller_colors, radius=controller_radius)
     frame_count = _chunk_frame_count(chunk)
     chunk_id = int(chunk.get("chunk_id", -1))
     _draw_status(
@@ -375,6 +477,167 @@ def render_chunk_frame(
         f"chunk {chunk_id:06d}  frame {int(local_frame) + 1}/{frame_count}  source {source_frame}  {fps:g} FPS",
     )
     return image
+
+
+class RgbOverlayRenderer:
+    def __init__(self, *, camera: CameraModel, args: argparse.Namespace, fps: float) -> None:
+        self._camera = camera
+        self._args = args
+        self._fps = float(fps)
+
+    def render_frame(self, chunk: Mapping[str, Any], *, local_frame: int, case_dir: Path) -> np.ndarray:
+        return render_chunk_frame(
+            chunk,
+            local_frame=int(local_frame),
+            case_dir=case_dir,
+            camera=self._camera,
+            cam_idx=int(self._args.cam_idx),
+            use_background=not bool(self._args.no_background),
+            show_invisible_object_points=bool(self._args.show_invisible_object_points),
+            object_stride=int(self._args.object_stride),
+            object_radius=int(self._args.object_radius),
+            controller_radius=int(self._args.controller_radius),
+            object_color_mode=str(self._args.object_color_mode),
+            controller_color=self._args.controller_color,
+            fps=self._fps,
+        )
+
+    def close(self) -> None:
+        return None
+
+
+class Sam3DFinalDataRenderer:
+    def __init__(self, *, image_size: tuple[int, int], show_invisible_object_points: bool) -> None:
+        self._image_size = (int(image_size[0]), int(image_size[1]))
+        self._show_invisible_object_points = bool(show_invisible_object_points)
+        self._o3d: Any | None = None
+        self._vis: Any | None = None
+        self._object_pcd: Any | None = None
+        self._controller_meshes: list[Any] = []
+        self._controller_centers: list[np.ndarray] = []
+        self._object_colors: np.ndarray | None = None
+        self._object_color_count = -1
+        self._initialized = False
+
+    def _require_open3d(self) -> Any:
+        if self._o3d is None:
+            import open3d as o3d
+
+            self._o3d = o3d
+        return self._o3d
+
+    def _ensure_window(self) -> None:
+        if self._vis is not None:
+            return
+        o3d = self._require_open3d()
+        self._vis = o3d.visualization.Visualizer()
+        width, height = self._image_size
+        self._vis.create_window(width=width, height=height, visible=False)
+        self._object_pcd = o3d.geometry.PointCloud()
+
+    def _object_visibility(self, chunk: Mapping[str, Any], local_frame: int, point_count: int) -> np.ndarray:
+        if self._show_invisible_object_points:
+            return np.ones((point_count,), dtype=bool)
+        value = chunk.get("object_visibilities")
+        if value is None:
+            return np.ones((point_count,), dtype=bool)
+        arr = np.asarray(value, dtype=bool)
+        if arr.ndim == 2 and int(local_frame) < int(arr.shape[0]) and arr.shape[1] == point_count:
+            return np.ascontiguousarray(arr[int(local_frame)], dtype=bool)
+        return np.ones((point_count,), dtype=bool)
+
+    def _update_object_colors(self, object_points: np.ndarray) -> np.ndarray:
+        point_count = int(object_points.shape[1])
+        if self._object_colors is None or self._object_color_count != point_count:
+            self._object_colors = _sam3d_rainbow_colors_rgb_float(object_points, point_count)
+            self._object_color_count = point_count
+        return self._object_colors
+
+    def _reset_controller_meshes(self, controller_points: np.ndarray) -> None:
+        assert self._vis is not None
+        o3d = self._require_open3d()
+        for mesh in self._controller_meshes:
+            self._vis.remove_geometry(mesh, reset_bounding_box=False)
+        self._controller_meshes = []
+        self._controller_centers = []
+        for origin in np.asarray(controller_points, dtype=np.float64).reshape(-1, 3):
+            sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.01).translate(origin)
+            sphere.paint_uniform_color([1.0, 0.0, 0.0])
+            self._controller_meshes.append(sphere)
+            self._controller_centers.append(np.asarray(origin, dtype=np.float64))
+            self._vis.add_geometry(sphere, reset_bounding_box=False)
+
+    def _set_initial_view(self) -> None:
+        assert self._vis is not None
+        view_control = self._vis.get_view_control()
+        view_control.set_front([1, 0, -2])
+        view_control.set_up([0, 0, -1])
+        view_control.set_zoom(1)
+
+    def render_frame(self, chunk: Mapping[str, Any], *, local_frame: int, case_dir: Path) -> np.ndarray:
+        del case_dir
+        self._ensure_window()
+        assert self._vis is not None
+        assert self._object_pcd is not None
+        o3d = self._require_open3d()
+
+        object_arr = np.asarray(chunk.get("object_points"), dtype=np.float64)
+        controller_arr = np.asarray(chunk.get("controller_points"), dtype=np.float64)
+        if object_arr.ndim != 3 or controller_arr.ndim != 3:
+            return _blank_image(self._image_size)
+        if int(local_frame) >= int(object_arr.shape[0]) or int(local_frame) >= int(controller_arr.shape[0]):
+            return _blank_image(self._image_size)
+
+        object_frame = np.asarray(object_arr[int(local_frame)], dtype=np.float64).reshape(-1, 3)
+        object_colors = self._update_object_colors(object_arr)
+        visible = self._object_visibility(chunk, int(local_frame), int(object_frame.shape[0]))
+        object_valid = visible & np.all(np.isfinite(object_frame), axis=1)
+        controller_frame = np.asarray(controller_arr[int(local_frame)], dtype=np.float64).reshape(-1, 3)
+        controller_valid = np.all(np.isfinite(controller_frame), axis=1)
+        controller_points = controller_frame[controller_valid]
+
+        if not self._initialized:
+            self._object_pcd.points = o3d.utility.Vector3dVector(object_frame[object_valid])
+            self._object_pcd.colors = o3d.utility.Vector3dVector(object_colors[object_valid])
+            self._vis.add_geometry(self._object_pcd)
+            self._reset_controller_meshes(controller_points)
+            self._set_initial_view()
+            self._initialized = True
+        else:
+            self._object_pcd.points = o3d.utility.Vector3dVector(object_frame[object_valid])
+            self._object_pcd.colors = o3d.utility.Vector3dVector(object_colors[object_valid])
+            self._vis.update_geometry(self._object_pcd)
+            if len(controller_points) != len(self._controller_meshes):
+                self._reset_controller_meshes(controller_points)
+            for index, sphere in enumerate(self._controller_meshes):
+                origin = np.asarray(controller_points[index], dtype=np.float64)
+                sphere.translate(origin - self._controller_centers[index])
+                self._controller_centers[index] = origin
+                self._vis.update_geometry(sphere)
+
+        self._vis.poll_events()
+        self._vis.update_renderer()
+        frame = np.asarray(self._vis.capture_screen_float_buffer(do_render=True))
+        frame = np.clip(frame * 255.0, 0.0, 255.0).astype(np.uint8)
+        cv2 = _require_cv2()
+        return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+    def close(self) -> None:
+        if self._vis is not None:
+            self._vis.destroy_window()
+            self._vis = None
+
+
+def build_frame_renderer(args: argparse.Namespace, *, camera: CameraModel, fps: float) -> Any:
+    render_mode = str(args.render_mode)
+    if render_mode == RENDER_MODE_RGB_OVERLAY:
+        return RgbOverlayRenderer(camera=camera, args=args, fps=fps)
+    if render_mode == RENDER_MODE_SAM3D_FINAL_DATA:
+        return Sam3DFinalDataRenderer(
+            image_size=camera.image_size,
+            show_invisible_object_points=bool(args.show_invisible_object_points),
+        )
+    raise ValueError(f"unsupported render mode: {render_mode!r}")
 
 
 def _window_is_open(window_name: str) -> bool:
@@ -414,7 +677,7 @@ def play_chunk(
     chunk: Mapping[str, Any],
     *,
     case_dir: Path,
-    camera: CameraModel,
+    renderer: Any,
     args: argparse.Namespace,
     fps: float,
 ) -> np.ndarray | None:
@@ -423,20 +686,10 @@ def play_chunk(
     frame_count = _chunk_frame_count(chunk)
     last_image = None
     for local_frame in range(frame_count):
-        image = render_chunk_frame(
+        image = renderer.render_frame(
             chunk,
             local_frame=local_frame,
             case_dir=case_dir,
-            camera=camera,
-            cam_idx=int(args.cam_idx),
-            use_background=not bool(args.no_background),
-            show_invisible_object_points=bool(args.show_invisible_object_points),
-            object_stride=int(args.object_stride),
-            object_radius=int(args.object_radius),
-            controller_radius=int(args.controller_radius),
-            object_color_mode=str(args.object_color_mode),
-            controller_color=args.controller_color,
-            fps=fps,
         )
         cv2.imshow(str(args.window_name), image)
         last_image = image
@@ -485,17 +738,71 @@ def resolve_playback_fps(args: argparse.Namespace, camera: CameraModel) -> float
     return float(fps)
 
 
+def _chunk_sort_key(path: Path) -> tuple[int, str]:
+    stem = path.stem
+    try:
+        return (int(stem.rsplit("_", 1)[1]), path.name)
+    except (IndexError, ValueError):
+        return (0, path.name)
+
+
+def list_available_chunk_paths(online_dir: Path, *, start_chunk: int) -> list[Path]:
+    chunks_dir = normalize_online_dir(online_dir) / "chunks"
+    paths = sorted(chunks_dir.glob("chunk_*.pkl"), key=_chunk_sort_key)
+    start = int(start_chunk)
+    return [path for path in paths if _chunk_sort_key(path)[0] >= start]
+
+
+def render_output_video(args: argparse.Namespace) -> int:
+    cv2 = _require_cv2()
+    online_dir = normalize_online_dir(args.online_dir)
+    case_dir = infer_case_dir(online_dir, args.case_dir)
+    camera = load_camera_model(case_dir, cam_idx=int(args.cam_idx))
+    fps = resolve_playback_fps(args, camera)
+    chunk_paths = list_available_chunk_paths(online_dir, start_chunk=int(args.start_chunk))
+    if not chunk_paths:
+        raise ValueError(f"no chunk_*.pkl files found under {online_dir / 'chunks'}")
+    output_path = Path(args.output_video).expanduser()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    renderer = build_frame_renderer(args, camera=camera, fps=fps)
+    writer = None
+    try:
+        for chunk_path in chunk_paths:
+            chunk = dict(load_pickle(chunk_path))
+            frame_count = _chunk_frame_count(chunk)
+            for local_frame in range(frame_count):
+                image = renderer.render_frame(chunk, local_frame=local_frame, case_dir=case_dir)
+                if writer is None:
+                    height, width = image.shape[:2]
+                    writer = cv2.VideoWriter(
+                        str(output_path),
+                        cv2.VideoWriter_fourcc(*"mp4v"),
+                        fps,
+                        (int(width), int(height)),
+                    )
+                    if not writer.isOpened():
+                        raise RuntimeError(f"failed to open VideoWriter for {output_path}")
+                writer.write(image)
+    finally:
+        if writer is not None:
+            writer.release()
+        renderer.close()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Play Demo v5 online object/controller points chunk by chunk.")
     parser.add_argument("--online-dir", type=Path, required=True, help="Path to online_data/<case> or its chunks directory.")
     parser.add_argument("--case-dir", type=Path, default=None, help="Path to data/<case>. Inferred from --online-dir when omitted.")
+    parser.add_argument("--render-mode", choices=RENDER_MODES, default=RENDER_MODE_RGB_OVERLAY)
+    parser.add_argument("--output-video", type=Path, default=None, help="Write existing chunks to MP4 and exit instead of opening a live window.")
     parser.add_argument("--cam-idx", type=int, default=0)
     parser.add_argument("--fps", type=float, default=None, help="Playback FPS. Defaults to metadata fps, then 5.")
     parser.add_argument("--poll-sec", type=float, default=0.1)
     parser.add_argument("--start-chunk", type=int, default=0)
     parser.add_argument("--object-stride", type=int, default=1)
-    parser.add_argument("--object-radius", type=int, default=4)
-    parser.add_argument("--controller-radius", type=int, default=7)
+    parser.add_argument("--object-radius", type=int, default=DEFAULT_OBJECT_RADIUS)
+    parser.add_argument("--controller-radius", type=int, default=DEFAULT_CONTROLLER_RADIUS)
     parser.add_argument("--object-color-mode", choices=("rainbow", "green", "object-colors"), default="rainbow")
     parser.add_argument("--controller-color", type=parse_bgr_color, default=parse_bgr_color("0,0,255"))
     parser.add_argument("--show-invisible-object-points", action="store_true")
@@ -522,34 +829,40 @@ def validate_args(args: argparse.Namespace) -> None:
 def run(args: argparse.Namespace) -> int:
     """Play committed chunks in order, tailing the online directory live."""
     validate_args(args)
+    if args.output_video is not None:
+        return render_output_video(args)
     cv2 = _require_cv2()
     online_dir = normalize_online_dir(args.online_dir)
     case_dir = infer_case_dir(online_dir, args.case_dir)
     camera = load_camera_model(case_dir, cam_idx=int(args.cam_idx))
     fps = resolve_playback_fps(args, camera)
+    renderer = build_frame_renderer(args, camera=camera, fps=fps)
     cv2.namedWindow(str(args.window_name), cv2.WINDOW_NORMAL)
     chunk_id = int(args.start_chunk)
     last_image: np.ndarray | None = None
-    while True:
-        chunk = wait_for_chunk(
-            online_dir,
-            chunk_id=chunk_id,
-            poll_sec=float(args.poll_sec),
-            window_name=str(args.window_name),
-            last_image=last_image,
-        )
-        if chunk is None:
-            return 0
-        last_image = play_chunk(
-            chunk,
-            case_dir=case_dir,
-            camera=camera,
-            args=args,
-            fps=fps,
-        )
-        if last_image is None:
-            return 0
-        chunk_id += 1
+    try:
+        while True:
+            chunk = wait_for_chunk(
+                online_dir,
+                chunk_id=chunk_id,
+                poll_sec=float(args.poll_sec),
+                window_name=str(args.window_name),
+                last_image=last_image,
+            )
+            if chunk is None:
+                return 0
+            last_image = play_chunk(
+                chunk,
+                case_dir=case_dir,
+                renderer=renderer,
+                args=args,
+                fps=fps,
+            )
+            if last_image is None:
+                return 0
+            chunk_id += 1
+    finally:
+        renderer.close()
 
 
 def main(argv: Sequence[str] | None = None) -> int:

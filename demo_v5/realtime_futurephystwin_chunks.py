@@ -85,9 +85,10 @@ DEFAULT_POINT_VIEWER_CUDA_VISIBLE_DEVICES = "1"
 DEFAULT_POINT_VIEWER_CAM_IDX = 0
 DEFAULT_POINT_VIEWER_POLL_SEC = 0.1
 DEFAULT_POINT_VIEWER_OBJECT_STRIDE = 1
-DEFAULT_POINT_VIEWER_OBJECT_RADIUS = 4
-DEFAULT_POINT_VIEWER_CONTROLLER_RADIUS = 7
+DEFAULT_POINT_VIEWER_OBJECT_RADIUS = 3
+DEFAULT_POINT_VIEWER_CONTROLLER_RADIUS = 6
 DEFAULT_POINT_VIEWER_OBJECT_COLOR_MODE = "rainbow"
+DEFAULT_POINT_VIEWER_RENDER_MODE = "rgb-overlay"
 DEFAULT_TABLE_CALIBRATE_PATH = Path("table_calibrate.pkl")
 DEFAULT_SAM31_CHECKPOINT_PATH = Path("vendor/demo_runtime/checkpoints/sam31/sam3.1_multiplex.pt")
 SAM31_CHECKPOINT_ENV = "QQTT_SAM31_CHECKPOINT"
@@ -373,6 +374,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--point-viewer-object-stride", type=int, default=DEFAULT_POINT_VIEWER_OBJECT_STRIDE)
     parser.add_argument("--point-viewer-object-radius", type=int, default=DEFAULT_POINT_VIEWER_OBJECT_RADIUS)
     parser.add_argument("--point-viewer-controller-radius", type=int, default=DEFAULT_POINT_VIEWER_CONTROLLER_RADIUS)
+    parser.add_argument(
+        "--point-viewer-render-mode",
+        choices=("rgb-overlay", "sam3d-final-data"),
+        default=DEFAULT_POINT_VIEWER_RENDER_MODE,
+    )
     parser.add_argument(
         "--point-viewer-object-color-mode",
         choices=("rainbow", "green", "object-colors"),
@@ -696,6 +702,8 @@ def build_point_viewer_command(args: argparse.Namespace) -> list[str]:
         str(resolve_online_dir(args)),
         "--case-dir",
         str(Path(args.futurephystwin_base_path) / "data" / str(args.case_prefix)),
+        "--render-mode",
+        str(args.point_viewer_render_mode),
         "--cam-idx",
         str(int(args.point_viewer_cam_idx)),
         "--fps",
