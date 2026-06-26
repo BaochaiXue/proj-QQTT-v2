@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 from typing import Iterable
 
@@ -220,6 +223,122 @@ def _check_cuda(required: bool) -> list[str]:
     return []
 
 
+def _is_executable(path: Path) -> bool:
+    return path.is_file() and os.access(path, os.X_OK)
+
+
+def _check_nvcc_version(path: Path) -> list[str]:
+    try:
+        result = subprocess.run(
+            [str(path), "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except Exception as exc:
+        return [f"run nvcc --version at {path}: {type(exc).__name__}: {exc}"]
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        stdout = result.stdout.strip()
+        detail = stderr or stdout or f"exit code {result.returncode}"
+        return [f"run nvcc --version at {path}: {detail}"]
+    version_line = next(
+        (line.strip() for line in result.stdout.splitlines() if "release" in line),
+        result.stdout.splitlines()[-1].strip() if result.stdout.splitlines() else "version-ok",
+    )
+    print(f"[ok] nvcc {path}: {version_line}")
+    return []
+
+
+def _check_nvcc_toolchain() -> list[str]:
+    errors: list[str] = []
+    candidates: list[Path] = []
+
+    cudacxx = os.environ.get("CUDACXX")
+    if cudacxx:
+        cudacxx_path = Path(cudacxx).expanduser()
+        if _is_executable(cudacxx_path):
+            candidates.append(cudacxx_path)
+        else:
+            errors.append(f"CUDACXX points to missing or non-executable nvcc: {cudacxx_path}")
+
+    cuda_home = os.environ.get("CUDA_HOME")
+    if cuda_home:
+        cuda_home_nvcc = Path(cuda_home).expanduser() / "bin" / "nvcc"
+        if _is_executable(cuda_home_nvcc):
+            candidates.append(cuda_home_nvcc)
+        else:
+            errors.append(f"CUDA_HOME/bin/nvcc is missing or non-executable: {cuda_home_nvcc}")
+
+    path_nvcc = shutil.which("nvcc")
+    if path_nvcc:
+        candidates.append(Path(path_nvcc))
+    else:
+        errors.append("nvcc is not on PATH")
+
+    if not candidates:
+        return errors
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        errors.extend(_check_nvcc_version(candidate))
+    return errors
+
+
+def _check_gsplat_runtime_smoke() -> list[str]:
+    try:
+        import torch
+        from gsplat import rasterization
+    except Exception as exc:
+        return [f"import gsplat rasterization for CUDA smoke: {type(exc).__name__}: {exc}"]
+
+    if not torch.cuda.is_available():
+        return ["torch.cuda.is_available() is false for gsplat CUDA smoke"]
+
+    try:
+        device = torch.device("cuda:0")
+        with torch.no_grad():
+            means = torch.tensor([[0.0, 0.0, 2.0]], device=device)
+            quats = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=device)
+            scales = torch.tensor([[0.1, 0.1, 0.1]], device=device)
+            opacities = torch.tensor([0.9], device=device)
+            colors = torch.tensor([[1.0, 0.0, 0.0]], device=device)
+            viewmats = torch.eye(4, device=device)[None]
+            intrinsics = torch.tensor(
+                [[[32.0, 0.0, 16.0], [0.0, 32.0, 16.0], [0.0, 0.0, 1.0]]],
+                device=device,
+            )
+            render_colors, render_alphas, _ = rasterization(
+                means,
+                quats,
+                scales,
+                opacities,
+                colors,
+                viewmats,
+                intrinsics,
+                width=32,
+                height=32,
+            )
+            torch.cuda.synchronize(device)
+    except Exception as exc:
+        return [
+            "gsplat CUDA rasterization smoke failed: "
+            f"{type(exc).__name__}: {exc}. Ensure nvcc is available through "
+            "CUDACXX, CUDA_HOME/bin/nvcc, or PATH before running SAM3D."
+        ]
+
+    print(
+        "[ok] gsplat CUDA rasterization smoke: "
+        f"colors={tuple(render_colors.shape)} alphas={tuple(render_alphas.shape)}"
+    )
+    return []
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Check Demo v5 runtime environment and repo-local assets.")
     parser.add_argument("--role", choices=("main", "shape-prior", "all"), default="all")
@@ -242,6 +361,9 @@ def main(argv: list[str] | None = None) -> int:
         errors.extend(_check_paths(SHAPE_PRIOR_ASSET_PATHS))
         errors.extend(_check_shape_prior_source_import())
     errors.extend(_check_cuda(bool(args.require_cuda)))
+    if bool(args.require_cuda) and role in {"shape-prior", "all"}:
+        errors.extend(_check_nvcc_toolchain())
+        errors.extend(_check_gsplat_runtime_smoke())
     if errors:
         print("[fail] Demo v5 environment check failed:")
         for error in errors:

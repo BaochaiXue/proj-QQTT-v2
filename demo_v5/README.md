@@ -42,6 +42,11 @@ conda run -n phystwin-max --no-capture-output \
   python demo_v5/env/check_demo_v5_env.py --role shape-prior --require-cuda
 ```
 
+The shape-prior CUDA check also validates `nvcc` and runs a tiny
+`gsplat.rasterization` smoke. A failure there means SAM3D's GS layout
+post-optimization would fail or warn at runtime, so update the `phystwin-max`
+CUDA toolkit before starting the managed worker.
+
 For a new machine, use the install materials under `demo_v5/env/`:
 
 ```bash
@@ -329,10 +334,10 @@ Deterministic checks:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
-  python demo_v5/env/check_demo_v5_env.py --role main
+  python demo_v5/env/check_demo_v5_env.py --role main --require-cuda
 
 conda run -n phystwin-max --no-capture-output \
-  python demo_v5/env/check_demo_v5_env.py --role shape-prior
+  python demo_v5/env/check_demo_v5_env.py --role shape-prior --require-cuda
 
 conda run -n demo_2_max --no-capture-output \
   python -m unittest tests.test_demo_v5_realtime_phystwin
