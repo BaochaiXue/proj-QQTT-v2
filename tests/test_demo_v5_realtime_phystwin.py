@@ -310,6 +310,17 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
         self.assertEqual(ffs_command[ffs_command.index("--depth-source") + 1], "ffs")
         self.assertEqual(ffs_command[ffs_command.index("--depth-backend-label") + 1], "ir-ffs")
 
+    def test_max_chunks_does_not_bound_camera_duration_before_warmup_finishes(self) -> None:
+        args = demo_v5.build_parser().parse_args(["--max-chunks", "4"])
+        command = demo_v5.build_camera_realtime_command(
+            args,
+            capture_dir=Path("result/demo_v5/unit_capture"),
+            profile_json=Path("result/demo_v5/unit_capture/shape_prior_profile.json"),
+            chunk_frame_count=35,
+        )
+
+        self.assertEqual(command[command.index("--duration-s") + 1], "0.000")
+
     def test_chunk_and_aggregate_metadata_record_demo_v5_dataprocess_reference(self) -> None:
         root = Path("result/test_demo_v5_unit_metadata_contract")
         shutil.rmtree(root, ignore_errors=True)
@@ -823,19 +834,19 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
 
         self.assertEqual(selected, 35)
 
-    def test_visualize_track_realtime_fps_meter_reports_recent_display_rate(self) -> None:
+    def test_visualize_track_camera_to_final_data_fps_meter_reports_publish_rate(self) -> None:
         viewer = importlib.import_module("demo_v5.visualize_track")
-        meter = viewer.RealtimeFpsMeter()
+        meter = viewer.CameraToFinalDataFpsMeter()
 
-        first = meter.update(10.0)
-        second = meter.update(10.2)
-        third = meter.update(10.4)
+        first = meter.update(appended_frames=35, now_s=10.0)
+        second = meter.update(appended_frames=35, now_s=17.0)
+        third = meter.update(appended_frames=0, now_s=18.0)
 
         self.assertIsNone(first)
         self.assertAlmostEqual(second, 5.0)
         self.assertAlmostEqual(third, 5.0)
 
-    def test_visualize_track_input_panel_can_draw_realtime_fps(self) -> None:
+    def test_visualize_track_input_panel_can_draw_camera_to_final_data_fps(self) -> None:
         viewer = importlib.import_module("demo_v5.visualize_track")
         frame = viewer.InputRgbFrame(
             seq=7,
@@ -845,8 +856,16 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
             source_timestamp_s=8.4,
         )
 
-        without_fps = viewer._render_input_panel(frame, image_size=(320, 180), display_fps=None)
-        with_fps = viewer._render_input_panel(frame, image_size=(320, 180), display_fps=12.3)
+        without_fps = viewer._render_input_panel(
+            frame,
+            image_size=(320, 180),
+            camera_to_final_data_fps=None,
+        )
+        with_fps = viewer._render_input_panel(
+            frame,
+            image_size=(320, 180),
+            camera_to_final_data_fps=12.3,
+        )
 
         self.assertFalse(np.array_equal(without_fps, with_fps))
 

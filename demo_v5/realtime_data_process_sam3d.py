@@ -965,12 +965,10 @@ def validate_runtime_args(args: argparse.Namespace, *, chunk_frame_count: int) -
 
 
 def _camera_duration_s(args: argparse.Namespace, *, chunk_frame_count: int) -> float:
-    if args.max_chunks is None:
-        return 0.0
-    fps = resolve_camera_source_replay_fps(args)
-    if fps <= 0.0:
-        fps = DEFAULT_REPLAY_FPS
-    return (float(args.max_chunks) * float(chunk_frame_count) / fps) + float(args.capture_extra_seconds)
+    # Demo v5 chunks are bounded by the chunk publisher, not by the camera
+    # subprocess. Keeping camera duration unbounded prevents shape-prior warmup
+    # time from consuming the realtime RGB input timeline.
+    return 0.0
 
 
 def build_camera_realtime_command(

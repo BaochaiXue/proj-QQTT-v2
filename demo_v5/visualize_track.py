@@ -77,22 +77,24 @@ class OutputStreamPlaybackCursor:
 
 
 @dataclass
-class RealtimeFpsMeter:
-    window_s: float = 1.5
-    _timestamps: list[float] | None = None
+class CameraToFinalDataFpsMeter:
+    _last_update_s: float | None = None
+    _fps: float | None = None
 
-    def update(self, now_s: float) -> float | None:
-        if self._timestamps is None:
-            self._timestamps = []
+    def update(self, *, appended_frames: int, now_s: float) -> float | None:
+        count = int(appended_frames)
+        if count <= 0:
+            return self._fps
         now = float(now_s)
-        self._timestamps.append(now)
-        cutoff = now - max(0.1, float(self.window_s))
-        while len(self._timestamps) > 2 and self._timestamps[0] < cutoff:
-            self._timestamps.pop(0)
-        if len(self._timestamps) < 2:
+        if self._last_update_s is None:
+            self._last_update_s = now
             return None
-        elapsed = max(1e-9, self._timestamps[-1] - self._timestamps[0])
-        return float(len(self._timestamps) - 1) / elapsed
+        elapsed = now - float(self._last_update_s)
+        self._last_update_s = now
+        if elapsed <= 1e-9:
+            return self._fps
+        self._fps = float(count) / elapsed
+        return self._fps
 
 
 def _require_cv2() -> Any:
@@ -282,20 +284,23 @@ def _draw_panel_label(image: np.ndarray, text: str, *, right: bool = False) -> N
     cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
 
 
-def _draw_fps_overlay(image: np.ndarray, fps: float | None) -> None:
-    if fps is None or not math.isfinite(float(fps)) or image.shape[0] < 40 or image.shape[1] < 180:
+def _draw_camera_to_final_data_fps_overlay(image: np.ndarray, fps: float | None) -> None:
+    if image.shape[0] < 40 or image.shape[1] < 280:
         return
     cv2 = _require_cv2()
-    text = f"{float(fps):.1f} FPS"
+    if fps is None or not math.isfinite(float(fps)):
+        text = "camera->final_data -- FPS"
+    else:
+        text = f"camera->final_data {float(fps):.1f} FPS"
     (text_width, _text_height), _baseline = cv2.getTextSize(
         text,
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.65,
+        0.58,
         1,
     )
     origin = (max(12, int(image.shape[1]) - int(text_width) - 12), 28)
-    cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 3, cv2.LINE_AA)
-    cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
+    cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 0, 0), 3, cv2.LINE_AA)
+    cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 1, cv2.LINE_AA)
 
 
 def _draw_center_label(image: np.ndarray, text: str) -> None:
@@ -403,6 +408,7 @@ def render_side_by_side_frame(
     output_frame: np.ndarray | None,
     image_size: tuple[int, int],
     right_blank_label: str = DEFAULT_RIGHT_BLANK_LABEL,
+    camera_to_final_data_fps: float | None = None,
 ) -> np.ndarray:
     left = _panel_image(None if input_frame is None else input_frame.image_bgr, image_size=image_size)
     right = _panel_image(output_frame, image_size=image_size)
@@ -411,6 +417,7 @@ def render_side_by_side_frame(
     if output_frame is None:
         _draw_center_label(right, str(right_blank_label))
     _draw_panel_label(left, "RGB input")
+    _draw_camera_to_final_data_fps_overlay(left, camera_to_final_data_fps)
     _draw_panel_label(right, "final_data output", right=True)
     return np.ascontiguousarray(np.concatenate([left, right], axis=1), dtype=np.uint8)
 
@@ -1050,13 +1057,13 @@ def _render_input_panel(
     input_frame: InputRgbFrame | None,
     *,
     image_size: tuple[int, int],
-    display_fps: float | None = None,
+    camera_to_final_data_fps: float | None = None,
 ) -> np.ndarray:
     image = _panel_image(None if input_frame is None else input_frame.image_bgr, image_size=image_size)
     if input_frame is None:
         _draw_center_label(image, "waiting for RGB input")
     _draw_panel_label(image, "RGB input")
-    _draw_fps_overlay(image, display_fps)
+    _draw_camera_to_final_data_fps_overlay(image, camera_to_final_data_fps)
     return image
 
 
@@ -1081,7 +1088,7 @@ def run_interactive_side_by_side(args: argparse.Namespace) -> int:
     output_frames: list[tuple[dict[str, Any], int]] = []
     loaded_paths: set[Path] = set()
     cursor = OutputStreamPlaybackCursor(fps=fps)
-    fps_meter = RealtimeFpsMeter()
+    final_data_fps_meter = CameraToFinalDataFpsMeter()
     paused = False
 
     cv2.namedWindow(left_window_name, cv2.WINDOW_NORMAL)
@@ -1093,7 +1100,7 @@ def run_interactive_side_by_side(args: argparse.Namespace) -> int:
 
     try:
         while True:
-            _append_new_output_frames(
+            appended = _append_new_output_frames(
                 online_dir,
                 start_chunk=int(args.start_chunk),
                 loaded_paths=loaded_paths,
@@ -1101,13 +1108,20 @@ def run_interactive_side_by_side(args: argparse.Namespace) -> int:
             )
             latest = max(0, len(output_frames) - 1)
             now_s = time.monotonic()
+            camera_to_final_data_fps = final_data_fps_meter.update(
+                appended_frames=appended,
+                now_s=now_s,
+            )
             cursor.advance(latest=latest, now_s=now_s, paused=paused or not output_frames)
 
             input_frame = None
             if capture_dir is not None and input_timeline is not None:
                 input_frame = load_latest_input_rgb_frame(input_timeline, capture_dir=capture_dir)
-            display_fps = fps_meter.update(now_s)
-            input_panel = _render_input_panel(input_frame, image_size=camera.image_size, display_fps=display_fps)
+            input_panel = _render_input_panel(
+                input_frame,
+                image_size=camera.image_size,
+                camera_to_final_data_fps=camera_to_final_data_fps,
+            )
             cv2.imshow(left_window_name, input_panel)
 
             if output_frames:
@@ -1150,6 +1164,7 @@ def run_side_by_side(args: argparse.Namespace) -> int:
     output_frames: list[tuple[dict[str, Any], int]] = []
     loaded_paths: set[Path] = set()
     cursor = OutputStreamPlaybackCursor(fps=fps)
+    final_data_fps_meter = CameraToFinalDataFpsMeter()
     follow_latest = bool(args.follow_latest)
     paused = False
     trackbar_guard = {"updating": False}
@@ -1166,7 +1181,7 @@ def run_side_by_side(args: argparse.Namespace) -> int:
     cv2.createTrackbar(trackbar_name, window_name, 0, 1, on_trackbar)
     try:
         while True:
-            _append_new_output_frames(
+            appended = _append_new_output_frames(
                 online_dir,
                 start_chunk=int(args.start_chunk),
                 loaded_paths=loaded_paths,
@@ -1175,6 +1190,10 @@ def run_side_by_side(args: argparse.Namespace) -> int:
             latest = max(0, len(output_frames) - 1)
             _set_trackbar_max(cv2, trackbar_name, window_name, latest)
             now_s = time.monotonic()
+            camera_to_final_data_fps = final_data_fps_meter.update(
+                appended_frames=appended,
+                now_s=now_s,
+            )
             if output_frames and follow_latest and not paused:
                 cursor.advance(latest=latest, now_s=now_s, paused=False)
             else:
@@ -1194,6 +1213,7 @@ def run_side_by_side(args: argparse.Namespace) -> int:
                 output_frame=output_frame,
                 image_size=camera.image_size,
                 right_blank_label=str(args.right_blank_label),
+                camera_to_final_data_fps=camera_to_final_data_fps,
             )
             cv2.imshow(window_name, image)
             trackbar_guard["updating"] = True
