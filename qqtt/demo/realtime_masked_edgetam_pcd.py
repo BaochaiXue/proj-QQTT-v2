@@ -1092,6 +1092,7 @@ class HeadlessCaptureWriter:
     def __init__(self, output_dir: str | Path, *, metadata: dict[str, Any]) -> None:
         self.output_dir = _resolve_path(output_dir)
         self.prepared_only = bool(metadata.get("headless_prepared_only", False))
+        self.write_input_rgb_timeline = bool(metadata.get("write_input_rgb_timeline", False))
         self.saved_pcd_source = str(metadata.get("saved_pcd_source") or HEADLESS_CAPTURE_SAVED_PCD_SOURCE)
         self.pcd_coordinate_frame = str(
             metadata.get("pcd_coordinate_frame")
@@ -1126,6 +1127,7 @@ class HeadlessCaptureWriter:
         payload = dict(metadata)
         payload["headless_capture_enabled"] = True
         payload["headless_prepared_only"] = bool(self.prepared_only)
+        payload["write_input_rgb_timeline"] = bool(self.write_input_rgb_timeline)
         payload["saved_pcd_source"] = self.saved_pcd_source
         payload["saved_mask_source"] = "edgetam_binary_masks"
         payload["saved_rgb_source"] = "segmentation_color_bgr"
@@ -1203,7 +1205,7 @@ class HeadlessCaptureWriter:
             "source_step": None if packet.source_step is None else int(packet.source_step),
             "receive_perf_s": float(packet.receive_perf_s),
         }
-        if not self.prepared_only:
+        if self.write_input_rgb_timeline or not self.prepared_only:
             _bgr_to_pil_rgb(packet.color_bgr).save(rgb_path)
             row["input_rgb_path"] = self._relative(rgb_path)
         with self._lock:
@@ -2418,6 +2420,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--headless-prepared-only",
         action="store_true",
         help="For strict PhysTwin chunk preprocessing, save prepared_phystwin frames and frames.jsonl without legacy per-frame artifacts.",
+    )
+    parser.add_argument(
+        "--write-input-rgb-timeline",
+        action="store_true",
+        help="Write input_rgb/*.png and input_frames.jsonl for Demo v5 realtime side-by-side viewing.",
     )
     parser.add_argument("--controller-color", type=_parse_rgb_triplet, default=CONTROLLER_COLOR_RGB, help="Controller RGB color.")
     parser.add_argument("--object-color", type=_parse_rgb_triplet, default=OBJECT_COLOR_RGB, help="Object RGB color.")
@@ -4513,6 +4520,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 normalize_tracking_product_backend(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
             ),
             "headless_prepared_only": bool(getattr(self.args, "headless_prepared_only", False)),
+            "write_input_rgb_timeline": bool(getattr(self.args, "write_input_rgb_timeline", False)),
             "phystwin_strict_output_dir": (
                 None
                 if getattr(self.args, "phystwin_strict_output_dir", None) is None
@@ -4904,7 +4912,10 @@ class RealtimeMaskedEdgeTamPcdDemo:
 
     def _publish_input_preview_packet(self, packet: FramePacket, *, record_s: float | None = None) -> None:
         self.input_preview_slot.put(packet)
-        if self.headless_capture_writer is not None and _is_replay_input_source(str(self.args.input_source)):
+        should_write_timeline = _is_replay_input_source(str(self.args.input_source)) or bool(
+            getattr(self.args, "write_input_rgb_timeline", False)
+        )
+        if self.headless_capture_writer is not None and should_write_timeline:
             self.headless_capture_writer.write_input_frame(packet)
         if str(self.args.render_mode) == RENDER_MODE_PANEL:
             self._request_render_update()

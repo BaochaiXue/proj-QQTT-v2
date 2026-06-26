@@ -201,8 +201,9 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
         self.assertEqual(args.shape_prior_worker_mode, "managed")
         self.assertEqual(args.optimization_mode, "disabled")
         self.assertEqual(args.point_viewer_mode, "window")
+        self.assertEqual(args.point_viewer_layout, "side-by-side")
         self.assertFalse(args.allow_degraded_online)
-        self.assertEqual(args.point_viewer_render_mode, "rgb-overlay")
+        self.assertEqual(args.point_viewer_render_mode, "sam3d-final-data")
         self.assertEqual(
             demo_v5.build_parser().parse_args(["--point-viewer-render-mode", "sam3d-final-data"]).point_viewer_render_mode,
             "sam3d-final-data",
@@ -218,7 +219,8 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
         self.assertEqual(contract["optimization_scope"], "disabled")
         self.assertEqual(contract["optimization_segment_len"], 35)
         self.assertEqual(contract["shape_prior_worker_released_before_optimization"], False)
-        self.assertEqual(contract["shape_prior_worker_released_before_point_viewer"], True)
+        self.assertEqual(contract["shape_prior_worker_released_before_point_viewer"], False)
+        self.assertTrue(contract["write_input_rgb_timeline"])
         worker_command = contract["shape_prior_worker_command"]
         self.assertIn("--max-observation-to-aligned-p95-m", worker_command)
         self.assertEqual(worker_command[worker_command.index("--max-observation-to-aligned-p95-m") + 1], "0.06")
@@ -234,7 +236,9 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
         point_viewer_command = contract["point_viewer_command"]
         self.assertEqual(point_viewer_command[:6], ["conda", "run", "-n", "demo_2_max", "--no-capture-output", "python"])
         self.assertEqual(point_viewer_command[6], "demo_v5/visualize_track.py")
-        self.assertEqual(point_viewer_command[point_viewer_command.index("--render-mode") + 1], "rgb-overlay")
+        self.assertEqual(point_viewer_command[point_viewer_command.index("--layout") + 1], "side-by-side")
+        self.assertEqual(point_viewer_command[point_viewer_command.index("--render-mode") + 1], "sam3d-final-data")
+        self.assertEqual(point_viewer_command[point_viewer_command.index("--capture-dir") + 1], "")
         self.assertEqual(
             point_viewer_command[point_viewer_command.index("--online-dir") + 1],
             "result/demo_v5/data_process_sam3d_chunks/online_data/demo_v5",
@@ -261,6 +265,15 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
         self.assertEqual(opt_command[opt_command.index("--segment_len") + 1], "35")
         self.assertEqual(opt_command[opt_command.index("--device") + 1], "cuda:0")
 
+    def test_disabled_point_viewer_does_not_force_input_rgb_timeline(self) -> None:
+        disabled_args = demo_v5.build_parser().parse_args(["--point-viewer-mode", "disabled"])
+        explicit_args = demo_v5.build_parser().parse_args(
+            ["--point-viewer-mode", "disabled", "--write-input-rgb-timeline"]
+        )
+
+        self.assertFalse(demo_v5.resolve_write_input_rgb_timeline(disabled_args))
+        self.assertTrue(demo_v5.resolve_write_input_rgb_timeline(explicit_args))
+
     def test_camera_command_uses_demo_v5_final_data_contract(self) -> None:
         args = demo_v5.build_parser().parse_args([])
         command = demo_v5.build_camera_realtime_command(
@@ -277,6 +290,7 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
         self.assertEqual(command[command.index("--depth-source") + 1], "realsense")
         self.assertEqual(command[command.index("--depth-backend-label") + 1], "native-realsense")
         self.assertIn("--headless-prepared-only", command)
+        self.assertIn("--write-input-rgb-timeline", command)
         self.assertIn("--enable-pcd-filter", command)
         self.assertEqual(command[command.index("--pcd-filter-mode") + 1], "sync")
         self.assertEqual(command[command.index("--pcd-filter-preset") + 1], "original")
@@ -852,7 +866,7 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
-    def test_default_point_viewer_starts_after_first_committed_online_chunk(self) -> None:
+    def test_output_only_point_viewer_starts_after_first_committed_online_chunk(self) -> None:
         root = Path("result/test_demo_v5_unit_point_viewer")
         shutil.rmtree(root, ignore_errors=True)
         try:
@@ -893,6 +907,8 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
                                 str(capture_dir),
                                 "--max-chunks",
                                 "1",
+                                "--point-viewer-layout",
+                                "output-only",
                             ]
                         )
 
@@ -903,7 +919,8 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
             self.assertIn("demo_v5/realtime_dense_track.py", camera_command[1])
             self.assertEqual(viewer_command[:6], ["conda", "run", "-n", "demo_2_max", "--no-capture-output", "python"])
             self.assertEqual(viewer_command[6], "demo_v5/visualize_track.py")
-            self.assertEqual(viewer_command[viewer_command.index("--render-mode") + 1], "rgb-overlay")
+            self.assertEqual(viewer_command[viewer_command.index("--layout") + 1], "output-only")
+            self.assertEqual(viewer_command[viewer_command.index("--render-mode") + 1], "sam3d-final-data")
             self.assertEqual(viewer_command[viewer_command.index("--online-dir") + 1], str(base_path / "online_data" / "demo_v5_rt"))
             self.assertEqual(viewer_command[viewer_command.index("--case-dir") + 1], str(base_path / "data" / "demo_v5_rt"))
             self.assertEqual(viewer_command[viewer_command.index("--fps") + 1], "5.0")
@@ -914,8 +931,211 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
             self.assertEqual(summary["optimization_mode"], "disabled")
             self.assertFalse(summary["optimization_started"])
             self.assertTrue(summary["point_viewer_started"])
+            self.assertEqual(summary["point_viewer_layout"], "output-only")
+            self.assertEqual(summary["point_viewer_start_policy"], "after_first_committed_online_chunk")
             self.assertEqual(summary["point_viewer_started_from_chunk"]["case_name"], "demo_v5_rt_chunk_0001")
             self.assertEqual(summary["point_viewer_return_code"], 0)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_side_by_side_point_viewer_starts_immediately_with_capture_dir(self) -> None:
+        root = Path("result/test_demo_v5_unit_side_by_side_point_viewer")
+        shutil.rmtree(root, ignore_errors=True)
+        try:
+            capture_dir = root / "capture"
+            base_path = root / "cases"
+            popen_calls: list[tuple[list[str], dict[str, object]]] = []
+            event_order: list[str] = []
+
+            def fake_popen(command, **kwargs):
+                popen_calls.append((list(command), dict(kwargs)))
+                if "demo_v5/visualize_track.py" in command:
+                    event_order.append("viewer_started")
+                elif "demo_v5/realtime_dense_track.py" in command:
+                    event_order.append("camera_started")
+                return FakeProcess(returncode=0)
+
+            def fake_stream(_capture_dir_arg, **kwargs):
+                event_order.append("stream_started")
+                manifest = {
+                    "case_name": "demo_v5_rt_chunk_0001",
+                    "frame_count": 35,
+                    "data_process_case_root": str(base_path / "demo_v5_rt_chunk_0001"),
+                    "online_chunk_path": str(base_path / "online_data" / "demo_v5_rt" / "chunks" / "chunk_000000.pkl"),
+                    "static_data_path": str(base_path / "data" / "demo_v5_rt" / "final_data.pkl"),
+                    "publish_wall_s": 7.0,
+                    "backlog_chunks": 0,
+                    "shape_prior_complete": True,
+                }
+                kwargs["on_chunk_written"](manifest)
+                return [manifest]
+
+            with mock.patch("demo_v5.realtime_data_process_sam3d.subprocess.Popen", side_effect=fake_popen):
+                with mock.patch("demo_v5.realtime_data_process_sam3d.stream_chunks_from_headless_capture", side_effect=fake_stream):
+                    with redirect_stdout(io.StringIO()) as stdout:
+                        exit_code = demo_v5.main(
+                            [
+                                "--shape-prior-worker-mode",
+                                "external",
+                                "--base-path",
+                                str(base_path),
+                                "--case-prefix",
+                                "demo_v5_rt",
+                                "--camera-capture-dir",
+                                str(capture_dir),
+                                "--max-chunks",
+                                "1",
+                            ]
+                        )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(event_order[:3], ["camera_started", "viewer_started", "stream_started"])
+            self.assertEqual(len(popen_calls), 2)
+            viewer_command, viewer_kwargs = popen_calls[1]
+            self.assertEqual(viewer_command[6], "demo_v5/visualize_track.py")
+            self.assertEqual(viewer_command[viewer_command.index("--layout") + 1], "side-by-side")
+            self.assertEqual(viewer_command[viewer_command.index("--capture-dir") + 1], str(capture_dir))
+            self.assertEqual(viewer_command[viewer_command.index("--input-rgb-timeline") + 1], str(capture_dir / "input_frames.jsonl"))
+            self.assertEqual(viewer_kwargs["env"]["CUDA_VISIBLE_DEVICES"], "1")
+            summary = json.loads(stdout.getvalue())
+            self.assertEqual(summary["point_viewer_layout"], "side-by-side")
+            self.assertEqual(summary["point_viewer_start_policy"], "immediate_after_camera_start")
+            self.assertEqual(summary["point_viewer_capture_dir"], str(capture_dir))
+            self.assertIsNone(summary["point_viewer_started_from_chunk"])
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_output_only_point_viewer_keeps_legacy_chunk_start_policy(self) -> None:
+        root = Path("result/test_demo_v5_unit_output_only_point_viewer")
+        shutil.rmtree(root, ignore_errors=True)
+        try:
+            capture_dir = root / "capture"
+            base_path = root / "cases"
+            event_order: list[str] = []
+
+            def fake_popen(command, **_kwargs):
+                if "demo_v5/visualize_track.py" in command:
+                    event_order.append("viewer_started")
+                elif "demo_v5/realtime_dense_track.py" in command:
+                    event_order.append("camera_started")
+                return FakeProcess(returncode=0)
+
+            def fake_stream(_capture_dir_arg, **kwargs):
+                event_order.append("stream_started")
+                manifest = {
+                    "case_name": "demo_v5_rt_chunk_0001",
+                    "frame_count": 35,
+                    "data_process_case_root": str(base_path / "demo_v5_rt_chunk_0001"),
+                    "online_chunk_path": str(base_path / "online_data" / "demo_v5_rt" / "chunks" / "chunk_000000.pkl"),
+                    "static_data_path": str(base_path / "data" / "demo_v5_rt" / "final_data.pkl"),
+                    "publish_wall_s": 7.0,
+                    "backlog_chunks": 0,
+                    "shape_prior_complete": True,
+                }
+                kwargs["on_chunk_written"](manifest)
+                return [manifest]
+
+            with mock.patch("demo_v5.realtime_data_process_sam3d.subprocess.Popen", side_effect=fake_popen):
+                with mock.patch("demo_v5.realtime_data_process_sam3d.stream_chunks_from_headless_capture", side_effect=fake_stream):
+                    with redirect_stdout(io.StringIO()) as stdout:
+                        exit_code = demo_v5.main(
+                            [
+                                "--shape-prior-worker-mode",
+                                "external",
+                                "--base-path",
+                                str(base_path),
+                                "--case-prefix",
+                                "demo_v5_rt",
+                                "--camera-capture-dir",
+                                str(capture_dir),
+                                "--max-chunks",
+                                "1",
+                                "--point-viewer-layout",
+                                "output-only",
+                            ]
+                        )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(event_order, ["camera_started", "stream_started", "viewer_started"])
+            summary = json.loads(stdout.getvalue())
+            self.assertEqual(summary["point_viewer_layout"], "output-only")
+            self.assertEqual(summary["point_viewer_start_policy"], "after_first_committed_online_chunk")
+            self.assertEqual(summary["point_viewer_started_from_chunk"]["case_name"], "demo_v5_rt_chunk_0001")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_prepared_only_headless_writer_can_still_write_input_rgb_timeline(self) -> None:
+        from qqtt.demo.realtime_masked_edgetam_pcd import (
+            CameraIntrinsics,
+            FramePacket,
+            HeadlessCaptureWriter,
+            PipelineTiming,
+        )
+
+        root = Path("result/test_demo_v5_unit_input_rgb_timeline")
+        shutil.rmtree(root, ignore_errors=True)
+        try:
+            writer = HeadlessCaptureWriter(
+                root,
+                metadata={
+                    "headless_prepared_only": True,
+                    "write_input_rgb_timeline": True,
+                },
+            )
+            packet = FramePacket(
+                seq=3,
+                color_bgr=np.full((4, 5, 3), (10, 20, 30), dtype=np.uint8),
+                depth_source="realsense",
+                intrinsics=CameraIntrinsics(1.0, 1.0, 0.0, 0.0),
+                depth_scale_m_per_unit=0.001,
+                receive_perf_s=12.5,
+                timing=PipelineTiming(),
+                source_timestamp_s=99.0,
+                source_frame_index=123,
+                source_step=456,
+            )
+
+            writer.write_input_frame(packet)
+
+            rows = [
+                json.loads(line)
+                for line in (root / "input_frames.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["seq"], 3)
+            self.assertEqual(rows[0]["input_rgb_path"], "input_rgb/000003.png")
+            self.assertTrue((root / "input_rgb" / "000003.png").is_file())
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_visualize_track_side_by_side_renders_input_with_blank_output_before_chunks(self) -> None:
+        viewer = importlib.import_module("demo_v5.visualize_track")
+        root = Path("result/test_demo_v5_side_by_side_blank")
+        shutil.rmtree(root, ignore_errors=True)
+        try:
+            capture_dir = root / "capture"
+            input_rgb_dir = capture_dir / "input_rgb"
+            input_rgb_dir.mkdir(parents=True)
+            import cv2
+
+            image = np.full((8, 10, 3), (5, 80, 180), dtype=np.uint8)
+            cv2.imwrite(str(input_rgb_dir / "000000.png"), image)
+            (capture_dir / "input_frames.jsonl").write_text(
+                json.dumps({"seq": 0, "input_rgb_path": "input_rgb/000000.png"}) + "\n",
+                encoding="utf-8",
+            )
+
+            rendered = viewer.render_side_by_side_frame(
+                input_frame=viewer.load_latest_input_rgb_frame(capture_dir / "input_frames.jsonl", capture_dir=capture_dir),
+                output_frame=None,
+                image_size=(10, 8),
+                right_blank_label="waiting for first final_data chunk",
+            )
+
+            self.assertEqual(rendered.shape, (8, 20, 3))
+            np.testing.assert_array_equal(rendered[2, 2], image[2, 2])
+            self.assertLess(int(rendered[2, 15].max()), 80)
         finally:
             shutil.rmtree(root, ignore_errors=True)
 

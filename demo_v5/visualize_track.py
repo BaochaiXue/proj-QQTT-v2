@@ -22,6 +22,10 @@ DEFAULT_CONTROLLER_RADIUS = 6
 RENDER_MODE_RGB_OVERLAY = "rgb-overlay"
 RENDER_MODE_SAM3D_FINAL_DATA = "sam3d-final-data"
 RENDER_MODES = (RENDER_MODE_RGB_OVERLAY, RENDER_MODE_SAM3D_FINAL_DATA)
+LAYOUT_OUTPUT_ONLY = "output-only"
+LAYOUT_SIDE_BY_SIDE = "side-by-side"
+LAYOUTS = (LAYOUT_SIDE_BY_SIDE, LAYOUT_OUTPUT_ONLY)
+DEFAULT_RIGHT_BLANK_LABEL = "waiting for first final_data chunk"
 
 
 @dataclass(frozen=True)
@@ -30,6 +34,15 @@ class CameraModel:
     camera_to_world: np.ndarray
     image_size: tuple[int, int]
     metadata_fps: float | None
+
+
+@dataclass(frozen=True)
+class InputRgbFrame:
+    seq: int
+    image_bgr: np.ndarray
+    path: Path | None
+    source_frame_index: int | None
+    source_timestamp_s: float | None
 
 
 def _require_cv2() -> Any:
@@ -186,6 +199,154 @@ def project_world_points_to_pixels(
 def _blank_image(image_size: tuple[int, int]) -> np.ndarray:
     width, height = int(image_size[0]), int(image_size[1])
     return np.zeros((height, width, 3), dtype=np.uint8)
+
+
+def _panel_image(image: np.ndarray | None, *, image_size: tuple[int, int]) -> np.ndarray:
+    cv2 = _require_cv2()
+    width, height = int(image_size[0]), int(image_size[1])
+    if image is None:
+        return _blank_image((width, height))
+    arr = np.asarray(image)
+    if arr.ndim != 3 or arr.shape[2] < 3:
+        return _blank_image((width, height))
+    bgr = np.ascontiguousarray(arr[:, :, :3], dtype=np.uint8)
+    if bgr.shape[1] == width and bgr.shape[0] == height:
+        return bgr.copy()
+    return cv2.resize(bgr, (width, height), interpolation=cv2.INTER_AREA)
+
+
+def _draw_panel_label(image: np.ndarray, text: str, *, right: bool = False) -> None:
+    if image.shape[0] < 40 or image.shape[1] < 160:
+        return
+    cv2 = _require_cv2()
+    origin = (12, 28)
+    if right:
+        (text_width, _text_height), _baseline = cv2.getTextSize(
+            text,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            1,
+        )
+        origin = (max(12, int(image.shape[1]) - int(text_width) - 12), 28)
+    cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 3, cv2.LINE_AA)
+    cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
+
+
+def _draw_center_label(image: np.ndarray, text: str) -> None:
+    if image.shape[0] < 60 or image.shape[1] < 160:
+        return
+    cv2 = _require_cv2()
+    (text_width, text_height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 1)
+    origin = (
+        max(12, (int(image.shape[1]) - int(text_width)) // 2),
+        max(32, (int(image.shape[0]) + int(text_height)) // 2),
+    )
+    cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 3, cv2.LINE_AA)
+    cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (180, 180, 180), 1, cv2.LINE_AA)
+
+
+def _input_rgb_path_from_row(row: Mapping[str, Any], *, capture_dir: Path) -> Path | None:
+    value = row.get("input_rgb_path")
+    if value is not None and str(value).strip():
+        path = Path(str(value))
+        return path if path.is_absolute() else capture_dir / path
+    seq = row.get("seq")
+    if seq is not None:
+        try:
+            seq_int = int(seq)
+        except (TypeError, ValueError):
+            seq_int = -1
+        if seq_int >= 0:
+            for directory in ("input_rgb", "rgb"):
+                path = capture_dir / directory / f"{seq_int:06d}.png"
+                if path.is_file():
+                    return path
+    return None
+
+
+def _input_rgb_frame_from_row(row: Mapping[str, Any], *, capture_dir: Path) -> InputRgbFrame | None:
+    cv2 = _require_cv2()
+    path = _input_rgb_path_from_row(row, capture_dir=capture_dir)
+    if path is None or not path.is_file():
+        return None
+    image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if image is None:
+        return None
+    try:
+        seq = int(row.get("seq", 0))
+    except (TypeError, ValueError):
+        seq = 0
+    source_frame_index = row.get("source_frame_index")
+    try:
+        source_frame_index = None if source_frame_index is None else int(source_frame_index)
+    except (TypeError, ValueError):
+        source_frame_index = None
+    source_timestamp_s = row.get("source_timestamp_s")
+    try:
+        source_timestamp_s = None if source_timestamp_s is None else float(source_timestamp_s)
+    except (TypeError, ValueError):
+        source_timestamp_s = None
+    return InputRgbFrame(
+        seq=seq,
+        image_bgr=np.ascontiguousarray(image, dtype=np.uint8),
+        path=path,
+        source_frame_index=source_frame_index,
+        source_timestamp_s=source_timestamp_s,
+    )
+
+
+def _read_jsonl_rows(path: Path) -> list[dict[str, Any]]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in lines:
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            rows.append(dict(json.loads(text)))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+    return rows
+
+
+def load_latest_input_rgb_frame(timeline_path: str | Path, *, capture_dir: str | Path) -> InputRgbFrame | None:
+    capture_path = Path(capture_dir).expanduser()
+    for row in reversed(_read_jsonl_rows(Path(timeline_path).expanduser())):
+        frame = _input_rgb_frame_from_row(row, capture_dir=capture_path)
+        if frame is not None:
+            return frame
+    return None
+
+
+def load_input_rgb_frames(timeline_path: str | Path, *, capture_dir: str | Path) -> list[InputRgbFrame]:
+    capture_path = Path(capture_dir).expanduser()
+    frames: list[InputRgbFrame] = []
+    for row in _read_jsonl_rows(Path(timeline_path).expanduser()):
+        frame = _input_rgb_frame_from_row(row, capture_dir=capture_path)
+        if frame is not None:
+            frames.append(frame)
+    return frames
+
+
+def render_side_by_side_frame(
+    *,
+    input_frame: InputRgbFrame | None,
+    output_frame: np.ndarray | None,
+    image_size: tuple[int, int],
+    right_blank_label: str = DEFAULT_RIGHT_BLANK_LABEL,
+) -> np.ndarray:
+    left = _panel_image(None if input_frame is None else input_frame.image_bgr, image_size=image_size)
+    right = _panel_image(output_frame, image_size=image_size)
+    if input_frame is None:
+        _draw_center_label(left, "waiting for RGB input")
+    if output_frame is None:
+        _draw_center_label(right, str(right_blank_label))
+    _draw_panel_label(left, "RGB input")
+    _draw_panel_label(right, "final_data output", right=True)
+    return np.ascontiguousarray(np.concatenate([left, right], axis=1), dtype=np.uint8)
 
 
 def _frame_path_candidates(case_dir: Path, *, cam_idx: int, source_frame: int) -> list[Path]:
@@ -698,6 +859,103 @@ def play_chunk(
     return last_image
 
 
+def _set_trackbar_max(cv2: Any, trackbar_name: str, window_name: str, max_value: int) -> None:
+    value = max(1, int(max_value))
+    try:
+        cv2.setTrackbarMax(trackbar_name, window_name, value)
+    except Exception:
+        pass
+
+
+def run_side_by_side(args: argparse.Namespace) -> int:
+    cv2 = _require_cv2()
+    online_dir = normalize_online_dir(args.online_dir)
+    case_dir = infer_case_dir(online_dir, args.case_dir)
+    camera = load_camera_model(case_dir, cam_idx=int(args.cam_idx))
+    fps = resolve_playback_fps(args, camera)
+    renderer = build_frame_renderer(args, camera=camera, fps=fps)
+    capture_dir = _resolve_capture_dir(args)
+    input_timeline = _resolve_input_rgb_timeline(args, capture_dir=capture_dir)
+
+    window_name = str(args.window_name)
+    trackbar_name = "output frame"
+    output_frames: list[tuple[dict[str, Any], int]] = []
+    loaded_paths: set[Path] = set()
+    output_index = 0
+    follow_latest = bool(args.follow_latest)
+    paused = False
+    last_step_s = time.monotonic()
+    trackbar_guard = {"updating": False}
+
+    def on_trackbar(value: int) -> None:
+        nonlocal output_index, follow_latest
+        if trackbar_guard["updating"]:
+            return
+        latest = max(0, len(output_frames) - 1)
+        output_index = min(max(int(value), 0), latest)
+        follow_latest = output_index >= latest
+
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.createTrackbar(trackbar_name, window_name, 0, 1, on_trackbar)
+    try:
+        while True:
+            _append_new_output_frames(
+                online_dir,
+                start_chunk=int(args.start_chunk),
+                loaded_paths=loaded_paths,
+                output_frames=output_frames,
+            )
+            latest = max(0, len(output_frames) - 1)
+            _set_trackbar_max(cv2, trackbar_name, window_name, latest)
+            now_s = time.monotonic()
+            if output_frames and follow_latest and not paused:
+                period_s = 1.0 / max(float(fps), 1e-6)
+                if output_index < latest and now_s - last_step_s >= period_s:
+                    steps = max(1, int((now_s - last_step_s) / period_s))
+                    output_index = min(latest, int(output_index) + steps)
+                    last_step_s = now_s
+                elif output_index >= latest:
+                    output_index = latest
+                    last_step_s = now_s
+            else:
+                output_index = min(output_index, latest)
+
+            input_frame = None
+            if capture_dir is not None and input_timeline is not None:
+                input_frame = load_latest_input_rgb_frame(input_timeline, capture_dir=capture_dir)
+            output_frame = _render_output_timeline_frame(
+                output_frames,
+                output_index=output_index,
+                renderer=renderer,
+                case_dir=case_dir,
+            )
+            image = render_side_by_side_frame(
+                input_frame=input_frame,
+                output_frame=output_frame,
+                image_size=camera.image_size,
+                right_blank_label=str(args.right_blank_label),
+            )
+            cv2.imshow(window_name, image)
+            trackbar_guard["updating"] = True
+            try:
+                cv2.setTrackbarPos(trackbar_name, window_name, int(output_index))
+            finally:
+                trackbar_guard["updating"] = False
+            key = cv2.waitKey(max(1, int(float(args.poll_sec) * 1000))) & 0xFF
+            if _key_requests_quit(key) or not _window_is_open(window_name):
+                return 0
+            if key == ord(" "):
+                paused = not paused
+                last_step_s = time.monotonic()
+            elif key in (ord("f"), ord("F")):
+                follow_latest = True
+                paused = False
+                output_index = latest
+                last_step_s = time.monotonic()
+    finally:
+        renderer.close()
+
+
 def wait_for_chunk(
     online_dir: Path,
     *,
@@ -753,8 +1011,128 @@ def list_available_chunk_paths(online_dir: Path, *, start_chunk: int) -> list[Pa
     return [path for path in paths if _chunk_sort_key(path)[0] >= start]
 
 
+def _append_new_output_frames(
+    online_dir: Path,
+    *,
+    start_chunk: int,
+    loaded_paths: set[Path],
+    output_frames: list[tuple[dict[str, Any], int]],
+) -> int:
+    appended = 0
+    for chunk_path in list_available_chunk_paths(online_dir, start_chunk=start_chunk):
+        resolved = chunk_path.resolve()
+        if resolved in loaded_paths:
+            continue
+        try:
+            chunk = dict(load_pickle(chunk_path))
+        except Exception:
+            continue
+        loaded_paths.add(resolved)
+        frame_count = _chunk_frame_count(chunk)
+        for local_frame in range(frame_count):
+            output_frames.append((chunk, int(local_frame)))
+            appended += 1
+    return appended
+
+
+def _render_output_timeline_frame(
+    output_frames: Sequence[tuple[dict[str, Any], int]],
+    *,
+    output_index: int,
+    renderer: Any,
+    case_dir: Path,
+) -> np.ndarray | None:
+    if not output_frames:
+        return None
+    idx = min(max(int(output_index), 0), len(output_frames) - 1)
+    chunk, local_frame = output_frames[idx]
+    return renderer.render_frame(chunk, local_frame=local_frame, case_dir=case_dir)
+
+
+def _resolve_capture_dir(args: argparse.Namespace) -> Path | None:
+    value = getattr(args, "capture_dir", None)
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return Path(value).expanduser()
+
+
+def _resolve_input_rgb_timeline(args: argparse.Namespace, *, capture_dir: Path | None) -> Path | None:
+    value = getattr(args, "input_rgb_timeline", None)
+    if value is not None and str(value).strip():
+        return Path(value).expanduser()
+    if capture_dir is None:
+        return None
+    return capture_dir / "input_frames.jsonl"
+
+
+def render_side_by_side_output_video(args: argparse.Namespace) -> int:
+    cv2 = _require_cv2()
+    online_dir = normalize_online_dir(args.online_dir)
+    case_dir = infer_case_dir(online_dir, args.case_dir)
+    camera = load_camera_model(case_dir, cam_idx=int(args.cam_idx))
+    fps = resolve_playback_fps(args, camera)
+    renderer = build_frame_renderer(args, camera=camera, fps=fps)
+    capture_dir = _resolve_capture_dir(args)
+    input_timeline = _resolve_input_rgb_timeline(args, capture_dir=capture_dir)
+    input_frames = (
+        []
+        if capture_dir is None or input_timeline is None
+        else load_input_rgb_frames(input_timeline, capture_dir=capture_dir)
+    )
+    loaded_paths: set[Path] = set()
+    output_frames: list[tuple[dict[str, Any], int]] = []
+    _append_new_output_frames(
+        online_dir,
+        start_chunk=int(args.start_chunk),
+        loaded_paths=loaded_paths,
+        output_frames=output_frames,
+    )
+    total_frames = max(len(input_frames), len(output_frames), 1)
+    output_path = Path(args.output_video).expanduser()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    writer = None
+    try:
+        for index in range(total_frames):
+            input_frame = input_frames[min(index, len(input_frames) - 1)] if input_frames else None
+            output_frame = None
+            if index < len(output_frames):
+                output_frame = _render_output_timeline_frame(
+                    output_frames,
+                    output_index=index,
+                    renderer=renderer,
+                    case_dir=case_dir,
+                )
+            image = render_side_by_side_frame(
+                input_frame=input_frame,
+                output_frame=output_frame,
+                image_size=camera.image_size,
+                right_blank_label=str(args.right_blank_label),
+            )
+            if writer is None:
+                height, width = image.shape[:2]
+                writer = cv2.VideoWriter(
+                    str(output_path),
+                    cv2.VideoWriter_fourcc(*"mp4v"),
+                    fps,
+                    (int(width), int(height)),
+                )
+                if not writer.isOpened():
+                    raise RuntimeError(f"failed to open VideoWriter for {output_path}")
+            writer.write(image)
+    finally:
+        if writer is not None:
+            writer.release()
+        renderer.close()
+    return 0
+
+
 def render_output_video(args: argparse.Namespace) -> int:
     cv2 = _require_cv2()
+    if str(getattr(args, "layout", LAYOUT_OUTPUT_ONLY)) == LAYOUT_SIDE_BY_SIDE:
+        return render_side_by_side_output_video(args)
     online_dir = normalize_online_dir(args.online_dir)
     case_dir = infer_case_dir(online_dir, args.case_dir)
     camera = load_camera_model(case_dir, cam_idx=int(args.cam_idx))
@@ -792,10 +1170,16 @@ def render_output_video(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Play Demo v5 online object/controller points chunk by chunk.")
+    parser.add_argument("--layout", choices=LAYOUTS, default=LAYOUT_OUTPUT_ONLY)
     parser.add_argument("--online-dir", type=Path, required=True, help="Path to online_data/<case> or its chunks directory.")
     parser.add_argument("--case-dir", type=Path, default=None, help="Path to data/<case>. Inferred from --online-dir when omitted.")
     parser.add_argument("--render-mode", choices=RENDER_MODES, default=RENDER_MODE_RGB_OVERLAY)
     parser.add_argument("--output-video", type=Path, default=None, help="Write existing chunks to MP4 and exit instead of opening a live window.")
+    parser.add_argument("--capture-dir", type=Path, default=None, help="Headless capture dir containing input_frames.jsonl and input_rgb/*.png.")
+    parser.add_argument("--input-rgb-timeline", type=Path, default=None, help="Path to input_frames.jsonl. Defaults to --capture-dir/input_frames.jsonl.")
+    parser.add_argument("--right-blank-label", default=DEFAULT_RIGHT_BLANK_LABEL)
+    parser.add_argument("--follow-latest", dest="follow_latest", action="store_true", default=True)
+    parser.add_argument("--no-follow-latest", dest="follow_latest", action="store_false")
     parser.add_argument("--cam-idx", type=int, default=0)
     parser.add_argument("--fps", type=float, default=None, help="Playback FPS. Defaults to metadata fps, then 5.")
     parser.add_argument("--poll-sec", type=float, default=0.1)
@@ -812,6 +1196,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def validate_args(args: argparse.Namespace) -> None:
+    if str(args.layout) not in LAYOUTS:
+        raise ValueError(f"--layout must be one of {', '.join(LAYOUTS)}")
     if int(args.cam_idx) < 0:
         raise ValueError("--cam-idx must be non-negative")
     if float(args.poll_sec) <= 0.0:
@@ -831,6 +1217,8 @@ def run(args: argparse.Namespace) -> int:
     validate_args(args)
     if args.output_video is not None:
         return render_output_video(args)
+    if str(args.layout) == LAYOUT_SIDE_BY_SIDE:
+        return run_side_by_side(args)
     cv2 = _require_cv2()
     online_dir = normalize_online_dir(args.online_dir)
     case_dir = infer_case_dir(online_dir, args.case_dir)

@@ -3,9 +3,9 @@
 
 This runner owns process boundaries, GPU routing, and artifact publication. The
 actual camera/tracker stack runs in ``demo_v5/realtime_dense_track.py``;
-SAM3D shape prior work can run in a separate managed worker; and optional
-realtime_phystwin optimization or point viewing starts only after a chunk has
-been atomically committed.
+SAM3D shape prior work can run in a separate managed worker; the default
+side-by-side point viewer starts as soon as capture starts, while optional
+realtime_phystwin optimization still starts only after a committed chunk.
 """
 from __future__ import annotations
 
@@ -88,7 +88,11 @@ DEFAULT_POINT_VIEWER_OBJECT_STRIDE = 1
 DEFAULT_POINT_VIEWER_OBJECT_RADIUS = 3
 DEFAULT_POINT_VIEWER_CONTROLLER_RADIUS = 6
 DEFAULT_POINT_VIEWER_OBJECT_COLOR_MODE = "rainbow"
-DEFAULT_POINT_VIEWER_RENDER_MODE = "rgb-overlay"
+POINT_VIEWER_LAYOUT_SIDE_BY_SIDE = "side-by-side"
+POINT_VIEWER_LAYOUT_OUTPUT_ONLY = "output-only"
+POINT_VIEWER_LAYOUTS = (POINT_VIEWER_LAYOUT_SIDE_BY_SIDE, POINT_VIEWER_LAYOUT_OUTPUT_ONLY)
+DEFAULT_POINT_VIEWER_LAYOUT = POINT_VIEWER_LAYOUT_SIDE_BY_SIDE
+DEFAULT_POINT_VIEWER_RENDER_MODE = "sam3d-final-data"
 DEFAULT_TABLE_CALIBRATE_PATH = Path("table_calibrate.pkl")
 DEFAULT_SAM31_CHECKPOINT_PATH = Path("vendor/demo_runtime/checkpoints/sam31/sam3.1_multiplex.pt")
 SAM31_CHECKPOINT_ENV = "QQTT_SAM31_CHECKPOINT"
@@ -214,6 +218,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Keep Demo v5 legacy per-frame headless artifacts in addition to prepared PhysTwin frames.",
     )
     parser.set_defaults(camera_headless_prepared_only=True)
+    parser.add_argument(
+        "--write-input-rgb-timeline",
+        dest="write_input_rgb_timeline",
+        action="store_true",
+        default=None,
+        help="Write input_rgb/*.png and input_frames.jsonl for the Demo v5 side-by-side realtime viewer.",
+    )
+    parser.add_argument(
+        "--no-write-input-rgb-timeline",
+        dest="write_input_rgb_timeline",
+        action="store_false",
+        help="Disable the side-by-side input RGB timeline even when the viewer layout is side-by-side.",
+    )
     parser.add_argument(
         "--max-chunks",
         type=int,
@@ -366,7 +383,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--point-viewer-mode",
         choices=("window", "disabled"),
         default=DEFAULT_POINT_VIEWER_MODE,
-        help="window launches the online object/controller point viewer after the first committed chunk.",
+        help="window launches the Demo v5 point viewer.",
+    )
+    parser.add_argument(
+        "--point-viewer-layout",
+        choices=POINT_VIEWER_LAYOUTS,
+        default=DEFAULT_POINT_VIEWER_LAYOUT,
+        help="Viewer layout. side-by-side shows live RGB input next to final_data output chunks.",
     )
     parser.add_argument("--point-viewer-conda-env", default=DEFAULT_POINT_VIEWER_CONDA_ENV)
     parser.add_argument("--point-viewer-cuda-visible-devices", default=DEFAULT_POINT_VIEWER_CUDA_VISIBLE_DEVICES)
@@ -519,6 +542,35 @@ def resolve_point_viewer_cuda_visible_devices(args: argparse.Namespace) -> str:
     if not value:
         raise ValueError("--point-viewer-cuda-visible-devices must be non-empty when point viewer is enabled")
     return value
+
+
+def resolve_point_viewer_layout(args: argparse.Namespace) -> str:
+    value = str(getattr(args, "point_viewer_layout", DEFAULT_POINT_VIEWER_LAYOUT))
+    if value not in POINT_VIEWER_LAYOUTS:
+        raise ValueError(f"unsupported point viewer layout: {value!r}")
+    return value
+
+
+def point_viewer_uses_side_by_side(args: argparse.Namespace) -> bool:
+    return resolve_point_viewer_layout(args) == POINT_VIEWER_LAYOUT_SIDE_BY_SIDE
+
+
+def point_viewer_start_policy(args: argparse.Namespace) -> str:
+    if str(getattr(args, "point_viewer_mode", DEFAULT_POINT_VIEWER_MODE)) != "window":
+        return "disabled"
+    if point_viewer_uses_side_by_side(args):
+        return "immediate_after_camera_start"
+    return "after_first_committed_online_chunk"
+
+
+def resolve_write_input_rgb_timeline(args: argparse.Namespace) -> bool:
+    value = getattr(args, "write_input_rgb_timeline", None)
+    if value is not None:
+        return bool(value)
+    return (
+        str(getattr(args, "point_viewer_mode", DEFAULT_POINT_VIEWER_MODE)) == "window"
+        and point_viewer_uses_side_by_side(args)
+    )
 
 
 def _repo_path(path: str | Path) -> Path:
@@ -695,10 +747,15 @@ def build_realtime_phystwin_optimization_command(
     return command
 
 
-def build_point_viewer_command(args: argparse.Namespace) -> list[str]:
+def build_point_viewer_command(args: argparse.Namespace, *, capture_dir: Path | None = None) -> list[str]:
+    layout = resolve_point_viewer_layout(args)
+    capture_text = "" if capture_dir is None else str(capture_dir)
+    input_timeline_text = "" if capture_dir is None else str(Path(capture_dir) / "input_frames.jsonl")
     command = [
         *_python_command_prefix(getattr(args, "point_viewer_conda_env", None)),
         str(Path("demo_v5") / "visualize_track.py"),
+        "--layout",
+        layout,
         "--online-dir",
         str(resolve_online_dir(args)),
         "--case-dir",
@@ -720,6 +777,16 @@ def build_point_viewer_command(args: argparse.Namespace) -> list[str]:
         "--object-color-mode",
         str(args.point_viewer_object_color_mode),
     ]
+    if layout == POINT_VIEWER_LAYOUT_SIDE_BY_SIDE:
+        command.extend(
+            [
+                "--capture-dir",
+                capture_text,
+                "--input-rgb-timeline",
+                input_timeline_text,
+                "--follow-latest",
+            ]
+        )
     return command
 
 
@@ -779,6 +846,7 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "camera_dtype": str(args.camera_dtype),
         "camera_lossless_max_backlog_seconds": args.camera_lossless_max_backlog_seconds,
         "camera_headless_prepared_only": bool(args.camera_headless_prepared_only),
+        "write_input_rgb_timeline": resolve_write_input_rgb_timeline(args),
         "shape_prior_warmup": bool(args.shape_prior_warmup),
         "shape_prior_start_policy": str(args.shape_prior_start_policy),
         "shape_prior_execution": str(args.shape_prior_execution),
@@ -798,6 +866,7 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         ),
         "shape_prior_worker_released_before_point_viewer": bool(
             str(args.shape_prior_worker_mode) == "managed" and str(args.point_viewer_mode) == "window"
+            and not point_viewer_uses_side_by_side(args)
         ),
         "shape_prior_chunk_wait_timeout_s": float(args.shape_prior_chunk_wait_timeout_s),
         "mask_radius_outlier_filter": bool(args.mask_radius_outlier_filter),
@@ -806,9 +875,11 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "write_final_pcd": bool(args.write_final_pcd),
         "source_headless_capture": None if args.source_headless_capture is None else str(args.source_headless_capture),
         "point_viewer_mode": str(args.point_viewer_mode),
+        "point_viewer_layout": resolve_point_viewer_layout(args),
         "point_viewer_command": build_point_viewer_command(args),
         "point_viewer_cuda_visible_devices": resolve_point_viewer_cuda_visible_devices(args),
-        "point_viewer_start_policy": "after_first_committed_online_chunk",
+        "point_viewer_start_policy": point_viewer_start_policy(args),
+        "point_viewer_capture_dir": None,
         "point_viewer_fps": float(args.replay_fps),
         "point_viewer_object_color_mode": str(args.point_viewer_object_color_mode),
         "optimization_mode": str(args.optimization_mode),
@@ -854,6 +925,7 @@ def validate_runtime_args(args: argparse.Namespace, *, chunk_frame_count: int) -
     if float(args.shape_prior_worker_max_observation_to_aligned_p95_m) <= 0.0:
         raise ValueError("--shape-prior-worker-max-observation-to-aligned-p95-m must be positive")
     if str(args.point_viewer_mode) == "window":
+        resolve_point_viewer_layout(args)
         if int(args.point_viewer_cam_idx) < 0:
             raise ValueError("--point-viewer-cam-idx must be non-negative")
         if float(args.point_viewer_poll_sec) <= 0.0:
@@ -979,6 +1051,8 @@ def build_camera_realtime_command(
         command.extend(["--lossless-input-fps", str(float(camera_source_replay_fps))])
     if bool(args.camera_headless_prepared_only):
         command.append("--headless-prepared-only")
+    if resolve_write_input_rgb_timeline(args):
+        command.append("--write-input-rgb-timeline")
     if bool(args.shape_prior_warmup):
         command.extend(
             [
@@ -1089,10 +1163,10 @@ def _start_continuous_optimization(
     )
 
 
-def _start_point_viewer(args: argparse.Namespace) -> subprocess.Popen[bytes]:
+def _start_point_viewer(args: argparse.Namespace, *, capture_dir: Path | None = None) -> subprocess.Popen[bytes]:
     """Launch the lightweight online point viewer in the repo environment."""
     return subprocess.Popen(
-        build_point_viewer_command(args),
+        build_point_viewer_command(args, capture_dir=capture_dir),
         cwd=REPO_ROOT,
         env=_point_viewer_env(args),
         start_new_session=True,
@@ -1246,6 +1320,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     shape_prior_worker_released_before_optimization = False
     shape_prior_worker_released_before_point_viewer = False
     point_viewer_process: subprocess.Popen[bytes] | None = None
+    point_viewer_started = False
     point_viewer_started_manifest: dict[str, object] | None = None
     point_viewer_start_wall_s: float | None = None
     point_viewer_return_code: int | None = None
@@ -1258,6 +1333,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     def on_chunk_written(manifest: dict[str, object]) -> None:
         nonlocal point_viewer_process
+        nonlocal point_viewer_started
         nonlocal point_viewer_started_manifest
         nonlocal point_viewer_start_wall_s
         nonlocal optimization_process
@@ -1267,15 +1343,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         nonlocal shape_prior_worker_return_code
         nonlocal shape_prior_worker_released_before_optimization
         nonlocal shape_prior_worker_released_before_point_viewer
-        # GPU1 is shared by the managed shape-prior worker and downstream tools.
-        # Release the worker after the first committed chunk has been published
-        # so the viewer/optimizer cannot fight SAM3D for memory.
-        if str(args.point_viewer_mode) == "window" and point_viewer_process is None:
+        # Output-only viewing starts after the first committed chunk. The
+        # side-by-side viewer starts immediately after camera launch so warmup
+        # RGB remains visible while the output side waits for chunks.
+        if (
+            str(args.point_viewer_mode) == "window"
+            and not point_viewer_uses_side_by_side(args)
+            and point_viewer_process is None
+        ):
             if shape_prior_worker_process is not None:
                 shape_prior_worker_return_code = _stop_process(shape_prior_worker_process)
                 shape_prior_worker_process = None
                 shape_prior_worker_released_before_point_viewer = True
             point_viewer_process = _start_point_viewer(args)
+            point_viewer_started = True
             point_viewer_started_manifest = dict(manifest)
             point_viewer_start_wall_s = time.monotonic()
         if str(args.optimization_mode) != "continuous" or optimization_process is not None:
@@ -1297,6 +1378,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         optimization_start_wall_s = time.monotonic()
 
     process = subprocess.Popen(command, env=camera_env, start_new_session=True)
+    if str(args.point_viewer_mode) == "window" and point_viewer_uses_side_by_side(args):
+        point_viewer_process = _start_point_viewer(args, capture_dir=capture_dir)
+        point_viewer_started = True
+        point_viewer_start_wall_s = time.monotonic()
     surface_points = _load_optional_points(args.surface_points_npy)
     interior_points = _load_optional_points(args.interior_points_npy)
     try:
@@ -1366,6 +1451,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         "camera_lossless_max_backlog_seconds": args.camera_lossless_max_backlog_seconds,
         "camera_headless_prepared_only": bool(args.camera_headless_prepared_only),
+        "write_input_rgb_timeline": resolve_write_input_rgb_timeline(args),
         "camera_source_replay_fps": resolve_camera_source_replay_fps(args),
         "camera_source_replay_fps_override": (
             None if args.camera_source_replay_fps is None else float(args.camera_source_replay_fps)
@@ -1402,11 +1488,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         "external_shape_prior_points": bool(surface_points is not None or interior_points is not None),
         "write_final_pcd": bool(args.write_final_pcd),
         "point_viewer_mode": str(args.point_viewer_mode),
-        "point_viewer_started": point_viewer_started_manifest is not None,
-        "point_viewer_start_policy": "after_first_committed_online_chunk",
+        "point_viewer_layout": resolve_point_viewer_layout(args),
+        "point_viewer_started": point_viewer_started,
+        "point_viewer_start_policy": point_viewer_start_policy(args),
+        "point_viewer_capture_dir": str(capture_dir) if point_viewer_uses_side_by_side(args) else None,
         "point_viewer_started_from_chunk": point_viewer_started_manifest,
         "point_viewer_start_wall_s": point_viewer_start_wall_s,
-        "point_viewer_command": build_point_viewer_command(args),
+        "point_viewer_command": build_point_viewer_command(
+            args,
+            capture_dir=capture_dir if point_viewer_uses_side_by_side(args) else None,
+        ),
         "point_viewer_cuda_visible_devices": resolve_point_viewer_cuda_visible_devices(args),
         "point_viewer_fps": float(args.replay_fps),
         "point_viewer_object_color_mode": str(args.point_viewer_object_color_mode),
@@ -1453,7 +1544,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return int(return_code)
     if args.max_chunks is not None and len(manifests) < int(args.max_chunks):
         return 1
-    if str(args.point_viewer_mode) == "window" and point_viewer_started_manifest is None:
+    if str(args.point_viewer_mode) == "window" and not point_viewer_started:
         return 1
     if point_viewer_return_code not in (0, None):
         return int(point_viewer_return_code)
