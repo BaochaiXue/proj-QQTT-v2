@@ -76,6 +76,25 @@ class OutputStreamPlaybackCursor:
         return int(self.output_index)
 
 
+@dataclass
+class RealtimeFpsMeter:
+    window_s: float = 1.5
+    _timestamps: list[float] | None = None
+
+    def update(self, now_s: float) -> float | None:
+        if self._timestamps is None:
+            self._timestamps = []
+        now = float(now_s)
+        self._timestamps.append(now)
+        cutoff = now - max(0.1, float(self.window_s))
+        while len(self._timestamps) > 2 and self._timestamps[0] < cutoff:
+            self._timestamps.pop(0)
+        if len(self._timestamps) < 2:
+            return None
+        elapsed = max(1e-9, self._timestamps[-1] - self._timestamps[0])
+        return float(len(self._timestamps) - 1) / elapsed
+
+
 def _require_cv2() -> Any:
     import cv2
 
@@ -259,6 +278,22 @@ def _draw_panel_label(image: np.ndarray, text: str, *, right: bool = False) -> N
             1,
         )
         origin = (max(12, int(image.shape[1]) - int(text_width) - 12), 28)
+    cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 3, cv2.LINE_AA)
+    cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
+
+
+def _draw_fps_overlay(image: np.ndarray, fps: float | None) -> None:
+    if fps is None or not math.isfinite(float(fps)) or image.shape[0] < 40 or image.shape[1] < 180:
+        return
+    cv2 = _require_cv2()
+    text = f"{float(fps):.1f} FPS"
+    (text_width, _text_height), _baseline = cv2.getTextSize(
+        text,
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        1,
+    )
+    origin = (max(12, int(image.shape[1]) - int(text_width) - 12), 28)
     cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 3, cv2.LINE_AA)
     cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
 
@@ -1015,11 +1050,13 @@ def _render_input_panel(
     input_frame: InputRgbFrame | None,
     *,
     image_size: tuple[int, int],
+    display_fps: float | None = None,
 ) -> np.ndarray:
     image = _panel_image(None if input_frame is None else input_frame.image_bgr, image_size=image_size)
     if input_frame is None:
         _draw_center_label(image, "waiting for RGB input")
     _draw_panel_label(image, "RGB input")
+    _draw_fps_overlay(image, display_fps)
     return image
 
 
@@ -1044,6 +1081,7 @@ def run_interactive_side_by_side(args: argparse.Namespace) -> int:
     output_frames: list[tuple[dict[str, Any], int]] = []
     loaded_paths: set[Path] = set()
     cursor = OutputStreamPlaybackCursor(fps=fps)
+    fps_meter = RealtimeFpsMeter()
     paused = False
 
     cv2.namedWindow(left_window_name, cv2.WINDOW_NORMAL)
@@ -1068,7 +1106,8 @@ def run_interactive_side_by_side(args: argparse.Namespace) -> int:
             input_frame = None
             if capture_dir is not None and input_timeline is not None:
                 input_frame = load_latest_input_rgb_frame(input_timeline, capture_dir=capture_dir)
-            input_panel = _render_input_panel(input_frame, image_size=camera.image_size)
+            display_fps = fps_meter.update(now_s)
+            input_panel = _render_input_panel(input_frame, image_size=camera.image_size, display_fps=display_fps)
             cv2.imshow(left_window_name, input_panel)
 
             if output_frames:

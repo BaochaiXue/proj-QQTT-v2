@@ -823,6 +823,33 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
 
         self.assertEqual(selected, 35)
 
+    def test_visualize_track_realtime_fps_meter_reports_recent_display_rate(self) -> None:
+        viewer = importlib.import_module("demo_v5.visualize_track")
+        meter = viewer.RealtimeFpsMeter()
+
+        first = meter.update(10.0)
+        second = meter.update(10.2)
+        third = meter.update(10.4)
+
+        self.assertIsNone(first)
+        self.assertAlmostEqual(second, 5.0)
+        self.assertAlmostEqual(third, 5.0)
+
+    def test_visualize_track_input_panel_can_draw_realtime_fps(self) -> None:
+        viewer = importlib.import_module("demo_v5.visualize_track")
+        frame = viewer.InputRgbFrame(
+            seq=7,
+            image_bgr=np.zeros((80, 120, 3), dtype=np.uint8),
+            path=None,
+            source_frame_index=42,
+            source_timestamp_s=8.4,
+        )
+
+        without_fps = viewer._render_input_panel(frame, image_size=(320, 180), display_fps=None)
+        with_fps = viewer._render_input_panel(frame, image_size=(320, 180), display_fps=12.3)
+
+        self.assertFalse(np.array_equal(without_fps, with_fps))
+
     def test_visualize_track_uses_interactive_open3d_backend_for_live_final_data_side_by_side(self) -> None:
         viewer = importlib.import_module("demo_v5.visualize_track")
 
