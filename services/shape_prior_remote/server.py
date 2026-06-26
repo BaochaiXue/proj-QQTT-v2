@@ -330,6 +330,20 @@ class ShapePriorSam3DWorker:
         self._last_upscaler_model_load_ms = _elapsed_ms(start_s)
         return self._upscaler
 
+    def _release_upscaler(self) -> None:
+        if self._upscaler is None:
+            return
+        self._upscaler = None
+        try:
+            import gc
+            import torch
+
+            gc.collect()
+            if str(self.device).startswith("cuda") and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
     def _load_inference(self) -> Any:
         if self._inference is not None:
             self._last_sam3d_model_load_ms = 0.0
@@ -393,6 +407,7 @@ class ShapePriorSam3DWorker:
             Image.fromarray(mask).resize(upscaled.size, Image.Resampling.NEAREST),
             dtype=np.uint8,
         )
+        self._release_upscaler()
         if int(np.count_nonzero(mask_u8)) <= 0:
             raise RuntimeError("dummy shape-prior warmup mask is empty")
 
@@ -456,6 +471,7 @@ class ShapePriorSam3DWorker:
         resized_mask = crop_mask.resize(upscaled.size, Image.Resampling.NEAREST)
         mask_u8 = (np.asarray(resized_mask, dtype=np.uint8) > 0).astype(np.uint8) * 255
         mask_refinement_ms = _elapsed_ms(mask_start_s)
+        self._release_upscaler()
         if int(np.count_nonzero(mask_u8)) <= 0:
             raise RuntimeError("upscaled shape-prior mask is empty")
         return upscaled_rgb, np.ascontiguousarray(mask_u8, dtype=np.uint8), {

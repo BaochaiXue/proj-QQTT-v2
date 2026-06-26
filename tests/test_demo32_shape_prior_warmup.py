@@ -525,6 +525,46 @@ class ShapePriorWorkerSam3DInputTest(unittest.TestCase):
         self.assertGreaterEqual(metadata["mask_refinement_ms"], 0.0)
         self.assertEqual(metadata["sam3d_input_shape"], list(calls["sam3d_image_shape"]))
 
+    def test_worker_releases_upscaler_before_sam3d_inference(self) -> None:
+        rgb = np.zeros((12, 16, 3), dtype=np.uint8)
+        object_mask = np.zeros((12, 16), dtype=bool)
+        object_mask[3:9, 5:11] = True
+        request = shape_prior_server.ShapePriorRequest(
+            metadata={"request_id": "req-release-upscaler", "seq": 0},
+            rgb_u8=rgb,
+            object_mask=object_mask,
+            controller_mask=np.zeros_like(object_mask),
+            depth_color_m=np.ones((12, 16), dtype=np.float32),
+            k_color=np.eye(3, dtype=np.float32),
+            camera_to_world_c2w=np.eye(4, dtype=np.float32),
+        )
+        calls: list[str] = []
+
+        class FakeUpscaler:
+            def __call__(self, *, prompt: str, image: Image.Image):
+                calls.append("upscale")
+                upscaled = image.resize((image.width * 4, image.height * 4), Image.Resampling.NEAREST)
+                return SimpleNamespace(images=[upscaled])
+
+        class FakePipeline:
+            def run(self, image_rgb, mask_u8, **kwargs):
+                calls.append("sam3d")
+                return {"glb": SimpleNamespace(vertices=np.eye(3, dtype=np.float32))}
+
+        worker = self._worker()
+        worker._upscaler = FakeUpscaler()
+
+        def load_inference():
+            self.assertIsNone(worker._upscaler)
+            return SimpleNamespace(_pipeline=FakePipeline())
+
+        worker._load_inference = load_inference  # type: ignore[method-assign]
+
+        canonical, _metadata = worker._canonical_points_from_sam3d(request)
+
+        self.assertEqual(calls, ["upscale", "sam3d"])
+        self.assertEqual(canonical.shape, (3, 3))
+
     def test_echo_observation_uses_processed_observation_mask_not_raw_prompt_mask(self) -> None:
         worker = self._worker()
         worker.echo_observation = True
