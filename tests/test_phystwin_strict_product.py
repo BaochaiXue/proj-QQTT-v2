@@ -60,6 +60,12 @@ def _filtered_controller_track(
     *,
     query_ids: np.ndarray | None = None,
     controller_mask: np.ndarray | None = None,
+    raw_visible: np.ndarray | None = None,
+    processed_mask_valid: np.ndarray | None = None,
+    depth_valid: np.ndarray | None = None,
+    measurement_valid: np.ndarray | None = None,
+    motions_valid: np.ndarray | None = None,
+    raw_points: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     pts = np.ascontiguousarray(np.asarray(points, dtype=np.float32))
     if pts.ndim != 3 or pts.shape[-1] != 3:
@@ -69,7 +75,7 @@ def _filtered_controller_track(
         query_ids = np.arange(point_count, dtype=np.int64)
     if controller_mask is None:
         controller_mask = np.ones((point_count,), dtype=bool)
-    return {
+    payload = {
         "object_points": np.zeros((frame_count, 0, 3), dtype=np.float32),
         "object_colors": np.zeros((frame_count, 0, 3), dtype=np.float32),
         "object_visibilities": np.zeros((frame_count, 0), dtype=bool),
@@ -81,6 +87,18 @@ def _filtered_controller_track(
         "controller_mask": np.ascontiguousarray(np.asarray(controller_mask, dtype=bool)),
         "controller_query_indices": np.ascontiguousarray(np.asarray(query_ids, dtype=np.int64)),
     }
+    for key, value, dtype in (
+        ("controller_raw_visible", raw_visible, bool),
+        ("controller_processed_mask_valid", processed_mask_valid, bool),
+        ("controller_depth_valid", depth_valid, bool),
+        ("controller_measurement_valid", measurement_valid, bool),
+        ("controller_motions_valid", motions_valid, bool),
+    ):
+        if value is not None:
+            payload[key] = np.ascontiguousarray(np.asarray(value, dtype=dtype))
+    if raw_points is not None:
+        payload["controller_raw_points"] = np.ascontiguousarray(np.asarray(raw_points, dtype=np.float32))
+    return payload
 
 
 def _filtered_object_track(
@@ -231,6 +249,55 @@ class PhysTwinStrictProductTest(unittest.TestCase):
         self.assertEqual(int(np.count_nonzero(filtered["controller_mask"])), 30)
         self.assertEqual(final_data["controller_points"].shape, (2, 30, 3))
 
+    def test_track_process_input_preserves_controller_observation_validity_stages(self) -> None:
+        tracks = np.array(
+            [
+                [[1.0, 1.0], [1.0, 2.0], [1.0, 3.0]],
+            ],
+            dtype=np.float32,
+        )
+        visibility = np.ones((1, 3), dtype=bool)
+        controller_mask = np.zeros((4, 5), dtype=bool)
+        controller_mask[1, 1] = True
+        controller_mask[1, 3] = True
+        pcd_points = np.zeros((1, 1, 4, 5, 3), dtype=np.float32)
+        pcd_points[0, 0, 1, 1] = np.array([0.10, 0.0, -0.10], dtype=np.float32)
+        pcd_points[0, 0, 1, 2] = np.array([0.20, 0.0, -0.10], dtype=np.float32)
+        pcd_points[0, 0, 1, 3] = 0.0
+        pcd_colors = np.ones_like(pcd_points, dtype=np.uint8) * 255
+
+        track_input = strict.build_track_process_input(
+            tracks_yx=tracks,
+            visibility=visibility,
+            processed_masks=[[{"object": np.zeros_like(controller_mask), "controller": controller_mask}]],
+            pcd_points=pcd_points,
+            pcd_colors=pcd_colors,
+            query_ids=np.array([10, 11, 12], dtype=np.int64),
+            query_semantic_labels=np.array([2, 2, 2], dtype=np.int8),
+        )
+
+        np.testing.assert_array_equal(track_input["controller_raw_visible"], np.array([[True, True, True]]))
+        np.testing.assert_array_equal(
+            track_input["controller_processed_mask_valid"],
+            np.array([[True, False, True]]),
+        )
+        np.testing.assert_array_equal(track_input["controller_depth_valid"], np.array([[True, True, False]]))
+        np.testing.assert_array_equal(
+            track_input["controller_measurement_valid"],
+            np.array([[True, False, False]]),
+        )
+        np.testing.assert_allclose(
+            track_input["controller_raw_points"][0],
+            np.array(
+                [
+                    [0.10, 0.0, -0.10],
+                    [0.20, 0.0, -0.10],
+                    [0.00, 0.0, 0.00],
+                ],
+                dtype=np.float32,
+            ),
+        )
+
     def test_streaming_controller_anchor_selector_reuses_initial_query_ids(self) -> None:
         query_ids = np.arange(100, 108, dtype=np.int64)
         first_points = np.zeros((2, len(query_ids), 3), dtype=np.float32)
@@ -255,81 +322,117 @@ class PhysTwinStrictProductTest(unittest.TestCase):
             source_idx = int(np.flatnonzero(query_ids == query_id)[0])
             np.testing.assert_allclose(second["controller_points"][:, anchor_idx, :], second_points[:, source_idx, :])
 
-    def test_streaming_controller_anchor_selector_marks_lost_anchor_missing_without_replacement(self) -> None:
-        query_ids = np.arange(200, 208, dtype=np.int64)
+    def test_streaming_controller_anchor_selector_recovers_tapnext_lost_primary_from_local_bundle(self) -> None:
+        query_ids = np.arange(200, 205, dtype=np.int64)
         first_points = np.zeros((2, len(query_ids), 3), dtype=np.float32)
-        first_points[0, :, 0] = np.linspace(0.00, 0.07, len(query_ids), dtype=np.float32)
-        first_points[0, :, 2] = -0.10
-        first_points[1] = first_points[0] + np.array([0.01, 0.0, 0.0], dtype=np.float32)
-        selector = strict.StreamingControllerAnchorSelector(count=3)
+        first_points[:, :, 0] = np.array([0.000, 0.006, 0.012, 0.018, 0.024], dtype=np.float32)
+        first_points[:, :, 2] = -0.10
+        first_points[1] = first_points[0] + np.array([0.010, 0.0, 0.0], dtype=np.float32)
+        selector = strict.StreamingControllerAnchorSelector(count=1, backup_query_count=4, backup_min_count=4)
         first = selector.select(_filtered_controller_track(first_points, query_ids=query_ids))
-        selected_ids = np.asarray(first["controller_anchor_query_indices"], dtype=np.int64)
+        primary_qid = int(first["controller_anchor_query_indices"][0])
 
-        second_points = first_points + np.array([0.03, 0.0, 0.0], dtype=np.float32)
-        lost_anchor_idx = 1
-        lost_query_id = int(selected_ids[lost_anchor_idx])
-        lost_source_idx = int(np.flatnonzero(query_ids == lost_query_id)[0])
-        controller_mask = np.ones((len(query_ids),), dtype=bool)
-        controller_mask[lost_source_idx] = False
-        second_points[:, lost_source_idx, :] = 0.0
+        second_points = first_points + np.array([0.050, 0.020, 0.000], dtype=np.float32)
+        primary_idx = int(np.flatnonzero(query_ids == primary_qid)[0])
+        raw_visible = np.ones((2, len(query_ids)), dtype=bool)
+        raw_visible[:, primary_idx] = False
+        measurement_valid = raw_visible.copy()
+        second_points[:, primary_idx, :] = 0.0
 
         second = selector.select(
             _filtered_controller_track(
                 second_points,
                 query_ids=query_ids,
-                controller_mask=controller_mask,
+                raw_visible=raw_visible,
+                measurement_valid=measurement_valid,
+                raw_points=second_points,
             )
         )
 
-        self.assertEqual(second["controller_points"].shape, (2, 3, 3))
-        np.testing.assert_array_equal(second["controller_anchor_query_indices"], selected_ids)
-        self.assertEqual(str(second["controller_anchor_status"][lost_anchor_idx]), "missing")
-        self.assertEqual(int(second["controller_anchor_active_query_indices"][lost_anchor_idx]), -1)
-        self.assertEqual(int(second["controller_fps_indices"][lost_anchor_idx]), -1)
-        self.assertEqual(second["controller_mask"].shape, (len(query_ids),))
-        self.assertFalse(bool(second["controller_mask"][lost_source_idx]))
-        self.assertEqual(second["controller_visibilities"].shape, (2, 3))
-        self.assertEqual(second["controller_motions_valid"].shape, (2, 3))
-        self.assertFalse(np.any(second["controller_visibilities"][:, lost_anchor_idx]))
-        self.assertFalse(np.any(second["controller_motions_valid"][:, lost_anchor_idx]))
-        self.assertTrue(np.isfinite(second["controller_points"]).all())
-        self.assertTrue(np.all(np.linalg.norm(second["controller_points"][:, lost_anchor_idx, :], axis=1) > 1e-9))
+        self.assertEqual(second["controller_points"].shape, (2, 1, 3))
+        self.assertEqual(int(second["controller_anchor_active_query_indices"][0]), primary_qid)
+        self.assertEqual(str(second["controller_anchor_observation_mode"][0, 0]), "tapnext_lost_bundle_recovered")
+        self.assertGreater(float(second["controller_anchor_confidence"][0, 0]), 0.7)
+        self.assertGreaterEqual(int(second["controller_anchor_bundle_support_count"][0, 0]), 4)
+        self.assertIn(int(second["controller_anchor_source_query_id"][0, 0]), query_ids[1:].tolist())
         np.testing.assert_allclose(
-            second["controller_points"][:, lost_anchor_idx, :],
-            np.repeat(first["controller_points"][-1:, lost_anchor_idx, :], 2, axis=0),
+            second["controller_points"][:, 0, :],
+            first_points[:, primary_idx, :] + np.array([0.050, 0.020, 0.000], dtype=np.float32),
+            atol=1e-6,
         )
+        self.assertNotEqual(str(second["controller_quality_status"]), "invalid")
 
-    def test_streaming_controller_anchor_selector_revives_lost_anchor_from_neighbor_motion(self) -> None:
+    def test_streaming_controller_anchor_selector_accepts_primary_raw_when_mask_reject_residual_is_small(self) -> None:
         query_ids = np.array([510, 511, 512], dtype=np.int64)
         first_points = np.zeros((2, 3, 3), dtype=np.float32)
-        first_points[:, :, 0] = np.array([0.000, 0.010, 0.020], dtype=np.float32)
+        first_points[:, :, 0] = np.array([0.000, 0.008, 0.016], dtype=np.float32)
         first_points[:, :, 2] = -0.10
-        selector = strict.StreamingControllerAnchorSelector(count=3)
+        selector = strict.StreamingControllerAnchorSelector(count=1, backup_query_count=2, backup_min_count=2)
         first = selector.select(_filtered_controller_track(first_points, query_ids=query_ids))
-        selected_ids = np.asarray(first["controller_anchor_query_indices"], dtype=np.int64)
-        lost_anchor_idx = int(np.flatnonzero(selected_ids == 511)[0])
-        lost_source_idx = int(np.flatnonzero(query_ids == 511)[0])
+        primary_qid = int(first["controller_anchor_query_indices"][0])
+        primary_idx = int(np.flatnonzero(query_ids == primary_qid)[0])
         second_points = first_points + np.array([0.050, 0.020, 0.000], dtype=np.float32)
-        second_points[:, lost_source_idx, :] = 0.0
-        controller_mask = np.ones((3,), dtype=bool)
-        controller_mask[lost_source_idx] = False
+        processed_valid = np.ones((2, 3), dtype=bool)
+        processed_valid[:, primary_idx] = False
+        measurement_valid = processed_valid.copy()
+        raw_points = second_points.copy()
+        filtered_points = second_points.copy()
+        filtered_points[:, primary_idx, :] = 0.0
 
+        second = selector.select(
+            _filtered_controller_track(
+                filtered_points,
+                query_ids=query_ids,
+                processed_mask_valid=processed_valid,
+                measurement_valid=measurement_valid,
+                raw_points=raw_points,
+            )
+        )
+
+        self.assertEqual(str(second["controller_anchor_observation_mode"][0, 0]), "mask_reject_primary_raw_accepted")
+        self.assertEqual(str(second["controller_anchor_failure_reason"][0, 0]), "processed_mask_reject")
+        self.assertEqual(int(second["controller_anchor_source_query_id"][0, 0]), primary_qid)
+        self.assertGreater(float(second["controller_anchor_confidence"][0, 0]), 0.7)
+        np.testing.assert_allclose(second["controller_points"][:, 0, :], raw_points[:, primary_idx, :], atol=1e-6)
+
+    def test_streaming_controller_anchor_selector_marks_unrecoverable_without_static_hold(self) -> None:
+        query_ids = np.array([700, 701], dtype=np.int64)
+        first_points = np.zeros((2, 2, 3), dtype=np.float32)
+        first_points[0, :, 0] = np.array([0.000, 0.010], dtype=np.float32)
+        first_points[0, :, 2] = -0.10
+        first_points[1] = first_points[0] + np.array([0.010, 0.0, 0.0], dtype=np.float32)
+        selector = strict.StreamingControllerAnchorSelector(count=1, backup_query_count=1, backup_min_count=1)
+        first = selector.select(_filtered_controller_track(first_points, query_ids=query_ids))
+        primary_qid = int(first["controller_anchor_query_indices"][0])
+        primary_idx = int(np.flatnonzero(query_ids == primary_qid)[0])
+
+        second_points = first_points.copy()
+        raw_visible = np.ones((2, 2), dtype=bool)
+        raw_visible[:, primary_idx] = False
+        measurement_valid = raw_visible.copy()
+        second_points[:, primary_idx, :] = 0.0
         second = selector.select(
             _filtered_controller_track(
                 second_points,
                 query_ids=query_ids,
-                controller_mask=controller_mask,
+                raw_visible=raw_visible,
+                measurement_valid=measurement_valid,
+                raw_points=second_points,
             )
         )
 
-        self.assertEqual(str(second["controller_anchor_status"][lost_anchor_idx]), "revived")
-        self.assertEqual(int(second["controller_anchor_active_query_indices"][lost_anchor_idx]), 511)
-        self.assertEqual(int(second["controller_fps_indices"][lost_anchor_idx]), -1)
-        np.testing.assert_array_equal(second["controller_anchor_query_indices"], selected_ids)
-        expected = first["controller_points"][-1, lost_anchor_idx] + np.array([0.050, 0.020, 0.000], dtype=np.float32)
-        np.testing.assert_allclose(second["controller_points"][:, lost_anchor_idx, :], np.repeat(expected[None], 2, axis=0))
-        self.assertTrue(np.all(second["controller_visibilities"][:, lost_anchor_idx]))
-        self.assertTrue(np.all(second["controller_motions_valid"][:, lost_anchor_idx]))
+        self.assertEqual(str(second["controller_anchor_observation_mode"][0, 0]), "tapnext_lost_unrecoverable")
+        self.assertLess(float(second["controller_anchor_confidence"][0, 0]), 0.25)
+        self.assertEqual(str(second["controller_quality_status"]), "invalid")
+        self.assertEqual(int(second["controller_anchor_active_query_indices"][0]), primary_qid)
+        self.assertEqual(int(second["controller_anchor_source_query_id"][0, 0]), -1)
+        self.assertTrue(np.isfinite(second["controller_points"]).all())
+        self.assertFalse(
+            np.allclose(
+                second["controller_points"][:, 0, :],
+                np.repeat(first["controller_points"][-1:, 0, :], 2, axis=0),
+            )
+        )
 
     def test_streaming_object_anchor_selector_reuses_first_chunk_volume_sample_query_ids(self) -> None:
         query_ids = np.arange(300, 306, dtype=np.int64)

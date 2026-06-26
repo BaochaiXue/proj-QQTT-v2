@@ -450,11 +450,15 @@ def build_track_process_input(
         object_label = semantic_labels == QUERY_SEMANTIC_OBJECT
         controller_label = semantic_labels == QUERY_SEMANTIC_CONTROLLER
 
-    semantic_vis = np.array(vis, dtype=bool, copy=True)
+    raw_visible = np.array(vis, dtype=bool, copy=True)
+    processed_mask_valid = np.zeros_like(raw_visible, dtype=bool)
+    depth_valid = np.zeros_like(raw_visible, dtype=bool)
+    measurement_valid = np.zeros_like(raw_visible, dtype=bool)
+    raw_points = np.zeros((tracks.shape[0], tracks.shape[1], 3), dtype=np.float32)
     for frame_idx in range(tracks.shape[0]):
         masks = normalize_processed_mask_frame(processed_masks[frame_idx][0])
         yy, xx, in_bounds = _round_tracks_to_indices(tracks[frame_idx], masks["object"].shape)
-        valid = semantic_vis[frame_idx] & in_bounds
+        valid = raw_visible[frame_idx] & in_bounds
         inside = np.zeros((tracks.shape[1],), dtype=bool)
         object_idx = valid & object_label
         controller_idx = valid & controller_label
@@ -462,26 +466,28 @@ def build_track_process_input(
             inside[object_idx] = masks["object"][yy[object_idx], xx[object_idx]]
         if np.any(controller_idx):
             inside[controller_idx] |= masks["controller"][yy[controller_idx], xx[controller_idx]]
-        semantic_vis[frame_idx] &= inside
+        processed_mask_valid[frame_idx] = inside
 
     track_points = np.zeros((tracks.shape[0], tracks.shape[1], 3), dtype=np.float32)
     track_colors = np.zeros((tracks.shape[0], tracks.shape[1], 3), dtype=np.float32)
     for frame_idx in range(tracks.shape[0]):
         height, width = points_grid.shape[2:4]
         yy, xx, in_bounds = _round_tracks_to_indices(tracks[frame_idx], (height, width))
-        valid = semantic_vis[frame_idx] & in_bounds
-        if np.any(valid):
-            sampled_points = points_grid[frame_idx, 0, yy[valid], xx[valid]]
+        raw_sample = raw_visible[frame_idx] & in_bounds
+        if np.any(raw_sample):
+            sampled_points = points_grid[frame_idx, 0, yy[raw_sample], xx[raw_sample]]
             finite_depth = np.isfinite(sampled_points).all(axis=1)
             nonzero_depth = np.linalg.norm(sampled_points, axis=1) > 1e-9
-            valid_indices = np.flatnonzero(valid)
-            invalid_indices = valid_indices[~(finite_depth & nonzero_depth)]
-            if len(invalid_indices):
-                semantic_vis[frame_idx, invalid_indices] = False
-            keep_indices = valid_indices[finite_depth & nonzero_depth]
+            valid_indices = np.flatnonzero(raw_sample)
+            keep_raw_indices = valid_indices[finite_depth & nonzero_depth]
+            depth_valid[frame_idx, keep_raw_indices] = True
+            if len(keep_raw_indices):
+                raw_points[frame_idx, keep_raw_indices] = points_grid[frame_idx, 0, yy[keep_raw_indices], xx[keep_raw_indices]]
+            keep_indices = np.flatnonzero(processed_mask_valid[frame_idx] & depth_valid[frame_idx])
             if len(keep_indices):
                 track_points[frame_idx, keep_indices] = points_grid[frame_idx, 0, yy[keep_indices], xx[keep_indices]]
                 track_colors[frame_idx, keep_indices] = colors_grid[frame_idx, 0, yy[keep_indices], xx[keep_indices]].astype(np.float32) / 255.0
+    measurement_valid = raw_visible & processed_mask_valid & depth_valid
 
     object_indices = np.flatnonzero(object_label)
     controller_indices = np.flatnonzero(controller_label)
@@ -494,10 +500,15 @@ def build_track_process_input(
         "controller_query_indices": controller_indices.astype(np.int64),
         "object_points": track_points[:, object_indices, :],
         "object_colors": track_colors[:, object_indices, :],
-        "object_visibilities": semantic_vis[:, object_indices],
+        "object_visibilities": measurement_valid[:, object_indices],
         "controller_points": track_points[:, controller_indices, :],
         "controller_colors": track_colors[:, controller_indices, :],
-        "controller_visibilities": semantic_vis[:, controller_indices],
+        "controller_visibilities": measurement_valid[:, controller_indices],
+        "controller_raw_points": raw_points[:, controller_indices, :],
+        "controller_raw_visible": raw_visible[:, controller_indices],
+        "controller_processed_mask_valid": processed_mask_valid[:, controller_indices],
+        "controller_depth_valid": depth_valid[:, controller_indices],
+        "controller_measurement_valid": measurement_valid[:, controller_indices],
     }
 
 
@@ -706,20 +717,67 @@ def _revive_lost_anchors_from_neighbor_motion(
     return revived
 
 
+def _rigid_transform_from_points(source: np.ndarray, target: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
+    src = np.asarray(source, dtype=np.float64).reshape(-1, 3)
+    dst = np.asarray(target, dtype=np.float64).reshape(-1, 3)
+    if src.shape != dst.shape or src.shape[0] < 3:
+        raise ValueError("rigid transform requires matching Nx3 source/target with N >= 3")
+    src_center = np.mean(src, axis=0)
+    dst_center = np.mean(dst, axis=0)
+    src_zero = src - src_center
+    dst_zero = dst - dst_center
+    u, _s, vt = np.linalg.svd(src_zero.T @ dst_zero)
+    rot = vt.T @ u.T
+    if np.linalg.det(rot) < 0:
+        vt[-1] *= -1
+        rot = vt.T @ u.T
+    trans = dst_center - rot @ src_center
+    residual = float(np.sqrt(np.mean(np.sum(((src @ rot.T) + trans - dst) ** 2, axis=1))))
+    return rot.astype(np.float32), trans.astype(np.float32), residual
+
+
+def _translation_from_points(source: np.ndarray, target: np.ndarray) -> tuple[np.ndarray, float]:
+    src = np.asarray(source, dtype=np.float64).reshape(-1, 3)
+    dst = np.asarray(target, dtype=np.float64).reshape(-1, 3)
+    if src.shape != dst.shape or src.shape[0] < 2:
+        raise ValueError("translation recovery requires matching Nx3 source/target with N >= 2")
+    displacements = dst - src
+    translation = np.median(displacements, axis=0)
+    residual = float(np.sqrt(np.mean(np.sum((displacements - translation[None, :]) ** 2, axis=1))))
+    return translation.astype(np.float32), residual
+
+
 class StreamingControllerAnchorSelector:
-    """Keep controller handle order stable across online chunks."""
+    """Keep controller handle order stable while recovering measurements locally."""
 
     def __init__(
         self,
         *,
         count: int = 30,
+        backup_query_count: int = 12,
+        backup_radius_m: float = 0.03,
+        backup_min_count: int = 4,
     ) -> None:
         if int(count) < 0:
             raise ValueError("count must be >= 0")
+        if int(backup_query_count) < 0:
+            raise ValueError("backup_query_count must be >= 0")
+        if float(backup_radius_m) <= 0.0:
+            raise ValueError("backup_radius_m must be positive")
+        if int(backup_min_count) < 0:
+            raise ValueError("backup_min_count must be >= 0")
         self.count = int(count)
+        self.backup_query_count = int(backup_query_count)
+        self.backup_radius_m = float(backup_radius_m)
+        self.backup_min_count = int(backup_min_count)
         self._initial_query_indices: np.ndarray | None = None
         self._active_query_indices: np.ndarray | None = None
         self._last_points: np.ndarray | None = None
+        self._last_velocity: np.ndarray | None = None
+        self._anchor_initial_points: np.ndarray | None = None
+        self._bundle_query_ids: np.ndarray | None = None
+        self._bundle_initial_points: np.ndarray | None = None
+        self._unreliable_chunk_counts: np.ndarray | None = None
 
     @property
     def initialized(self) -> bool:
@@ -733,12 +791,43 @@ class StreamingControllerAnchorSelector:
         frame_count, candidate_count, _ = points.shape
         query_indices = self._query_indices(result, candidate_count)
         controller_mask = self._controller_mask(result, candidate_count)
+        raw_points = np.asarray(result.get("controller_raw_points", points), dtype=np.float32)
+        if raw_points.shape != points.shape:
+            raise ValueError("controller_raw_points must match controller_points shape")
         controller_visibilities = self._controller_time_mask(
             result,
             "controller_visibilities",
             frame_count=frame_count,
             candidate_count=candidate_count,
             default=True,
+        )
+        controller_raw_visible = self._controller_time_mask(
+            result,
+            "controller_raw_visible",
+            frame_count=frame_count,
+            candidate_count=candidate_count,
+            default=controller_visibilities,
+        )
+        controller_processed_mask_valid = self._controller_time_mask(
+            result,
+            "controller_processed_mask_valid",
+            frame_count=frame_count,
+            candidate_count=candidate_count,
+            default=controller_visibilities,
+        )
+        controller_depth_valid = self._controller_time_mask(
+            result,
+            "controller_depth_valid",
+            frame_count=frame_count,
+            candidate_count=candidate_count,
+            default=controller_visibilities,
+        )
+        controller_measurement_valid = self._controller_time_mask(
+            result,
+            "controller_measurement_valid",
+            frame_count=frame_count,
+            candidate_count=candidate_count,
+            default=controller_visibilities,
         )
         controller_motions_valid = self._controller_time_mask(
             result,
@@ -757,10 +846,29 @@ class StreamingControllerAnchorSelector:
             initial_query_indices = np.ascontiguousarray(query_indices[selected], dtype=np.int64)
             self._initial_query_indices = initial_query_indices
             self._active_query_indices = initial_query_indices.copy()
+            self._anchor_initial_points = np.ascontiguousarray(output[0], dtype=np.float32).copy()
+            self._bundle_query_ids, self._bundle_initial_points = self._build_backup_bundles(
+                points=raw_points,
+                query_indices=query_indices,
+                selected=selected,
+                controller_mask=controller_mask,
+                measurement_valid=controller_measurement_valid,
+            )
             self._last_points = _last_valid_aligned_values(
                 output,
                 _valid_point_time_mask(output, output_visibilities),
             )
+            if frame_count >= 2:
+                self._last_velocity = np.ascontiguousarray(output[-1] - output[-2], dtype=np.float32)
+            else:
+                self._last_velocity = np.zeros_like(self._last_points, dtype=np.float32)
+            self._unreliable_chunk_counts = np.zeros((self.count,), dtype=np.int64)
+            mode = np.full((frame_count, self.count), "direct_valid", dtype="<U40")
+            confidence = np.ones((frame_count, self.count), dtype=np.float32)
+            failure = np.full((frame_count, self.count), "none", dtype="<U40")
+            source_query = np.repeat(initial_query_indices[None, :], frame_count, axis=0)
+            support_count = np.zeros((frame_count, self.count), dtype=np.int64)
+            residual = np.zeros((frame_count, self.count), dtype=np.float32)
             return self._with_anchor_payload(
                 result,
                 output,
@@ -769,78 +877,129 @@ class StreamingControllerAnchorSelector:
                 selected,
                 np.asarray(["direct"] * self.count),
                 active_query_indices=initial_query_indices,
+                source_query_ids=source_query,
+                observation_modes=mode,
+                confidence=confidence,
+                failure_reasons=failure,
+                bundle_support_count=support_count,
+                recovery_residual=residual,
+                quality_status="normal",
             )
 
         assert self._initial_query_indices is not None
         assert self._active_query_indices is not None
         assert self._last_points is not None
+        assert self._last_velocity is not None
+        assert self._anchor_initial_points is not None
+        assert self._bundle_query_ids is not None
+        assert self._bundle_initial_points is not None
+        assert self._unreliable_chunk_counts is not None
 
         output = np.zeros((frame_count, self.count, 3), dtype=np.float32)
         output_visibilities = np.zeros((frame_count, self.count), dtype=bool)
         output_motions_valid = np.zeros((frame_count, self.count), dtype=bool)
         selected = np.full((self.count,), -1, dtype=np.int64)
-        statuses = np.full((self.count,), "missing", dtype="<U8")
+        modes = np.full((frame_count, self.count), "tapnext_lost_unrecoverable", dtype="<U40")
+        failures = np.full((frame_count, self.count), "tapnext_lost", dtype="<U40")
+        confidence = np.full((frame_count, self.count), 0.1, dtype=np.float32)
+        source_query_ids = np.full((frame_count, self.count), -1, dtype=np.int64)
+        support_counts = np.zeros((frame_count, self.count), dtype=np.int64)
+        residuals = np.full((frame_count, self.count), np.inf, dtype=np.float32)
         active_query_indices = self._active_query_indices.copy()
-        used_candidates: set[int] = set()
         query_to_candidate = {int(query_id): int(idx) for idx, query_id in enumerate(query_indices.tolist())}
 
-        direct_mask = np.zeros((self.count,), dtype=bool)
         for anchor_idx in range(self.count):
-            # Direct recovery only accepts the fixed anchor query when it is still
-            # a strict-valid controller candidate in this chunk.
-            candidate_idx = self._direct_candidate_for_anchor(
-                anchor_idx,
-                query_to_candidate=query_to_candidate,
-                valid_candidates=selectable_candidates,
-            )
-            if candidate_idx is None or candidate_idx in used_candidates:
-                continue
-            output[:, anchor_idx, :] = points[:, candidate_idx, :]
-            output_visibilities[:, anchor_idx] = controller_visibilities[:, candidate_idx]
-            output_motions_valid[:, anchor_idx] = controller_motions_valid[:, candidate_idx]
-            selected[anchor_idx] = int(candidate_idx)
-            active_query_indices[anchor_idx] = int(query_indices[candidate_idx])
-            statuses[anchor_idx] = "direct" if bool(controller_mask[candidate_idx]) else "missing"
-            used_candidates.add(int(candidate_idx))
-            direct_mask[anchor_idx] = True
-
-        lost_indices = np.flatnonzero(~direct_mask)
-        current_valid = _valid_point_time_mask(output, output_visibilities) & output_motions_valid
-        # Current revival support comes only from the already-selected 30 anchors.
-        # If few anchors are direct-valid, this local-neighbor revival often fails
-        # even when many other strict-valid controller candidates still exist.
-        revived = _revive_lost_anchors_from_neighbor_motion(
-            previous_points=self._last_points,
-            current_points=output,
-            current_valid=current_valid,
-            direct_mask=direct_mask,
-            lost_indices=lost_indices,
-        )
-        for anchor_idx, (revived_points, _support, _weights) in revived.items():
-            output[:, anchor_idx, :] = revived_points
-            output_visibilities[:, anchor_idx] = True
-            output_motions_valid[:, anchor_idx] = True
+            primary_idx = query_to_candidate.get(int(self._initial_query_indices[anchor_idx]))
+            if primary_idx is not None:
+                selected[anchor_idx] = int(primary_idx)
+            previous_point = np.asarray(self._last_points[anchor_idx], dtype=np.float32).copy()
+            previous_velocity = np.asarray(self._last_velocity[anchor_idx], dtype=np.float32).copy()
+            for frame_idx in range(frame_count):
+                recovery = self._bundle_recovery_for_frame(
+                    anchor_idx,
+                    frame_idx,
+                    query_to_candidate=query_to_candidate,
+                    raw_points=raw_points,
+                    raw_visible=controller_raw_visible,
+                    processed_mask_valid=controller_processed_mask_valid,
+                    depth_valid=controller_depth_valid,
+                    motions_valid=controller_motions_valid,
+                )
+                support_counts[frame_idx, anchor_idx] = int(recovery["support_count"])
+                residuals[frame_idx, anchor_idx] = float(recovery["residual"])
+                primary = self._primary_observation(
+                    primary_idx,
+                    frame_idx,
+                    points=points,
+                    raw_points=raw_points,
+                    raw_visible=controller_raw_visible,
+                    processed_mask_valid=controller_processed_mask_valid,
+                    depth_valid=controller_depth_valid,
+                    measurement_valid=controller_measurement_valid,
+                    motions_valid=controller_motions_valid,
+                )
+                failures[frame_idx, anchor_idx] = str(primary["failure_reason"])
+                source_query = int(self._initial_query_indices[anchor_idx])
+                if bool(primary["direct_valid"]):
+                    point = np.asarray(primary["measurement_point"], dtype=np.float32)
+                    mode = "direct_valid"
+                    conf = 1.0
+                elif str(primary["failure_reason"]) == "processed_mask_reject" and bool(primary["raw_usable"]):
+                    point, mode, conf, source_query = self._recover_mask_or_motion_reject(
+                        raw_point=np.asarray(primary["raw_point"], dtype=np.float32),
+                        recovery=recovery,
+                        raw_accept_mode="mask_reject_primary_raw_accepted",
+                        bundle_mode="mask_reject_bundle_recovered",
+                        unrecoverable_mode="mask_reject_unrecoverable",
+                        primary_query_id=int(self._initial_query_indices[anchor_idx]),
+                    )
+                elif str(primary["failure_reason"]) == "motion_consistency_invalid" and bool(primary["raw_usable"]):
+                    point, mode, conf, source_query = self._recover_mask_or_motion_reject(
+                        raw_point=np.asarray(primary["raw_point"], dtype=np.float32),
+                        recovery=recovery,
+                        raw_accept_mode="motion_reject_residual_ok",
+                        bundle_mode="motion_reject_bundle_recovered",
+                        unrecoverable_mode="motion_reject_unrecoverable",
+                        primary_query_id=int(self._initial_query_indices[anchor_idx]),
+                    )
+                elif str(primary["failure_reason"]) == "depth_invalid":
+                    point, mode, conf, source_query = self._recover_or_predict(
+                        recovery=recovery,
+                        predicted_point=previous_point + previous_velocity,
+                        recovered_mode="depth_invalid_bundle_recovered",
+                        unrecoverable_mode="depth_invalid_unrecoverable",
+                    )
+                else:
+                    point, mode, conf, source_query = self._recover_or_predict(
+                        recovery=recovery,
+                        predicted_point=previous_point + previous_velocity,
+                        recovered_mode="tapnext_lost_bundle_recovered",
+                        unrecoverable_mode="tapnext_lost_unrecoverable",
+                    )
+                output[frame_idx, anchor_idx] = np.asarray(point, dtype=np.float32)
+                modes[frame_idx, anchor_idx] = str(mode)
+                confidence[frame_idx, anchor_idx] = float(conf)
+                source_query_ids[frame_idx, anchor_idx] = int(source_query)
+                output_visibilities[frame_idx, anchor_idx] = bool(float(conf) >= 0.25)
+                output_motions_valid[frame_idx, anchor_idx] = bool(float(conf) >= 0.25)
+                new_velocity = output[frame_idx, anchor_idx] - previous_point
+                previous_point = output[frame_idx, anchor_idx].copy()
+                if float(conf) >= 0.25:
+                    previous_velocity = new_velocity.astype(np.float32)
             active_query_indices[anchor_idx] = int(self._initial_query_indices[anchor_idx])
-            statuses[anchor_idx] = "revived"
 
-        revived_mask = np.zeros((self.count,), dtype=bool)
-        if revived:
-            revived_mask[np.asarray(sorted(revived), dtype=np.int64)] = True
-        for anchor_idx in np.flatnonzero((~direct_mask) & (~revived_mask)):
-            # TODO: Replace this hold-last fallback with a state estimator. This is
-            # the direct cause of visually static red controller points: a rejected
-            # observation becomes a repeated previous position instead of a recovered
-            # current anchor state.
-            held = np.repeat(self._last_points[int(anchor_idx)][None, :], frame_count, axis=0)
-            output[:, anchor_idx, :] = held
-            active_query_indices[anchor_idx] = -1
-
+        previous_last_points = np.asarray(self._last_points, dtype=np.float32).copy()
         self._active_query_indices = np.ascontiguousarray(active_query_indices, dtype=np.int64)
-        self._last_points = _last_valid_aligned_values(
-            output,
-            _valid_point_time_mask(output, output_visibilities),
-            previous=self._last_points,
-        )
+        self._last_points = np.ascontiguousarray(output[-1], dtype=np.float32)
+        if frame_count >= 2:
+            self._last_velocity = np.ascontiguousarray(output[-1] - output[-2], dtype=np.float32)
+        else:
+            self._last_velocity = np.ascontiguousarray(output[-1] - previous_last_points, dtype=np.float32)
+        statuses = self._summarize_anchor_statuses(modes, confidence)
+        reliable_anchor = np.any(confidence >= 0.4, axis=0)
+        self._unreliable_chunk_counts[reliable_anchor] = 0
+        self._unreliable_chunk_counts[~reliable_anchor] += 1
+        quality_status = self._quality_status(confidence)
         return self._with_anchor_payload(
             result,
             output,
@@ -849,6 +1008,13 @@ class StreamingControllerAnchorSelector:
             selected,
             statuses,
             active_query_indices=active_query_indices,
+            source_query_ids=source_query_ids,
+            observation_modes=modes,
+            confidence=confidence,
+            failure_reasons=failures,
+            bundle_support_count=support_counts,
+            recovery_residual=residuals,
+            quality_status=quality_status,
         )
 
     def _query_indices(self, result: Mapping[str, np.ndarray], candidate_count: int) -> np.ndarray:
@@ -884,7 +1050,13 @@ class StreamingControllerAnchorSelector:
         value = result.get(key)
         if value is None:
             if isinstance(default, np.ndarray):
-                mask = np.repeat(np.asarray(default, dtype=bool)[None, :], frame_count, axis=0)
+                default_arr = np.asarray(default, dtype=bool)
+                if default_arr.shape == (frame_count, candidate_count):
+                    mask = default_arr
+                elif default_arr.shape == (candidate_count,):
+                    mask = np.repeat(default_arr[None, :], frame_count, axis=0)
+                else:
+                    raise ValueError(f"default mask for {key} must have shape N or T,N")
             else:
                 mask = np.full((frame_count, candidate_count), bool(default), dtype=bool)
             return np.ascontiguousarray(mask, dtype=bool)
@@ -903,6 +1075,226 @@ class StreamingControllerAnchorSelector:
         candidates = points[:, valid_indices, :]
         sample_indices = _farthest_point_sample_indices(candidates[0], self.count)
         return np.ascontiguousarray(valid_indices[sample_indices], dtype=np.int64)
+
+    def _build_backup_bundles(
+        self,
+        *,
+        points: np.ndarray,
+        query_indices: np.ndarray,
+        selected: np.ndarray,
+        controller_mask: np.ndarray,
+        measurement_valid: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        bundle_ids = np.full((self.count, self.backup_query_count), -1, dtype=np.int64)
+        bundle_points = np.zeros((self.count, self.backup_query_count, 3), dtype=np.float32)
+        if self.backup_query_count == 0:
+            return bundle_ids, bundle_points
+        first_points = np.asarray(points[0], dtype=np.float32)
+        first_valid = (
+            np.asarray(controller_mask, dtype=bool)
+            & np.asarray(measurement_valid[0], dtype=bool)
+            & np.isfinite(first_points).all(axis=1)
+            & (np.linalg.norm(first_points, axis=1) > 1e-9)
+        )
+        selected_set = {int(idx) for idx in np.asarray(selected, dtype=np.int64).tolist()}
+        for anchor_idx, source_idx in enumerate(np.asarray(selected, dtype=np.int64).tolist()):
+            primary = first_points[int(source_idx)]
+            distances = np.linalg.norm(first_points - primary[None, :], axis=1)
+            candidates = np.flatnonzero(first_valid & (distances <= float(self.backup_radius_m)))
+            candidates = np.asarray([int(idx) for idx in candidates.tolist() if int(idx) not in selected_set], dtype=np.int64)
+            if candidates.size < self.backup_min_count:
+                continue
+            order = np.argsort(distances[candidates], kind="stable")[: self.backup_query_count]
+            keep = candidates[order]
+            if keep.size >= 3:
+                centered = first_points[keep] - np.mean(first_points[keep], axis=0, keepdims=True)
+                if np.linalg.matrix_rank(centered.astype(np.float64)) <= 0:
+                    continue
+            bundle_ids[anchor_idx, : keep.size] = np.asarray(query_indices[keep], dtype=np.int64)
+            bundle_points[anchor_idx, : keep.size] = np.asarray(first_points[keep], dtype=np.float32)
+        return np.ascontiguousarray(bundle_ids, dtype=np.int64), np.ascontiguousarray(bundle_points, dtype=np.float32)
+
+    def _primary_observation(
+        self,
+        candidate_idx: int | None,
+        frame_idx: int,
+        *,
+        points: np.ndarray,
+        raw_points: np.ndarray,
+        raw_visible: np.ndarray,
+        processed_mask_valid: np.ndarray,
+        depth_valid: np.ndarray,
+        measurement_valid: np.ndarray,
+        motions_valid: np.ndarray,
+    ) -> dict[str, object]:
+        if candidate_idx is None:
+            return {"failure_reason": "topology_missing", "direct_valid": False, "raw_usable": False}
+        idx = int(candidate_idx)
+        raw_ok = bool(raw_visible[frame_idx, idx])
+        depth_ok = bool(depth_valid[frame_idx, idx])
+        mask_ok = bool(processed_mask_valid[frame_idx, idx])
+        measurement_ok = bool(measurement_valid[frame_idx, idx])
+        motion_ok = bool(motions_valid[frame_idx, idx])
+        raw_point = np.asarray(raw_points[frame_idx, idx], dtype=np.float32)
+        measurement_point = np.asarray(points[frame_idx, idx], dtype=np.float32)
+        raw_finite = bool(np.isfinite(raw_point).all() and np.linalg.norm(raw_point) > 1e-9)
+        meas_finite = bool(np.isfinite(measurement_point).all() and np.linalg.norm(measurement_point) > 1e-9)
+        if not raw_ok:
+            failure = "tapnext_lost"
+        elif not depth_ok or not raw_finite:
+            failure = "depth_invalid"
+        elif not mask_ok:
+            failure = "processed_mask_reject"
+        elif not motion_ok:
+            failure = "motion_consistency_invalid"
+        elif not measurement_ok or not meas_finite:
+            failure = "measurement_invalid"
+        else:
+            failure = "none"
+        return {
+            "failure_reason": failure,
+            "direct_valid": failure == "none",
+            "raw_usable": bool(raw_ok and depth_ok and raw_finite),
+            "raw_point": raw_point,
+            "measurement_point": measurement_point,
+        }
+
+    def _bundle_recovery_for_frame(
+        self,
+        anchor_idx: int,
+        frame_idx: int,
+        *,
+        query_to_candidate: Mapping[int, int],
+        raw_points: np.ndarray,
+        raw_visible: np.ndarray,
+        processed_mask_valid: np.ndarray,
+        depth_valid: np.ndarray,
+        motions_valid: np.ndarray,
+    ) -> dict[str, object]:
+        assert self._bundle_query_ids is not None
+        assert self._bundle_initial_points is not None
+        assert self._anchor_initial_points is not None
+        support_initial: list[np.ndarray] = []
+        support_current: list[np.ndarray] = []
+        support_query_ids: list[int] = []
+        for slot_idx, query_id in enumerate(self._bundle_query_ids[int(anchor_idx)].tolist()):
+            if int(query_id) < 0:
+                continue
+            candidate_idx = query_to_candidate.get(int(query_id))
+            if candidate_idx is None:
+                continue
+            if not (
+                bool(raw_visible[frame_idx, candidate_idx])
+                and bool(processed_mask_valid[frame_idx, candidate_idx])
+                and bool(depth_valid[frame_idx, candidate_idx])
+                and bool(motions_valid[frame_idx, candidate_idx])
+            ):
+                continue
+            current = np.asarray(raw_points[frame_idx, candidate_idx], dtype=np.float32)
+            if not (np.isfinite(current).all() and np.linalg.norm(current) > 1e-9):
+                continue
+            support_initial.append(np.asarray(self._bundle_initial_points[int(anchor_idx), int(slot_idx)], dtype=np.float32))
+            support_current.append(current)
+            support_query_ids.append(int(query_id))
+        support_count = len(support_initial)
+        if support_count >= 3:
+            src = np.stack(support_initial, axis=0)
+            dst = np.stack(support_current, axis=0)
+            rot, trans, residual = _rigid_transform_from_points(src, dst)
+            predicted = rot @ np.asarray(self._anchor_initial_points[int(anchor_idx)], dtype=np.float32) + trans
+        elif support_count >= 2:
+            src = np.stack(support_initial, axis=0)
+            dst = np.stack(support_current, axis=0)
+            translation, residual = _translation_from_points(src, dst)
+            predicted = np.asarray(self._anchor_initial_points[int(anchor_idx)], dtype=np.float32) + translation
+        else:
+            return {
+                "available": False,
+                "point": None,
+                "confidence": 0.1,
+                "support_count": support_count,
+                "residual": np.inf,
+                "source_query_id": -1,
+            }
+        confidence = self._confidence_for_recovery(support_count=support_count, residual=residual)
+        return {
+            "available": bool(confidence >= 0.25),
+            "point": np.asarray(predicted, dtype=np.float32),
+            "confidence": float(confidence),
+            "support_count": support_count,
+            "residual": float(residual),
+            "source_query_id": support_query_ids[0] if support_query_ids else -1,
+        }
+
+    def _confidence_for_recovery(self, *, support_count: int, residual: float) -> float:
+        if int(support_count) < 2 or not np.isfinite(float(residual)):
+            return 0.1
+        if float(residual) > 0.03:
+            return 0.2
+        if float(residual) < 0.015 and int(support_count) >= 4:
+            return 0.85
+        if float(residual) < 0.015:
+            return 0.75
+        return 0.55
+
+    def _recover_or_predict(
+        self,
+        *,
+        recovery: Mapping[str, object],
+        predicted_point: np.ndarray,
+        recovered_mode: str,
+        unrecoverable_mode: str,
+    ) -> tuple[np.ndarray, str, float, int]:
+        if bool(recovery.get("available", False)):
+            return (
+                np.asarray(recovery["point"], dtype=np.float32),
+                str(recovered_mode),
+                float(recovery["confidence"]),
+                int(recovery.get("source_query_id", -1)),
+            )
+        return np.asarray(predicted_point, dtype=np.float32), str(unrecoverable_mode), 0.1, -1
+
+    def _recover_mask_or_motion_reject(
+        self,
+        *,
+        raw_point: np.ndarray,
+        recovery: Mapping[str, object],
+        raw_accept_mode: str,
+        bundle_mode: str,
+        unrecoverable_mode: str,
+        primary_query_id: int,
+    ) -> tuple[np.ndarray, str, float, int]:
+        raw = np.asarray(raw_point, dtype=np.float32)
+        if bool(recovery.get("available", False)):
+            bundle_point = np.asarray(recovery["point"], dtype=np.float32)
+            residual = float(np.linalg.norm(raw - bundle_point))
+            if residual <= 0.015:
+                return raw, str(raw_accept_mode), 0.8, int(primary_query_id)
+            return bundle_point, str(bundle_mode), float(recovery["confidence"]), int(recovery.get("source_query_id", -1))
+        return raw, str(unrecoverable_mode), 0.2, int(primary_query_id)
+
+    def _summarize_anchor_statuses(self, modes: np.ndarray, confidence: np.ndarray) -> np.ndarray:
+        statuses: list[str] = []
+        for anchor_idx in range(modes.shape[1]):
+            anchor_modes = {str(value) for value in modes[:, anchor_idx].reshape(-1).tolist()}
+            if anchor_modes == {"direct_valid"}:
+                statuses.append("direct")
+            elif bool(np.any(confidence[:, anchor_idx] >= 0.25)):
+                statuses.append("recovered")
+            else:
+                statuses.append("missing")
+        return np.asarray(statuses, dtype="<U16")
+
+    def _quality_status(self, confidence: np.ndarray) -> str:
+        conf = np.asarray(confidence, dtype=np.float32)
+        mean_conf = float(np.mean(conf)) if conf.size else 1.0
+        low_ratio = float(np.count_nonzero(conf < 0.25) / conf.size) if conf.size else 0.0
+        assert self._unreliable_chunk_counts is not None
+        if mean_conf < 0.45 or low_ratio > 0.40 or bool(np.any(self._unreliable_chunk_counts >= 3)):
+            return "invalid"
+        if mean_conf < 0.65 or low_ratio > 0.20:
+            return "degraded"
+        return "normal"
 
     def _direct_candidate_for_anchor(
         self,
@@ -932,8 +1324,16 @@ class StreamingControllerAnchorSelector:
         statuses: np.ndarray,
         *,
         active_query_indices: np.ndarray,
+        source_query_ids: np.ndarray,
+        observation_modes: np.ndarray,
+        confidence: np.ndarray,
+        failure_reasons: np.ndarray,
+        bundle_support_count: np.ndarray,
+        recovery_residual: np.ndarray,
+        quality_status: str,
     ) -> dict[str, np.ndarray]:
         assert self._initial_query_indices is not None
+        assert self._bundle_query_ids is not None
         result["controller_points"] = np.ascontiguousarray(output, dtype=np.float32)
         result["controller_visibilities"] = np.ascontiguousarray(output_visibilities, dtype=bool)
         result["controller_motions_valid"] = np.ascontiguousarray(output_motions_valid, dtype=bool)
@@ -943,7 +1343,19 @@ class StreamingControllerAnchorSelector:
         result["controller_anchor_active_query_indices"] = np.ascontiguousarray(
             np.asarray(active_query_indices, dtype=np.int64)
         )
-        result["controller_anchor_status"] = np.asarray(statuses, dtype="<U8")
+        result["controller_anchor_status"] = np.asarray(statuses, dtype="<U16")
+        result["controller_anchor_bundle_query_ids"] = np.ascontiguousarray(self._bundle_query_ids, dtype=np.int64)
+        result["controller_anchor_source_query_id"] = np.ascontiguousarray(np.asarray(source_query_ids, dtype=np.int64))
+        result["controller_anchor_observation_mode"] = np.asarray(observation_modes, dtype="<U40")
+        result["controller_anchor_confidence"] = np.ascontiguousarray(np.asarray(confidence, dtype=np.float32))
+        result["controller_anchor_failure_reason"] = np.asarray(failure_reasons, dtype="<U40")
+        result["controller_anchor_bundle_support_count"] = np.ascontiguousarray(
+            np.asarray(bundle_support_count, dtype=np.int64)
+        )
+        result["controller_anchor_recovery_residual"] = np.ascontiguousarray(
+            np.asarray(recovery_residual, dtype=np.float32)
+        )
+        result["controller_quality_status"] = np.asarray(str(quality_status))
         return result
 
 
