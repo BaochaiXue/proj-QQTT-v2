@@ -510,6 +510,31 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
             "track_process_invalid",
         )
 
+    def test_online_chunk_preserves_realtime_source_indices_and_timestamps(self) -> None:
+        root = Path("result/test_demo_v5_unit_online_source_timeline")
+        shutil.rmtree(root, ignore_errors=True)
+        try:
+            base_path = root / "cases"
+            manifest = write_data_process_chunk_case(
+                base_path,
+                "source_timeline_chunk_0001",
+                _tiny_data_process_chunk(chunk_index=0),
+            )
+            writer = ChunkedFinalDataWriter(base_path=base_path, case_name="source_timeline", chunk_size=2)
+            online_result = writer.commit_case_chunk(
+                Path(manifest["data_process_case_root"]),
+                source_frame_indices=[551, 557],
+                source_timestamps_s=[1018.3, 1018.5],
+            )
+            writer.finish()
+
+            with Path(online_result["online_chunk_path"]).open("rb") as handle:
+                online_chunk = pickle.load(handle)
+            self.assertEqual(online_chunk["source_frame_indices"], [551, 557])
+            self.assertEqual(online_chunk["source_timestamps_s"], [1018.3, 1018.5])
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
     def test_legacy_controller_anchor_keys_are_normalized_to_track_keys(self) -> None:
         root = Path("result/test_demo_v5_unit_legacy_anchor_schema")
         shutil.rmtree(root, ignore_errors=True)
@@ -686,6 +711,92 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
                 )
         finally:
             shutil.rmtree(root, ignore_errors=True)
+
+    def test_trim_warmup_delayed_rows_starts_at_realtime_stream(self) -> None:
+        rows = [
+            {
+                "seq": 0,
+                "source_frame_index": 0,
+                "source_timestamp_s": 1000.0,
+                "pipeline_latency_ms": 18234.0,
+                "startup_hold_s": 18.2,
+            },
+            {
+                "seq": 1,
+                "source_frame_index": 551,
+                "source_timestamp_s": 1018.3,
+                "pipeline_latency_ms": 248.0,
+                "startup_hold_s": 18.2,
+            },
+            {
+                "seq": 2,
+                "source_frame_index": 557,
+                "source_timestamp_s": 1018.5,
+                "pipeline_latency_ms": 221.0,
+                "startup_hold_s": 18.2,
+            },
+        ]
+
+        trimmed, skipped = realtime_data_process_track._trim_warmup_delayed_rows(rows)
+
+        self.assertEqual(skipped, 1)
+        self.assertEqual([row["source_frame_index"] for row in trimmed], [551, 557])
+
+    def test_live_start_filter_waits_for_second_row_before_publishing_first_chunk_row(self) -> None:
+        state = realtime_data_process_track._WarmupStartFilterState()
+        warmup_row = {
+            "seq": 0,
+            "source_frame_index": 0,
+            "source_timestamp_s": 1000.0,
+            "pipeline_latency_ms": 18234.0,
+            "startup_hold_s": 18.2,
+        }
+        realtime_row = {
+            "seq": 1,
+            "source_frame_index": 551,
+            "source_timestamp_s": 1018.3,
+            "pipeline_latency_ms": 248.0,
+            "startup_hold_s": 18.2,
+        }
+        realtime_next = {
+            "seq": 2,
+            "source_frame_index": 557,
+            "source_timestamp_s": 1018.5,
+            "pipeline_latency_ms": 221.0,
+            "startup_hold_s": 18.2,
+        }
+
+        first = realtime_data_process_track._filter_warmup_start_rows(
+            state,
+            [warmup_row],
+            capture_finished=False,
+        )
+        second = realtime_data_process_track._filter_warmup_start_rows(
+            state,
+            [realtime_row],
+            capture_finished=False,
+        )
+        third = realtime_data_process_track._filter_warmup_start_rows(
+            state,
+            [realtime_next],
+            capture_finished=False,
+        )
+
+        self.assertEqual(first, [])
+        self.assertEqual(second, [])
+        self.assertEqual([row["source_frame_index"] for row in third], [551, 557])
+        self.assertEqual(state.skipped_rows, 1)
+
+    def test_visualize_track_selects_output_frame_by_source_time_latency(self) -> None:
+        viewer = importlib.import_module("demo_v5.visualize_track")
+
+        selected = viewer.select_output_frame_for_input_source_time(
+            output_source_times=[18.0, 18.2, 18.4, 25.0, 25.2],
+            input_source_time=32.1,
+            target_latency_s=7.0,
+        )
+
+        self.assertEqual(selected, 3)
 
     def test_continuous_optimization_starts_once_for_whole_online_stream(self) -> None:
         root = Path("result/test_demo_v5_unit_continuous")

@@ -143,6 +143,7 @@ def build_online_chunk(
     start_frame: int,
     end_frame: int,
     source_frame_indices: Sequence[int] | None = None,
+    source_timestamps_s: Sequence[float] | None = None,
 ) -> dict[str, Any]:
     """Create the small per-window payload stored under online_data/chunks."""
     data = normalize_data_process_keys(data)
@@ -156,6 +157,11 @@ def build_online_chunk(
         "end_frame": int(end_frame),
         "source_frame_indices": indices,
     }
+    if source_timestamps_s is not None:
+        timestamps = [float(value) for value in source_timestamps_s]
+        if len(timestamps) != len(indices):
+            raise ValueError("source_timestamps_s length must match source_frame_indices")
+        chunk["source_timestamps_s"] = timestamps
     for key in TIME_KEYS:
         value = data.get(key)
         if value is not None:
@@ -227,6 +233,7 @@ class ChunkedFinalDataWriter:
         data: Mapping[str, Any],
         *,
         source_frame_indices: Sequence[int] | None = None,
+        source_timestamps_s: Sequence[float] | None = None,
         status: str = "recording",
     ) -> dict[str, Any]:
         """Append one final_data chunk and rewrite online metadata atomically."""
@@ -244,6 +251,8 @@ class ChunkedFinalDataWriter:
             )
         if len(source_frame_indices) != frame_count:
             raise ValueError("source_frame_indices length must match chunk frame count")
+        if source_timestamps_s is not None and len(source_timestamps_s) != frame_count:
+            raise ValueError("source_timestamps_s length must match chunk frame count")
         chunk_id = int(self.latest_committed_chunk + 1)
         chunk = build_online_chunk(
             data,
@@ -252,6 +261,7 @@ class ChunkedFinalDataWriter:
             start_frame=start_frame,
             end_frame=end_frame,
             source_frame_indices=source_frame_indices,
+            source_timestamps_s=source_timestamps_s,
         )
         atomic_pickle_dump(chunk, self.chunks_dir / f"chunk_{chunk_id:06d}.pkl")
         self._append_static_data(data, frame_count=frame_count)
@@ -274,6 +284,7 @@ class ChunkedFinalDataWriter:
         case_dir: str | Path,
         *,
         source_frame_indices: Sequence[int] | None = None,
+        source_timestamps_s: Sequence[float] | None = None,
         status: str = "recording",
     ) -> dict[str, Any]:
         """Commit a validated chunk case and mirror it into the aggregate case."""
@@ -287,6 +298,7 @@ class ChunkedFinalDataWriter:
         result = self.commit_final_data_chunk(
             online_data,
             source_frame_indices=source_frame_indices,
+            source_timestamps_s=source_timestamps_s,
             status=status,
         )
         aggregate_manifest = self._aggregate_writer.add_chunk_case(chunk_case_dir)

@@ -7,6 +7,7 @@ by realtime_phystwin.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import time
@@ -104,6 +105,129 @@ def _complete_chunk_backlog(frames_path: Path, *, chunk_size: int, published_chu
         return 0
     complete_chunks = _count_jsonl_rows(frames_path) // int(chunk_size)
     return max(0, int(complete_chunks) - int(published_chunk_count))
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if np.isfinite(result) else None
+
+
+def _row_source_frame_index(row: Mapping[str, Any], fallback: int) -> int:
+    value = _optional_int(row.get("source_frame_index"))
+    if value is not None:
+        return int(value)
+    value = _optional_int(row.get("seq"))
+    if value is not None:
+        return int(value)
+    return int(fallback)
+
+
+def _rows_source_frame_indices(rows: Sequence[Mapping[str, Any]], *, fallback_start: int) -> list[int]:
+    return [
+        _row_source_frame_index(row, int(fallback_start) + offset)
+        for offset, row in enumerate(rows)
+    ]
+
+
+def _rows_source_timestamps(rows: Sequence[Mapping[str, Any]]) -> list[float] | None:
+    values: list[float] = []
+    for row in rows:
+        value = _optional_float(row.get("source_timestamp_s"))
+        if value is None:
+            return None
+        values.append(float(value))
+    return values
+
+
+def _trim_warmup_delayed_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """Drop leading delayed warmup source rows before chunking realtime output.
+
+    Demo v5 writes ``input_frames.jsonl`` from camera start, but ``frames.jsonl``
+    is the data_process output stream. With shape-prior warmup, the first strict
+    pair can be source frame 0 processed many seconds late; the next row then
+    jumps to the realtime source frame after warmup. That delayed row is useful
+    for shape-prior diagnostics but must not define chunk_000000.
+    """
+    trimmed = [dict(row) for row in rows]
+    skipped = 0
+    while len(trimmed) >= 2:
+        first = trimmed[0]
+        second = trimmed[1]
+        first_source = _optional_int(first.get("source_frame_index"))
+        second_source = _optional_int(second.get("source_frame_index"))
+        if first_source is None or second_source is None:
+            break
+        source_gap = int(second_source) - int(first_source)
+        if source_gap <= 1:
+            break
+
+        following_gap = None
+        if len(trimmed) >= 3:
+            third_source = _optional_int(trimmed[2].get("source_frame_index"))
+            if third_source is not None:
+                following_gap = int(third_source) - int(second_source)
+        expected_gap = max(2, int(following_gap) if following_gap is not None and following_gap > 0 else 2)
+
+        startup_hold_s = _optional_float(first.get("startup_hold_s")) or _optional_float(second.get("startup_hold_s")) or 0.0
+        latency_ms = _optional_float(first.get("pipeline_latency_ms")) or 0.0
+        first_time = _optional_float(first.get("source_timestamp_s"))
+        second_time = _optional_float(second.get("source_timestamp_s"))
+        timestamp_gap_s = 0.0 if first_time is None or second_time is None else float(second_time - first_time)
+
+        looks_like_warmup_hold = (
+            startup_hold_s > 0.0
+            and latency_ms >= max(1000.0, startup_hold_s * 500.0)
+            and timestamp_gap_s >= max(1.0, startup_hold_s * 0.5)
+        )
+        looks_like_stream_jump = source_gap > max(10, expected_gap * 3)
+        if not (looks_like_warmup_hold and looks_like_stream_jump):
+            break
+        skipped += 1
+        trimmed.pop(0)
+    return trimmed, int(skipped)
+
+
+@dataclass
+class _WarmupStartFilterState:
+    pending_rows: list[dict[str, Any]] = field(default_factory=list)
+    resolved: bool = False
+    skipped_rows: int = 0
+
+
+def _filter_warmup_start_rows(
+    state: _WarmupStartFilterState,
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    capture_finished: bool,
+) -> list[dict[str, Any]]:
+    """Hold the first live rows until warmup-delayed source rows can be trimmed."""
+    if state.resolved:
+        return [dict(row) for row in rows]
+    state.pending_rows.extend(dict(row) for row in rows)
+    trimmed, skipped = _trim_warmup_delayed_rows(state.pending_rows)
+    if skipped:
+        state.skipped_rows += int(skipped)
+        state.pending_rows = trimmed
+    if len(state.pending_rows) < 2 and not bool(capture_finished):
+        return []
+    state.resolved = True
+    output = list(state.pending_rows)
+    state.pending_rows = []
+    return output
 
 
 def _load_rgb(path: Path) -> np.ndarray:
@@ -773,6 +897,7 @@ def _write_chunk_from_rows(
     object_track_selector: strict.StreamingObjectTrackSelector | None = None,
     controller_track_selector: strict.StreamingControllerTrackSelector | None = None,
     session_query_schema: dict[str, np.ndarray] | None = None,
+    warmup_skipped_rows: int = 0,
 ) -> dict[str, Any]:
     """Write one data_process_sam3d case and optionally commit it to online output."""
     case_name = f"{case_prefix}_chunk_{chunk_index:04d}"
@@ -825,6 +950,12 @@ def _write_chunk_from_rows(
     track_finalize_done_wall_s = max(_relative_wall_s(float(wall_time_origin_s)), window_closed_wall_s)
     track_fields = _object_track_manifest_fields(chunk.track_process_data)
     track_fields.update(_controller_track_manifest_fields(chunk.track_process_data))
+    chunk_source_frame_indices = (
+        [int(value) for value in chunk.source_frame_indices]
+        if chunk.source_frame_indices is not None
+        else _rows_source_frame_indices(rows, fallback_start=row_start)
+    )
+    chunk_source_timestamps_s = _rows_source_timestamps(rows)
 
     def manifest_extras() -> dict[str, Any]:
         backlog_count = 0 if backlog_chunks is None else int(backlog_chunks())
@@ -832,9 +963,11 @@ def _write_chunk_from_rows(
             "source_capture_dir": str(capture),
             "source_row_start": int(row_start),
             "source_row_end": int(row_end),
+            "warmup_skipped_rows": int(warmup_skipped_rows),
             "source_window_start_s": source_window_start_s,
             "source_window_end_s": source_window_end_s,
             "chunk_ready_source_seq": int(rows[-1].get("seq", row_end - 1)),
+            "chunk_ready_source_frame_index": int(chunk_source_frame_indices[-1]),
             "chunk_ready_source_time_s": (
                 None
                 if rows[-1].get("source_timestamp_s") is None
@@ -875,10 +1008,8 @@ def _write_chunk_from_rows(
     if online_writer is not None:
         online_result = online_writer.commit_case_chunk(
             Path(manifest["data_process_case_root"]),
-            source_frame_indices=[
-                int(row.get("seq", row_start + offset))
-                for offset, row in enumerate(rows)
-            ],
+            source_frame_indices=chunk_source_frame_indices,
+            source_timestamps_s=chunk_source_timestamps_s,
             status="recording",
         )
         manifest.update(
@@ -940,23 +1071,24 @@ def write_chunks_from_headless_capture(
     row_start = 0
     wall_time_origin_s = time.monotonic()
     frames_path = capture / "frames.jsonl"
+    rows_to_process, warmup_skipped_rows = _trim_warmup_delayed_rows(list(_iter_jsonl(frames_path)))
     online_writer = None
     if bool(write_online_output):
         online_writer = ChunkedFinalDataWriter(
             base_path=base_path,
             case_name=str(online_case_name or case_prefix),
             chunk_size=chunk_size,
-            num_frames_total=_online_total_frame_count(
-                frames_path,
-                chunk_size=chunk_size,
-                max_chunks=max_chunks,
+            num_frames_total=(
+                min(len(rows_to_process) // chunk_size, int(max_chunks)) * chunk_size
+                if max_chunks is not None
+                else (len(rows_to_process) // chunk_size) * chunk_size
             ),
             allow_degraded=bool(allow_degraded_online),
         )
     object_track_selector = strict.StreamingObjectTrackSelector(volume_sample_size=0.005)
     controller_track_selector = strict.StreamingControllerTrackSelector(count=30)
     session_query_schema: dict[str, np.ndarray] = {}
-    for row_idx, row in enumerate(_iter_jsonl(capture / "frames.jsonl")):
+    for row_idx, row in enumerate(rows_to_process):
         if max_chunks is not None and len(manifests) >= int(max_chunks):
             break
         row_buffer.append(row)
@@ -996,6 +1128,7 @@ def write_chunks_from_headless_capture(
             object_track_selector=object_track_selector,
             controller_track_selector=controller_track_selector,
             session_query_schema=session_query_schema,
+            warmup_skipped_rows=warmup_skipped_rows,
         )
         manifests.append(manifest)
         if not bool(manifest.get("online_publish_skipped", False)) and on_chunk_written is not None:
@@ -1074,6 +1207,7 @@ def stream_chunks_from_headless_capture(
     chunk_index = 1
     chunk_size = int(chunk_frame_count)
     wall_time_origin_s = time.monotonic()
+    warmup_start_filter = _WarmupStartFilterState()
     online_writer = None
     if bool(write_online_output):
         online_writer = ChunkedFinalDataWriter(
@@ -1096,6 +1230,11 @@ def stream_chunks_from_headless_capture(
             before_poll()
         rows, frames_offset = _read_jsonl_from_offset(frames_path, frames_offset)
         saw_new_rows = bool(rows)
+        rows = _filter_warmup_start_rows(
+            warmup_start_filter,
+            rows,
+            capture_finished=bool(capture_finished()),
+        )
         for row in rows:
             # A chunk closes strictly by row count. Shape-prior readiness and
             # final_data materialization are handled after this window boundary
@@ -1147,6 +1286,7 @@ def stream_chunks_from_headless_capture(
                 object_track_selector=object_track_selector,
                 controller_track_selector=controller_track_selector,
                 session_query_schema=session_query_schema,
+                warmup_skipped_rows=warmup_start_filter.skipped_rows,
             )
             manifests.append(manifest)
             if not bool(manifest.get("online_publish_skipped", False)) and on_chunk_written is not None:

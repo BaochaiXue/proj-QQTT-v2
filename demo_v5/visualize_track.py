@@ -398,6 +398,76 @@ def _source_frame_for_chunk_frame(chunk: Mapping[str, Any], local_frame: int) ->
     return int(chunk.get("start_frame", 0)) + int(local_frame)
 
 
+def _source_time_for_chunk_frame(
+    chunk: Mapping[str, Any],
+    local_frame: int,
+    *,
+    fps: float,
+    allow_frame_index_fallback: bool = False,
+) -> float | None:
+    source_timestamps = chunk.get("source_timestamps_s")
+    if source_timestamps is not None:
+        try:
+            value = float(source_timestamps[int(local_frame)])
+            if math.isfinite(value):
+                return value
+        except (IndexError, TypeError, ValueError):
+            pass
+    source_indices = chunk.get("source_frame_indices")
+    if allow_frame_index_fallback and source_indices is not None and math.isfinite(float(fps)) and float(fps) > 0.0:
+        try:
+            return float(source_indices[int(local_frame)]) / float(fps)
+        except (IndexError, TypeError, ValueError):
+            pass
+    return None
+
+
+def output_source_times(
+    output_frames: Sequence[tuple[Mapping[str, Any], int]],
+    *,
+    fps: float,
+    allow_frame_index_fallback: bool = False,
+) -> list[float] | None:
+    times: list[float] = []
+    for chunk, local_frame in output_frames:
+        source_time = _source_time_for_chunk_frame(
+            chunk,
+            int(local_frame),
+            fps=float(fps),
+            allow_frame_index_fallback=bool(allow_frame_index_fallback),
+        )
+        if source_time is None:
+            return None
+        times.append(float(source_time))
+    return times
+
+
+def select_output_frame_for_input_source_time(
+    *,
+    output_source_times: Sequence[float],
+    input_source_time: float,
+    target_latency_s: float,
+) -> int:
+    if not output_source_times:
+        return 0
+    target_time = float(input_source_time) - float(target_latency_s)
+    best = 0
+    found = False
+    for index, value in enumerate(output_source_times):
+        try:
+            source_time = float(value)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(source_time):
+            continue
+        if source_time <= target_time:
+            best = int(index)
+            found = True
+            continue
+        break
+    return int(best if found else 0)
+
+
 def parse_bgr_color(text: str) -> tuple[int, int, int]:
     parts = [part.strip() for part in str(text).split(",")]
     if len(parts) != 3:
@@ -885,6 +955,7 @@ def run_side_by_side(args: argparse.Namespace) -> int:
     follow_latest = bool(args.follow_latest)
     paused = False
     last_step_s = time.monotonic()
+    target_latency_s = float(args.target_latency_s) if args.target_latency_s is not None else 7.0
     trackbar_guard = {"updating": False}
 
     def on_trackbar(value: int) -> None:
@@ -923,6 +994,32 @@ def run_side_by_side(args: argparse.Namespace) -> int:
             input_frame = None
             if capture_dir is not None and input_timeline is not None:
                 input_frame = load_latest_input_rgb_frame(input_timeline, capture_dir=capture_dir)
+            input_source_time = None
+            allow_frame_index_fallback = False
+            if input_frame is not None:
+                if input_frame.source_timestamp_s is not None:
+                    input_source_time = float(input_frame.source_timestamp_s)
+                elif input_frame.source_frame_index is not None and float(fps) > 0.0:
+                    input_source_time = float(input_frame.source_frame_index) / float(fps)
+                    allow_frame_index_fallback = True
+            if (
+                output_frames
+                and follow_latest
+                and not paused
+                and input_source_time is not None
+            ):
+                times = output_source_times(
+                    output_frames,
+                    fps=float(fps),
+                    allow_frame_index_fallback=allow_frame_index_fallback,
+                )
+                if times is not None:
+                    output_index = select_output_frame_for_input_source_time(
+                        output_source_times=times,
+                        input_source_time=float(input_source_time),
+                        target_latency_s=target_latency_s,
+                    )
+                    last_step_s = now_s
             output_frame = _render_output_timeline_frame(
                 output_frames,
                 output_index=output_index,
@@ -1182,6 +1279,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-follow-latest", dest="follow_latest", action="store_false")
     parser.add_argument("--cam-idx", type=int, default=0)
     parser.add_argument("--fps", type=float, default=None, help="Playback FPS. Defaults to metadata fps, then 5.")
+    parser.add_argument(
+        "--target-latency-s",
+        type=float,
+        default=None,
+        help="Side-by-side auto-follow target latency for the right output panel. Defaults to one Demo v5 chunk.",
+    )
     parser.add_argument("--poll-sec", type=float, default=0.1)
     parser.add_argument("--start-chunk", type=int, default=0)
     parser.add_argument("--object-stride", type=int, default=1)
@@ -1202,6 +1305,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--cam-idx must be non-negative")
     if float(args.poll_sec) <= 0.0:
         raise ValueError("--poll-sec must be positive")
+    if args.target_latency_s is not None and float(args.target_latency_s) < 0.0:
+        raise ValueError("--target-latency-s must be non-negative")
     if int(args.start_chunk) < 0:
         raise ValueError("--start-chunk must be non-negative")
     if int(args.object_stride) <= 0:
