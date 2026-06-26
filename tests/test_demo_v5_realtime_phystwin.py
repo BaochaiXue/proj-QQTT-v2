@@ -421,6 +421,48 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
+    def test_candidate_motion_validity_survives_anchor_selection_shape_split(self) -> None:
+        root = Path("result/test_demo_v5_unit_candidate_motion_validity")
+        shutil.rmtree(root, ignore_errors=True)
+        try:
+            base_path = root / "cases"
+            chunk = _with_anchor_diagnostics(_tiny_futurephystwin_chunk(chunk_index=0))
+            track = dict(chunk.track_process_data)
+            frame_count, anchor_count = np.asarray(track["controller_points"]).shape[:2]
+            candidate_count = 5
+            candidate_motion_valid = np.ones((frame_count, candidate_count), dtype=bool)
+            candidate_motion_valid[1, -1] = False
+            track["controller_mask"] = np.ones((candidate_count,), dtype=bool)
+            track["controller_query_indices"] = np.asarray([3, 4, 10, 11, 12], dtype=np.int64)
+            track["controller_candidate_motions_valid"] = candidate_motion_valid
+            track["controller_motions_valid"] = np.ones((frame_count, anchor_count), dtype=bool)
+            chunk = FuturePhysTwinChunk(
+                rgb_frames=chunk.rgb_frames,
+                processed_masks=chunk.processed_masks,
+                track_process_data=track,
+                intrinsics=chunk.intrinsics,
+                camera_to_world_c2w=chunk.camera_to_world_c2w,
+                tracks_yx=chunk.tracks_yx,
+                tracker_visibility=chunk.tracker_visibility,
+                queries_txy=chunk.queries_txy,
+                surface_points=chunk.surface_points,
+                interior_points=chunk.interior_points,
+                fps=chunk.fps,
+                serial_number=chunk.serial_number,
+                depth_backend=chunk.depth_backend,
+                depth_source_internal=chunk.depth_source_internal,
+                chunk_index=chunk.chunk_index,
+            )
+
+            manifest = write_futurephystwin_chunk_case(base_path, "candidate_motion_chunk_0001", chunk)
+
+            with (Path(manifest["futurephystwin_case_root"]) / "track_process_data.pkl").open("rb") as handle:
+                track_process = pickle.load(handle)
+            self.assertEqual(track_process["controller_motions_valid"].shape, (frame_count, candidate_count))
+            np.testing.assert_array_equal(track_process["controller_motions_valid"], candidate_motion_valid)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
     def test_source_headless_requires_optimization_disabled(self) -> None:
         with self.assertRaisesRegex(ValueError, "continuous optimization requires fake-live or live capture"):
             demo_v5.main(["--dry-run", "--optimization-mode", "continuous", "--source-headless-capture", "existing_capture"])

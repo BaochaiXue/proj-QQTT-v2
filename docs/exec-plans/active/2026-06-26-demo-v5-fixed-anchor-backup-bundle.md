@@ -42,3 +42,7 @@ be published into the realtime online stream.
 - Strict product and Demo v5 focused unit tests pass locally.
 - Adjacent Demo v4/Demo v5/strict product unit sweep passes locally.
 - Smoke validation passes locally.
+- Full source-headless chunk test on
+  `result/demo_v5/full_chunks_20260626_010038/...camera_capture_20260626_010054`
+  exposed the expected invalid-quality stop at chunk 13 after 12 online-published
+  chunks. A diagnostic chunk video was written for chunks 1-13 at 5 FPS.

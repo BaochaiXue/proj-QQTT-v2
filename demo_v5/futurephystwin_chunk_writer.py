@@ -405,8 +405,18 @@ def _track_process_payload(track_process_data: Mapping[str, np.ndarray]) -> dict
         else:
             payload[key] = np.ascontiguousarray(arr.astype(np.int64).reshape(-1))
     for key in CONTROLLER_CANDIDATE_TIME_KEYS:
+        if key == "controller_motions_valid":
+            continue
         if key in track_process_data:
             payload[key] = np.ascontiguousarray(np.asarray(track_process_data[key], dtype=bool))
+    controller_motion_source = track_process_data.get(
+        "controller_candidate_motions_valid",
+        track_process_data.get("controller_motions_valid"),
+    )
+    if controller_motion_source is not None:
+        payload["controller_motions_valid"] = np.ascontiguousarray(
+            np.asarray(controller_motion_source, dtype=bool)
+        )
     for key in CONTROLLER_CANDIDATE_POINT_KEYS:
         if key in track_process_data:
             payload[key] = np.ascontiguousarray(np.asarray(track_process_data[key], dtype=np.float32))

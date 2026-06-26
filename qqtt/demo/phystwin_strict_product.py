@@ -1334,6 +1334,11 @@ class StreamingControllerAnchorSelector:
     ) -> dict[str, np.ndarray]:
         assert self._initial_query_indices is not None
         assert self._bundle_query_ids is not None
+        candidate_motions_valid = result.get("controller_candidate_motions_valid", result.get("controller_motions_valid"))
+        if candidate_motions_valid is not None:
+            result["controller_candidate_motions_valid"] = np.ascontiguousarray(
+                np.asarray(candidate_motions_valid, dtype=bool)
+            )
         result["controller_points"] = np.ascontiguousarray(output, dtype=np.float32)
         result["controller_visibilities"] = np.ascontiguousarray(output_visibilities, dtype=bool)
         result["controller_motions_valid"] = np.ascontiguousarray(output_motions_valid, dtype=bool)
