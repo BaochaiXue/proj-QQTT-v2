@@ -771,7 +771,7 @@ def _translation_from_points(
     return translation.astype(np.float32), residual
 
 
-class StreamingControllerAnchorSelector:
+class StreamingControllerTrackSelector:
     """Keep controller handle order stable while recovering measurements locally."""
 
     def __init__(
@@ -1445,37 +1445,37 @@ class StreamingControllerAnchorSelector:
         result["controller_points"] = np.ascontiguousarray(output, dtype=np.float32)
         result["controller_visibilities"] = np.ascontiguousarray(output_visibilities, dtype=bool)
         result["controller_motions_valid"] = np.ascontiguousarray(output_motions_valid, dtype=bool)
-        result["controller_fps_indices"] = np.ascontiguousarray(np.asarray(selected, dtype=np.int64))
-        result["controller_anchor_query_indices"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
+        result["controller_final_indices"] = np.ascontiguousarray(np.asarray(selected, dtype=np.int64))
+        result["controller_track_query_indices"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
         result["controller_sample_query_ids"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
-        result["controller_anchor_active_query_indices"] = np.ascontiguousarray(
+        result["controller_track_active_query_indices"] = np.ascontiguousarray(
             np.asarray(active_query_indices, dtype=np.int64)
         )
-        result["controller_anchor_status"] = np.asarray(statuses, dtype="<U16")
-        result["controller_anchor_bundle_query_ids"] = np.ascontiguousarray(self._bundle_query_ids, dtype=np.int64)
-        result["controller_anchor_source_query_id"] = np.ascontiguousarray(np.asarray(source_query_ids, dtype=np.int64))
-        result["controller_anchor_observation_mode"] = np.asarray(observation_modes, dtype="<U40")
-        result["controller_anchor_confidence"] = np.ascontiguousarray(np.asarray(confidence, dtype=np.float32))
-        result["controller_anchor_failure_reason"] = np.asarray(failure_reasons, dtype="<U40")
-        result["controller_anchor_bundle_support_count"] = np.ascontiguousarray(
+        result["controller_track_status"] = np.asarray(statuses, dtype="<U16")
+        result["controller_neighbor_query_ids"] = np.ascontiguousarray(self._bundle_query_ids, dtype=np.int64)
+        result["controller_source_query_ids"] = np.ascontiguousarray(np.asarray(source_query_ids, dtype=np.int64))
+        result["controller_track_mode"] = np.asarray(observation_modes, dtype="<U40")
+        result["controller_track_confidence"] = np.ascontiguousarray(np.asarray(confidence, dtype=np.float32))
+        result["controller_filter_reason"] = np.asarray(failure_reasons, dtype="<U40")
+        result["controller_neighbor_support_count"] = np.ascontiguousarray(
             np.asarray(bundle_support_count, dtype=np.int64)
         )
-        result["controller_anchor_bundle_raw_visible_count"] = np.ascontiguousarray(
+        result["controller_neighbor_raw_visible_count"] = np.ascontiguousarray(
             np.asarray(bundle_raw_visible_count, dtype=np.int64)
         )
-        result["controller_anchor_bundle_depth_valid_count"] = np.ascontiguousarray(
+        result["controller_neighbor_depth_valid_count"] = np.ascontiguousarray(
             np.asarray(bundle_depth_valid_count, dtype=np.int64)
         )
-        result["controller_anchor_bundle_processed_mask_valid_count"] = np.ascontiguousarray(
+        result["controller_neighbor_processed_mask_valid_count"] = np.ascontiguousarray(
             np.asarray(bundle_processed_mask_valid_count, dtype=np.int64)
         )
-        result["controller_anchor_bundle_motion_valid_count"] = np.ascontiguousarray(
+        result["controller_neighbor_motion_valid_count"] = np.ascontiguousarray(
             np.asarray(bundle_motion_valid_count, dtype=np.int64)
         )
-        result["controller_anchor_recovery_residual"] = np.ascontiguousarray(
+        result["controller_neighbor_fit_residual"] = np.ascontiguousarray(
             np.asarray(recovery_residual, dtype=np.float32)
         )
-        result["controller_quality_status"] = np.asarray(str(quality_status))
+        result["track_process_status"] = np.asarray(str(quality_status))
         return result
 
 
@@ -1513,7 +1513,7 @@ def _object_volume_sample_indices(
     return np.asarray(keep, dtype=np.int64)
 
 
-class StreamingObjectAnchorSelector:
+class StreamingObjectTrackSelector:
     """Keep object topology stable across online chunks."""
 
     def __init__(
@@ -1733,9 +1733,9 @@ class StreamingObjectAnchorSelector:
         result["object_volume_sample_indices"] = np.ascontiguousarray(np.asarray(selected, dtype=np.int64))
         result["object_sample_query_ids"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
         result["object_selected_query_ids"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
-        result["object_anchor_query_indices"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
-        result["object_anchor_active_query_indices"] = np.ascontiguousarray(np.asarray(active_query_indices, dtype=np.int64))
-        result["object_anchor_status"] = np.asarray(statuses, dtype="<U8")
+        result["object_track_query_indices"] = np.ascontiguousarray(self._initial_query_indices, dtype=np.int64)
+        result["object_track_active_query_indices"] = np.ascontiguousarray(np.asarray(active_query_indices, dtype=np.int64))
+        result["object_track_status"] = np.asarray(statuses, dtype="<U8")
         return result
 
 
@@ -1748,7 +1748,7 @@ def select_final_controller_points(track_data: Mapping[str, np.ndarray], *, coun
     sample_indices = _farthest_point_sample_indices(candidates[0], int(count))
     final_indices = valid_indices[sample_indices]
     result["controller_points"] = np.ascontiguousarray(result["controller_points"][:, final_indices, :], dtype=np.float32)
-    result["controller_fps_indices"] = np.asarray(final_indices, dtype=np.int64)
+    result["controller_final_indices"] = np.asarray(final_indices, dtype=np.int64)
     controller_query_indices = np.asarray(
         result.get("controller_query_indices", np.arange(original_controller_count, dtype=np.int64)),
         dtype=np.int64,
@@ -2243,6 +2243,10 @@ def finalize_headless_capture(
     return manifest
 
 
+StreamingControllerAnchorSelector = StreamingControllerTrackSelector
+StreamingObjectAnchorSelector = StreamingObjectTrackSelector
+
+
 __all__ = [
     "COMPATIBILITY_TARGET_PHYSTWIN",
     "DEFAULT_TRACKING_PRODUCT_BACKEND",
@@ -2252,7 +2256,9 @@ __all__ = [
     "TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY",
     "TRACKING_PRODUCT_BACKENDS",
     "StrictQuerySample",
+    "StreamingControllerTrackSelector",
     "StreamingControllerAnchorSelector",
+    "StreamingObjectTrackSelector",
     "StreamingObjectAnchorSelector",
     "apply_depth_validity_to_mask_frame",
     "apply_phystwin_motion_filters",

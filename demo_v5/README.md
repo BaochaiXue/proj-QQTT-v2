@@ -1,7 +1,7 @@
 # Demo v5 Online Points Viewer
 
 Demo v5 is the single-camera realtime bridge from Demo v5 fake/live capture to
-online FuturePhysTwin chunks. The default demo now opens a lightweight viewer
+chunked `data_process_sam3d` final_data. The default demo now opens a lightweight viewer
 for object points and controller points instead of starting
 `realtime_phystwin` optimization. It is a demo diagnostic carveout, not the
 formal recording/alignment data product.
@@ -12,7 +12,7 @@ The default flow is:
 Demo v5 fake/live camera on GPU0
   -> RGB-D, masks, TAPNext++ strict tracks
   -> SAM3D shape-prior warmup worker on GPU1
-  -> Demo v5 online FuturePhysTwin chunks at 5 FPS
+  -> Demo v5 online data_process_sam3d chunks at 5 FPS
   -> release the managed SAM3D worker
   -> online object/controller point viewer on GPU1
 ```
@@ -93,15 +93,15 @@ Do a contract check before a live run:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
-  python demo_v5/realtime_futurephystwin_chunks.py --dry-run
+  python demo_v5/realtime_data_process_sam3d.py --dry-run
 ```
 
 Run a short fake-live smoke:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
-  python demo_v5/realtime_futurephystwin_chunks.py \
-  --futurephystwin-base-path result/demo_v5/smoke \
+  python demo_v5/realtime_data_process_sam3d.py \
+  --base-path result/demo_v5/smoke \
   --case-prefix demo_v5_smoke \
   --shape-prior-endpoint tcp://127.0.0.1:7107 \
   --max-chunks 2 \
@@ -112,9 +112,9 @@ Run with the live RealSense camera:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
-  python demo_v5/realtime_futurephystwin_chunks.py \
+  python demo_v5/realtime_data_process_sam3d.py \
   --input-source live \
-  --futurephystwin-base-path result/demo_v5/live \
+  --base-path result/demo_v5/live \
   --case-prefix demo_v5_live
 ```
 
@@ -123,8 +123,8 @@ of the viewer, disable the viewer and enable optimization explicitly:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
-  python demo_v5/realtime_futurephystwin_chunks.py \
-  --futurephystwin-base-path result/demo_v5/full_fake_live \
+  python demo_v5/realtime_data_process_sam3d.py \
+  --base-path result/demo_v5/full_fake_live \
   --case-prefix demo_v5_full_fake_live \
   --shape-prior-endpoint tcp://127.0.0.1:7108 \
   --max-chunks 5 \
@@ -140,8 +140,8 @@ Run a quality fake-live optimization validation:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
-  python demo_v5/realtime_futurephystwin_chunks.py \
-  --futurephystwin-base-path result/demo_v5/full_fake_live \
+  python demo_v5/realtime_data_process_sam3d.py \
+  --base-path result/demo_v5/full_fake_live \
   --case-prefix demo_v5_full_fake_live \
   --shape-prior-endpoint tcp://127.0.0.1:7108 \
   --max-chunks 5 \
@@ -169,7 +169,7 @@ The minimal default command is:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
-  python demo_v5/realtime_futurephystwin_chunks.py
+  python demo_v5/realtime_data_process_sam3d.py
 ```
 
 Defaults:
@@ -183,7 +183,7 @@ managed SAM3D warmup GPU:      physical GPU1
 point viewer GPU:              physical GPU1
 shape-prior worker env:        phystwin-max
 point viewer env:              demo_2_max
-output base:                  result/demo_v5/futurephystwin_chunks
+output base:                  result/demo_v5/data_process_sam3d_chunks
 case prefix:                  demo_v5
 viewer playback:               chunk by chunk at 5 FPS
 optimization scope:            disabled by default
@@ -192,8 +192,8 @@ optimization scope:            disabled by default
 The viewer command reads the online and static case paths directly:
 
 ```text
---online-dir result/demo_v5/futurephystwin_chunks/online_data/demo_v5
---case-dir result/demo_v5/futurephystwin_chunks/data/demo_v5
+--online-dir result/demo_v5/data_process_sam3d_chunks/online_data/demo_v5
+--case-dir result/demo_v5/data_process_sam3d_chunks/data/demo_v5
 --fps 5.0
 --object-color-mode rainbow
 ```
@@ -202,15 +202,15 @@ When optimization is enabled, Demo v5 keeps paths portable. The command passed
 to `realtime_phystwin` uses paths relative to its working directory:
 
 ```text
---base_path ../result/demo_v5/futurephystwin_chunks/data
---online_dir ../result/demo_v5/futurephystwin_chunks/online_data/demo_v5
---static_data_path ../result/demo_v5/futurephystwin_chunks/data/demo_v5/final_data.pkl
+--base_path ../result/demo_v5/data_process_sam3d_chunks/data
+--online_dir ../result/demo_v5/data_process_sam3d_chunks/online_data/demo_v5
+--static_data_path ../result/demo_v5/data_process_sam3d_chunks/data/demo_v5/final_data.pkl
 ```
 
 ## Outputs
 
 ```text
-result/demo_v5/futurephystwin_chunks/
+result/demo_v5/data_process_sam3d_chunks/
   data/<case>/
     READY
     final_data.pkl
@@ -234,19 +234,20 @@ result/demo_v5/futurephystwin_chunks/
 ```
 
 The aggregate `data/<case>/final_data.pkl` and every online chunk contain the
-topology fields required by `realtime_phystwin`:
+query schema fields required by `realtime_phystwin`:
 
 ```text
 query_ids
 query_semantic_labels
 object_sample_query_ids
 controller_sample_query_ids
-topology_version
-topology_hash
+query_schema_version
+query_schema_hash
 ```
 
-The topology version remains `demo_v4_session_topology_v1` because
-`realtime_phystwin` already validates that wire contract.
+The canonical query schema version is `data_process_sam3d_realtime_query_schema_v1`.
+Validators still accept the legacy `demo_v4_session_topology_v1` spelling and
+normalize it before shape/schema checks.
 
 Every Demo v5 case metadata also carries:
 
@@ -259,14 +260,14 @@ That contract is enforced by the active writer/validator, not by a side helper:
 ```text
 object_sample_query_ids     must reference query_semantic_labels == object
 controller_sample_query_ids must reference query_semantic_labels == controller
-topology_hash               is recomputed from query ids, semantic labels, and sample ids
-chunk continuity            requires stable topology_hash and contiguous online frame ranges
+query_schema_hash           is recomputed from query ids, semantic labels, and sample ids
+chunk continuity            requires stable query_schema_hash and contiguous online frame ranges
 ```
 
 This keeps Demo v5 final_data semantically aligned with
 `data_process_sam3d`: first-frame semantic ownership, per-frame mask/depth
 gating, SAM3D-style neighbor motion filtering, 5 mm object volume sampling,
-controller FPS handles, and shape-prior surface/interior points are the data
+controller final handles, and shape-prior surface/interior points are the data
 product consumed by `realtime_phystwin`.
 
 ## Common Variants
@@ -275,7 +276,7 @@ Use external or already-running SAM3D worker:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
-  python demo_v5/realtime_futurephystwin_chunks.py \
+  python demo_v5/realtime_data_process_sam3d.py \
   --shape-prior-worker-mode external \
   --shape-prior-endpoint tcp://127.0.0.1:7100
 ```
@@ -284,9 +285,9 @@ Convert an existing headless capture without optimization:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
-  python demo_v5/realtime_futurephystwin_chunks.py \
+  python demo_v5/realtime_data_process_sam3d.py \
   --source-headless-capture result/demo_v5/capture_dir \
-  --futurephystwin-base-path result/demo_v5/rechunked \
+  --base-path result/demo_v5/rechunked \
   --case-prefix demo_v5_rechunked \
   --optimization-mode disabled
 ```
