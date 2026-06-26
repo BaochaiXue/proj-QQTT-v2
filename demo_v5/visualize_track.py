@@ -45,6 +45,37 @@ class InputRgbFrame:
     source_timestamp_s: float | None
 
 
+@dataclass
+class OutputStreamPlaybackCursor:
+    fps: float
+    output_index: int = 0
+    last_step_s: float | None = None
+
+    def advance(self, *, latest: int, now_s: float, paused: bool) -> int:
+        latest_index = max(0, int(latest))
+        self.output_index = min(max(int(self.output_index), 0), latest_index)
+        now = float(now_s)
+        if self.last_step_s is None:
+            self.last_step_s = now
+            return int(self.output_index)
+        if paused or self.output_index >= latest_index:
+            self.last_step_s = now
+            return int(self.output_index)
+        period_s = 1.0 / max(float(self.fps), 1e-6)
+        elapsed_s = max(0.0, now - float(self.last_step_s))
+        if elapsed_s + 1e-9 < period_s:
+            return int(self.output_index)
+        self.output_index = min(latest_index, int(self.output_index) + 1)
+        self.last_step_s = now
+        return int(self.output_index)
+
+    def seek(self, index: int, *, latest: int, now_s: float | None = None) -> int:
+        self.output_index = min(max(int(index), 0), max(0, int(latest)))
+        if now_s is not None:
+            self.last_step_s = float(now_s)
+        return int(self.output_index)
+
+
 def _require_cv2() -> Any:
     import cv2
 
@@ -738,9 +769,20 @@ class RgbOverlayRenderer:
 
 
 class Sam3DFinalDataRenderer:
-    def __init__(self, *, image_size: tuple[int, int], show_invisible_object_points: bool) -> None:
+    def __init__(
+        self,
+        *,
+        image_size: tuple[int, int],
+        show_invisible_object_points: bool,
+        visible: bool = False,
+        window_name: str = "final_data output",
+        window_position: tuple[int, int] | None = None,
+    ) -> None:
         self._image_size = (int(image_size[0]), int(image_size[1]))
         self._show_invisible_object_points = bool(show_invisible_object_points)
+        self._visible = bool(visible)
+        self._window_name = str(window_name)
+        self._window_position = window_position
         self._o3d: Any | None = None
         self._vis: Any | None = None
         self._object_pcd: Any | None = None
@@ -763,7 +805,18 @@ class Sam3DFinalDataRenderer:
         o3d = self._require_open3d()
         self._vis = o3d.visualization.Visualizer()
         width, height = self._image_size
-        self._vis.create_window(width=width, height=height, visible=False)
+        left = 50
+        top = 50
+        if self._window_position is not None:
+            left, top = (int(self._window_position[0]), int(self._window_position[1]))
+        self._vis.create_window(
+            window_name=self._window_name,
+            width=width,
+            height=height,
+            left=left,
+            top=top,
+            visible=self._visible,
+        )
         self._object_pcd = o3d.geometry.PointCloud()
 
     def _object_visibility(self, chunk: Mapping[str, Any], local_frame: int, point_count: int) -> np.ndarray:
@@ -805,7 +858,14 @@ class Sam3DFinalDataRenderer:
         view_control.set_up([0, 0, -1])
         view_control.set_zoom(1)
 
-    def render_frame(self, chunk: Mapping[str, Any], *, local_frame: int, case_dir: Path) -> np.ndarray:
+    def poll(self) -> bool:
+        self._ensure_window()
+        assert self._vis is not None
+        alive = self._vis.poll_events()
+        self._vis.update_renderer()
+        return bool(alive) if alive is not None else True
+
+    def update_frame(self, chunk: Mapping[str, Any], *, local_frame: int, case_dir: Path) -> bool:
         del case_dir
         self._ensure_window()
         assert self._vis is not None
@@ -815,9 +875,9 @@ class Sam3DFinalDataRenderer:
         object_arr = np.asarray(chunk.get("object_points"), dtype=np.float64)
         controller_arr = np.asarray(chunk.get("controller_points"), dtype=np.float64)
         if object_arr.ndim != 3 or controller_arr.ndim != 3:
-            return _blank_image(self._image_size)
+            return self.poll()
         if int(local_frame) >= int(object_arr.shape[0]) or int(local_frame) >= int(controller_arr.shape[0]):
-            return _blank_image(self._image_size)
+            return self.poll()
 
         object_frame = np.asarray(object_arr[int(local_frame)], dtype=np.float64).reshape(-1, 3)
         object_colors = self._update_object_colors(object_arr)
@@ -846,8 +906,14 @@ class Sam3DFinalDataRenderer:
                 self._controller_centers[index] = origin
                 self._vis.update_geometry(sphere)
 
-        self._vis.poll_events()
+        alive = self._vis.poll_events()
         self._vis.update_renderer()
+        return bool(alive) if alive is not None else True
+
+    def render_frame(self, chunk: Mapping[str, Any], *, local_frame: int, case_dir: Path) -> np.ndarray:
+        if not self.update_frame(chunk, local_frame=local_frame, case_dir=case_dir):
+            return _blank_image(self._image_size)
+        assert self._vis is not None
         frame = np.asarray(self._vis.capture_screen_float_buffer(do_render=True))
         frame = np.clip(frame * 255.0, 0.0, 255.0).astype(np.uint8)
         cv2 = _require_cv2()
@@ -937,6 +1003,99 @@ def _set_trackbar_max(cv2: Any, trackbar_name: str, window_name: str, max_value:
         pass
 
 
+def use_interactive_side_by_side(args: argparse.Namespace) -> bool:
+    return (
+        str(getattr(args, "layout", LAYOUT_OUTPUT_ONLY)) == LAYOUT_SIDE_BY_SIDE
+        and str(getattr(args, "render_mode", RENDER_MODE_RGB_OVERLAY)) == RENDER_MODE_SAM3D_FINAL_DATA
+        and getattr(args, "output_video", None) is None
+    )
+
+
+def _render_input_panel(
+    input_frame: InputRgbFrame | None,
+    *,
+    image_size: tuple[int, int],
+) -> np.ndarray:
+    image = _panel_image(None if input_frame is None else input_frame.image_bgr, image_size=image_size)
+    if input_frame is None:
+        _draw_center_label(image, "waiting for RGB input")
+    _draw_panel_label(image, "RGB input")
+    return image
+
+
+def run_interactive_side_by_side(args: argparse.Namespace) -> int:
+    cv2 = _require_cv2()
+    online_dir = normalize_online_dir(args.online_dir)
+    case_dir = infer_case_dir(online_dir, args.case_dir)
+    camera = load_camera_model(case_dir, cam_idx=int(args.cam_idx))
+    fps = resolve_playback_fps(args, camera)
+    capture_dir = _resolve_capture_dir(args)
+    input_timeline = _resolve_input_rgb_timeline(args, capture_dir=capture_dir)
+    width, height = camera.image_size
+    left_window_name = f"{args.window_name} - RGB input"
+    right_window_name = f"{args.window_name} - final_data output"
+    output_renderer = Sam3DFinalDataRenderer(
+        image_size=camera.image_size,
+        show_invisible_object_points=bool(args.show_invisible_object_points),
+        visible=True,
+        window_name=right_window_name,
+        window_position=(int(width) + 80, 50),
+    )
+    output_frames: list[tuple[dict[str, Any], int]] = []
+    loaded_paths: set[Path] = set()
+    cursor = OutputStreamPlaybackCursor(fps=fps)
+    paused = False
+
+    cv2.namedWindow(left_window_name, cv2.WINDOW_NORMAL)
+    try:
+        cv2.resizeWindow(left_window_name, int(width), int(height))
+        cv2.moveWindow(left_window_name, 30, 50)
+    except Exception:
+        pass
+
+    try:
+        while True:
+            _append_new_output_frames(
+                online_dir,
+                start_chunk=int(args.start_chunk),
+                loaded_paths=loaded_paths,
+                output_frames=output_frames,
+            )
+            latest = max(0, len(output_frames) - 1)
+            now_s = time.monotonic()
+            cursor.advance(latest=latest, now_s=now_s, paused=paused or not output_frames)
+
+            input_frame = None
+            if capture_dir is not None and input_timeline is not None:
+                input_frame = load_latest_input_rgb_frame(input_timeline, capture_dir=capture_dir)
+            input_panel = _render_input_panel(input_frame, image_size=camera.image_size)
+            cv2.imshow(left_window_name, input_panel)
+
+            if output_frames:
+                chunk, local_frame = output_frames[int(cursor.output_index)]
+                if not output_renderer.update_frame(chunk, local_frame=local_frame, case_dir=case_dir):
+                    return 0
+            else:
+                if not output_renderer.poll():
+                    return 0
+
+            key = cv2.waitKey(max(1, int(float(args.poll_sec) * 1000))) & 0xFF
+            if _key_requests_quit(key) or not _window_is_open(left_window_name):
+                return 0
+            if key == ord(" "):
+                paused = not paused
+                cursor.last_step_s = time.monotonic()
+            elif key in (ord("f"), ord("F")):
+                paused = False
+                cursor.seek(latest, latest=latest, now_s=time.monotonic())
+    finally:
+        output_renderer.close()
+        try:
+            cv2.destroyWindow(left_window_name)
+        except Exception:
+            pass
+
+
 def run_side_by_side(args: argparse.Namespace) -> int:
     cv2 = _require_cv2()
     online_dir = normalize_online_dir(args.online_dir)
@@ -951,20 +1110,18 @@ def run_side_by_side(args: argparse.Namespace) -> int:
     trackbar_name = "output frame"
     output_frames: list[tuple[dict[str, Any], int]] = []
     loaded_paths: set[Path] = set()
-    output_index = 0
+    cursor = OutputStreamPlaybackCursor(fps=fps)
     follow_latest = bool(args.follow_latest)
     paused = False
-    last_step_s = time.monotonic()
-    target_latency_s = float(args.target_latency_s) if args.target_latency_s is not None else 7.0
     trackbar_guard = {"updating": False}
 
     def on_trackbar(value: int) -> None:
-        nonlocal output_index, follow_latest
+        nonlocal follow_latest
         if trackbar_guard["updating"]:
             return
         latest = max(0, len(output_frames) - 1)
-        output_index = min(max(int(value), 0), latest)
-        follow_latest = output_index >= latest
+        cursor.seek(value, latest=latest, now_s=time.monotonic())
+        follow_latest = int(cursor.output_index) >= latest
 
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     cv2.createTrackbar(trackbar_name, window_name, 0, 1, on_trackbar)
@@ -980,49 +1137,16 @@ def run_side_by_side(args: argparse.Namespace) -> int:
             _set_trackbar_max(cv2, trackbar_name, window_name, latest)
             now_s = time.monotonic()
             if output_frames and follow_latest and not paused:
-                period_s = 1.0 / max(float(fps), 1e-6)
-                if output_index < latest and now_s - last_step_s >= period_s:
-                    steps = max(1, int((now_s - last_step_s) / period_s))
-                    output_index = min(latest, int(output_index) + steps)
-                    last_step_s = now_s
-                elif output_index >= latest:
-                    output_index = latest
-                    last_step_s = now_s
+                cursor.advance(latest=latest, now_s=now_s, paused=False)
             else:
-                output_index = min(output_index, latest)
+                cursor.seek(cursor.output_index, latest=latest)
 
             input_frame = None
             if capture_dir is not None and input_timeline is not None:
                 input_frame = load_latest_input_rgb_frame(input_timeline, capture_dir=capture_dir)
-            input_source_time = None
-            allow_frame_index_fallback = False
-            if input_frame is not None:
-                if input_frame.source_timestamp_s is not None:
-                    input_source_time = float(input_frame.source_timestamp_s)
-                elif input_frame.source_frame_index is not None and float(fps) > 0.0:
-                    input_source_time = float(input_frame.source_frame_index) / float(fps)
-                    allow_frame_index_fallback = True
-            if (
-                output_frames
-                and follow_latest
-                and not paused
-                and input_source_time is not None
-            ):
-                times = output_source_times(
-                    output_frames,
-                    fps=float(fps),
-                    allow_frame_index_fallback=allow_frame_index_fallback,
-                )
-                if times is not None:
-                    output_index = select_output_frame_for_input_source_time(
-                        output_source_times=times,
-                        input_source_time=float(input_source_time),
-                        target_latency_s=target_latency_s,
-                    )
-                    last_step_s = now_s
             output_frame = _render_output_timeline_frame(
                 output_frames,
-                output_index=output_index,
+                output_index=int(cursor.output_index),
                 renderer=renderer,
                 case_dir=case_dir,
             )
@@ -1035,7 +1159,7 @@ def run_side_by_side(args: argparse.Namespace) -> int:
             cv2.imshow(window_name, image)
             trackbar_guard["updating"] = True
             try:
-                cv2.setTrackbarPos(trackbar_name, window_name, int(output_index))
+                cv2.setTrackbarPos(trackbar_name, window_name, int(cursor.output_index))
             finally:
                 trackbar_guard["updating"] = False
             key = cv2.waitKey(max(1, int(float(args.poll_sec) * 1000))) & 0xFF
@@ -1043,12 +1167,11 @@ def run_side_by_side(args: argparse.Namespace) -> int:
                 return 0
             if key == ord(" "):
                 paused = not paused
-                last_step_s = time.monotonic()
+                cursor.last_step_s = time.monotonic()
             elif key in (ord("f"), ord("F")):
                 follow_latest = True
                 paused = False
-                output_index = latest
-                last_step_s = time.monotonic()
+                cursor.seek(latest, latest=latest, now_s=time.monotonic())
     finally:
         renderer.close()
 
@@ -1323,6 +1446,8 @@ def run(args: argparse.Namespace) -> int:
     if args.output_video is not None:
         return render_output_video(args)
     if str(args.layout) == LAYOUT_SIDE_BY_SIDE:
+        if use_interactive_side_by_side(args):
+            return run_interactive_side_by_side(args)
         return run_side_by_side(args)
     cv2 = _require_cv2()
     online_dir = normalize_online_dir(args.online_dir)

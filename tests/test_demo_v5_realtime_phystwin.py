@@ -249,6 +249,7 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
         )
         self.assertEqual(point_viewer_command[point_viewer_command.index("--fps") + 1], "5.0")
         self.assertEqual(point_viewer_command[point_viewer_command.index("--object-color-mode") + 1], "rainbow")
+        self.assertNotIn("--target-latency-s", point_viewer_command)
         sam3d_viewer_args = demo_v5.build_parser().parse_args(["--point-viewer-render-mode", "sam3d-final-data"])
         sam3d_viewer_command = demo_v5.build_point_viewer_command(sam3d_viewer_args)
         self.assertEqual(sam3d_viewer_command[sam3d_viewer_command.index("--render-mode") + 1], "sam3d-final-data")
@@ -797,6 +798,70 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
         )
 
         self.assertEqual(selected, 3)
+
+    def test_visualize_track_live_output_cursor_does_not_jump_to_new_chunk_tail(self) -> None:
+        viewer = importlib.import_module("demo_v5.visualize_track")
+        cursor = viewer.OutputStreamPlaybackCursor(fps=5.0)
+        cursor.output_index = 34
+        cursor.last_step_s = 10.0
+
+        first = cursor.advance(latest=69, now_s=10.10, paused=False)
+        second = cursor.advance(latest=69, now_s=10.20, paused=False)
+        third = cursor.advance(latest=69, now_s=10.40, paused=False)
+
+        self.assertEqual(first, 34)
+        self.assertEqual(second, 35)
+        self.assertEqual(third, 36)
+
+    def test_visualize_track_live_output_cursor_advances_one_frame_after_ui_stall(self) -> None:
+        viewer = importlib.import_module("demo_v5.visualize_track")
+        cursor = viewer.OutputStreamPlaybackCursor(fps=5.0)
+        cursor.output_index = 34
+        cursor.last_step_s = 10.0
+
+        selected = cursor.advance(latest=69, now_s=11.0, paused=False)
+
+        self.assertEqual(selected, 35)
+
+    def test_visualize_track_uses_interactive_open3d_backend_for_live_final_data_side_by_side(self) -> None:
+        viewer = importlib.import_module("demo_v5.visualize_track")
+
+        live_args = viewer.build_parser().parse_args(
+            [
+                "--layout",
+                "side-by-side",
+                "--online-dir",
+                "result/demo_v5/unit/online_data/case",
+                "--render-mode",
+                "sam3d-final-data",
+            ]
+        )
+        video_args = viewer.build_parser().parse_args(
+            [
+                "--layout",
+                "side-by-side",
+                "--online-dir",
+                "result/demo_v5/unit/online_data/case",
+                "--render-mode",
+                "sam3d-final-data",
+                "--output-video",
+                "result/demo_v5/unit/side_by_side.mp4",
+            ]
+        )
+        overlay_args = viewer.build_parser().parse_args(
+            [
+                "--layout",
+                "side-by-side",
+                "--online-dir",
+                "result/demo_v5/unit/online_data/case",
+                "--render-mode",
+                "rgb-overlay",
+            ]
+        )
+
+        self.assertTrue(viewer.use_interactive_side_by_side(live_args))
+        self.assertFalse(viewer.use_interactive_side_by_side(video_args))
+        self.assertFalse(viewer.use_interactive_side_by_side(overlay_args))
 
     def test_continuous_optimization_starts_once_for_whole_online_stream(self) -> None:
         root = Path("result/test_demo_v5_unit_continuous")

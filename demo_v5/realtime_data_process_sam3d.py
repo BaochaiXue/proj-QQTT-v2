@@ -784,9 +784,6 @@ def build_point_viewer_command(args: argparse.Namespace, *, capture_dir: Path | 
                 capture_text,
                 "--input-rgb-timeline",
                 input_timeline_text,
-                "--target-latency-s",
-                str(float(args.chunk_seconds)),
-                "--follow-latest",
             ]
         )
     return command
