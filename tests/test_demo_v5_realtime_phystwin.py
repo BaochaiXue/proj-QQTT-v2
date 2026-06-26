@@ -20,6 +20,7 @@ from demo_v5.futurephystwin_chunk_writer import (
     write_futurephystwin_chunk_case,
 )
 from demo_v5.online_case_aggregate import build_aggregate_case_from_chunk_cases
+from demo_v5.online_chunk_output import DemoV5OnlineOutputWriter
 import demo_v5.realtime_futurephystwin_chunks as demo_v5
 
 
@@ -101,6 +102,49 @@ def _tiny_futurephystwin_chunk(*, chunk_index: int, serial: str = "demo-v5-singl
         depth_backend="native-realsense",
         depth_source_internal="realsense",
         chunk_index=chunk_index,
+    )
+
+
+def _with_anchor_diagnostics(chunk: FuturePhysTwinChunk, *, quality_status: str = "normal") -> FuturePhysTwinChunk:
+    track = dict(chunk.track_process_data)
+    controller_points = np.asarray(track["controller_points"])
+    frame_count, anchor_count = controller_points.shape[:2]
+    object_count = int(np.asarray(track["object_points"]).shape[1])
+    anchor_query_ids = np.arange(anchor_count, dtype=np.int64) + object_count
+    track.update(
+        {
+            "controller_anchor_query_indices": anchor_query_ids,
+            "controller_anchor_active_query_indices": anchor_query_ids,
+            "controller_anchor_status": np.asarray(["direct"] * anchor_count, dtype="<U16"),
+            "controller_anchor_bundle_query_ids": np.tile(anchor_query_ids[:, None], (1, 3)),
+            "controller_anchor_source_query_id": np.tile(anchor_query_ids[None, :], (frame_count, 1)),
+            "controller_anchor_observation_mode": np.full((frame_count, anchor_count), "direct_valid", dtype="<U40"),
+            "controller_anchor_confidence": np.ones((frame_count, anchor_count), dtype=np.float32),
+            "controller_anchor_failure_reason": np.full((frame_count, anchor_count), "none", dtype="<U40"),
+            "controller_anchor_bundle_support_count": np.full((frame_count, anchor_count), 3, dtype=np.int64),
+            "controller_anchor_recovery_residual": np.zeros((frame_count, anchor_count), dtype=np.float32),
+            "controller_quality_status": str(quality_status),
+        }
+    )
+    return FuturePhysTwinChunk(
+        rgb_frames=chunk.rgb_frames,
+        processed_masks=chunk.processed_masks,
+        track_process_data=track,
+        intrinsics=chunk.intrinsics,
+        camera_to_world_c2w=chunk.camera_to_world_c2w,
+        tracks_yx=chunk.tracks_yx,
+        tracker_visibility=chunk.tracker_visibility,
+        queries_txy=chunk.queries_txy,
+        surface_points=chunk.surface_points,
+        interior_points=chunk.interior_points,
+        pcd_points=chunk.pcd_points,
+        pcd_colors=chunk.pcd_colors,
+        fps=chunk.fps,
+        serial_number=chunk.serial_number,
+        depth_backend=chunk.depth_backend,
+        depth_source_internal=chunk.depth_source_internal,
+        chunk_index=chunk.chunk_index,
+        source_frame_indices=chunk.source_frame_indices,
     )
 
 
@@ -340,6 +384,40 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "controller_sample_query_ids.*controller semantic"):
                 validate_futurephystwin_case(case_dir)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_anchor_diagnostics_are_persisted_to_track_process_online_chunk_and_aggregate(self) -> None:
+        root = Path("result/test_demo_v5_unit_anchor_diagnostics")
+        shutil.rmtree(root, ignore_errors=True)
+        try:
+            base_path = root / "cases"
+            chunk = _with_anchor_diagnostics(_tiny_futurephystwin_chunk(chunk_index=0))
+            manifest = write_futurephystwin_chunk_case(base_path, "diag_chunk_0001", chunk)
+            case_dir = Path(manifest["futurephystwin_case_root"])
+            with (case_dir / "track_process_data.pkl").open("rb") as handle:
+                track_process = pickle.load(handle)
+
+            self.assertEqual(track_process["controller_anchor_confidence"].shape, (2, 2))
+            self.assertEqual(track_process["controller_anchor_bundle_query_ids"].shape, (2, 3))
+            self.assertEqual(str(track_process["controller_quality_status"]), "normal")
+
+            writer = DemoV5OnlineOutputWriter(base_path=base_path, case_name="diag", chunk_size=2)
+            online_result = writer.commit_case_chunk(case_dir)
+            writer.finish()
+
+            with Path(online_result["online_chunk_path"]).open("rb") as handle:
+                online_chunk = pickle.load(handle)
+            self.assertEqual(online_chunk["controller_anchor_confidence"].shape, (2, 2))
+            np.testing.assert_array_equal(
+                online_chunk["controller_anchor_bundle_query_ids"],
+                track_process["controller_anchor_bundle_query_ids"],
+            )
+
+            with (base_path / "data" / "diag" / "track_process_data.pkl").open("rb") as handle:
+                aggregate_track = pickle.load(handle)
+            self.assertEqual(aggregate_track["controller_anchor_confidence"].shape, (2, 2))
+            self.assertEqual(aggregate_track["controller_anchor_bundle_query_ids"].shape, (2, 3))
         finally:
             shutil.rmtree(root, ignore_errors=True)
 
@@ -623,6 +701,53 @@ class DemoV5RealtimePhysTwinTest(unittest.TestCase):
             self.assertTrue(summary["point_viewer_started"])
             self.assertEqual(summary["point_viewer_started_from_chunk"]["case_name"], "demo_v5_rt_chunk_0001")
             self.assertEqual(summary["point_viewer_return_code"], 0)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_realtime_runner_returns_nonzero_when_controller_quality_is_invalid(self) -> None:
+        root = Path("result/test_demo_v5_unit_invalid_quality")
+        shutil.rmtree(root, ignore_errors=True)
+        try:
+            capture_dir = root / "capture"
+            base_path = root / "cases"
+
+            def fake_stream(_capture_dir_arg, **_kwargs):
+                return [
+                    {
+                        "case_name": "demo_v5_rt_chunk_0001",
+                        "frame_count": 35,
+                        "futurephystwin_case_root": str(base_path / "demo_v5_rt_chunk_0001"),
+                        "publish_wall_s": 7.0,
+                        "backlog_chunks": 0,
+                        "shape_prior_complete": True,
+                        "controller_quality_status": "invalid",
+                        "online_publish_skipped": True,
+                    }
+                ]
+
+            with mock.patch("demo_v5.realtime_futurephystwin_chunks.subprocess.Popen", return_value=FakeProcess(returncode=0)):
+                with mock.patch("demo_v5.realtime_futurephystwin_chunks.stream_chunks_from_headless_capture", side_effect=fake_stream):
+                    with redirect_stdout(io.StringIO()) as stdout:
+                        exit_code = demo_v5.main(
+                            [
+                                "--shape-prior-worker-mode",
+                                "external",
+                                "--futurephystwin-base-path",
+                                str(base_path),
+                                "--case-prefix",
+                                "demo_v5_rt",
+                                "--camera-capture-dir",
+                                str(capture_dir),
+                                "--max-chunks",
+                                "1",
+                                "--point-viewer-mode",
+                                "disabled",
+                            ]
+                        )
+
+            self.assertEqual(exit_code, 1)
+            summary = json.loads(stdout.getvalue())
+            self.assertEqual(summary["controller_quality_status"], "invalid")
         finally:
             shutil.rmtree(root, ignore_errors=True)
 

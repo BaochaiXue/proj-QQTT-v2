@@ -86,6 +86,29 @@ FUTUREPHYSTWIN_TRACK_PROCESS_TRACE_KEYS = (
     "object_anchor_status",
 )
 
+CONTROLLER_CANDIDATE_TIME_KEYS = (
+    "controller_raw_visible",
+    "controller_processed_mask_valid",
+    "controller_depth_valid",
+    "controller_measurement_valid",
+    "controller_motions_valid",
+)
+CONTROLLER_CANDIDATE_POINT_KEYS = (
+    "controller_raw_points",
+)
+CONTROLLER_ANCHOR_TIME_KEYS = (
+    "controller_anchor_source_query_id",
+    "controller_anchor_observation_mode",
+    "controller_anchor_confidence",
+    "controller_anchor_failure_reason",
+    "controller_anchor_bundle_support_count",
+    "controller_anchor_recovery_residual",
+)
+CONTROLLER_ANCHOR_STATIC_KEYS = (
+    "controller_anchor_bundle_query_ids",
+)
+CONTROLLER_QUALITY_STATUSES = ("normal", "degraded", "invalid")
+
 DATA_PROCESS_SAM3D_METRICS = {
     "runtime_contract": DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
     "mask_radius_outlier_filter_source": "data_process_sam3d/data_process_mask.py::process_pcd_mask",
@@ -381,6 +404,27 @@ def _track_process_payload(track_process_data: Mapping[str, np.ndarray]) -> dict
             payload[key] = np.ascontiguousarray(arr.astype(np.int8).reshape(-1))
         else:
             payload[key] = np.ascontiguousarray(arr.astype(np.int64).reshape(-1))
+    for key in CONTROLLER_CANDIDATE_TIME_KEYS:
+        if key in track_process_data:
+            payload[key] = np.ascontiguousarray(np.asarray(track_process_data[key], dtype=bool))
+    for key in CONTROLLER_CANDIDATE_POINT_KEYS:
+        if key in track_process_data:
+            payload[key] = np.ascontiguousarray(np.asarray(track_process_data[key], dtype=np.float32))
+    for key in CONTROLLER_ANCHOR_TIME_KEYS:
+        if key not in track_process_data:
+            continue
+        arr = np.asarray(track_process_data[key])
+        if key in {"controller_anchor_observation_mode", "controller_anchor_failure_reason"}:
+            payload[key] = np.asarray(arr, dtype="<U40")
+        elif key in {"controller_anchor_source_query_id", "controller_anchor_bundle_support_count"}:
+            payload[key] = np.ascontiguousarray(arr.astype(np.int64))
+        else:
+            payload[key] = np.ascontiguousarray(arr.astype(np.float32))
+    for key in CONTROLLER_ANCHOR_STATIC_KEYS:
+        if key in track_process_data:
+            payload[key] = np.ascontiguousarray(np.asarray(track_process_data[key], dtype=np.int64))
+    if "controller_quality_status" in track_process_data:
+        payload["controller_quality_status"] = str(np.asarray(track_process_data["controller_quality_status"]).item())
     selected_controller_count = int(np.asarray(payload["controller_points"]).shape[1])
     controller_mask_len = int(np.asarray(payload["controller_mask"]).reshape(-1).shape[0])
     if (
@@ -549,7 +593,7 @@ def _quality_manifest_fields(
         dtype=bool,
     )
     target_counts_met = bool(surface_points.shape[0] >= 700 and interior_points.shape[0] >= 1000)
-    return {
+    payload = {
         "object_point_count": int(object_points.shape[1]),
         "controller_point_count": int(controller_points.shape[1]),
         "controller_candidate_count": int(controller_mask.shape[0]),
@@ -565,6 +609,24 @@ def _quality_manifest_fields(
         "first_frame_zero_object_points": _zero_point_count(object_points),
         "first_frame_zero_controller_points": _zero_point_count(controller_points),
     }
+    if "controller_anchor_confidence" in track_process:
+        confidence = np.asarray(track_process["controller_anchor_confidence"], dtype=np.float32)
+        payload["controller_anchor_mean_confidence"] = float(np.mean(confidence)) if confidence.size else 1.0
+        payload["controller_anchor_low_confidence_ratio"] = (
+            float(np.count_nonzero(confidence < 0.25) / confidence.size) if confidence.size else 0.0
+        )
+    if "controller_anchor_observation_mode" in track_process:
+        modes = np.asarray(track_process["controller_anchor_observation_mode"], dtype=str)
+        payload["controller_anchor_direct_frame_count"] = int(np.count_nonzero(modes == "direct_valid"))
+        payload["controller_anchor_bundle_recovered_frame_count"] = int(
+            np.count_nonzero(np.char.find(modes.astype(str), "bundle_recovered") >= 0)
+        )
+        payload["controller_anchor_unrecoverable_frame_count"] = int(
+            np.count_nonzero(np.char.find(modes.astype(str), "unrecoverable") >= 0)
+        )
+    if "controller_quality_status" in track_process:
+        payload["controller_quality_status"] = str(track_process["controller_quality_status"])
+    return payload
 
 
 def _metadata_payload(chunk: FuturePhysTwinChunk, frame_count: int, width_height: tuple[int, int]) -> dict[str, Any]:
@@ -765,6 +827,8 @@ def _validate_track_shapes(payload: Mapping[str, np.ndarray]) -> None:
     if controller_mask.ndim != 1:
         raise ValueError("controller_mask must be a 1D mask over candidate controller points")
     controller_mask_is_candidate_level = controller_mask.shape[0] != controller_points.shape[1]
+    controller_candidate_count = int(controller_mask.shape[0])
+    controller_count = int(controller_points.shape[1])
     if "controller_fps_indices" in payload:
         fps = np.asarray(payload["controller_fps_indices"], dtype=np.int64).reshape(-1)
         if fps.shape[0] != controller_points.shape[1]:
@@ -779,6 +843,32 @@ def _validate_track_shapes(payload: Mapping[str, np.ndarray]) -> None:
         query_ids = np.asarray(payload["controller_candidate_query_ids"], dtype=np.int64).reshape(-1)
         if controller_mask_is_candidate_level and query_ids.shape[0] != controller_mask.shape[0]:
             raise ValueError("controller_candidate_query_ids must match controller candidate count")
+    for key in CONTROLLER_CANDIDATE_TIME_KEYS:
+        if key not in payload:
+            continue
+        arr = np.asarray(payload[key])
+        if arr.shape != (frame_count, controller_candidate_count):
+            raise ValueError(f"{key} must have shape T,N matching controller candidates")
+    for key in CONTROLLER_CANDIDATE_POINT_KEYS:
+        if key not in payload:
+            continue
+        arr = np.asarray(payload[key])
+        if arr.shape != (frame_count, controller_candidate_count, 3):
+            raise ValueError(f"{key} must have shape T,N,3 matching controller candidates")
+    for key in CONTROLLER_ANCHOR_TIME_KEYS:
+        if key not in payload:
+            continue
+        arr = np.asarray(payload[key])
+        if arr.shape != (frame_count, controller_count):
+            raise ValueError(f"{key} must have shape T,M matching selected controller anchors")
+    for key in CONTROLLER_ANCHOR_STATIC_KEYS:
+        if key not in payload:
+            continue
+        arr = np.asarray(payload[key])
+        if arr.ndim != 2 or arr.shape[0] != controller_count:
+            raise ValueError(f"{key} must have shape M,K matching selected controller anchors")
+    if "controller_quality_status" in payload and str(payload["controller_quality_status"]) not in CONTROLLER_QUALITY_STATUSES:
+        raise ValueError("controller_quality_status must be normal, degraded, or invalid")
     for key in ("object_volume_sample_indices", "object_anchor_query_indices"):
         if key not in payload:
             continue

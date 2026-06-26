@@ -17,6 +17,12 @@ OPTIONAL_TIME_KEYS = (
     "controller_observed",
     "controller_recovered",
     "controller_recovery_confidence",
+    "controller_anchor_source_query_id",
+    "controller_anchor_observation_mode",
+    "controller_anchor_confidence",
+    "controller_anchor_failure_reason",
+    "controller_anchor_bundle_support_count",
+    "controller_anchor_recovery_residual",
 )
 
 TIME_KEYS = (*REQUIRED_TIME_KEYS, *OPTIONAL_TIME_KEYS)

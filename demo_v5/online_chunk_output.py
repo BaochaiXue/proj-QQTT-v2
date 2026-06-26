@@ -30,6 +30,19 @@ FINAL_DATA_STATIC_KEYS = (
     "object_sample_query_ids",
     *FUTUREPHYSTWIN_TOPOLOGY_KEYS,
 )
+OPTIONAL_STATIC_KEYS = (
+    "controller_anchor_bundle_query_ids",
+)
+TRACK_DIAGNOSTIC_KEYS = (
+    "controller_anchor_source_query_id",
+    "controller_anchor_observation_mode",
+    "controller_anchor_confidence",
+    "controller_anchor_failure_reason",
+    "controller_anchor_bundle_support_count",
+    "controller_anchor_recovery_residual",
+    "controller_anchor_bundle_query_ids",
+    "controller_quality_status",
+)
 
 
 def _infer_frame_count(data: Mapping[str, Any]) -> int:
@@ -141,7 +154,22 @@ def build_online_chunk(
         if value is not None:
             chunk[key] = _take_source_frames(value, list(range(0, int(end_frame) - int(start_frame))))
     chunk.update(_static_mapping_vectors(data))
+    for key in OPTIONAL_STATIC_KEYS:
+        if key in data:
+            chunk[key] = np.ascontiguousarray(np.asarray(data[key]))
+    if "controller_quality_status" in data:
+        chunk["controller_quality_status"] = str(data["controller_quality_status"])
     return chunk
+
+
+def _track_diagnostics(track_process: Mapping[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key in TRACK_DIAGNOSTIC_KEYS:
+        if key not in track_process:
+            continue
+        value = track_process[key]
+        payload[key] = str(value) if key == "controller_quality_status" else np.ascontiguousarray(np.asarray(value))
+    return payload
 
 
 class DemoV5OnlineOutputWriter:
@@ -239,8 +267,11 @@ class DemoV5OnlineOutputWriter:
         self._aggregate_writer.validate_next_chunk_case(chunk_case_dir)
         with (chunk_case_dir / "final_data.pkl").open("rb") as handle:
             final_data = pickle.load(handle)
+        with (chunk_case_dir / "track_process_data.pkl").open("rb") as handle:
+            track_process = pickle.load(handle)
+        online_data = {**final_data, **_track_diagnostics(track_process)}
         result = self.commit_final_data_chunk(
-            final_data,
+            online_data,
             source_frame_indices=source_frame_indices,
             status=status,
         )
@@ -271,6 +302,12 @@ class DemoV5OnlineOutputWriter:
             value = data.get(key)
             if value is not None:
                 self._static_arrays[key] = np.ascontiguousarray(np.asarray(value))
+        for key in OPTIONAL_STATIC_KEYS:
+            value = data.get(key)
+            if value is not None:
+                self._static_arrays[key] = np.ascontiguousarray(np.asarray(value))
+        if "controller_quality_status" in data:
+            self._static_arrays["controller_quality_status"] = str(data["controller_quality_status"])
         self._static_arrays.update(_static_mapping_vectors(data))
         payload: dict[str, Any] = {}
         for key, values in self._time_arrays.items():
@@ -280,6 +317,12 @@ class DemoV5OnlineOutputWriter:
             value = self._static_arrays.get(key)
             if value is not None:
                 payload[key] = value
+        for key in OPTIONAL_STATIC_KEYS:
+            value = self._static_arrays.get(key)
+            if value is not None:
+                payload[key] = value
+        if "controller_quality_status" in self._static_arrays:
+            payload["controller_quality_status"] = str(self._static_arrays["controller_quality_status"])
         for key in STATIC_KEYS:
             payload[key] = self._static_arrays.get(
                 key,

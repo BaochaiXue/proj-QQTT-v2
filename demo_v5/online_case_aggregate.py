@@ -48,8 +48,20 @@ TRACK_TIME_KEYS = (
     "object_points",
     "object_visibilities",
 )
+TRACK_OPTIONAL_TIME_KEYS = (
+    "controller_anchor_source_query_id",
+    "controller_anchor_observation_mode",
+    "controller_anchor_confidence",
+    "controller_anchor_failure_reason",
+    "controller_anchor_bundle_support_count",
+    "controller_anchor_recovery_residual",
+)
 TRACK_STATIC_KEYS = FUTUREPHYSTWIN_TOPOLOGY_KEYS
 TRACK_FIRST_STATIC_KEYS = ("controller_mask",)
+TRACK_OPTIONAL_FIRST_STATIC_KEYS = (
+    "controller_anchor_bundle_query_ids",
+    "controller_quality_status",
+)
 METADATA_INVARIANT_KEYS = (
     "fps",
     "WH",
@@ -169,6 +181,24 @@ def _concatenate_payloads(
                 raise ValueError(f"aggregate static invariant mismatch for {label}.{key} at chunk {chunk_idx}")
         combined[key] = first
     return combined
+
+
+def _concatenate_optional_time_keys(
+    combined: dict[str, Any],
+    payloads: Sequence[Mapping[str, Any]],
+    *,
+    keys: Sequence[str],
+    label: str,
+) -> None:
+    for key in keys:
+        if not all(key in payload for payload in payloads):
+            continue
+        arrays = [np.ascontiguousarray(np.asarray(payload[key])) for payload in payloads]
+        tail_shape = arrays[0].shape[1:]
+        for chunk_idx, arr in enumerate(arrays):
+            if arr.ndim < 1 or arr.shape[1:] != tail_shape:
+                raise ValueError(f"cannot concatenate optional {label}.{key} at chunk {chunk_idx}")
+        combined[key] = np.ascontiguousarray(np.concatenate(arrays, axis=0))
 
 
 def _load_calibrate_matrix(case_dir: Path) -> np.ndarray:
@@ -437,8 +467,18 @@ def build_aggregate_case_from_chunk_cases(
         static_keys=TRACK_STATIC_KEYS,
         label="track_process_data.pkl",
     )
+    _concatenate_optional_time_keys(
+        track_process,
+        track_payloads,
+        keys=TRACK_OPTIONAL_TIME_KEYS,
+        label="track_process_data.pkl",
+    )
     for key in TRACK_FIRST_STATIC_KEYS:
         track_process[key] = np.ascontiguousarray(np.asarray(track_payloads[0][key]))
+    for key in TRACK_OPTIONAL_FIRST_STATIC_KEYS:
+        if key in track_payloads[0]:
+            value = track_payloads[0][key]
+            track_process[key] = str(value) if key == "controller_quality_status" else np.ascontiguousarray(np.asarray(value))
     frame_count = _frame_count_from_payload(final_data)
 
     _remove_generated_contents(target)

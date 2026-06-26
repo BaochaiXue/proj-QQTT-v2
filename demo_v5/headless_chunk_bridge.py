@@ -386,17 +386,42 @@ def _controller_anchor_manifest_fields(track_process_data: Mapping[str, Any]) ->
         dtype=np.int64,
     ).reshape(-1)
     statuses = np.asarray(track_process_data.get("controller_anchor_status", []), dtype=str).reshape(-1)
-    return {
+    payload = {
         "controller_anchor_mode": "streaming_stable",
         "controller_anchor_count": int(len(query_indices)),
         "controller_anchor_query_indices": [int(value) for value in query_indices.tolist()],
         "controller_anchor_active_query_indices": [int(value) for value in active_indices.tolist()],
         "controller_anchor_direct_count": int(np.count_nonzero(statuses == "direct")),
-        "controller_anchor_revived_count": int(np.count_nonzero(statuses == "revived")),
+        "controller_anchor_recovered_count": int(np.count_nonzero(statuses == "recovered")),
+        "controller_anchor_revived_count": int(np.count_nonzero((statuses == "revived") | (statuses == "recovered"))),
         "controller_anchor_fallback_count": int(np.count_nonzero(statuses == "fallback")),
         "controller_anchor_missing_count": int(np.count_nonzero(statuses == "missing")),
         "controller_anchor_status": [str(value) for value in statuses.tolist()],
     }
+    if "controller_anchor_confidence" in track_process_data:
+        confidence = np.asarray(track_process_data["controller_anchor_confidence"], dtype=np.float32)
+        payload["controller_anchor_mean_confidence"] = float(np.mean(confidence)) if confidence.size else 1.0
+        payload["controller_anchor_low_confidence_ratio"] = (
+            float(np.count_nonzero(confidence < 0.25) / confidence.size) if confidence.size else 0.0
+        )
+    if "controller_anchor_observation_mode" in track_process_data:
+        modes = np.asarray(track_process_data["controller_anchor_observation_mode"], dtype=str)
+        bundle_recovered = np.char.find(modes.astype(str), "bundle_recovered") >= 0
+        unrecoverable = np.char.find(modes.astype(str), "unrecoverable") >= 0
+        payload["controller_anchor_direct_frame_count"] = int(np.count_nonzero(modes == "direct_valid"))
+        payload["controller_anchor_bundle_recovered_frame_count"] = int(np.count_nonzero(bundle_recovered))
+        payload["controller_anchor_unrecoverable_frame_count"] = int(np.count_nonzero(unrecoverable))
+        payload["controller_anchor_observation_mode_summary"] = {
+            str(mode): int(np.count_nonzero(modes == mode))
+            for mode in sorted(set(str(value) for value in modes.reshape(-1).tolist()))
+        }
+    if "controller_quality_status" in track_process_data:
+        payload["controller_quality_status"] = str(np.asarray(track_process_data["controller_quality_status"]).item())
+    return payload
+
+
+def _controller_quality_invalid(manifest: Mapping[str, Any]) -> bool:
+    return str(manifest.get("controller_quality_status", "normal")) == "invalid"
 
 
 def _object_anchor_manifest_fields(track_process_data: Mapping[str, Any]) -> dict[str, Any]:
@@ -818,6 +843,14 @@ def _write_chunk_from_rows(
         manifest_extras=manifest_extras,
         relative_wall_time_s=lambda: _relative_wall_s(float(wall_time_origin_s)),
     )
+    if _controller_quality_invalid(manifest):
+        manifest.update(
+            {
+                "online_publish_skipped": True,
+                "online_publish_skip_reason": "controller_quality_invalid",
+            }
+        )
+        return manifest
     if online_writer is not None:
         online_result = online_writer.commit_case_chunk(
             Path(manifest["futurephystwin_case_root"]),
@@ -837,6 +870,7 @@ def _write_chunk_from_rows(
                 "static_data_path": online_result["static_data_path"],
             }
         )
+    manifest.setdefault("online_publish_skipped", False)
     return manifest
 
 
@@ -940,8 +974,10 @@ def write_chunks_from_headless_capture(
             session_query_topology=session_query_topology,
         )
         manifests.append(manifest)
-        if on_chunk_written is not None:
+        if not bool(manifest.get("online_publish_skipped", False)) and on_chunk_written is not None:
             on_chunk_written(manifest)
+        if _controller_quality_invalid(manifest):
+            break
         chunk_index += 1
         row_start = row_idx + 1
         row_buffer = []
@@ -1086,14 +1122,18 @@ def stream_chunks_from_headless_capture(
                 session_query_topology=session_query_topology,
             )
             manifests.append(manifest)
-            if on_chunk_written is not None:
+            if not bool(manifest.get("online_publish_skipped", False)) and on_chunk_written is not None:
                 on_chunk_written(manifest)
+            if _controller_quality_invalid(manifest):
+                break
             chunk_index += 1
             row_start = next_row_idx
             row_buffer = []
             prepared_buffer = []
             if max_chunks is not None and len(manifests) >= int(max_chunks):
                 break
+        if manifests and _controller_quality_invalid(manifests[-1]):
+            break
         if max_chunks is not None and len(manifests) >= int(max_chunks):
             break
         if capture_finished() and not saw_new_rows:

@@ -1122,12 +1122,36 @@ def _runtime_chunk_summary(manifests: Sequence[dict[str, object]]) -> dict[str, 
         if item.get("publish_wall_s") is not None
         and bool(item.get("shape_prior_complete") or item.get("shape_prior_target_counts_met"))
     ]
+    quality_order = {"normal": 0, "degraded": 1, "invalid": 2}
+    quality_values = [
+        str(item.get("controller_quality_status", "normal"))
+        for item in manifests
+    ]
+    controller_quality_status = "normal"
+    if quality_values:
+        controller_quality_status = max(quality_values, key=lambda value: quality_order.get(value, -1))
+    quality_counts = {
+        status: int(sum(1 for value in quality_values if value == status))
+        for status in ("normal", "degraded", "invalid")
+    }
+    invalid_chunks = [
+        str(item.get("case_name", ""))
+        for item in manifests
+        if str(item.get("controller_quality_status", "normal")) == "invalid"
+    ]
     return {
         "first_ready_chunk_wall_s": publish_times[0] if publish_times else None,
         "first_shape_prior_ready_chunk_wall_s": shape_publish_times[0] if shape_publish_times else None,
         "steady_publish_intervals_s": intervals,
         "steady_state_publish_interval_max_s": max(intervals) if intervals else None,
         "max_backlog_chunks": max(backlog_values) if backlog_values else None,
+        "controller_quality_status": controller_quality_status,
+        "controller_quality_status_counts": quality_counts,
+        "controller_quality_invalid_chunk_count": int(len(invalid_chunks)),
+        "controller_quality_invalid_chunks": invalid_chunks,
+        "online_publish_skipped_chunk_count": int(
+            sum(1 for item in manifests if bool(item.get("online_publish_skipped", False)))
+        ),
     }
 
 
@@ -1184,7 +1208,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary_path = base_path / f"{args.case_prefix}_chunks_manifest.json"
         summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         print(json.dumps(summary, indent=2, sort_keys=True))
-        return 0
+        return 1 if str(summary.get("controller_quality_status", "normal")) == "invalid" else 0
 
     capture_dir = _default_capture_dir(args, base_path)
     capture_dir.mkdir(parents=True, exist_ok=True)
@@ -1299,7 +1323,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             point_viewer_left_running = point_viewer_return_code is None
     final_migration = migrate_legacy_online_static_case(base_path, str(args.case_prefix))
     validation_cases = select_validation_chunk_cases(manifests) if len(manifests) >= 5 else []
-    if args.max_chunks is not None and len(manifests) >= int(args.max_chunks):
+    runtime_summary = _runtime_chunk_summary(manifests)
+    controller_quality_invalid = str(runtime_summary.get("controller_quality_status", "normal")) == "invalid"
+    if controller_quality_invalid:
+        stop_reason = "controller_quality_invalid"
+    elif args.max_chunks is not None and len(manifests) >= int(args.max_chunks):
         stop_reason = "max_chunks_reached"
     elif return_code == 0:
         stop_reason = "camera_completed"
@@ -1396,10 +1424,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "startup_legacy_static_case_migration": startup_migration,
         "final_legacy_static_case_migration": final_migration,
     }
-    summary.update(_runtime_chunk_summary(manifests))
+    summary.update(runtime_summary)
     summary_path = base_path / f"{args.case_prefix}_chunks_manifest.json"
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(summary, indent=2, sort_keys=True))
+    if controller_quality_invalid:
+        return 1
     if return_code not in (0, None) and not manifests:
         return int(return_code)
     if args.max_chunks is not None and len(manifests) < int(args.max_chunks):
