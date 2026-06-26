@@ -786,6 +786,8 @@ class StreamingControllerAnchorSelector:
 
         direct_mask = np.zeros((self.count,), dtype=bool)
         for anchor_idx in range(self.count):
+            # Direct recovery only accepts the fixed anchor query when it is still
+            # a strict-valid controller candidate in this chunk.
             candidate_idx = self._direct_candidate_for_anchor(
                 anchor_idx,
                 query_to_candidate=query_to_candidate,
@@ -804,6 +806,9 @@ class StreamingControllerAnchorSelector:
 
         lost_indices = np.flatnonzero(~direct_mask)
         current_valid = _valid_point_time_mask(output, output_visibilities) & output_motions_valid
+        # Current revival support comes only from the already-selected 30 anchors.
+        # If few anchors are direct-valid, this local-neighbor revival often fails
+        # even when many other strict-valid controller candidates still exist.
         revived = _revive_lost_anchors_from_neighbor_motion(
             previous_points=self._last_points,
             current_points=output,
@@ -822,6 +827,10 @@ class StreamingControllerAnchorSelector:
         if revived:
             revived_mask[np.asarray(sorted(revived), dtype=np.int64)] = True
         for anchor_idx in np.flatnonzero((~direct_mask) & (~revived_mask)):
+            # TODO: Replace this hold-last fallback with a state estimator. This is
+            # the direct cause of visually static red controller points: a rejected
+            # observation becomes a repeated previous position instead of a recovered
+            # current anchor state.
             held = np.repeat(self._last_points[int(anchor_idx)][None, :], frame_count, axis=0)
             output[:, anchor_idx, :] = held
             active_query_indices[anchor_idx] = -1
