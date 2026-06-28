@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Demo 5.1 Warmup And Actual Run Pipeline</title>
+    <link rel="stylesheet" href="./demo51_pipeline.css">
+    <script src="./demo51_pipeline.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Teachme / Demo 5.1</p>
+        <h1>Warmup Pipeline 和 Actual Run Pipeline</h1>
+      </div>
+      <nav class="quick-nav" aria-label="Page sections">
+        <a href="#warmup">Warmup</a>
+        <a href="#shape-prior">Shape Prior</a>
+        <a href="#actual-run">Actual Run</a>
+        <a href="#visualizer-pass">Visualizer</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="summary-band" aria-labelledby="mapping-title">
+        <div class="summary-copy">
+          <p class="eyebrow">Code mapping</p>
+          <h2 id="mapping-title">这里的 Demo 5.1 对应当前仓库的 Demo 3.3 + Demo 3.2 live path</h2>
+          <p>
+            我按仓库里的实际实现来讲：Demo 3.3 在 Demo 3.2 的
+            FFS + EdgeTAM + TAPNext++/LiteTracker 双 GPU live path 上，
+            增加一个只用于 warmup 的 FuturePhysTwin/SAM3D shape prior。
+            shape prior 最终只是灰色 canonical reference layer，不改 tracker input、
+            live fused PCD、mask 或 red/cyan tracking marker。
+          </p>
+        </div>
+        <dl class="mapping-list">
+          <div>
+            <dt>GPU0 / mask-gpu</dt>
+            <dd>FFS TensorRT depth, SAM3.1/HF EdgeTAM masks, fusion, render packet, Open3D。</dd>
+          </div>
+          <div>
+            <dt>GPU1 / cotracker-gpu</dt>
+            <dd>TAPNext++ 或 LiteTracker tracker 子进程，通过 latest-wins IPC 收发。</dd>
+          </div>
+          <div>
+            <dt>Shape prior</dt>
+            <dd>默认先 snapshot case，heavy route after-teardown 再跑，避免抢 live GPU。</dd>
+          </div>
+          <div>
+            <dt>Visualizer pass</dt>
+            <dd>actual run 的另一遍诊断展示使用 visualizer，而不是完整 realtime_phystwin。</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="control-band" aria-labelledby="flow-title">
+        <div>
+          <p class="eyebrow">Interactive flow</p>
+          <h2 id="flow-title">按阶段筛选流程图</h2>
+        </div>
+        <div class="phase-controls" role="tablist" aria-label="Pipeline phases">
+          <button type="button" class="phase-button is-active" data-phase="all" role="tab" aria-selected="true">
+            全部
+          </button>
+          <button type="button" class="phase-button" data-phase="warmup" role="tab" aria-selected="false">
+            普通 warmup
+          </button>
+          <button type="button" class="phase-button" data-phase="shape" role="tab" aria-selected="false">
+            shape prior
+          </button>
+          <button type="button" class="phase-button" data-phase="actual" role="tab" aria-selected="false">
+            actual run
+          </button>
+          <button type="button" class="phase-button" data-phase="visualizer" role="tab" aria-selected="false">
+            visualizer
+          </button>
+        </div>
+      </section>
+
+      <section class="flow-shell" aria-label="Dual GPU flow diagram">
+        <div class="gpu-lanes" id="flow-lanes"></div>
+        <aside class="detail-panel" aria-live="polite">
+          <p class="eyebrow">Selected step</p>
+          <h2 id="detail-title">点击任意节点查看细节</h2>
+          <p id="detail-body">
+            节点颜色表示阶段，所在泳道表示它主要占用 GPU0、GPU1，或 CPU/IO。
+          </p>
+          <dl id="detail-meta" class="detail-meta"></dl>
+        </aside>
+      </section>
+
+      <section id="warmup" class="explain-band">
+        <div class="section-heading">
+          <p class="eyebrow">Warmup A</p>
+          <h2>普通 warmup：让 live pipeline 先站稳</h2>
+        </div>
+        <div class="two-column">
+          <article class="text-block">
+            <h3>它解决什么</h3>
+            <p>
+              普通 warmup 的目标是把相机、FFS depth、SAM3.1/EdgeTAM mask、
+              tracker 子进程、Open3D 首帧全部带到可运行状态。它和 shape prior
+              不是一回事：普通 warmup 是 live run 的必要起跑动作，shape prior 是
+              额外生成 canonical reference 的单次任务。
+            </p>
+          </article>
+          <article class="text-block">
+            <h3>两个 GPU 怎么分</h3>
+            <p>
+              Demo 3.2/3.3 默认 `--mask-gpu 0 --cotracker-gpu 1`。入口先让主进程只看
+              GPU0；tracker 用独立子进程和 `CUDA_VISIBLE_DEVICES=1` 跑在 GPU1。
+              两边通过 pickle/latest-wins IPC 传 RGB + mask input 和 tracker result，
+              不做跨 GPU CUDA tensor transfer。
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="shape-prior" class="explain-band split-accent">
+        <div class="section-heading">
+          <p class="eyebrow">Warmup B</p>
+          <h2>Shape prior warmup：先抓 snapshot，再 after-teardown 跑重路线</h2>
+        </div>
+        <ol class="route-list">
+          <li><span>1</span>第一组有效 strict-source tracking input 到达后，复制 RGB-D、object/controller mask、intrinsics、c2w。</li>
+          <li><span>2</span>写出 FuturePhysTwin-style one-frame case：`color/`, `mask/`, `pcd/`, `calibrate.pkl`, `processed_masks.pkl`, `track_process_data.pkl`。</li>
+          <li><span>3</span>默认状态变成 `case_ready`，heavy route 不阻塞 tracker input，也不阻塞第一帧 render。</li>
+          <li><span>4</span>live process teardown 后，detached completion worker 等 GPU 内存释放再执行五段 route。</li>
+          <li><span>5</span>读取 `final_data.pkl`，拼出 `object_points[0] + surface_points + interior_points`，作为灰色 reference layer。</li>
+        </ol>
+        <div class="route-strip" aria-label="Shape prior command route">
+          <code>image_upscale.py</code>
+          <code>segment_util_image.py</code>
+          <code>data_process_sam3d/shape_prior.py</code>
+          <code>data_process/align.py</code>
+          <code>data_process_sam3d/data_process_sample.py --shape_prior</code>
+        </div>
+      </section>
+
+      <section id="actual-run" class="explain-band">
+        <div class="section-heading">
+          <p class="eyebrow">Actual run</p>
+          <h2>正式运行：严格同源 group_id 驱动一帧完整输出</h2>
+        </div>
+        <div class="timeline">
+          <div>
+            <strong>Capture</strong>
+            <p>三相机 RealSense 产生同一组 RGB/IR/depth 时间片。</p>
+          </div>
+          <div>
+            <strong>Depth + Mask</strong>
+            <p>GPU0 跑 FFS TensorRT batch=3 depth，然后 SAM3.1/HF EdgeTAM 给 object/controller mask。</p>
+          </div>
+          <div>
+            <strong>Tracker</strong>
+            <p>GPU1 tracker 子进程收到 RGB + trackable masks，返回 tracks、visibility 和语义归属。</p>
+          </div>
+          <div>
+            <strong>Render</strong>
+            <p>主进程要求 tracker result 与 RGB/depth/mask 同 group，再 lift 3D markers 并送 Open3D。</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="visualizer-pass" class="explain-band split-accent">
+        <div class="section-heading">
+          <p class="eyebrow">Second pass</p>
+          <h2>Actual run 的另一遍：用 visualizer 做诊断展示，不走 realtime_phystwin 主程序</h2>
+        </div>
+        <div class="two-column">
+          <article class="text-block">
+            <h3>输入是什么</h3>
+            <p>
+              visualizer pass 消费已经得到的视频帧、tracks、visibility 和可选 segm_mask。
+              它的职责是画轨迹点、轨迹线、可见性和遮罩后的颜色，再保存 mp4 或写到 writer。
+            </p>
+          </article>
+          <article class="text-block">
+            <h3>它不做什么</h3>
+            <p>
+              它不重新启动完整 realtime_phystwin / PhysTwin physics pipeline，
+              不训练 spring-mass，不做 inverse physics，也不改变 Demo 5.1 的 live GPU
+              ownership。这里它是 actual run 后的解释/检查视图。
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="source-band" aria-labelledby="source-title">
+        <div class="section-heading">
+          <p class="eyebrow">Source map</p>
+          <h2 id="source-title">这张图对应的代码位置</h2>
+        </div>
+        <ul class="source-list">
+          <li><code>demo_v3_3/realtime_three_view_litetracker_ffs_dual4090.py</code>：Demo 3.3 entrypoint，主进程 CUDA 先绑定 mask GPU。</li>
+          <li><code>qqtt/demo/demo33_runtime.py</code>：shape prior snapshot、start policy、detached completion、render-layer attach。</li>
+          <li><code>qqtt/demo/demo33_shape_prior_warmup.py</code>：写 FuturePhysTwin case、执行五段 shape-prior route、加载 final_data。</li>
+          <li><code>qqtt/demo/demo31_runtime.py</code>：双 GPU contract、tracker subprocess、strict-source render bundle、profile summary。</li>
+          <li><code>qqtt/demo/three_view_masked_fused_pcd_runtime.py</code>：FFS/mask/fusion/render packet 和 Open3D visual output。</li>
+          <li><code>realtime_phystwin/data_process/utils/visualizer.py</code>：actual run 另一遍的 track/video visualizer。</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>
