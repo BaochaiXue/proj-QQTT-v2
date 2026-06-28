@@ -1,0 +1,141 @@
+# Filesystem paths and external checkpoint locations.
+paths:
+  # Directory where Demo v5.1 writes realtime data_process chunk cases.
+  data_process_base_path: "outputs"
+  # Local checkout used by the realtime PhysTwin consumer.
+  realtime_phystwin_root: "realtime_phystwin"
+  # Optional tabletop calibration file used by capture/alignment helpers.
+  table_calibrate_path: "table_calibrate.pkl"
+  # Default SAM 3.1 checkpoint path used when the env var is not set.
+  sam31_checkpoint_path: "vendor/demo_runtime/checkpoints/sam31/sam3.1_multiplex.pt"
+  # Environment variable that can override the SAM 3.1 checkpoint path.
+  sam31_checkpoint_env: "QQTT_SAM31_CHECKPOINT"
+
+# Source stream and replay pacing.
+input:
+  # Input backend for the demo runner; fake-live replays prepared data as a live stream.
+  input_source: "fake-live"
+  # Output metadata/window FPS used for replay-mode chunk math.
+  replay_fps: 5.0
+  # Default replay FPS used by the camera subprocess for fake-live input.
+  camera_source_replay_fps: 5.0
+
+# Chunk publication cadence and run length.
+chunking:
+  # Duration, in seconds, represented by each realtime data_process chunk.
+  chunk_seconds: 7.0
+  # Sleep interval, in seconds, between checks for new frames.jsonl rows.
+  chunk_poll_interval_s: 0.001
+  # Optional cap on chunks to process; null means run until stopped.
+  max_chunks: null
+
+# Camera capture, depth, masks, and local model runtime.
+camera:
+  # Target camera capture frame rate.
+  camera_fps: 5
+  # Allowed camera FPS choices exposed by the Demo v5.1 CLI/UI.
+  camera_fps_choices: [5, 15, 30, 60]
+  # Manual RealSense color exposure used by the camera process.
+  camera_color_exposure: 45.0
+  # Manual RealSense color gain used by the camera process.
+  camera_color_gain: 45.0
+  # Prefix used when naming generated realtime cases.
+  case_prefix: "demo_v5_1"
+  # Depth source used for realtime point cloud generation.
+  depth_backend: "native-realsense"
+  # Radius, in meters, for mask point-cloud outlier filtering.
+  mask_radius_outlier_radius_m: 0.01
+  # Minimum neighbor count for mask point-cloud radius outlier filtering.
+  mask_radius_outlier_nb_points: 40
+  # Torch device used by the camera-side model runtime.
+  camera_device: "cuda"
+  # Torch device used by the camera-side tracker runtime.
+  camera_tracker_device: "cuda"
+  # Numeric dtype used by camera-side model inference.
+  camera_dtype: "bfloat16"
+
+# GPU routing presets for the cooperating subprocesses.
+gpu:
+  # GPU routing preset for the realtime camera/data-process path.
+  realtime_gpu_mode: "single"
+  # GPU routing preset for the warmup and shape-prior path.
+  warmup_gpu_mode: "dual"
+  # Backward-compatible alias for realtime_gpu_mode.
+  gpu_mode: "single"
+  # CUDA_VISIBLE_DEVICES mapping for camera/data-process GPU routing presets.
+  gpu_mode_camera_cuda_visible_devices: {"single": "0", "dual": "1"}
+  # Torch device mapping for shape-prior GPU routing presets.
+  gpu_mode_shape_prior_device: {"single": "cuda:0", "dual": "cuda:1"}
+
+# SAM3D shape-prior worker lifecycle and readiness thresholds.
+shape_prior:
+  # ZeroMQ endpoint for the shape-prior worker service.
+  shape_prior_endpoint: "tcp://127.0.0.1:7100"
+  # How the shape-prior worker is launched and supervised.
+  shape_prior_worker_mode: "managed"
+  # Conda environment used for the managed shape-prior worker.
+  shape_prior_worker_conda_env: "phystwin-max"
+  # Torch device passed to the managed shape-prior worker.
+  shape_prior_worker_device: "cuda:0"
+  # Grace period, in seconds, after starting the shape-prior worker.
+  shape_prior_worker_startup_grace_s: 0.0
+  # Maximum allowed p95 observation-to-aligned distance for shape-prior checks.
+  shape_prior_worker_max_observation_to_aligned_p95_m: 0.06
+
+# Optional realtime_phystwin online optimization.
+optimization:
+  # Online optimization mode; disabled skips the optimization process.
+  optimization_mode: "disabled"
+  # CUDA_VISIBLE_DEVICES value for the optimization process.
+  optimization_cuda_visible_devices: "1"
+  # Torch device used inside the optimization process after CUDA remapping.
+  optimization_device: "cuda:0"
+  # Number of zero-iteration optimization passes for smoke/baseline output.
+  optimization_zero_iterations: 10
+  # Batch size used by the online optimization process.
+  optimization_batch_size: 4
+  # Frame stride used when building optimization segments.
+  optimization_segment_stride: 16
+  # Poll interval, in seconds, for optimization input discovery.
+  optimization_poll_sec: 1.0
+  # Number of recent chunk windows considered by online optimization.
+  optimization_recent_window_count: 8
+  # Random seed used by optimization experiments.
+  optimization_seed: 42
+  # Directory for normal online optimization experiment output.
+  optimization_experiments_dir: "experiments_online_v5"
+  # Directory for zero-iteration optimization experiment output.
+  optimization_zero_experiments_dir: "experiments_online_v5_cma"
+  # Startup delay before online optimization begins polling.
+  optimization_start_grace_s: 2.0
+
+# Optional online point-cloud viewer.
+point_viewer:
+  # Point viewer launch mode; window opens an interactive viewer.
+  point_viewer_mode: "window"
+  # Conda environment used by the point viewer process.
+  point_viewer_conda_env: "demo_2_max"
+  # CUDA_VISIBLE_DEVICES value for the point viewer process.
+  point_viewer_cuda_visible_devices: "1"
+  # Camera index displayed by the point viewer.
+  point_viewer_cam_idx: 0
+  # Poll interval, in seconds, for point viewer data refresh.
+  point_viewer_poll_sec: 0.1
+  # Subsampling stride for object points in the viewer.
+  point_viewer_object_stride: 1
+  # Render radius for object points in the viewer.
+  point_viewer_object_radius: 3
+  # Render radius for controller points in the viewer.
+  point_viewer_controller_radius: 6
+  # Color policy for object points in the viewer.
+  point_viewer_object_color_mode: "rainbow"
+  # Viewer layout name for side-by-side input/output display.
+  point_viewer_layout_side_by_side: "side-by-side"
+  # Viewer layout name for output-only display.
+  point_viewer_layout_output_only: "output-only"
+  # Available point viewer layout choices.
+  point_viewer_layouts: ["side-by-side", "output-only"]
+  # Default point viewer layout.
+  point_viewer_layout: "side-by-side"
+  # Data/rendering mode used by the point viewer.
+  point_viewer_render_mode: "sam3d-final-data"

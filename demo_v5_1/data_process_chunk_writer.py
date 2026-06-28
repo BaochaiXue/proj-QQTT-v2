@@ -1,8 +1,8 @@
-"""Write and validate Demo v5 data_process_sam3d-compatible chunk cases.
+"""Write and validate Demo v5.1 data_process_sam3d-compatible chunk cases.
 
 The writer produces the same file names realtime_phystwin expects
 (``final_data.pkl``, ``track_process_data.pkl``, ``tracking/0.npz``,
-``mask/processed_masks.pkl``, and camera metadata) while keeping Demo v5's
+``mask/processed_masks.pkl``, and camera metadata) while keeping Demo v5.1's
 query schema explicit in every chunk.
 """
 from __future__ import annotations
@@ -21,14 +21,12 @@ import uuid
 import numpy as np
 from PIL import Image
 
-from demo_v5_1.data_process_schema import (
-    TRACK_PROCESS_STATUSES,
-    normalize_data_process_keys,
-)
-
-
 DATA_PROCESS_QUERY_SCHEMA_VERSION = "data_process_sam3d_realtime_query_schema_v1"
 DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION = "data_process_sam3d_realtime_final_data_v1"
+TRACK_PROCESS_STATUSES = ("normal", "degraded", "invalid")
+# Query schema fields are static over an online run. The hash is intentionally
+# part of both final_data and track_process_data so readers can reject mixed
+# chunks before comparing large arrays.
 DATA_PROCESS_QUERY_SCHEMA_KEYS = (
     "query_schema_version",
     "query_schema_hash",
@@ -89,6 +87,9 @@ DATA_PROCESS_TRACK_PROCESS_TRACE_KEYS = (
     "object_track_status",
 )
 
+# Candidate keys describe every controller query before final 30-point
+# selection. Track keys describe the stable selected controller points after
+# strict filtering and recovery.
 CONTROLLER_CANDIDATE_TIME_KEYS = (
     "controller_raw_visible",
     "controller_processed_mask_valid",
@@ -145,6 +146,8 @@ DATA_PROCESS_SAM3D_METRICS = {
 
 @dataclass(frozen=True)
 class DataProcessChunk:
+    """In-memory representation of one fixed-size data_process_sam3d window."""
+
     rgb_frames: Sequence[np.ndarray]
     processed_masks: Sequence[Sequence[Mapping[str, np.ndarray]]]
     track_process_data: Mapping[str, np.ndarray]
@@ -198,6 +201,10 @@ def _write_rgb_frames(case_dir: Path, rgb_frames: Sequence[np.ndarray]) -> None:
 
 
 def _write_processed_masks(case_dir: Path, processed_masks: Sequence[Sequence[Mapping[str, np.ndarray]]]) -> None:
+    # Offline parity with data_process_sam3d/data_process_mask.py:L213-L215.
+    # That path serializes processed_masks.pkl after semantic, depth, and
+    # radius-outlier filtering. Demo v5.1 writes the same payload after
+    # realtime filtering.
     mask_dir = case_dir / "mask"
     mask_dir.mkdir(parents=True, exist_ok=True)
     normalized: list[list[dict[str, np.ndarray]]] = []
@@ -218,6 +225,10 @@ def _write_processed_masks(case_dir: Path, processed_masks: Sequence[Sequence[Ma
 
 
 def _write_tracking(case_dir: Path, chunk: DataProcessChunk, frame_count: int) -> None:
+    # Offline parity with data_process_sam3d/data_process_track.py:L49-L55.
+    # That path reads cotracker/*.npz with tracks and visibility. Demo v5.1
+    # writes both tracking/0.npz and cotracker/0.npz for the same downstream
+    # contract.
     if chunk.tracks_yx is None:
         tracks = np.zeros((frame_count, 0, 2), dtype=np.float32)
     else:
@@ -249,6 +260,10 @@ def _write_tracking(case_dir: Path, chunk: DataProcessChunk, frame_count: int) -
 
 
 def _write_optional_pcd(case_dir: Path, chunk: DataProcessChunk, frame_count: int) -> None:
+    # Offline parity with data_process_sam3d/data_process_pcd.py:L224-L229.
+    # That path writes pcd/<frame>.npz with points, colors, and masks. The
+    # realtime writer persists points/colors for diagnostics when requested;
+    # masks live in processed_masks.
     if chunk.pcd_points is None and chunk.pcd_colors is None:
         return
     if chunk.pcd_points is None or chunk.pcd_colors is None:
@@ -303,12 +318,15 @@ def build_query_schema_payload(
     controller_sample_query_ids: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Build query-id metadata shared by final_data and track_process_data."""
-    track_process_data = normalize_data_process_keys(track_process_data)
+    track_process_data = dict(track_process_data)
     object_points = np.asarray(track_process_data.get("object_points", np.empty((0, 0, 3))))
     controller_points = np.asarray(track_process_data.get("controller_points", np.empty((0, 0, 3))))
     object_count = int(object_points.shape[1]) if object_points.ndim >= 2 else 0
     controller_count = int(controller_points.shape[1]) if controller_points.ndim >= 2 else 0
 
+    # Prepared v5.1 frames usually carry explicit query identity. Synthetic or
+    # reconstructed inputs can still derive ids from object/controller query
+    # arrays before the canonical payload is written.
     if "query_ids" in track_process_data and "query_semantic_labels" in track_process_data:
         query_ids = np.ascontiguousarray(np.asarray(track_process_data["query_ids"], dtype=np.int64).reshape(-1))
         query_semantic_labels = np.ascontiguousarray(
@@ -394,7 +412,11 @@ def build_query_schema_payload(
 
 def _track_process_payload(track_process_data: Mapping[str, np.ndarray]) -> dict[str, Any]:
     """Normalize strict tracking output into data_process_sam3d track payload."""
-    track_process_data = normalize_data_process_keys(track_process_data)
+    # Offline parity with data_process_sam3d/data_process_track.py:L127-L135
+    # and L321-L322. That path assembles object/controller point, color, and
+    # visibility arrays, then adds the controller candidate mask after motion
+    # filtering.
+    track_process_data = dict(track_process_data)
     payload: dict[str, Any] = {}
     for key in DATA_PROCESS_TRACK_PROCESS_KEYS:
         if key not in track_process_data:
@@ -473,6 +495,9 @@ def _sample_object_volume_indices(
     volume_sample_size: float = 0.005,
 ) -> np.ndarray:
     """Choose first-frame object samples on the 5 mm occupancy grid."""
+    # Offline parity with data_process_sam3d/data_process_sample.py:L281-L300.
+    # That path keeps one first-frame object track per 5 mm voxel, with
+    # shape-prior points included in the bounds when available.
     pts = np.asarray(object_points, dtype=np.float64)
     if pts.ndim != 3 or pts.shape[-1] != 3:
         raise ValueError("object_points must have shape T,N,3")
@@ -507,8 +532,14 @@ def _final_data_payload(
     interior_points: np.ndarray,
 ) -> dict[str, np.ndarray]:
     """Assemble the final_data.pkl contract consumed by realtime_phystwin."""
-    track_process = normalize_data_process_keys(track_process)
+    # Offline parity with data_process_sam3d/data_process_sample.py:L250-L352.
+    # That path reduces track_process_data into final_data.pkl, carrying object
+    # samples, controller handles, and optional surface/interior shape-prior
+    # points.
+    track_process = dict(track_process)
     object_points = np.asarray(track_process["object_points"])
+    # If strict tracking already selected object tracks, preserve that selection.
+    # Otherwise sample against the shape prior so final_data remains compact.
     if "object_track_query_indices" in track_process:
         indices = np.arange(object_points.shape[1], dtype=np.int64)
     else:
@@ -540,6 +571,8 @@ def _final_data_payload(
 
     controller_points = np.asarray(track_process["controller_points"])
     controller_count = int(controller_points.shape[1])
+    # Controller points are always the selected control anchors. The *_query_ids
+    # arrays record which original query each anchor came from.
     if "controller_track_query_indices" in track_process:
         controller_final_indices = np.arange(controller_count, dtype=np.int64)
         controller_selected_query_ids = np.asarray(
@@ -763,6 +796,10 @@ def write_data_process_chunk_case(
             surface_points=chunk.surface_points,
             interior_points=chunk.interior_points,
         )
+        # Offline parity with data_process_sam3d/data_process_track.py:L462-L463
+        # and data_process_sam3d/data_process_sample.py:L437-L440. Demo v5.1
+        # writes both track_process_data.pkl and final_data.pkl atomically inside
+        # the realtime chunk case.
         # Keep the same query schema hash in both payloads. This is the guard that
         # lets the online aggregate concatenate chunks without changing query
         # semantic identity under realtime_phystwin.
@@ -797,7 +834,7 @@ def write_data_process_chunk_case(
         manifest.update(_quality_manifest_fields(final_data, track_process))
         if manifest_extras is not None:
             extras = manifest_extras() if callable(manifest_extras) else manifest_extras
-            manifest.update(normalize_data_process_keys(dict(extras)))
+            manifest.update(dict(extras))
         quality_status = str(manifest.get("track_process_status", "normal"))
         marker_name = "READY" if quality_status == "normal" else quality_status.upper()
         manifest["publish_marker"] = marker_name
@@ -904,6 +941,7 @@ def _validate_track_shapes(payload: Mapping[str, np.ndarray]) -> None:
 
 
 def _validate_query_schema_payload(payload: Mapping[str, Any], *, label: str) -> None:
+    """Validate the stable online query identity contract for one payload."""
     for key in DATA_PROCESS_QUERY_SCHEMA_KEYS:
         if key not in payload:
             raise ValueError(f"{label} missing required query schema key: {key}")
@@ -971,7 +1009,7 @@ def _query_schema_values_equal(left: Any, right: Any) -> bool:
 
 def _validate_final_shapes(payload: Mapping[str, np.ndarray]) -> None:
     """Validate final_data.pkl shape, query schema, and finite-point invariants."""
-    payload = normalize_data_process_keys(payload)
+    payload = dict(payload)
     for key in ("surface_points", "interior_points"):
         if key not in payload:
             raise ValueError(f"final_data.pkl missing required key: {key}")
@@ -1034,7 +1072,7 @@ def validate_data_process_case(case_dir: str | Path, *, require_ready: bool = Fa
     final_data = _load_pickle(final_path)
     if not isinstance(final_data, Mapping):
         raise ValueError("final_data.pkl must contain a mapping")
-    final_data = normalize_data_process_keys(final_data)
+    final_data = dict(final_data)
     _validate_final_shapes(final_data)
 
     required_files = (
@@ -1055,12 +1093,14 @@ def validate_data_process_case(case_dir: str | Path, *, require_ready: bool = Fa
     track_process = _load_pickle(case / "track_process_data.pkl")
     if not isinstance(track_process, Mapping):
         raise ValueError("track_process_data.pkl must contain a mapping")
-    track_process = normalize_data_process_keys(track_process)
+    track_process = dict(track_process)
     for key in DATA_PROCESS_TRACK_PROCESS_KEYS:
         if key not in track_process:
             raise ValueError(f"track_process_data.pkl missing required key: {key}")
     _validate_track_shapes(track_process)
     _validate_query_schema_payload(track_process, label="track_process_data.pkl")
+    # final_data and track_process_data must describe the same query topology. A
+    # mismatch here means online concatenation would silently mix identities.
     for key in DATA_PROCESS_QUERY_SCHEMA_KEYS:
         if not _query_schema_values_equal(final_data[key], track_process[key]):
             raise ValueError(f"track_process_data.pkl query schema key {key} does not match final_data.pkl")

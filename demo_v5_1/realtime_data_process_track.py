@@ -1,4 +1,4 @@
-"""Convert Demo v5 headless capture rows into realtime data_process_sam3d chunks.
+"""Convert Demo v5.1 headless capture rows into realtime chunks.
 
 The camera process appends ``frames.jsonl`` and prepared per-frame NPZ payloads.
 This bridge tails that stream, waits for the shape prior only at chunk materialize
@@ -21,11 +21,13 @@ from demo_v5_1.data_process_chunk_writer import (
     write_data_process_chunk_case,
 )
 from demo_v5_1.chunked_final_data_output import ChunkedFinalDataWriter
-from demo_v5_1.data_process_schema import normalize_data_process_keys
 from qqtt.demo.pcd_postprocess import _detect_radius_outlier_indices
 from qqtt.demo import phystwin_strict_product as strict
 
 
+# frames.jsonl is append-only and owned by the camera subprocess. The helpers in
+# this section either tolerate incomplete rows or normalize source-frame metadata
+# so chunking stays deterministic during live tailing.
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as handle:
@@ -166,13 +168,14 @@ def _row_ready_for_realtime_chunk_start(row: Mapping[str, Any]) -> bool:
 def _trim_warmup_delayed_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], int]:
     """Drop leading warmup rows before chunking realtime output.
 
-    Demo v5 writes ``input_frames.jsonl`` from camera start, but ``frames.jsonl``
-    is the data_process output stream. With shape-prior warmup, the first strict
-    pair can be source frame 0 processed many seconds late; the next row then
-    jumps to the realtime source frame after warmup. That delayed row is useful
-    for shape-prior diagnostics but must not define chunk_000000. Live RealSense
-    can also emit one strict pair before color-aligned PCD is ready; that row has
-    masks but zero controller/object points and must not anchor controller FPS.
+    Demo v5.1 writes ``input_frames.jsonl`` from camera start, but
+    ``frames.jsonl`` is the data_process output stream. With shape-prior warmup,
+    the first strict pair can be source frame 0 processed many seconds late; the
+    next row then jumps to the realtime source frame after warmup. That delayed
+    row is useful for shape-prior diagnostics but must not define chunk_000000.
+    Live RealSense can also emit one strict pair before color-aligned PCD is
+    ready; that row has masks but zero controller/object points and must not
+    anchor controller FPS.
     """
     trimmed = [dict(row) for row in rows]
     skipped = 0
@@ -269,6 +272,9 @@ def _apply_depth_validity_to_mask_frame(
     frame: Mapping[str, np.ndarray],
     depth_m: np.ndarray,
 ) -> dict[str, np.ndarray]:
+    # Offline parity with data_process_sam3d/data_process_mask.py:L56-L80.
+    # The offline path intersects semantic object/controller masks with valid
+    # depth support before processed_masks.pkl is written.
     depth = np.asarray(depth_m, dtype=np.float32)
     valid = np.isfinite(depth) & (depth > 0.0)
     normalized = strict.normalize_processed_mask_frame(frame)
@@ -289,6 +295,10 @@ def _apply_radius_outlier_to_mask_frame(
     radius_m: float,
     nb_points: int,
 ) -> dict[str, np.ndarray]:
+    """Apply the same local 3D support test used by data_process_sam3d masks."""
+    # Offline parity with data_process_sam3d/data_process_mask.py:L81-L92 and
+    # L107-L136. The offline path removes 3D radius outliers, then clears the
+    # corresponding mask pixels. Demo v5.1 does the same per frame in memory.
     normalized = strict.normalize_processed_mask_frame(frame)
     if not bool(enabled):
         return normalized
@@ -360,6 +370,7 @@ def _camera_to_world(metadata: Mapping[str, Any]) -> np.ndarray:
 
 
 def _full_tracks_and_visibility(trajectory: np.lib.npyio.NpzFile, query_count: int) -> tuple[np.ndarray, np.ndarray]:
+    """Expand a trajectory payload to one row per session query."""
     if "all_tracks_yx" in trajectory.files:
         tracks = np.asarray(trajectory["all_tracks_yx"], dtype=np.float32).reshape(-1, 2)
         vis_key = "all_tracker_visibility" if "all_tracker_visibility" in trajectory.files else "visibility"
@@ -408,6 +419,10 @@ def _shape_points_from_capture(
     capture metadata points at the async SAM3D result produced by the camera
     process.
     """
+    # Offline parity with data_process_sam3d/data_process_sample.py:L183-L241.
+    # That offline stage samples SAM3D surface/interior prior points. The
+    # realtime path receives those points from the async shape-prior worker
+    # instead of sampling here.
     if surface_points is not None or interior_points is not None:
         return (
             np.empty((0, 3), dtype=np.float64)
@@ -482,7 +497,7 @@ def _shape_points_for_chunk(
 ) -> tuple[Mapping[str, Any], np.ndarray, np.ndarray]:
     """Wait until required shape-prior points are available for final_data.
 
-    Demo v5 keeps capture realtime, but ``final_data.pkl`` must contain
+    Demo v5.1 keeps capture realtime, but ``final_data.pkl`` must contain
     structure points when shape-prior warmup is enabled. Waiting happens here,
     after a source window has closed, not inside the camera/tracker loop.
     """
@@ -517,7 +532,7 @@ def _shape_points_for_chunk(
 
 
 def _controller_track_manifest_fields(track_process_data: Mapping[str, Any]) -> dict[str, Any]:
-    track_process_data = normalize_data_process_keys(track_process_data)
+    track_process_data = dict(track_process_data)
     if "controller_track_query_indices" not in track_process_data:
         controller_points = np.asarray(track_process_data.get("controller_points", np.empty((0, 0, 3))))
         return {
@@ -565,7 +580,7 @@ def _controller_track_manifest_fields(track_process_data: Mapping[str, Any]) -> 
 
 
 def _track_process_invalid(manifest: Mapping[str, Any]) -> bool:
-    return str(normalize_data_process_keys(manifest, validate_aliases=False).get("track_process_status", "normal")) == "invalid"
+    return str(manifest.get("track_process_status", "normal")) == "invalid"
 
 
 def _track_process_online_publish_skip_reason(
@@ -573,7 +588,7 @@ def _track_process_online_publish_skip_reason(
     *,
     allow_degraded_online: bool = False,
 ) -> str | None:
-    status = str(normalize_data_process_keys(manifest, validate_aliases=False).get("track_process_status", "normal"))
+    status = str(manifest.get("track_process_status", "normal"))
     if status == "invalid":
         return "track_process_invalid"
     if status == "degraded" and not bool(allow_degraded_online):
@@ -582,7 +597,7 @@ def _track_process_online_publish_skip_reason(
 
 
 def _object_track_manifest_fields(track_process_data: Mapping[str, Any]) -> dict[str, Any]:
-    track_process_data = normalize_data_process_keys(track_process_data)
+    track_process_data = dict(track_process_data)
     if "object_track_query_indices" not in track_process_data:
         object_points = np.asarray(track_process_data.get("object_points", np.empty((0, 0, 3))))
         return {
@@ -622,7 +637,16 @@ def _track_input_with_session_query_schema(
     pcd_colors: np.ndarray,
     session_query_schema: dict[str, np.ndarray] | None,
 ) -> dict[str, np.ndarray]:
-    """Build strict track input while preserving session-wide query identity."""
+    """Build strict track input while preserving session-wide query identity.
+
+    The first chunk fixes the query id/semantic-label arrays. Later chunks must
+    reuse the same arrays so online output can be concatenated without changing
+    the object/controller topology underneath realtime_phystwin.
+    """
+    # Offline parity with data_process_sam3d/data_process_track.py:L58-L118.
+    # That stage labels first-frame tracks by object/controller masks and lifts
+    # visible track pixels into world-space PCD samples. Demo v5.1 also pins
+    # query ids across realtime chunks so those role labels stay stable online.
     query_ids = None
     query_semantic_labels = None
     if session_query_schema is not None and "query_ids" in session_query_schema:
@@ -691,6 +715,10 @@ def _chunk_payload_from_rows(
     for row in rows:
         rgb = _load_rgb(capture_dir / str(row["rgb_path"]))
         depth = np.load(_depth_path(capture_dir, row))
+        # Offline parity with data_process_sam3d/data_process_pcd.py:L84-L149
+        # and L224-L229. The offline path converts RGB-D into a world-space
+        # per-pixel PCD grid, then writes it as pcd/*.npz. This fallback
+        # rebuilds that grid for old captures.
         points, colors = strict.dense_world_pcd_grid(
             depth_m=depth,
             color_rgb_u8=rgb,
@@ -701,6 +729,10 @@ def _chunk_payload_from_rows(
         pcd_points.append(points)
         pcd_colors.append(colors)
         mask_frame = _load_mask_frame(capture_dir / str(row["mask_path"]))
+        # Offline parity with data_process_sam3d/data_process_mask.py:L42-L152.
+        # That stage turns raw semantic masks plus PCD validity into
+        # processed_masks.pkl. The realtime fallback keeps that product in
+        # memory until case write.
         depth_valid_mask_frame = _apply_depth_validity_to_mask_frame(mask_frame, depth)
         processed_masks.append(
             [
@@ -740,16 +772,27 @@ def _chunk_payload_from_rows(
         pcd_colors=pcd_colors_arr,
         session_query_schema=session_query_schema,
     )
+    # Offline parity with data_process_sam3d/data_process_track.py:L138-L322.
+    # Both paths filter object/controller tracks by neighbor motion consistency.
     filtered = strict.apply_phystwin_motion_filters(track_input)
     if object_track_selector is not None:
+        # Offline parity with data_process_sam3d/data_process_sample.py:L250-L352.
+        # That stage deduplicates and samples object points for final_data. The
+        # realtime selector keeps the same sampled query ids stable across
+        # chunks.
         filtered = object_track_selector.select(
             filtered,
             surface_points=surface_points,
             interior_points=interior_points,
         )
     if controller_track_selector is None:
+        # Offline parity with data_process_sam3d/data_process_track.py:L325-L378.
+        # That stage farthest-point-samples the final 30 controller handles.
         track_process = strict.select_final_controller_points(filtered, count=30)
     else:
+        # Offline parity with data_process_sam3d/data_process_track.py:L338-L356.
+        # Demo v5.1 keeps the same controller FPS target and adds realtime
+        # recovery so handle order survives later chunks.
         track_process = controller_track_selector.select(filtered)
 
     return DataProcessChunk(
@@ -811,7 +854,13 @@ def _chunk_payload_from_prepared_frames(
     controller_track_selector: strict.StreamingControllerTrackSelector | None = None,
     session_query_schema: dict[str, np.ndarray] | None = None,
 ) -> DataProcessChunk:
-    """Materialize a chunk from prepared per-frame NPZ payloads."""
+    """Materialize a chunk from prepared per-frame NPZ payloads.
+
+    This is the current v5.1 realtime path. The camera process already wrote
+    RGB, masks, dense world PCD, tracks, visibility, and query points for the
+    same source frame, so this function only enforces shared queries and runs
+    strict object/controller selection.
+    """
     if not frames:
         raise ValueError("prepared data_process chunk requires at least one frame")
     c2w = _camera_to_world(metadata)
@@ -842,6 +891,11 @@ def _chunk_payload_from_prepared_frames(
     tracker_visibility = np.stack(visibility, axis=0)
     pcd_points_arr = np.stack(pcd_points, axis=0)
     pcd_colors_arr = np.stack(pcd_colors, axis=0)
+    # Offline parity with data_process_sam3d/data_process_pcd.py:L84-L149,
+    # data_process_sam3d/data_process_mask.py:L42-L152, and
+    # data_process_sam3d/data_process_track.py:L37-L135. Prepared frames already
+    # contain the PCD and mask products, so this block performs the corresponding
+    # track classification/lift step.
     track_input = _track_input_with_session_query_schema(
         tracks_yx=tracks_yx,
         visibility=tracker_visibility,
@@ -850,16 +904,28 @@ def _chunk_payload_from_prepared_frames(
         pcd_colors=pcd_colors_arr,
         session_query_schema=session_query_schema,
     )
+    # Offline parity with data_process_sam3d/data_process_track.py:L138-L322.
+    # Both paths apply neighbor-motion filtering before final
+    # controller/object sampling.
     filtered = strict.apply_phystwin_motion_filters(track_input)
     if object_track_selector is not None:
+        # Offline parity with data_process_sam3d/data_process_sample.py:L281-L300.
+        # Both paths volume-sample object points; realtime also preserves the
+        # chosen sample ids.
         filtered = object_track_selector.select(
             filtered,
             surface_points=surface_points,
             interior_points=interior_points,
         )
     if controller_track_selector is None:
+        # Offline parity with data_process_sam3d/data_process_track.py:L338-L356.
+        # Both paths select 30 final controller points by farthest point
+        # sampling.
         track_process = strict.select_final_controller_points(filtered, count=30)
     else:
+        # Offline parity with data_process_sam3d/data_process_track.py:L338-L356.
+        # Demo v5.1 keeps the same 30-handle target while preserving stable
+        # realtime controller identities across windows.
         track_process = controller_track_selector.select(filtered)
 
     return DataProcessChunk(
@@ -928,6 +994,10 @@ def _write_chunk_from_rows(
         # Prepared frames are the realtime path: RGB, masks, dense world PCD,
         # full tracks, visibility, and query points are already synchronized by
         # the camera process for the same source seq.
+        # Offline parity is preserved without separate script-stage
+        # reprocessing because the camera process already emitted the
+        # data_process_pcd.py, data_process_mask.py, and cotracker-equivalent
+        # per-frame products.
         chunk = _chunk_payload_from_prepared_frames(
             metadata,
             [frame for frame in prepared if frame is not None],
@@ -944,8 +1014,8 @@ def _write_chunk_from_rows(
         materialization_source = "prepared_data_process_frame"
         legacy_reprocess_count = 0
     else:
-        # Fallback for historical captures where Demo v5 has to reconstruct the
-        # strict product from image/depth/mask/trajectory sidecar files.
+        # Fallback for historical captures where Demo v5.1 has to reconstruct
+        # the strict product from image/depth/mask/trajectory sidecar files.
         chunk = _chunk_payload_from_rows(
             capture,
             metadata,
@@ -1105,6 +1175,13 @@ def write_chunks_from_headless_capture(
         )
     object_track_selector = strict.StreamingObjectTrackSelector(volume_sample_size=0.005)
     controller_track_selector = strict.StreamingControllerTrackSelector(count=30)
+    # Keep selectors and query schema alive across chunks. This preserves stable
+    # sample identities rather than reselecting arbitrary object/controller
+    # points independently for every window.
+    # Offline parity with data_process_sam3d/data_process_sample.py:L281-L300
+    # and data_process_sam3d/data_process_track.py:L338-L356. Offline sampling
+    # happens once per case; Demo v5.1 treats the live stream as one case, so
+    # selectors persist.
     session_query_schema: dict[str, np.ndarray] = {}
     for row_idx, row in enumerate(rows_to_process):
         if max_chunks is not None and len(manifests) >= int(max_chunks):
@@ -1239,6 +1316,8 @@ def stream_chunks_from_headless_capture(
         )
     object_track_selector = strict.StreamingObjectTrackSelector(volume_sample_size=0.005)
     controller_track_selector = strict.StreamingControllerTrackSelector(count=30)
+    # Live streaming uses the same stateful selectors as offline conversion so
+    # chunk N+1 continues the topology established by chunk N.
     session_query_schema: dict[str, np.ndarray] = {}
 
     while True:

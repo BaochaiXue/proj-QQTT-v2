@@ -82,6 +82,13 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "smoke",
     ),
     HarnessEntry(
+        "scripts/harness/guards/check_demo_v5_no_compat_wrappers.py",
+        "guards",
+        "repo",
+        "Guard Demo v5 and Demo v5.1 from legacy import wrapper modules.",
+        "smoke",
+    ),
+    HarnessEntry(
         "scripts/harness/guards/check_scope.py",
         "guards",
         "repo",

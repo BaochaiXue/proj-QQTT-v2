@@ -17,6 +17,7 @@ opencv-python-headless==4.11.0.86
 pyzmq==27.1.0
 scipy==1.17.1
 trimesh==4.12.2
+PyYAML==6.0.3
 diffusers==0.38.0
 transformers==5.9.0
 accelerate==1.13.0

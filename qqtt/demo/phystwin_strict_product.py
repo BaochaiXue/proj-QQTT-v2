@@ -111,6 +111,8 @@ def _mask_from_frame(frame: Mapping[str, Any], key: str, fallback: np.ndarray | 
 
 
 def normalize_processed_mask_frame(frame: Mapping[str, Any]) -> dict[str, np.ndarray]:
+    # Demo v5.1 offline parity: data_process_sam3d/data_process_mask.py:L56-L80
+    # separates object and controller masks before depth/outlier filtering.
     obj = _mask_from_frame(frame, "object")
     if "controller" in frame and frame["controller"] is not None:
         ctrl = np.asarray(frame["controller"], dtype=bool)
@@ -171,6 +173,9 @@ def dense_world_pcd_grid(
     depth_min_m: float = 0.0,
     depth_max_m: float = float("inf"),
 ) -> tuple[np.ndarray, np.ndarray]:
+    # Demo v5.1 offline parity: data_process_sam3d/data_process_pcd.py:L84-L149
+    # lifts RGB-D pixels through intrinsics and camera_to_world into a
+    # world-space PCD grid.
     depth = np.asarray(depth_m, dtype=np.float32)
     if depth.ndim != 2:
         raise ValueError(f"depth_m must be HxW; got {depth.shape}")
@@ -206,6 +211,8 @@ def apply_depth_validity_to_mask_frame(
     frame: Mapping[str, np.ndarray],
     depth_m: np.ndarray,
 ) -> dict[str, np.ndarray]:
+    # Demo v5.1 offline parity: data_process_sam3d/data_process_mask.py:L56-L80
+    # intersects semantic masks with valid depth support.
     depth = np.asarray(depth_m, dtype=np.float32)
     valid = np.isfinite(depth) & (depth > 0.0)
     normalized = normalize_processed_mask_frame(frame)
@@ -226,6 +233,8 @@ def apply_radius_outlier_to_mask_frame(
     radius_m: float,
     nb_points: int,
 ) -> dict[str, np.ndarray]:
+    # Demo v5.1 offline parity: data_process_sam3d/data_process_mask.py:L81-L92
+    # and L107-L136 remove isolated 3D mask points before processed mask output.
     normalized = normalize_processed_mask_frame(frame)
     if not bool(enabled):
         return normalized
@@ -402,6 +411,9 @@ def build_track_process_input(
     query_ids: np.ndarray | None = None,
     query_semantic_labels: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
+    # Demo v5.1 offline parity: data_process_sam3d/data_process_track.py:L58-L135
+    # classifies first-frame queries by mask, applies per-frame mask validity,
+    # samples world PCD/color at track pixels, and returns track_process arrays.
     tracks = np.asarray(tracks_yx, dtype=np.float32)
     vis = np.asarray(visibility, dtype=bool)
     points_grid = np.asarray(pcd_points, dtype=np.float32)
@@ -579,6 +591,8 @@ def apply_phystwin_motion_filters(
     min_neighbors: int = 5,
     motion_similarity_m: float = 0.005,
 ) -> dict[str, np.ndarray]:
+    # Demo v5.1 offline parity: data_process_sam3d/data_process_track.py:L138-L322
+    # rejects object/controller tracks whose local neighbor motion is unstable.
     result = {key: np.asarray(value).copy() for key, value in track_data.items()}
     object_valid, _object_mask = _motion_valid_for_class(
         result["object_points"],
@@ -1740,6 +1754,8 @@ class StreamingObjectTrackSelector:
 
 
 def select_final_controller_points(track_data: Mapping[str, np.ndarray], *, count: int = 30) -> dict[str, np.ndarray]:
+    # Demo v5.1 offline parity: data_process_sam3d/data_process_track.py:L325-L378
+    # farthest-point-samples the final controller handles from valid candidates.
     result = {key: np.asarray(value).copy() for key, value in track_data.items()}
     original_controller_count = int(np.asarray(result["controller_points"]).shape[1])
     mask = np.asarray(result.get("controller_mask", np.ones((result["controller_points"].shape[1],), dtype=bool)), dtype=bool)
@@ -1765,6 +1781,8 @@ def sample_object_first_frame_volume(
     *,
     volume_sample_size: float = 0.005,
 ) -> dict[str, np.ndarray]:
+    # Demo v5.1 offline parity: data_process_sam3d/data_process_sample.py:L281-L300
+    # keeps one first-frame object point per volume-sampling voxel.
     result = {key: np.asarray(value).copy() for key, value in track_data.items()}
     object_points = np.asarray(result["object_points"], dtype=np.float32)
     if object_points.ndim != 3 or object_points.shape[-1] != 3:

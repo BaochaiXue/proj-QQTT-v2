@@ -1,4 +1,9 @@
-"""Publish Demo v5 chunks in the online format consumed by realtime_phystwin."""
+"""Publish Demo v5.1 chunks in the online format consumed by realtime_phystwin.
+
+The online stream has two views of the same data: small per-window chunk pickle
+files for low-latency readers, and a continuously rewritten ``data/<case>``
+static case for tools that expect a normal final_data directory.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -14,7 +19,6 @@ from demo_v5_1.data_process_chunk_writer import (
     DATA_PROCESS_QUERY_SCHEMA_KEYS,
     build_query_schema_payload,
 )
-from demo_v5_1.data_process_schema import normalize_data_process_keys
 from demo_v5_1.chunked_final_data_aggregate import FinalDataAggregateWriter
 
 STATIC_KEYS = (
@@ -22,6 +26,8 @@ STATIC_KEYS = (
     "interior_points",
 )
 
+# These arrays describe identity or sampling choices, so they are copied as
+# static metadata instead of sliced per frame.
 FINAL_DATA_STATIC_KEYS = (
     "controller_final_indices",
     "controller_selected_query_ids",
@@ -72,7 +78,8 @@ def _as_static_vector(data: Mapping[str, Any], key: str) -> np.ndarray | None:
 
 
 def _static_mapping_vectors(data: Mapping[str, Any]) -> dict[str, Any]:
-    data = normalize_data_process_keys(data)
+    """Collect static point/query mapping vectors for an online chunk."""
+    data = dict(data)
     vectors: dict[str, Any] = {}
     has_query_schema = all(key in data for key in DATA_PROCESS_QUERY_SCHEMA_KEYS)
     if has_query_schema:
@@ -146,7 +153,10 @@ def build_online_chunk(
     source_timestamps_s: Sequence[float] | None = None,
 ) -> dict[str, Any]:
     """Create the small per-window payload stored under online_data/chunks."""
-    data = normalize_data_process_keys(data)
+    # Offline parity with data_process_sam3d/data_process_sample.py:L335-L352.
+    # That path produces one final_data.pkl for a completed case. Demo v5.1
+    # slices that same final_data contract into per-window online chunks.
+    data = dict(data)
     if source_frame_indices is None:
         source_frame_indices = list(range(int(start_frame), int(end_frame)))
     indices = [int(idx) for idx in source_frame_indices]
@@ -162,6 +172,9 @@ def build_online_chunk(
         if len(timestamps) != len(indices):
             raise ValueError("source_timestamps_s length must match source_frame_indices")
         chunk["source_timestamps_s"] = timestamps
+    # TIME_KEYS are indexed by local frame inside this chunk. Static query and
+    # sampling vectors are attached below unchanged so every chunk can be read
+    # independently.
     for key in TIME_KEYS:
         value = data.get(key)
         if value is not None:
@@ -176,7 +189,7 @@ def build_online_chunk(
 
 
 def _track_diagnostics(track_process: Mapping[str, Any]) -> dict[str, Any]:
-    track_process = normalize_data_process_keys(track_process)
+    track_process = dict(track_process)
     payload: dict[str, Any] = {}
     for key in TRACK_DIAGNOSTIC_KEYS:
         if key not in track_process:
@@ -187,7 +200,12 @@ def _track_diagnostics(track_process: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class ChunkedFinalDataWriter:
-    """Maintain online chunks and the continuously growing static case."""
+    """Maintain online chunks and the continuously growing static case.
+
+    The writer is append-only from the perspective of online readers: each
+    chunk pickle gets a new monotonic id, while manifest/static-case files are
+    atomically rewritten to point at the latest committed prefix.
+    """
 
     def __init__(
         self,
@@ -237,7 +255,7 @@ class ChunkedFinalDataWriter:
         status: str = "recording",
     ) -> dict[str, Any]:
         """Append one final_data chunk and rewrite online metadata atomically."""
-        data = normalize_data_process_keys(data)
+        data = dict(data)
         frame_count = _infer_frame_count(data)
         start_frame = int(self.latest_committed_frame)
         end_frame = start_frame + int(frame_count)
@@ -288,12 +306,19 @@ class ChunkedFinalDataWriter:
         status: str = "recording",
     ) -> dict[str, Any]:
         """Commit a validated chunk case and mirror it into the aggregate case."""
+        # Offline parity with data_process_sam3d/data_process_track.py:L462-L463
+        # and data_process_sam3d/data_process_sample.py:L437-L440. Those paths
+        # write the completed per-case pickles. Demo v5.1 loads those same
+        # pickles before appending online data.
         chunk_case_dir = Path(case_dir)
         self._aggregate_writer.validate_next_chunk_case(chunk_case_dir)
         with (chunk_case_dir / "final_data.pkl").open("rb") as handle:
-            final_data = normalize_data_process_keys(pickle.load(handle))
+            final_data = dict(pickle.load(handle))
         with (chunk_case_dir / "track_process_data.pkl").open("rb") as handle:
-            track_process = normalize_data_process_keys(pickle.load(handle))
+            track_process = dict(pickle.load(handle))
+        # Online chunks include final_data tensors plus diagnostic track fields;
+        # the aggregate case still stores final_data and track_process_data as
+        # separate files through FinalDataAggregateWriter.
         online_data = {**final_data, **_track_diagnostics(track_process)}
         result = self.commit_final_data_chunk(
             online_data,
@@ -307,6 +332,7 @@ class ChunkedFinalDataWriter:
         return result
 
     def finish(self) -> dict[str, Any]:
+        """Publish a finished online manifest and finalize the aggregate case."""
         aggregate_manifest = self._aggregate_writer.finish()
         self.version += 1
         manifest = self._write_manifest(status="finished")
@@ -316,7 +342,13 @@ class ChunkedFinalDataWriter:
 
     def _append_static_data(self, data: Mapping[str, Any], *, frame_count: int) -> None:
         """Update data/<case>/final_data.pkl as a prefix aggregate."""
-        data = normalize_data_process_keys(data)
+        # Offline parity with data_process_sam3d/data_process_sample.py:L335-L352.
+        # That path writes one static final_data.pkl. Demo v5.1 continuously
+        # rewrites the same schema as a prefix aggregate for realtime consumers.
+        data = dict(data)
+        # Time arrays grow by concatenation. Static arrays are overwritten with
+        # the latest value, but upstream validation requires those values to be
+        # stable for all committed chunks.
         for key in TIME_KEYS:
             value = data.get(key)
             if value is None:

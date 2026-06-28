@@ -1,4 +1,4 @@
-"""Atomic file writers used by online consumers that tail Demo v5 outputs."""
+"""Atomic file writers used by online consumers that tail Demo v5.1 outputs."""
 from __future__ import annotations
 
 import json
@@ -12,12 +12,12 @@ def atomic_pickle_dump(value: Any, path: str | Path) -> None:
     """Write a pickle through a temp file so readers never see partial bytes."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = target.with_name(target.name + ".tmp") #tmp version
+    tmp_path = target.with_name(target.name + ".tmp")
     with tmp_path.open("wb") as handle:
         pickle.dump(value, handle, protocol=pickle.HIGHEST_PROTOCOL)
         handle.flush()
         os.fsync(handle.fileno())
-    os.replace(tmp_path, target) # finish so that we can have the formal file
+    os.replace(tmp_path, target)
 
 
 def atomic_json_dump(value: Mapping[str, Any], path: str | Path) -> None:

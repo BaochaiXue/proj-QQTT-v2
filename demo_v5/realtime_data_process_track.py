@@ -21,7 +21,6 @@ from demo_v5.data_process_chunk_writer import (
     write_data_process_chunk_case,
 )
 from demo_v5.chunked_final_data_output import ChunkedFinalDataWriter
-from demo_v5.data_process_schema import normalize_data_process_keys
 from qqtt.demo.pcd_postprocess import _detect_radius_outlier_indices
 from qqtt.demo import phystwin_strict_product as strict
 
@@ -499,7 +498,7 @@ def _shape_points_for_chunk(
 
 
 def _controller_track_manifest_fields(track_process_data: Mapping[str, Any]) -> dict[str, Any]:
-    track_process_data = normalize_data_process_keys(track_process_data)
+    track_process_data = dict(track_process_data)
     if "controller_track_query_indices" not in track_process_data:
         controller_points = np.asarray(track_process_data.get("controller_points", np.empty((0, 0, 3))))
         return {
@@ -547,7 +546,7 @@ def _controller_track_manifest_fields(track_process_data: Mapping[str, Any]) -> 
 
 
 def _track_process_invalid(manifest: Mapping[str, Any]) -> bool:
-    return str(normalize_data_process_keys(manifest, validate_aliases=False).get("track_process_status", "normal")) == "invalid"
+    return str(manifest.get("track_process_status", "normal")) == "invalid"
 
 
 def _track_process_online_publish_skip_reason(
@@ -555,7 +554,7 @@ def _track_process_online_publish_skip_reason(
     *,
     allow_degraded_online: bool = False,
 ) -> str | None:
-    status = str(normalize_data_process_keys(manifest, validate_aliases=False).get("track_process_status", "normal"))
+    status = str(manifest.get("track_process_status", "normal"))
     if status == "invalid":
         return "track_process_invalid"
     if status == "degraded" and not bool(allow_degraded_online):
@@ -564,7 +563,7 @@ def _track_process_online_publish_skip_reason(
 
 
 def _object_track_manifest_fields(track_process_data: Mapping[str, Any]) -> dict[str, Any]:
-    track_process_data = normalize_data_process_keys(track_process_data)
+    track_process_data = dict(track_process_data)
     if "object_track_query_indices" not in track_process_data:
         object_points = np.asarray(track_process_data.get("object_points", np.empty((0, 0, 3))))
         return {

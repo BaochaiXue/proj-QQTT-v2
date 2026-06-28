@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Track visualization for Demo v5 object/controller point chunks."""
+"""Track visualization for Demo v5.1 object/controller point chunks.
+
+The viewer can render historical chunk files or follow a live run. In
+side-by-side mode the left panel follows camera RGB input while the right panel
+chooses the final_data frame whose source timestamp best matches the desired
+camera-to-output latency.
+"""
 from __future__ import annotations
 
 import argparse
@@ -31,6 +37,8 @@ DEFAULT_RIGHT_BLANK_LABEL = "waiting for first final_data chunk"
 
 @dataclass(frozen=True)
 class CameraModel:
+    """Camera intrinsics, pose, image size, and optional playback FPS."""
+
     intrinsic: np.ndarray
     camera_to_world: np.ndarray
     image_size: tuple[int, int]
@@ -39,6 +47,8 @@ class CameraModel:
 
 @dataclass(frozen=True)
 class InputRgbFrame:
+    """One RGB input frame plus source-frame timing metadata."""
+
     seq: int
     image_bgr: np.ndarray
     path: Path | None
@@ -47,7 +57,11 @@ class InputRgbFrame:
 
 
 class InputReceiveTimeline:
-    """Incrementally cache fake-camera receive times keyed by source frame."""
+    """Incrementally cache fake-camera receive times keyed by source frame.
+
+    The timeline file is append-only during live capture, so the reader keeps a
+    byte offset and only parses newly completed JSONL rows.
+    """
 
     def __init__(self, timeline_path: str | Path | None) -> None:
         self.timeline_path = None if timeline_path is None else Path(timeline_path).expanduser()
@@ -55,6 +69,7 @@ class InputReceiveTimeline:
         self._offset = 0
 
     def refresh(self) -> None:
+        """Read any newly completed receive-timeline rows."""
         path = self.timeline_path
         if path is None:
             return
@@ -75,6 +90,7 @@ class InputReceiveTimeline:
             return
 
     def receive_time(self, source_frame_index: int | None) -> float | None:
+        """Return the cached receive time for one source frame."""
         if source_frame_index is None:
             return None
         try:
@@ -109,11 +125,14 @@ class InputReceiveTimeline:
 
 @dataclass
 class OutputStreamPlaybackCursor:
+    """Small playback state machine for live output-frame progression."""
+
     fps: float
     output_index: int = 0
     last_step_s: float | None = None
 
     def advance(self, *, latest: int, now_s: float, paused: bool) -> int:
+        """Advance playback by elapsed time while staying within loaded output."""
         latest_index = max(0, int(latest))
         self.output_index = min(max(int(self.output_index), 0), latest_index)
         now = float(now_s)
@@ -132,6 +151,7 @@ class OutputStreamPlaybackCursor:
         return int(self.output_index)
 
     def seek(self, index: int, *, latest: int, now_s: float | None = None) -> int:
+        """Move playback to a bounded output-frame index."""
         self.output_index = min(max(int(index), 0), max(0, int(latest)))
         if now_s is not None:
             self.last_step_s = float(now_s)
@@ -140,10 +160,13 @@ class OutputStreamPlaybackCursor:
 
 @dataclass
 class CameraToFinalDataFpsMeter:
+    """Estimate online publish throughput from newly appended output frames."""
+
     _last_update_s: float | None = None
     _fps: float | None = None
 
     def seed(self, fps: float | None) -> float | None:
+        """Seed the meter with a historical FPS estimate when available."""
         if fps is None:
             return self._fps
         value = float(fps)
@@ -153,6 +176,7 @@ class CameraToFinalDataFpsMeter:
         return self._fps
 
     def update(self, *, appended_frames: int, now_s: float) -> float | None:
+        """Update the FPS estimate from the number of newly appended frames."""
         count = int(appended_frames)
         if count <= 0:
             return self._fps
@@ -190,12 +214,14 @@ def _install_numpy_pickle_aliases() -> None:
 
 
 def load_pickle(path: str | Path) -> Any:
+    """Load a pickle while tolerating NumPy 2.x module aliases."""
     _install_numpy_pickle_aliases()
     with Path(path).open("rb") as handle:
         return pickle.load(handle)
 
 
 def read_json(path: str | Path) -> dict[str, Any]:
+    """Read a JSON object, returning an empty dict for missing or invalid input."""
     try:
         text = Path(path).read_text(encoding="utf-8")
         return dict(json.loads(text))
@@ -204,6 +230,7 @@ def read_json(path: str | Path) -> dict[str, Any]:
 
 
 def load_fake_input_frame_total(capture_dir: str | Path | None) -> int | None:
+    """Return the expected fake-live RGB frame count when metadata provides it."""
     if capture_dir is None:
         return None
     metadata = read_json(Path(capture_dir).expanduser() / "metadata.json")
@@ -217,6 +244,7 @@ def load_fake_input_frame_total(capture_dir: str | Path | None) -> int | None:
 
 
 def normalize_online_dir(path: str | Path) -> Path:
+    """Accept either online_data/<case> or online_data/<case>/chunks."""
     value = Path(path).expanduser()
     if value.name == "chunks":
         return value.parent
@@ -224,6 +252,7 @@ def normalize_online_dir(path: str | Path) -> Path:
 
 
 def infer_case_dir(online_dir: Path, case_dir: str | Path | None) -> Path:
+    """Resolve the aggregate data/<case> directory for an online stream."""
     if case_dir is not None:
         return Path(case_dir).expanduser()
     if online_dir.parent.name == "online_data":
@@ -293,7 +322,7 @@ def project_world_points_to_pixels(
     visibility: np.ndarray | None = None,
     stride: int = 1,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Project world-space Demo v5 points back onto the selected RGB camera."""
+    """Project world-space Demo v5.1 points back onto the selected RGB camera."""
     arr = np.asarray(points, dtype=np.float64).reshape(-1, 3)
     if arr.size == 0:
         return np.empty((0, 2), dtype=np.int32), np.empty((0,), dtype=np.int64)
@@ -516,6 +545,7 @@ def _read_jsonl_rows(path: Path) -> list[dict[str, Any]]:
 
 
 def load_latest_input_rgb_frame(timeline_path: str | Path, *, capture_dir: str | Path) -> InputRgbFrame | None:
+    """Load the newest RGB input frame referenced by an input timeline."""
     capture_path = Path(capture_dir).expanduser()
     for row in reversed(_read_jsonl_rows(Path(timeline_path).expanduser())):
         frame = _input_rgb_frame_from_row(row, capture_dir=capture_path)
@@ -525,6 +555,7 @@ def load_latest_input_rgb_frame(timeline_path: str | Path, *, capture_dir: str |
 
 
 def load_input_rgb_frames(timeline_path: str | Path, *, capture_dir: str | Path) -> list[InputRgbFrame]:
+    """Load all RGB input frames referenced by an input timeline."""
     capture_path = Path(capture_dir).expanduser()
     frames: list[InputRgbFrame] = []
     for row in _read_jsonl_rows(Path(timeline_path).expanduser()):
@@ -545,6 +576,7 @@ def render_side_by_side_frame(
     input_to_display_latency_s: float | None = None,
     show_latency_overlay: bool = True,
 ) -> np.ndarray:
+    """Compose one RGB-input/final_data-output frame for display or video."""
     left = _panel_image(None if input_frame is None else input_frame.image_bgr, image_size=image_size)
     right = _panel_image(output_frame, image_size=image_size)
     if input_frame is None:
@@ -620,6 +652,7 @@ def input_display_latency_s(
     receive_times: Mapping[int, float],
     now_s: float,
 ) -> float | None:
+    """Measure input receive-to-display latency for one output chunk frame."""
     source_frame = _source_frame_for_chunk_frame(chunk, int(local_frame))
     try:
         receive_perf_s = float(receive_times[int(source_frame)])
@@ -633,6 +666,7 @@ def input_display_latency_s(
 
 
 def format_input_display_latency(latency_s: float | None) -> str:
+    """Format an input-display latency value for the viewer overlay."""
     if latency_s is None:
         return "input->display --"
     try:
@@ -670,6 +704,7 @@ def resolve_side_by_side_target_latency_s(
     output_frames: Sequence[tuple[Mapping[str, Any], int]],
     fps: float,
 ) -> float:
+    """Resolve the side-by-side output lag target in seconds."""
     explicit = getattr(args, "target_latency_s", None)
     if explicit is not None:
         value = float(explicit)
@@ -713,6 +748,7 @@ def output_source_times(
     fps: float,
     allow_frame_index_fallback: bool = False,
 ) -> list[float] | None:
+    """Return source timestamps for flattened output frames when available."""
     times: list[float] = []
     for chunk, local_frame in output_frames:
         source_time = _source_time_for_chunk_frame(
@@ -733,6 +769,7 @@ def select_output_frame_for_input_source_time(
     input_source_time: float,
     target_latency_s: float,
 ) -> int:
+    """Select the output frame at or before the target source timestamp."""
     if not output_source_times:
         return 0
     target_time = float(input_source_time) - float(target_latency_s)
@@ -760,6 +797,7 @@ def select_output_index_for_input_frame_latency(
     fps: float,
     target_latency_s: float,
 ) -> int | None:
+    """Pick the output frame closest to the current input-frame latency target."""
     if input_frame is None or input_frame.source_timestamp_s is None or not output_frames:
         return None
     try:
@@ -785,6 +823,7 @@ def source_time_input_display_latency_s(
     output_index: int,
     fps: float,
 ) -> float | None:
+    """Estimate latency between current input source time and displayed output."""
     if input_frame is None or input_frame.source_timestamp_s is None or not output_frames:
         return None
     idx = min(max(int(output_index), 0), len(output_frames) - 1)
@@ -813,6 +852,7 @@ def source_time_input_display_latency_s(
 
 
 def parse_bgr_color(text: str) -> tuple[int, int, int]:
+    """Parse a comma-separated B,G,R color triplet."""
     parts = [part.strip() for part in str(text).split(",")]
     if len(parts) != 3:
         raise argparse.ArgumentTypeError("color must be B,G,R")
@@ -910,6 +950,7 @@ def object_point_colors(
     point_indices: np.ndarray,
     mode: str,
 ) -> np.ndarray:
+    """Resolve BGR colors for projected object point markers."""
     mode_value = str(mode)
     if mode_value == "green":
         return np.tile(np.array([[0, 255, 0]], dtype=np.uint8), (point_indices.shape[0], 1))
@@ -934,6 +975,7 @@ def controller_point_colors(
     point_indices: np.ndarray,
     fallback_color: tuple[int, int, int],
 ) -> np.ndarray:
+    """Resolve BGR colors for projected controller point markers."""
     color = np.asarray(fallback_color, dtype=np.uint8).reshape(1, 3)
     return np.tile(color, (point_indices.shape[0], 1))
 
@@ -1055,12 +1097,15 @@ def render_chunk_frame(
 
 
 class RgbOverlayRenderer:
+    """Render object/controller tracks as overlays on RGB background frames."""
+
     def __init__(self, *, camera: CameraModel, args: argparse.Namespace, fps: float) -> None:
         self._camera = camera
         self._args = args
         self._fps = float(fps)
 
     def render_frame(self, chunk: Mapping[str, Any], *, local_frame: int, case_dir: Path) -> np.ndarray:
+        """Render one chunk frame as an RGB-overlay image."""
         return render_chunk_frame(
             chunk,
             local_frame=int(local_frame),
@@ -1078,10 +1123,13 @@ class RgbOverlayRenderer:
         )
 
     def close(self) -> None:
+        """Release renderer resources."""
         return None
 
 
 class Sam3DFinalDataRenderer:
+    """Render final_data object/controller points through an Open3D visualizer."""
+
     def __init__(
         self,
         *,
@@ -1172,6 +1220,7 @@ class Sam3DFinalDataRenderer:
         view_control.set_zoom(1)
 
     def poll(self) -> bool:
+        """Process Open3D visualizer events and report whether it is alive."""
         self._ensure_window()
         assert self._vis is not None
         alive = self._vis.poll_events()
@@ -1179,6 +1228,7 @@ class Sam3DFinalDataRenderer:
         return bool(alive) if alive is not None else True
 
     def update_frame(self, chunk: Mapping[str, Any], *, local_frame: int, case_dir: Path) -> bool:
+        """Update the Open3D scene for one final_data frame."""
         del case_dir
         self._ensure_window()
         assert self._vis is not None
@@ -1224,6 +1274,7 @@ class Sam3DFinalDataRenderer:
         return bool(alive) if alive is not None else True
 
     def render_frame(self, chunk: Mapping[str, Any], *, local_frame: int, case_dir: Path) -> np.ndarray:
+        """Render one final_data frame to a BGR image."""
         if not self.update_frame(chunk, local_frame=local_frame, case_dir=case_dir):
             return _blank_image(self._image_size)
         assert self._vis is not None
@@ -1233,6 +1284,7 @@ class Sam3DFinalDataRenderer:
         return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
     def close(self) -> None:
+        """Destroy the Open3D visualizer window when it exists."""
         if self._vis is not None:
             self._vis.destroy_window()
             self._vis = None
@@ -1404,6 +1456,7 @@ class Sam3DGuiFinalDataRenderer:
         self._camera_initialized = True
 
     def poll(self) -> bool:
+        """Process Open3D GUI events and report whether the window is open."""
         self._ensure_window()
         if self._closed:
             return False
@@ -1421,6 +1474,7 @@ class Sam3DGuiFinalDataRenderer:
         case_dir: Path,
         input_to_display_latency_s: float | None = None,
     ) -> bool:
+        """Update the GUI scene and latency HUD for one final_data frame."""
         del case_dir
         self._ensure_window()
         if self._closed:
@@ -1465,6 +1519,7 @@ class Sam3DGuiFinalDataRenderer:
         return self.poll()
 
     def close(self) -> None:
+        """Close the Open3D GUI window and mark the renderer closed."""
         if self._window is not None:
             self._window.close()
             self._window = None
@@ -1472,6 +1527,7 @@ class Sam3DGuiFinalDataRenderer:
 
 
 def build_frame_renderer(args: argparse.Namespace, *, camera: CameraModel, fps: float) -> Any:
+    """Create the frame renderer selected by CLI arguments."""
     render_mode = str(args.render_mode)
     if render_mode == RENDER_MODE_RGB_OVERLAY:
         return RgbOverlayRenderer(camera=camera, args=args, fps=fps)
@@ -1524,6 +1580,7 @@ def play_chunk(
     args: argparse.Namespace,
     fps: float,
 ) -> np.ndarray | None:
+    """Play one chunk frame-by-frame in an OpenCV window."""
     cv2 = _require_cv2()
     period_s = 1.0 / max(float(fps), 1e-6)
     frame_count = _chunk_frame_count(chunk)
@@ -1550,6 +1607,7 @@ def _set_trackbar_max(cv2: Any, trackbar_name: str, window_name: str, max_value:
 
 
 def use_interactive_side_by_side(args: argparse.Namespace) -> bool:
+    """Return whether side-by-side mode should use the Open3D GUI renderer."""
     return (
         str(getattr(args, "layout", LAYOUT_OUTPUT_ONLY)) == LAYOUT_SIDE_BY_SIDE
         and str(getattr(args, "render_mode", RENDER_MODE_RGB_OVERLAY)) == RENDER_MODE_SAM3D_FINAL_DATA
@@ -1574,6 +1632,7 @@ def _render_input_panel(
 
 
 def run_interactive_side_by_side(args: argparse.Namespace) -> int:
+    """Run the Open3D output window next to a live OpenCV RGB input window."""
     cv2 = _require_cv2()
     online_dir = normalize_online_dir(args.online_dir)
     case_dir = infer_case_dir(online_dir, args.case_dir)
@@ -1631,6 +1690,9 @@ def run_interactive_side_by_side(args: argparse.Namespace) -> int:
             if capture_dir is not None and input_timeline is not None:
                 input_frame = load_latest_input_rgb_frame(input_timeline, capture_dir=capture_dir)
             if output_frames and not paused:
+                # Prefer source timestamps over wall-clock playback. That keeps
+                # the right panel aligned to the current left RGB frame even if
+                # chunks arrive with jitter during shape-prior warmup.
                 selected_index = select_output_index_for_input_frame_latency(
                     input_frame=input_frame,
                     output_frames=output_frames,
@@ -1694,6 +1756,7 @@ def run_interactive_side_by_side(args: argparse.Namespace) -> int:
 
 
 def run_side_by_side(args: argparse.Namespace) -> int:
+    """Run the single-window side-by-side viewer/video fallback."""
     cv2 = _require_cv2()
     online_dir = normalize_online_dir(args.online_dir)
     case_dir = infer_case_dir(online_dir, args.case_dir)
@@ -1751,6 +1814,8 @@ def run_side_by_side(args: argparse.Namespace) -> int:
             if capture_dir is not None and input_timeline is not None:
                 input_frame = load_latest_input_rgb_frame(input_timeline, capture_dir=capture_dir)
             if output_frames and follow_latest and not paused:
+                # When following live output, select by source time first and
+                # use the cursor only when timestamp metadata is unavailable.
                 selected_index = select_output_index_for_input_frame_latency(
                     input_frame=input_frame,
                     output_frames=output_frames,
@@ -1841,6 +1906,7 @@ def wait_for_chunk(
 
 
 def resolve_playback_fps(args: argparse.Namespace, camera: CameraModel) -> float:
+    """Resolve playback FPS from CLI, metadata, or the default fallback."""
     fps = None if args.fps is None else float(args.fps)
     if fps is None:
         fps = camera.metadata_fps
@@ -1860,6 +1926,7 @@ def _chunk_sort_key(path: Path) -> tuple[int, str]:
 
 
 def list_available_chunk_paths(online_dir: Path, *, start_chunk: int) -> list[Path]:
+    """List committed chunk pickle files at or after the requested chunk id."""
     chunks_dir = normalize_online_dir(online_dir) / "chunks"
     paths = sorted(chunks_dir.glob("chunk_*.pkl"), key=_chunk_sort_key)
     start = int(start_chunk)
@@ -1874,6 +1941,7 @@ def _run_root_for_online_dir(online_dir: Path) -> Path | None:
 
 
 def _camera_to_final_data_fps_from_run_manifest(online_dir: Path) -> float | None:
+    """Recover publish FPS from the run-level summary when available."""
     run_root = _run_root_for_online_dir(online_dir)
     if run_root is None or not run_root.is_dir():
         return None
@@ -1906,6 +1974,7 @@ def _camera_to_final_data_fps_from_run_manifest(online_dir: Path) -> float | Non
 
 
 def _camera_to_final_data_fps_from_chunk_mtimes(online_dir: Path, *, start_chunk: int) -> float | None:
+    """Fallback throughput estimate based on chunk file mtimes."""
     chunk_infos: list[tuple[float, int]] = []
     for chunk_path in list_available_chunk_paths(online_dir, start_chunk=start_chunk):
         try:
@@ -1932,7 +2001,10 @@ def _camera_to_final_data_fps_from_chunk_mtimes(online_dir: Path, *, start_chunk
 
 
 def estimate_historical_camera_to_final_data_fps(online_dir: Path, *, start_chunk: int) -> float | None:
-    """Estimate camera->final_data throughput when reopening already committed chunks."""
+    """Estimate camera->final_data throughput.
+
+    This is used when reopening already committed chunks.
+    """
     manifest_fps = _camera_to_final_data_fps_from_run_manifest(online_dir)
     if manifest_fps is not None:
         return manifest_fps
@@ -1946,6 +2018,7 @@ def _append_new_output_frames(
     loaded_paths: set[Path],
     output_frames: list[tuple[dict[str, Any], int]],
 ) -> int:
+    """Load each new chunk once and flatten it into frame-level playback rows."""
     appended = 0
     for chunk_path in list_available_chunk_paths(online_dir, start_chunk=start_chunk):
         resolved = chunk_path.resolve()
@@ -1997,6 +2070,7 @@ def _resolve_input_rgb_timeline(args: argparse.Namespace, *, capture_dir: Path |
 
 
 def render_side_by_side_output_video(args: argparse.Namespace) -> int:
+    """Render existing side-by-side frames to an MP4 file."""
     cv2 = _require_cv2()
     online_dir = normalize_online_dir(args.online_dir)
     case_dir = infer_case_dir(online_dir, args.case_dir)
@@ -2061,6 +2135,7 @@ def render_side_by_side_output_video(args: argparse.Namespace) -> int:
 
 
 def render_output_video(args: argparse.Namespace) -> int:
+    """Render existing output chunks to an MP4 file."""
     cv2 = _require_cv2()
     if str(getattr(args, "layout", LAYOUT_OUTPUT_ONLY)) == LAYOUT_SIDE_BY_SIDE:
         return render_side_by_side_output_video(args)
@@ -2100,6 +2175,7 @@ def render_output_video(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the Demo v5.1 chunk viewer CLI parser."""
     parser = argparse.ArgumentParser(description="Play Demo v5 online object/controller points chunk by chunk.")
     parser.add_argument("--layout", choices=LAYOUTS, default=LAYOUT_OUTPUT_ONLY)
     parser.add_argument("--online-dir", type=Path, required=True, help="Path to online_data/<case> or its chunks directory.")
@@ -2135,6 +2211,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def validate_args(args: argparse.Namespace) -> None:
+    """Validate viewer CLI arguments before opening windows or videos."""
     if str(args.layout) not in LAYOUTS:
         raise ValueError(f"--layout must be one of {', '.join(LAYOUTS)}")
     if int(args.cam_idx) < 0:
@@ -2197,6 +2274,7 @@ def run(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Parse CLI arguments and run the Demo v5.1 viewer."""
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     return run(args)

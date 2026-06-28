@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Check Demo v5.1 runtime imports, toolchains, and repo-local assets."""
 from __future__ import annotations
 
 import argparse
@@ -60,6 +61,7 @@ SHAPE_PRIOR_MODULES = (
     "zmq",
     "scipy",
     "trimesh",
+    "yaml",
     "torch",
     "torchvision",
     "diffusers",
@@ -340,6 +342,7 @@ def _check_gsplat_runtime_smoke() -> list[str]:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the Demo v5.1 environment-check CLI parser."""
     parser = argparse.ArgumentParser(description="Check Demo v5 runtime environment and repo-local assets.")
     parser.add_argument("--role", choices=("main", "shape-prior", "all"), default="all")
     parser.add_argument("--require-cuda", action="store_true")
@@ -347,6 +350,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the requested Demo v5.1 environment checks."""
     args = build_parser().parse_args(argv)
     errors: list[str] = []
     role = str(args.role)

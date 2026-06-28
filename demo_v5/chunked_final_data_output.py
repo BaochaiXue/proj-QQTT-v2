@@ -14,7 +14,6 @@ from demo_v5.data_process_chunk_writer import (
     DATA_PROCESS_QUERY_SCHEMA_KEYS,
     build_query_schema_payload,
 )
-from demo_v5.data_process_schema import normalize_data_process_keys
 from demo_v5.chunked_final_data_aggregate import FinalDataAggregateWriter
 
 STATIC_KEYS = (
@@ -72,7 +71,7 @@ def _as_static_vector(data: Mapping[str, Any], key: str) -> np.ndarray | None:
 
 
 def _static_mapping_vectors(data: Mapping[str, Any]) -> dict[str, Any]:
-    data = normalize_data_process_keys(data)
+    data = dict(data)
     vectors: dict[str, Any] = {}
     has_query_schema = all(key in data for key in DATA_PROCESS_QUERY_SCHEMA_KEYS)
     if has_query_schema:
@@ -146,7 +145,7 @@ def build_online_chunk(
     source_timestamps_s: Sequence[float] | None = None,
 ) -> dict[str, Any]:
     """Create the small per-window payload stored under online_data/chunks."""
-    data = normalize_data_process_keys(data)
+    data = dict(data)
     if source_frame_indices is None:
         source_frame_indices = list(range(int(start_frame), int(end_frame)))
     indices = [int(idx) for idx in source_frame_indices]
@@ -176,7 +175,7 @@ def build_online_chunk(
 
 
 def _track_diagnostics(track_process: Mapping[str, Any]) -> dict[str, Any]:
-    track_process = normalize_data_process_keys(track_process)
+    track_process = dict(track_process)
     payload: dict[str, Any] = {}
     for key in TRACK_DIAGNOSTIC_KEYS:
         if key not in track_process:
@@ -237,7 +236,7 @@ class ChunkedFinalDataWriter:
         status: str = "recording",
     ) -> dict[str, Any]:
         """Append one final_data chunk and rewrite online metadata atomically."""
-        data = normalize_data_process_keys(data)
+        data = dict(data)
         frame_count = _infer_frame_count(data)
         start_frame = int(self.latest_committed_frame)
         end_frame = start_frame + int(frame_count)
@@ -291,9 +290,9 @@ class ChunkedFinalDataWriter:
         chunk_case_dir = Path(case_dir)
         self._aggregate_writer.validate_next_chunk_case(chunk_case_dir)
         with (chunk_case_dir / "final_data.pkl").open("rb") as handle:
-            final_data = normalize_data_process_keys(pickle.load(handle))
+            final_data = dict(pickle.load(handle))
         with (chunk_case_dir / "track_process_data.pkl").open("rb") as handle:
-            track_process = normalize_data_process_keys(pickle.load(handle))
+            track_process = dict(pickle.load(handle))
         online_data = {**final_data, **_track_diagnostics(track_process)}
         result = self.commit_final_data_chunk(
             online_data,
@@ -316,7 +315,7 @@ class ChunkedFinalDataWriter:
 
     def _append_static_data(self, data: Mapping[str, Any], *, frame_count: int) -> None:
         """Update data/<case>/final_data.pkl as a prefix aggregate."""
-        data = normalize_data_process_keys(data)
+        data = dict(data)
         for key in TIME_KEYS:
             value = data.get(key)
             if value is None:

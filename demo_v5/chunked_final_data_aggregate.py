@@ -20,7 +20,6 @@ from demo_v5.data_process_chunk_writer import (
     DATA_PROCESS_TRACK_PROCESS_KEYS,
     validate_data_process_case,
 )
-from demo_v5.data_process_schema import normalize_data_process_keys
 
 
 FINAL_TIME_KEYS = (
@@ -249,8 +248,8 @@ def _validate_chunk_cases(chunk_cases: Sequence[Path], *, allow_degraded: bool =
     for chunk_idx, chunk_case in enumerate(chunk_cases):
         require_ready = not (bool(allow_degraded) and _degraded_chunk_case_allowed(chunk_case))
         validate_data_process_case(chunk_case, require_ready=require_ready)
-        final_data = normalize_data_process_keys(_load_pickle(chunk_case / "final_data.pkl"))
-        track_process = normalize_data_process_keys(_load_pickle(chunk_case / "track_process_data.pkl"))
+        final_data = dict(_load_pickle(chunk_case / "final_data.pkl"))
+        track_process = dict(_load_pickle(chunk_case / "track_process_data.pkl"))
         _require_payload_keys(final_data, DATA_PROCESS_FINAL_DATA_KEYS, label="final_data.pkl")
         _require_payload_keys(track_process, DATA_PROCESS_TRACK_PROCESS_KEYS, label="track_process_data.pkl")
 
@@ -470,8 +469,8 @@ def build_aggregate_case_from_chunk_cases(
     target = Path(aggregate_case)
     _validate_chunk_cases(cases, allow_degraded=bool(allow_degraded))
 
-    final_payloads = [normalize_data_process_keys(_load_pickle(case / "final_data.pkl")) for case in cases]
-    track_payloads = [normalize_data_process_keys(_load_pickle(case / "track_process_data.pkl")) for case in cases]
+    final_payloads = [dict(_load_pickle(case / "final_data.pkl")) for case in cases]
+    track_payloads = [dict(_load_pickle(case / "track_process_data.pkl")) for case in cases]
     final_data = _concatenate_payloads(
         final_payloads,
         time_keys=FINAL_TIME_KEYS,

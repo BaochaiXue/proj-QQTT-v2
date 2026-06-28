@@ -9,6 +9,8 @@ REQUIRED_TIME_KEYS = (
 )
 
 OPTIONAL_TIME_KEYS = (
+    # Optional keys are appended to online chunks only when the producer emits
+    # the corresponding diagnostics for every frame.
     "asap_object_points_filled",
     "asap_surface_points",
     "asap_interior_points",

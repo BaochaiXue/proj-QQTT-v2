@@ -174,8 +174,10 @@ The minimal default command is:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
-  python demo_v5/realtime_data_process_sam3d.py
+  python demo_v5_1/realtime_data_process_sam3d.py
 ```
+
+These defaults are sourced from `demo_v5_1/config/default.yaml`.
 
 Defaults:
 
@@ -188,8 +190,8 @@ managed SAM3D warmup GPU:      physical GPU1
 point viewer GPU:              physical GPU1
 shape-prior worker env:        phystwin-max
 point viewer env:              demo_2_max
-output base:                  result/demo_v5/data_process_sam3d_chunks
-case prefix:                  demo_v5
+output base:                  result/demo_v5_1/data_process_sam3d_chunks
+case prefix:                  demo_v5_1
 viewer playback:               chunk by chunk at 5 FPS
 optimization scope:            disabled by default
 ```
@@ -197,8 +199,8 @@ optimization scope:            disabled by default
 The viewer command reads the online and static case paths directly:
 
 ```text
---online-dir result/demo_v5/data_process_sam3d_chunks/online_data/demo_v5
---case-dir result/demo_v5/data_process_sam3d_chunks/data/demo_v5
+--online-dir result/demo_v5_1/data_process_sam3d_chunks/online_data/demo_v5_1
+--case-dir result/demo_v5_1/data_process_sam3d_chunks/data/demo_v5_1
 --fps 5.0
 --object-color-mode rainbow
 ```

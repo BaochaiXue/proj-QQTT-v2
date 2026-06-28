@@ -60,6 +60,7 @@ SHAPE_PRIOR_MODULES = (
     "zmq",
     "scipy",
     "trimesh",
+    "yaml",
     "torch",
     "torchvision",
     "diffusers",

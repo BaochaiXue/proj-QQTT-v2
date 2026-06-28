@@ -1,4 +1,9 @@
-"""Build the static data/<case> view from published Demo v5 chunk cases."""
+"""Build the static data/<case> view from published Demo v5.1 chunk cases.
+
+Chunk cases are individually valid data_process_sam3d cases. Aggregation
+concatenates frame-major arrays, copies per-frame artifacts into a single index
+space, and rejects any chunk whose static camera/query identity differs.
+"""
 from __future__ import annotations
 
 import json
@@ -20,7 +25,6 @@ from demo_v5_1.data_process_chunk_writer import (
     DATA_PROCESS_TRACK_PROCESS_KEYS,
     validate_data_process_case,
 )
-from demo_v5_1.data_process_schema import normalize_data_process_keys
 
 
 FINAL_TIME_KEYS = (
@@ -42,6 +46,9 @@ FINAL_STATIC_KEYS = (
     "interior_points",
 )
 FINAL_FIRST_STATIC_KEYS: tuple[str, ...] = ()
+# Track-process payloads mirror final_data for realtime readers but keep extra
+# controller diagnostic arrays. Time keys concatenate; static keys must match
+# exactly across all chunks.
 TRACK_TIME_KEYS = (
     "controller_points",
     "object_colors",
@@ -146,6 +153,7 @@ def _require_matching_value(name: str, expected: Any, actual: Any) -> None:
 
 
 def _static_invariant_value(key: str, value: Any) -> Any:
+    """Normalize static values before comparing them across chunks."""
     if key in {"query_schema_version", "query_schema_hash"}:
         return str(np.asarray(value).item() if isinstance(value, np.ndarray) else value)
     return np.ascontiguousarray(np.asarray(value))
@@ -165,6 +173,10 @@ def _concatenate_payloads(
     label: str,
 ) -> dict[str, Any]:
     """Concatenate time-varying arrays while enforcing static invariants."""
+    # Offline parity with data_process_sam3d/data_process_sample.py:L335-L352.
+    # That path writes one whole-case final_data.pkl. Demo v5.1 concatenates the
+    # same time-varying keys from realtime chunks while keeping static keys
+    # invariant.
     if not payloads:
         raise ValueError(f"cannot aggregate empty {label} payload list")
     combined: dict[str, Any] = {}
@@ -197,6 +209,7 @@ def _concatenate_optional_time_keys(
     keys: Sequence[str],
     label: str,
 ) -> None:
+    """Concatenate optional diagnostics only when every chunk provides them."""
     for key in keys:
         if not all(key in payload for payload in payloads):
             continue
@@ -239,6 +252,10 @@ def _degraded_chunk_case_allowed(chunk_case: Path) -> bool:
 
 def _validate_chunk_cases(chunk_cases: Sequence[Path], *, allow_degraded: bool = False) -> None:
     """Ensure chunks can be concatenated without changing camera/query identity."""
+    # Offline parity with data_process_sam3d/data_process_track.py:L462-L463
+    # and data_process_sam3d/data_process_sample.py:L437-L440. Those paths
+    # assume one stable case. Demo v5.1 validates that all chunks share those
+    # stable case fields.
     if not chunk_cases:
         raise ValueError("aggregate requires at least one READY chunk case")
     first_metadata: dict[str, Any] | None = None
@@ -249,8 +266,8 @@ def _validate_chunk_cases(chunk_cases: Sequence[Path], *, allow_degraded: bool =
     for chunk_idx, chunk_case in enumerate(chunk_cases):
         require_ready = not (bool(allow_degraded) and _degraded_chunk_case_allowed(chunk_case))
         validate_data_process_case(chunk_case, require_ready=require_ready)
-        final_data = normalize_data_process_keys(_load_pickle(chunk_case / "final_data.pkl"))
-        track_process = normalize_data_process_keys(_load_pickle(chunk_case / "track_process_data.pkl"))
+        final_data = dict(_load_pickle(chunk_case / "final_data.pkl"))
+        track_process = dict(_load_pickle(chunk_case / "track_process_data.pkl"))
         _require_payload_keys(final_data, DATA_PROCESS_FINAL_DATA_KEYS, label="final_data.pkl")
         _require_payload_keys(track_process, DATA_PROCESS_TRACK_PROCESS_KEYS, label="track_process_data.pkl")
 
@@ -262,6 +279,9 @@ def _validate_chunk_cases(chunk_cases: Sequence[Path], *, allow_degraded: bool =
         if first_metadata is None:
             first_metadata = metadata
             first_calibrate = calibrate
+            # The first chunk defines aggregate invariants. Later chunks can
+            # extend time, but cannot reinterpret cameras, calibration, or
+            # query/sample ids.
             first_final_static = {
                 key: _static_invariant_value(key, final_data[key])
                 for key in FINAL_STATIC_KEYS
@@ -313,6 +333,7 @@ def _copy_indexed_files(
     frame_count: int,
     required: bool,
 ) -> int:
+    """Copy per-frame files while renumbering local chunk frames globally."""
     if not source_dir.is_dir():
         if required:
             raise ValueError(f"missing required frame directory: {source_dir}")
@@ -470,8 +491,11 @@ def build_aggregate_case_from_chunk_cases(
     target = Path(aggregate_case)
     _validate_chunk_cases(cases, allow_degraded=bool(allow_degraded))
 
-    final_payloads = [normalize_data_process_keys(_load_pickle(case / "final_data.pkl")) for case in cases]
-    track_payloads = [normalize_data_process_keys(_load_pickle(case / "track_process_data.pkl")) for case in cases]
+    # final_data.pkl and track_process_data.pkl share the frame axis but have
+    # different static/diagnostic fields, so aggregate them in parallel and
+    # write the two contract files separately.
+    final_payloads = [dict(_load_pickle(case / "final_data.pkl")) for case in cases]
+    track_payloads = [dict(_load_pickle(case / "track_process_data.pkl")) for case in cases]
     final_data = _concatenate_payloads(
         final_payloads,
         time_keys=FINAL_TIME_KEYS,
@@ -539,9 +563,11 @@ class FinalDataAggregateWriter:
         self.allow_degraded = bool(allow_degraded)
 
     def validate_next_chunk_case(self, chunk_case_dir: str | Path) -> None:
+        """Validate that a candidate chunk preserves aggregate invariants."""
         _validate_chunk_cases([*self.chunk_cases, Path(chunk_case_dir)], allow_degraded=self.allow_degraded)
 
     def add_chunk_case(self, chunk_case_dir: str | Path) -> dict[str, Any]:
+        """Append one chunk case and rewrite the aggregate as a non-ready prefix."""
         source = Path(chunk_case_dir)
         candidate_cases = [*self.chunk_cases, source]
         manifest = build_aggregate_case_from_chunk_cases(
@@ -554,6 +580,7 @@ class FinalDataAggregateWriter:
         return manifest
 
     def finish(self) -> dict[str, Any] | None:
+        """Mark the aggregate ready after all committed chunks are present."""
         if not self.chunk_cases:
             return None
         return build_aggregate_case_from_chunk_cases(

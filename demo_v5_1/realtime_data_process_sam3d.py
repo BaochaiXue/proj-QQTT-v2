@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Demo v5 realtime orchestration entrypoint.
+"""Demo v5.1 realtime orchestration entrypoint.
 
 This runner owns process boundaries, GPU routing, and artifact publication. The
 actual camera/tracker stack runs in ``demo_v5_1/realtime_dense_track.py``;
@@ -23,84 +23,173 @@ from datetime import datetime
 from typing import Sequence
 
 import numpy as np
+import yaml
 
 
+# Keep this repo at the front of the import path when the script is launched
+# from another working directory. Removing the existing entry first avoids a
+# duplicate path while preserving the "current checkout wins" import order.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT_STR = str(REPO_ROOT)
 if REPO_ROOT_STR in sys.path:
     sys.path.remove(REPO_ROOT_STR)
 sys.path.insert(0, REPO_ROOT_STR)
 
-from demo_v5_1.realtime_data_process_track import stream_chunks_from_headless_capture, write_chunks_from_headless_capture
 from demo_v5_1.chunked_final_data_aggregate import migrate_legacy_online_static_case
+from demo_v5_1.realtime_data_process_track import (
+    stream_chunks_from_headless_capture,
+    write_chunks_from_headless_capture,
+)
 
 
-DEFAULT_DATA_PROCESS_BASE_PATH = Path("result/demo_v5_1/data_process_sam3d_chunks")
-DEFAULT_REALTIME_PHYSTWIN_ROOT = Path("realtime_phystwin")
-DEFAULT_INPUT_SOURCE = "fake-live"
-DEFAULT_REPLAY_FPS = 5.0
-DEFAULT_CHUNK_SECONDS = 7.0
-DEFAULT_CHUNK_POLL_INTERVAL_S = 0.001
-DEFAULT_CAMERA_LOSSLESS_INPUT_FPS = 5.0
-DEFAULT_CAMERA_FPS = 5
-CAMERA_FPS_CHOICES = (5, 15, 30, 60)
-DEFAULT_CAMERA_COLOR_EXPOSURE = 45.0
-DEFAULT_CAMERA_COLOR_GAIN = 45.0
-DEFAULT_CASE_PREFIX = "demo_v5_1"
-DEFAULT_DEPTH_BACKEND = "native-realsense"
-DEFAULT_MAX_CHUNKS: int | None = None
-DEFAULT_CAPTURE_EXTRA_SECONDS = 10.0
-DEFAULT_SHAPE_PRIOR_ENDPOINT = "tcp://127.0.0.1:7100"
-DEFAULT_MASK_RADIUS_OUTLIER_RADIUS_M = 0.01
-DEFAULT_MASK_RADIUS_OUTLIER_NB_POINTS = 40
-DEFAULT_REALTIME_GPU_MODE = "single"
-DEFAULT_WARMUP_GPU_MODE = "dual"
-DEFAULT_GPU_MODE = DEFAULT_REALTIME_GPU_MODE
-GPU_MODE_CAMERA_CUDA_VISIBLE_DEVICES = {
-    "single": "0",
-    "dual": "1",
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "default.yaml"
+DEFAULT_CONFIG_SECTIONS = {
+    "paths",
+    "input",
+    "chunking",
+    "camera",
+    "gpu",
+    "shape_prior",
+    "optimization",
+    "point_viewer",
 }
-GPU_MODE_SHAPE_PRIOR_DEVICE = {
-    "single": "cuda:0",
-    "dual": "cuda:1",
-}
-DEFAULT_CAMERA_DEVICE = "cuda"
-DEFAULT_CAMERA_TRACKER_DEVICE = "cuda"
-DEFAULT_CAMERA_DTYPE = "bfloat16"
-DEFAULT_SHAPE_PRIOR_WORKER_MODE = "managed"
-DEFAULT_SHAPE_PRIOR_WORKER_CONDA_ENV = "phystwin-max"
-DEFAULT_SHAPE_PRIOR_WORKER_DEVICE = "cuda:0"
-DEFAULT_SHAPE_PRIOR_WORKER_STARTUP_GRACE_S = 0.0
-DEFAULT_SHAPE_PRIOR_WORKER_MAX_OBSERVATION_TO_ALIGNED_P95_M = 0.06
-DEFAULT_OPTIMIZATION_MODE = "disabled"
-DEFAULT_OPTIMIZATION_CUDA_VISIBLE_DEVICES = "1"
-DEFAULT_OPTIMIZATION_DEVICE = "cuda:0"
-DEFAULT_OPTIMIZATION_ZERO_ITERATIONS = 10
-DEFAULT_OPTIMIZATION_BATCH_SIZE = 4
-DEFAULT_OPTIMIZATION_SEGMENT_STRIDE = 16
-DEFAULT_OPTIMIZATION_POLL_SEC = 1.0
-DEFAULT_OPTIMIZATION_RECENT_WINDOW_COUNT = 8
-DEFAULT_OPTIMIZATION_SEED = 42
-DEFAULT_OPTIMIZATION_EXPERIMENTS_DIR = "experiments_online_v5"
-DEFAULT_OPTIMIZATION_ZERO_EXPERIMENTS_DIR = "experiments_online_v5_cma"
-DEFAULT_OPTIMIZATION_START_GRACE_S = 2.0
-DEFAULT_POINT_VIEWER_MODE = "window"
-DEFAULT_POINT_VIEWER_CONDA_ENV = "demo_2_max"
-DEFAULT_POINT_VIEWER_CUDA_VISIBLE_DEVICES = "1"
-DEFAULT_POINT_VIEWER_CAM_IDX = 0
-DEFAULT_POINT_VIEWER_POLL_SEC = 0.1
-DEFAULT_POINT_VIEWER_OBJECT_STRIDE = 1
-DEFAULT_POINT_VIEWER_OBJECT_RADIUS = 3
-DEFAULT_POINT_VIEWER_CONTROLLER_RADIUS = 6
-DEFAULT_POINT_VIEWER_OBJECT_COLOR_MODE = "rainbow"
-POINT_VIEWER_LAYOUT_SIDE_BY_SIDE = "side-by-side"
-POINT_VIEWER_LAYOUT_OUTPUT_ONLY = "output-only"
-POINT_VIEWER_LAYOUTS = (POINT_VIEWER_LAYOUT_SIDE_BY_SIDE, POINT_VIEWER_LAYOUT_OUTPUT_ONLY)
-DEFAULT_POINT_VIEWER_LAYOUT = POINT_VIEWER_LAYOUT_SIDE_BY_SIDE
-DEFAULT_POINT_VIEWER_RENDER_MODE = "sam3d-final-data"
-DEFAULT_TABLE_CALIBRATE_PATH = Path("table_calibrate.pkl")
-DEFAULT_SAM31_CHECKPOINT_PATH = Path("vendor/demo_runtime/checkpoints/sam31/sam3.1_multiplex.pt")
-SAM31_CHECKPOINT_ENV = "QQTT_SAM31_CHECKPOINT"
+
+
+def _flatten_default_config(data: dict[str, object]) -> dict[str, object]:
+    """Return runtime defaults as flat keys regardless of YAML grouping."""
+    flattened: dict[str, object] = {}
+    for key, value in data.items():
+        if key in DEFAULT_CONFIG_SECTIONS and isinstance(value, dict):
+            for child_key, child_value in value.items():
+                flattened[str(child_key)] = child_value
+        else:
+            flattened[str(key)] = value
+    return flattened
+
+
+def load_default_config(path: Path = DEFAULT_CONFIG_PATH) -> dict[str, object]:
+    """Load Demo v5.1 defaults from YAML."""
+    text = Path(path).read_text(encoding="utf-8")
+    loaded = yaml.safe_load(text)
+    if not isinstance(loaded, dict):
+        raise ValueError(f"default config must be a mapping: {path}")
+    return _flatten_default_config(dict(loaded))
+
+
+_DEFAULT_CONFIG = load_default_config()
+
+
+def _default_value(key: str) -> object:
+    try:
+        return _DEFAULT_CONFIG[key]
+    except KeyError as exc:
+        raise KeyError(f"missing Demo v5.1 default config key: {key}") from exc
+
+
+def _default_str(key: str) -> str:
+    return str(_default_value(key))
+
+
+def _default_path(key: str) -> Path:
+    return Path(_default_str(key))
+
+
+def _default_int(key: str) -> int:
+    return int(_default_value(key))
+
+
+def _default_optional_int(key: str) -> int | None:
+    value = _default_value(key)
+    return None if value is None else int(value)
+
+
+def _default_float(key: str) -> float:
+    return float(_default_value(key))
+
+
+def _default_int_tuple(key: str) -> tuple[int, ...]:
+    value = _default_value(key)
+    if not isinstance(value, (list, tuple)):
+        raise TypeError(f"{key} must be a list")
+    return tuple(int(item) for item in value)
+
+
+def _default_str_tuple(key: str) -> tuple[str, ...]:
+    value = _default_value(key)
+    if not isinstance(value, (list, tuple)):
+        raise TypeError(f"{key} must be a list")
+    return tuple(str(item) for item in value)
+
+
+def _default_str_mapping(key: str) -> dict[str, str]:
+    value = _default_value(key)
+    if not isinstance(value, dict):
+        raise TypeError(f"{key} must be a mapping")
+    return {str(item_key): str(item_value) for item_key, item_value in value.items()}
+
+
+# Defaults below describe the current Demo v5.1 realtime path. They are grouped
+# by the subprocess they affect: camera/fake-camera capture, SAM3D warmup,
+# point viewing, and optional realtime_phystwin optimization.
+DEFAULT_DATA_PROCESS_BASE_PATH = _default_path("data_process_base_path")
+DEFAULT_REALTIME_PHYSTWIN_ROOT = _default_path("realtime_phystwin_root")
+DEFAULT_INPUT_SOURCE = _default_str("input_source")
+DEFAULT_REPLAY_FPS = _default_float("replay_fps")
+DEFAULT_CHUNK_SECONDS = _default_float("chunk_seconds")
+DEFAULT_CHUNK_POLL_INTERVAL_S = _default_float("chunk_poll_interval_s")
+DEFAULT_CAMERA_SOURCE_REPLAY_FPS = _default_float("camera_source_replay_fps")
+DEFAULT_CAMERA_FPS = _default_int("camera_fps")
+CAMERA_FPS_CHOICES = _default_int_tuple("camera_fps_choices")
+DEFAULT_CAMERA_COLOR_EXPOSURE = _default_float("camera_color_exposure")
+DEFAULT_CAMERA_COLOR_GAIN = _default_float("camera_color_gain")
+DEFAULT_CASE_PREFIX = _default_str("case_prefix")
+DEFAULT_DEPTH_BACKEND = _default_str("depth_backend")
+DEFAULT_MAX_CHUNKS: int | None = _default_optional_int("max_chunks")
+DEFAULT_SHAPE_PRIOR_ENDPOINT = _default_str("shape_prior_endpoint")
+DEFAULT_MASK_RADIUS_OUTLIER_RADIUS_M = _default_float("mask_radius_outlier_radius_m")
+DEFAULT_MASK_RADIUS_OUTLIER_NB_POINTS = _default_int("mask_radius_outlier_nb_points")
+DEFAULT_REALTIME_GPU_MODE = _default_str("realtime_gpu_mode")
+DEFAULT_WARMUP_GPU_MODE = _default_str("warmup_gpu_mode")
+DEFAULT_GPU_MODE = _default_str("gpu_mode")
+GPU_MODE_CAMERA_CUDA_VISIBLE_DEVICES = _default_str_mapping("gpu_mode_camera_cuda_visible_devices")
+GPU_MODE_SHAPE_PRIOR_DEVICE = _default_str_mapping("gpu_mode_shape_prior_device")
+DEFAULT_CAMERA_DEVICE = _default_str("camera_device")
+DEFAULT_CAMERA_TRACKER_DEVICE = _default_str("camera_tracker_device")
+DEFAULT_CAMERA_DTYPE = _default_str("camera_dtype")
+DEFAULT_SHAPE_PRIOR_WORKER_MODE = _default_str("shape_prior_worker_mode")
+DEFAULT_SHAPE_PRIOR_WORKER_CONDA_ENV = _default_str("shape_prior_worker_conda_env")
+DEFAULT_SHAPE_PRIOR_WORKER_DEVICE = _default_str("shape_prior_worker_device")
+DEFAULT_SHAPE_PRIOR_WORKER_STARTUP_GRACE_S = _default_float("shape_prior_worker_startup_grace_s")
+DEFAULT_SHAPE_PRIOR_WORKER_MAX_OBSERVATION_TO_ALIGNED_P95_M = _default_float("shape_prior_worker_max_observation_to_aligned_p95_m")
+DEFAULT_OPTIMIZATION_MODE = _default_str("optimization_mode")
+DEFAULT_OPTIMIZATION_CUDA_VISIBLE_DEVICES = _default_str("optimization_cuda_visible_devices")
+DEFAULT_OPTIMIZATION_DEVICE = _default_str("optimization_device")
+DEFAULT_OPTIMIZATION_ZERO_ITERATIONS = _default_int("optimization_zero_iterations")
+DEFAULT_OPTIMIZATION_BATCH_SIZE = _default_int("optimization_batch_size")
+DEFAULT_OPTIMIZATION_SEGMENT_STRIDE = _default_int("optimization_segment_stride")
+DEFAULT_OPTIMIZATION_POLL_SEC = _default_float("optimization_poll_sec")
+DEFAULT_OPTIMIZATION_RECENT_WINDOW_COUNT = _default_int("optimization_recent_window_count")
+DEFAULT_OPTIMIZATION_SEED = _default_int("optimization_seed")
+DEFAULT_OPTIMIZATION_EXPERIMENTS_DIR = _default_str("optimization_experiments_dir")
+DEFAULT_OPTIMIZATION_ZERO_EXPERIMENTS_DIR = _default_str("optimization_zero_experiments_dir")
+DEFAULT_OPTIMIZATION_START_GRACE_S = _default_float("optimization_start_grace_s")
+DEFAULT_POINT_VIEWER_MODE = _default_str("point_viewer_mode")
+DEFAULT_POINT_VIEWER_CONDA_ENV = _default_str("point_viewer_conda_env")
+DEFAULT_POINT_VIEWER_CUDA_VISIBLE_DEVICES = _default_str("point_viewer_cuda_visible_devices")
+DEFAULT_POINT_VIEWER_CAM_IDX = _default_int("point_viewer_cam_idx")
+DEFAULT_POINT_VIEWER_POLL_SEC = _default_float("point_viewer_poll_sec")
+DEFAULT_POINT_VIEWER_OBJECT_STRIDE = _default_int("point_viewer_object_stride")
+DEFAULT_POINT_VIEWER_OBJECT_RADIUS = _default_int("point_viewer_object_radius")
+DEFAULT_POINT_VIEWER_CONTROLLER_RADIUS = _default_int("point_viewer_controller_radius")
+DEFAULT_POINT_VIEWER_OBJECT_COLOR_MODE = _default_str("point_viewer_object_color_mode")
+POINT_VIEWER_LAYOUT_SIDE_BY_SIDE = _default_str("point_viewer_layout_side_by_side")
+POINT_VIEWER_LAYOUT_OUTPUT_ONLY = _default_str("point_viewer_layout_output_only")
+POINT_VIEWER_LAYOUTS = _default_str_tuple("point_viewer_layouts")
+DEFAULT_POINT_VIEWER_LAYOUT = _default_str("point_viewer_layout")
+DEFAULT_POINT_VIEWER_RENDER_MODE = _default_str("point_viewer_render_mode")
+DEFAULT_TABLE_CALIBRATE_PATH = _default_path("table_calibrate_path")
+DEFAULT_SAM31_CHECKPOINT_PATH = _default_path("sam31_checkpoint_path")
+SAM31_CHECKPOINT_ENV = _default_str("sam31_checkpoint_env")
 
 
 def _apply_default_sam31_checkpoint_env(env: dict[str, str]) -> None:
@@ -113,6 +202,7 @@ def _apply_default_sam31_checkpoint_env(env: dict[str, str]) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI parser for Demo v5.1 realtime orchestration."""
     parser = argparse.ArgumentParser(
         description=(
             "Demo v5 realtime data_process_sam3d runner. It turns Demo v5 "
@@ -121,6 +211,9 @@ def build_parser() -> argparse.ArgumentParser:
             "realtime_phystwin optimization."
         )
     )
+    # Input/chunking options define the online case cadence. The camera can run
+    # longer than the requested chunk count; the chunk writer is what stops
+    # publishing after max_chunks.
     parser.add_argument(
         "--input-source",
         choices=("fake-live", "live"),
@@ -159,6 +252,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-path", type=Path, default=DEFAULT_DATA_PROCESS_BASE_PATH)
     parser.add_argument("--futurephystwin-base-path", dest="base_path", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--case-prefix", default=DEFAULT_CASE_PREFIX)
+    # GPU routing is expressed as CUDA_VISIBLE_DEVICES namespaces. Devices such
+    # as "cuda:0" are interpreted inside each subprocess after that namespace is
+    # applied, so "cuda:0" can mean physical GPU 1 for a worker launched with
+    # CUDA_VISIBLE_DEVICES=1.
     parser.add_argument(
         "--gpu-mode",
         choices=tuple(GPU_MODE_CAMERA_CUDA_VISIBLE_DEVICES),
@@ -229,6 +326,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_CAMERA_COLOR_GAIN,
         help="Manual RealSense RGB gain passed to Demo v5.1 live camera.",
     )
+    # The current chunker consumes prepared frames directly. Keeping only
+    # prepared artifacts keeps live runs small and avoids old per-frame outputs
+    # becoming part of the v5.1 contract.
     parser.add_argument(
         "--camera-headless-prepared-only",
         dest="camera_headless_prepared_only",
@@ -263,12 +363,6 @@ def build_parser() -> argparse.ArgumentParser:
             "Optional realtime chunk cap for debug/short validation runs. "
             "Omit it to stream until the fake-live recording or live capture ends."
         ),
-    )
-    parser.add_argument(
-        "--capture-extra-seconds",
-        type=float,
-        default=DEFAULT_CAPTURE_EXTRA_SECONDS,
-        help="Extra Demo v5 runtime beyond max_chunks*chunk_seconds to absorb startup/warmup latency.",
     )
     parser.add_argument(
         "--camera-capture-dir",
@@ -397,6 +491,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.set_defaults(shape_prior_worker_preload_models=True)
     parser.add_argument("--shape-prior-worker-warmup-models", action="store_true")
     parser.add_argument("--shape-prior-worker-debug", action="store_true")
+    # Point viewing is diagnostic and can start before optimization. Continuous
+    # optimization waits for the first committed online chunk so it never reads
+    # an empty static case.
     parser.add_argument(
         "--optimization-mode",
         choices=("continuous", "disabled"),
@@ -475,6 +572,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def resolve_chunk_frame_count(args: argparse.Namespace) -> int:
+    """Resolve the frame count used to close each online chunk."""
     chunk_seconds = float(args.chunk_seconds)
     if not math.isfinite(chunk_seconds) or chunk_seconds <= 0.0:
         raise ValueError("chunk seconds must be positive")
@@ -491,6 +589,7 @@ def resolve_chunk_frame_count(args: argparse.Namespace) -> int:
 
 
 def resolve_camera_source_replay_fps(args: argparse.Namespace) -> float:
+    """Resolve fake-live source pacing while preserving output replay FPS."""
     value = args.camera_source_replay_fps
     fps = float(args.replay_fps if value is None else value)
     if not math.isfinite(fps) or fps <= 0.0:
@@ -499,6 +598,7 @@ def resolve_camera_source_replay_fps(args: argparse.Namespace) -> float:
 
 
 def resolve_realtime_gpu_mode(args: argparse.Namespace) -> str:
+    """Resolve the GPU routing preset for realtime capture."""
     value = getattr(args, "realtime_gpu_mode", None)
     if value is None:
         value = getattr(args, "gpu_mode", DEFAULT_REALTIME_GPU_MODE)
@@ -509,6 +609,7 @@ def resolve_realtime_gpu_mode(args: argparse.Namespace) -> str:
 
 
 def resolve_warmup_gpu_mode(args: argparse.Namespace) -> str:
+    """Resolve the GPU routing preset for shape-prior warmup."""
     value = str(getattr(args, "warmup_gpu_mode", DEFAULT_WARMUP_GPU_MODE))
     if value not in GPU_MODE_SHAPE_PRIOR_DEVICE:
         raise ValueError(f"unsupported warmup gpu mode: {value!r}")
@@ -538,6 +639,7 @@ def resolve_shape_prior_device(args: argparse.Namespace) -> str:
 
 
 def resolve_shape_prior_worker_cuda_visible_devices(args: argparse.Namespace) -> str:
+    """Resolve the CUDA namespace for the managed shape-prior worker."""
     override = getattr(args, "shape_prior_worker_cuda_visible_devices", None)
     if override is not None and str(override).strip():
         return str(override).strip()
@@ -548,6 +650,7 @@ def resolve_shape_prior_worker_cuda_visible_devices(args: argparse.Namespace) ->
 
 
 def resolve_optimization_cuda_visible_devices(args: argparse.Namespace) -> str:
+    """Resolve the CUDA namespace used by realtime_phystwin optimization."""
     value = str(getattr(args, "optimization_cuda_visible_devices", DEFAULT_OPTIMIZATION_CUDA_VISIBLE_DEVICES)).strip()
     if not value:
         raise ValueError("--optimization-cuda-visible-devices must be non-empty when optimization is enabled")
@@ -555,6 +658,7 @@ def resolve_optimization_cuda_visible_devices(args: argparse.Namespace) -> str:
 
 
 def resolve_optimization_device(args: argparse.Namespace) -> str:
+    """Resolve the device string passed to realtime_phystwin optimization."""
     value = str(getattr(args, "optimization_device", DEFAULT_OPTIMIZATION_DEVICE)).strip()
     if not value:
         raise ValueError("--optimization-device must be non-empty when optimization is enabled")
@@ -562,6 +666,7 @@ def resolve_optimization_device(args: argparse.Namespace) -> str:
 
 
 def resolve_point_viewer_cuda_visible_devices(args: argparse.Namespace) -> str:
+    """Resolve the CUDA namespace for the optional point viewer."""
     value = str(getattr(args, "point_viewer_cuda_visible_devices", DEFAULT_POINT_VIEWER_CUDA_VISIBLE_DEVICES)).strip()
     if not value:
         raise ValueError("--point-viewer-cuda-visible-devices must be non-empty when point viewer is enabled")
@@ -569,6 +674,7 @@ def resolve_point_viewer_cuda_visible_devices(args: argparse.Namespace) -> str:
 
 
 def resolve_point_viewer_layout(args: argparse.Namespace) -> str:
+    """Validate and return the configured point-viewer layout."""
     value = str(getattr(args, "point_viewer_layout", DEFAULT_POINT_VIEWER_LAYOUT))
     if value not in POINT_VIEWER_LAYOUTS:
         raise ValueError(f"unsupported point viewer layout: {value!r}")
@@ -576,10 +682,12 @@ def resolve_point_viewer_layout(args: argparse.Namespace) -> str:
 
 
 def point_viewer_uses_side_by_side(args: argparse.Namespace) -> bool:
+    """Return whether the viewer should show RGB input beside final_data."""
     return resolve_point_viewer_layout(args) == POINT_VIEWER_LAYOUT_SIDE_BY_SIDE
 
 
 def point_viewer_start_policy(args: argparse.Namespace) -> str:
+    """Describe when the point viewer should start during a live run."""
     if str(getattr(args, "point_viewer_mode", DEFAULT_POINT_VIEWER_MODE)) != "window":
         return "disabled"
     if point_viewer_uses_side_by_side(args):
@@ -588,6 +696,7 @@ def point_viewer_start_policy(args: argparse.Namespace) -> str:
 
 
 def resolve_write_input_rgb_timeline(args: argparse.Namespace) -> bool:
+    """Resolve whether capture should publish the side-by-side RGB timeline."""
     value = getattr(args, "write_input_rgb_timeline", None)
     if value is not None:
         return bool(value)
@@ -605,6 +714,7 @@ def _repo_path(path: str | Path) -> Path:
 
 
 def resolve_realtime_phystwin_root(args: argparse.Namespace) -> Path:
+    """Return the configured realtime_phystwin repository root."""
     return Path(args.realtime_phystwin_root)
 
 
@@ -613,10 +723,12 @@ def _resolved_realtime_phystwin_root(args: argparse.Namespace) -> Path:
 
 
 def resolve_realtime_phystwin_base_path(args: argparse.Namespace) -> Path:
+    """Return the data base path as seen by realtime_phystwin."""
     return Path(args.base_path) / "data"
 
 
 def _relative_for_realtime_phystwin(args: argparse.Namespace, path: str | Path) -> str:
+    """Translate repo paths into the cwd used by realtime_phystwin scripts."""
     target = _repo_path(path).resolve()
     start = _resolved_realtime_phystwin_root(args)
     return os.path.relpath(target, start=start)
@@ -683,6 +795,7 @@ def _apply_shape_prior_worker_cuda_build_env(args: argparse.Namespace, env: dict
 
 
 def build_shape_prior_worker_command(args: argparse.Namespace) -> list[str]:
+    """Build the command for the managed remote shape-prior worker."""
     command = [
         *_python_command_prefix(getattr(args, "shape_prior_worker_conda_env", None)),
         str(Path("services") / "shape_prior_remote" / "server.py"),
@@ -717,6 +830,7 @@ def build_realtime_phystwin_optimization_command(
     *,
     chunk_frame_count: int,
 ) -> list[str]:
+    """Build the optional optimizer command against the online static case."""
     command = [
         *_python_command_prefix(getattr(args, "optimization_conda_env", None)),
         "train_online_zero_then_first.py",
@@ -772,6 +886,7 @@ def build_realtime_phystwin_optimization_command(
 
 
 def build_point_viewer_command(args: argparse.Namespace, *, capture_dir: Path | None = None) -> list[str]:
+    """Build the viewer command; side-by-side mode also receives RGB timeline paths."""
     layout = resolve_point_viewer_layout(args)
     capture_text = "" if capture_dir is None else str(capture_dir)
     input_timeline_text = "" if capture_dir is None else str(Path(capture_dir) / "input_frames.jsonl")
@@ -825,10 +940,12 @@ def _load_optional_points(path: Path | None) -> np.ndarray | None:
 
 
 def resolve_online_dir(args: argparse.Namespace) -> Path:
+    """Return the online_data directory for the active case."""
     return Path(args.base_path) / "online_data" / str(args.case_prefix)
 
 
 def resolve_static_data_path(args: argparse.Namespace) -> Path:
+    """Return the aggregate final_data.pkl path for the active case."""
     return Path(args.base_path) / "data" / str(args.case_prefix) / "final_data.pkl"
 
 
@@ -872,6 +989,7 @@ def prepare_realtime_output_for_new_capture(base_path: str | Path, case_prefix: 
 
 
 def _contract(args: argparse.Namespace) -> dict[str, object]:
+    """Return the dry-run/runtime summary without launching subprocesses."""
     chunk_frame_count = int(resolve_chunk_frame_count(args))
     return {
         "demo_version": "demo_v5_1",
@@ -881,7 +999,6 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "camera_source_replay_fps_override": (
             None if args.camera_source_replay_fps is None else float(args.camera_source_replay_fps)
         ),
-        "camera_lossless_input_fps": resolve_camera_source_replay_fps(args),
         "chunk_seconds": float(args.chunk_seconds),
         "chunk_poll_interval_s": float(args.chunk_poll_interval_s),
         "chunk_frame_count": chunk_frame_count,
@@ -894,7 +1011,6 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "realtime_phystwin_base_path": str(resolve_realtime_phystwin_base_path(args)),
         "max_chunks": args.max_chunks,
         "depth_backend": str(args.depth_backend),
-        "capture_extra_seconds": float(args.capture_extra_seconds),
         "camera_capture_dir": None if args.camera_capture_dir is None else str(args.camera_capture_dir),
         "gpu_mode": resolve_realtime_gpu_mode(args),
         "realtime_gpu_mode": resolve_realtime_gpu_mode(args),
@@ -973,6 +1089,7 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
 
 
 def validate_runtime_args(args: argparse.Namespace, *, chunk_frame_count: int) -> None:
+    """Validate cross-option constraints before launching subprocesses."""
     if float(args.chunk_poll_interval_s) <= 0.0:
         raise ValueError("--chunk-poll-interval-s must be positive")
     resolve_camera_source_replay_fps(args)
@@ -1028,7 +1145,7 @@ def validate_runtime_args(args: argparse.Namespace, *, chunk_frame_count: int) -
 
 
 def _camera_duration_s(args: argparse.Namespace, *, chunk_frame_count: int) -> float:
-    # Demo v5 chunks are bounded by the chunk publisher, not by the camera
+    # Demo v5.1 chunks are bounded by the chunk publisher, not by the camera
     # subprocess. Keeping camera duration unbounded prevents shape-prior warmup
     # time from consuming the realtime RGB input timeline.
     return 0.0
@@ -1050,6 +1167,13 @@ def build_camera_realtime_command(
         depth_source = "realsense"
     else:
         raise ValueError(f"unsupported depth backend: {args.depth_backend!r}")
+    # This is the only v5.1 camera/tracker entrypoint. It writes prepared
+    # per-frame NPZ payloads plus optional input RGB timeline data; chunk
+    # materialization happens in realtime_data_process_track.py.
+    # Offline parity with data_process_sam3d/data_process_pcd.py:L84-L149,
+    # data_process_sam3d/data_process_mask.py:L42-L152, and
+    # data_process_sam3d/data_process_track.py:L49-L55. The subprocess emits the
+    # realtime equivalents of those PCD, mask, and cotracker inputs.
     command = [
         "python",
         str(script),
@@ -1113,7 +1237,7 @@ def build_camera_realtime_command(
                 str(float(args.camera_lossless_max_backlog_seconds)),
             ]
         )
-    if float(camera_source_replay_fps) != float(DEFAULT_CAMERA_LOSSLESS_INPUT_FPS):
+    if float(camera_source_replay_fps) != float(DEFAULT_CAMERA_SOURCE_REPLAY_FPS):
         command.extend(["--lossless-input-fps", str(float(camera_source_replay_fps))])
     if bool(args.camera_headless_prepared_only):
         command.append("--headless-prepared-only")
@@ -1177,7 +1301,7 @@ def _stop_process(process: subprocess.Popen[bytes]) -> int | None:
 
 
 def _start_managed_shape_prior_worker(args: argparse.Namespace) -> subprocess.Popen[bytes] | None:
-    """Start the optional SAM3D worker under Demo v5 lifecycle control."""
+    """Start the optional SAM3D worker under Demo v5.1 lifecycle control."""
     if not bool(args.shape_prior_warmup):
         return None
     if str(args.shape_prior_worker_mode) != "managed":
@@ -1251,6 +1375,7 @@ def _wait_for_process(process: subprocess.Popen[bytes], *, timeout_s: float) -> 
 
 
 def select_validation_chunk_cases(manifests: Sequence[dict[str, object]]) -> list[str]:
+    """Select representative chunk cases for post-run validation."""
     if len(manifests) < 5:
         raise ValueError("at least five chunks are required for second-last and fifth-last validation")
     return [
@@ -1311,6 +1436,7 @@ def _runtime_chunk_summary(manifests: Sequence[dict[str, object]]) -> dict[str, 
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Run Demo v5.1 offline conversion or live/fake-live orchestration."""
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     chunk_frame_count = resolve_chunk_frame_count(args)
@@ -1327,6 +1453,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         startup_realtime_case_cleanup = prepare_realtime_output_for_new_capture(base_path, str(args.case_prefix))
     startup_migration = migrate_legacy_online_static_case(base_path, str(args.case_prefix))
     if args.source_headless_capture is not None:
+        # Offline conversion path: consume an existing capture directory and
+        # write the same chunk/aggregate products without launching camera,
+        # viewer, or optimizer subprocesses.
         manifests = write_chunks_from_headless_capture(
             args.source_headless_capture,
             base_path=base_path,
@@ -1401,6 +1530,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     optimization_timed_out = False
 
     def on_chunk_written(manifest: dict[str, object]) -> None:
+        """Start downstream consumers exactly once when the first chunk commits."""
         nonlocal point_viewer_process
         nonlocal point_viewer_started
         nonlocal point_viewer_started_manifest
@@ -1457,6 +1587,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         # The bridge tails frames.jsonl and publishes fixed-size chunks while
         # the camera subprocess is still running, so fake-live and live share the
         # same realtime chunking path.
+        # Offline parity with data_process_track.py:L37-L378 and
+        # data_process_sample.py:L250-L352. stream_chunks_from_headless_capture
+        # materializes those outputs incrementally instead of after the
+        # recording has finished.
         manifests = stream_chunks_from_headless_capture(
             capture_dir,
             base_path=base_path,
@@ -1525,7 +1659,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "camera_source_replay_fps_override": (
             None if args.camera_source_replay_fps is None else float(args.camera_source_replay_fps)
         ),
-        "camera_lossless_input_fps": resolve_camera_source_replay_fps(args),
         "shape_prior_device": resolve_shape_prior_device(args),
         "shape_prior_device_override": None if args.shape_prior_device is None else str(args.shape_prior_device),
         "shape_prior_worker_mode": str(args.shape_prior_worker_mode),

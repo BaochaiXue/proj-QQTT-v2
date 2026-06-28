@@ -21,15 +21,12 @@ import uuid
 import numpy as np
 from PIL import Image
 
-from demo_v5.data_process_schema import (
-    TRACK_PROCESS_STATUSES,
-    normalize_data_process_keys,
-)
 from demo_v5.pickle_compat import dump_pickle_legacy_numpy
 
 
 DATA_PROCESS_QUERY_SCHEMA_VERSION = "data_process_sam3d_realtime_query_schema_v1"
 DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION = "data_process_sam3d_realtime_final_data_v1"
+TRACK_PROCESS_STATUSES = ("normal", "degraded", "invalid")
 DATA_PROCESS_QUERY_SCHEMA_KEYS = (
     "query_schema_version",
     "query_schema_hash",
@@ -304,7 +301,7 @@ def build_query_schema_payload(
     controller_sample_query_ids: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Build query-id metadata shared by final_data and track_process_data."""
-    track_process_data = normalize_data_process_keys(track_process_data)
+    track_process_data = dict(track_process_data)
     object_points = np.asarray(track_process_data.get("object_points", np.empty((0, 0, 3))))
     controller_points = np.asarray(track_process_data.get("controller_points", np.empty((0, 0, 3))))
     object_count = int(object_points.shape[1]) if object_points.ndim >= 2 else 0
@@ -395,7 +392,7 @@ def build_query_schema_payload(
 
 def _track_process_payload(track_process_data: Mapping[str, np.ndarray]) -> dict[str, Any]:
     """Normalize strict tracking output into data_process_sam3d track payload."""
-    track_process_data = normalize_data_process_keys(track_process_data)
+    track_process_data = dict(track_process_data)
     payload: dict[str, Any] = {}
     for key in DATA_PROCESS_TRACK_PROCESS_KEYS:
         if key not in track_process_data:
@@ -508,7 +505,7 @@ def _final_data_payload(
     interior_points: np.ndarray,
 ) -> dict[str, np.ndarray]:
     """Assemble the final_data.pkl contract consumed by realtime_phystwin."""
-    track_process = normalize_data_process_keys(track_process)
+    track_process = dict(track_process)
     object_points = np.asarray(track_process["object_points"])
     if "object_track_query_indices" in track_process:
         indices = np.arange(object_points.shape[1], dtype=np.int64)
@@ -794,7 +791,7 @@ def write_data_process_chunk_case(
         manifest.update(_quality_manifest_fields(final_data, track_process))
         if manifest_extras is not None:
             extras = manifest_extras() if callable(manifest_extras) else manifest_extras
-            manifest.update(normalize_data_process_keys(dict(extras)))
+            manifest.update(dict(extras))
         quality_status = str(manifest.get("track_process_status", "normal"))
         marker_name = "READY" if quality_status == "normal" else quality_status.upper()
         manifest["publish_marker"] = marker_name
@@ -968,7 +965,7 @@ def _query_schema_values_equal(left: Any, right: Any) -> bool:
 
 def _validate_final_shapes(payload: Mapping[str, np.ndarray]) -> None:
     """Validate final_data.pkl shape, query schema, and finite-point invariants."""
-    payload = normalize_data_process_keys(payload)
+    payload = dict(payload)
     for key in ("surface_points", "interior_points"):
         if key not in payload:
             raise ValueError(f"final_data.pkl missing required key: {key}")
@@ -1031,7 +1028,7 @@ def validate_data_process_case(case_dir: str | Path, *, require_ready: bool = Fa
     final_data = _load_pickle(final_path)
     if not isinstance(final_data, Mapping):
         raise ValueError("final_data.pkl must contain a mapping")
-    final_data = normalize_data_process_keys(final_data)
+    final_data = dict(final_data)
     _validate_final_shapes(final_data)
 
     required_files = (
@@ -1052,7 +1049,7 @@ def validate_data_process_case(case_dir: str | Path, *, require_ready: bool = Fa
     track_process = _load_pickle(case / "track_process_data.pkl")
     if not isinstance(track_process, Mapping):
         raise ValueError("track_process_data.pkl must contain a mapping")
-    track_process = normalize_data_process_keys(track_process)
+    track_process = dict(track_process)
     for key in DATA_PROCESS_TRACK_PROCESS_KEYS:
         if key not in track_process:
             raise ValueError(f"track_process_data.pkl missing required key: {key}")

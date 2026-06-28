@@ -41,7 +41,7 @@ push target for that work is `git push origin single-camera`.
 
 ## Current Catalog Shape
 
-`_catalog.py` currently contains 63 entries.
+`_catalog.py` currently contains 64 entries.
 
 | Lifecycle | Meaning |
 | --- | --- |
