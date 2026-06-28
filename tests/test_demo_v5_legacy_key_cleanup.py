@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 
 
-DEMO_PACKAGES = ("demo_v5", "demo_v5_1")
+DEMO_PACKAGES = ("demo_v5_1",)
 REMOVED_WRAPPER_EXPORTS = (
     "CONTROLLER_ANCHOR_STATIC_KEYS",
     "CONTROLLER_ANCHOR_TIME_KEYS",

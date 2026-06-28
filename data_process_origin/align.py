@@ -1,7 +1,6 @@
 import open3d as o3d
 import numpy as np
-from argparse import ArgumentParser
-import copy
+from argparse import ArgumentParser, Namespace
 import pickle
 import trimesh
 import cv2
@@ -21,25 +20,27 @@ from match_pairs import image_pair_matching
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 from scipy.spatial import KDTree
-import hashlib
-from pathlib import Path
 
 VIS = True
 parser = ArgumentParser()
 parser.add_argument(
     "--base_path",
     type=str,
-    required=True,
+    required=__name__ == "__main__",
+    default="",
 )
-parser.add_argument("--case_name", type=str, required=True)
-parser.add_argument("--controller_name", type=str, required=True)
+parser.add_argument("--case_name", type=str, required=__name__ == "__main__", default="")
 parser.add_argument(
-    "--force_rematch",
-    action="store_true",
-    default=False,
-    help="Recompute SuperGlue matching even if a cached best_match.pkl exists.",
+    "--controller_name",
+    type=str,
+    required=__name__ == "__main__",
+    default="",
 )
-args = parser.parse_args()
+args = Namespace(
+    base_path="",
+    case_name="",
+    controller_name="",
+)
 
 base_path = args.base_path
 case_name = args.case_name
@@ -50,14 +51,6 @@ output_dir = f"{base_path}/{case_name}/shape/matching"
 def existDir(dir_path):
     if not os.path.exists(dir_path):
         os.makedirs(dir_path)
-
-def sha1_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
-    """Return the SHA1 hash of a file on disk."""
-    digest = hashlib.sha1()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(chunk_size), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def pose_selection_render_superglue(
@@ -149,26 +142,11 @@ def deform_ARAP(initial_mesh_world, mesh_matching_points_world, matching_points)
     kdtree = KDTree(mesh_vertices)
     _, mesh_points_indices = kdtree.query(mesh_matching_points_world)
     mesh_points_indices = np.asarray(mesh_points_indices, dtype=np.int32)
-    unique_indices, inverse = np.unique(mesh_points_indices, return_inverse=True)
-    if unique_indices.shape[0] != mesh_points_indices.shape[0]:
-        unique_targets = np.zeros((unique_indices.shape[0], 3), dtype=np.float64)
-        counts = np.zeros(unique_indices.shape[0], dtype=np.float64)
-        for source_idx, target in zip(inverse, matching_points):
-            unique_targets[source_idx] += target
-            counts[source_idx] += 1
-        unique_targets /= counts[:, None]
-        mesh_points_indices = unique_indices.astype(np.int32)
-        matching_points = unique_targets
-
-    try:
-        deform_mesh = initial_mesh_world.deform_as_rigid_as_possible(
-            o3d.utility.IntVector(mesh_points_indices),
-            o3d.utility.Vector3dVector(matching_points),
-            max_iter=1,
-        )
-    except RuntimeError as exc:
-        print(f"[align.py][warn] ARAP failed; keeping pre-ARAP mesh. Error: {exc}")
-        deform_mesh = copy.deepcopy(initial_mesh_world)
+    deform_mesh = initial_mesh_world.deform_as_rigid_as_possible(
+        o3d.utility.IntVector(mesh_points_indices),
+        o3d.utility.Vector3dVector(matching_points),
+        max_iter=1,
+    )
     return deform_mesh, mesh_points_indices
 
 
@@ -278,17 +256,11 @@ def deform_ARAP_ray_registration(
                 target[2] = 0
                 final_targets[final_indices.index(index)] = target
 
-    try:
-        final_mesh_world = deform_kp_mesh_world.deform_as_rigid_as_possible(
-            o3d.utility.IntVector(final_indices),
-            o3d.utility.Vector3dVector(final_targets),
-            max_iter=1,
-        )
-    except RuntimeError as exc:
-        print(
-            f"[align.py][warn] Ray/ground ARAP failed; keeping keypoint-aligned mesh. Error: {exc}"
-        )
-        final_mesh_world = copy.deepcopy(deform_kp_mesh_world)
+    final_mesh_world = deform_kp_mesh_world.deform_as_rigid_as_possible(
+        o3d.utility.IntVector(final_indices),
+        o3d.utility.Vector3dVector(final_targets),
+        max_iter=1,
+    )
     return final_mesh_world
 
 
@@ -300,7 +272,15 @@ def line_point_distance(p, points):
     return cross_product / np.linalg.norm(p)
 
 
-if __name__ == "__main__":
+def main(argv=None):
+    global args, base_path, case_name, CONTROLLER_NAME, output_dir
+
+    args = parser.parse_args(argv)
+    base_path = args.base_path
+    case_name = args.case_name
+    CONTROLLER_NAME = args.controller_name
+    output_dir = f"{base_path}/{case_name}/shape/matching"
+
     existDir(output_dir)
 
     cam_idx = 0
@@ -341,40 +321,7 @@ if __name__ == "__main__":
     # Calculate camera parameters
     fov = 2 * np.arctan(raw_img.shape[1] / (2 * intrinsic[0, 0]))
 
-    best_match_path = Path(output_dir) / "best_match.pkl"
-    mesh_hash = sha1_file(Path(mesh_path))
-    img_hash = sha1_file(Path(img_path))
-    mask_hash = sha1_file(Path(mask_img_path))
-
-    cached_payload = None
-    if best_match_path.exists() and not args.force_rematch:
-        try:
-            with best_match_path.open("rb") as handle:
-                cached = pickle.load(handle)
-            if isinstance(cached, dict) and "payload" in cached and "meta" in cached:
-                meta = cached["meta"] or {}
-                if (
-                    meta.get("mesh_sha1") == mesh_hash
-                    and meta.get("image_sha1") == img_hash
-                    and meta.get("mask_sha1") == mask_hash
-                ):
-                    payload = cached["payload"]
-                    if isinstance(payload, (list, tuple)) and len(payload) == 6:
-                        cached_payload = payload
-            elif isinstance(cached, (list, tuple)) and len(cached) == 6:
-                # Legacy cache: only reuse when the cache is newer than all inputs.
-                cache_mtime = best_match_path.stat().st_mtime
-                deps_mtime = max(
-                    Path(mesh_path).stat().st_mtime,
-                    Path(img_path).stat().st_mtime,
-                    Path(mask_img_path).stat().st_mtime,
-                )
-                if cache_mtime >= deps_mtime:
-                    cached_payload = cached
-        except Exception:
-            cached_payload = None
-
-    if cached_payload is None:
+    if not os.path.exists(f"{output_dir}/best_match.pkl"):
         # 2D feature Matching to get the best pose of the object
         bbox = np.argwhere(mask_img > 0.8 * 255)
         bbox = (
@@ -417,33 +364,23 @@ if __name__ == "__main__":
                 output_dir=output_dir,
             )
         )
-        payload = [
-            best_color,
-            best_depth,
-            best_pose,
-            match_result,
-            camera_intrinsics,
-            bbox,
-        ]
-        cache = {
-            "meta": {
-                "mesh_sha1": mesh_hash,
-                "image_sha1": img_hash,
-                "mask_sha1": mask_hash,
-            },
-            "payload": payload,
-        }
-        with best_match_path.open("wb") as handle:
-            pickle.dump(cache, handle)
+        with open(f"{output_dir}/best_match.pkl", "wb") as f:
+            pickle.dump(
+                [
+                    best_color,
+                    best_depth,
+                    best_pose,
+                    match_result,
+                    camera_intrinsics,
+                    bbox,
+                ],
+                f,
+            )
     else:
-        (
-            best_color,
-            best_depth,
-            best_pose,
-            match_result,
-            camera_intrinsics,
-            bbox,
-        ) = cached_payload
+        with open(f"{output_dir}/best_match.pkl", "rb") as f:
+            best_color, best_depth, best_pose, match_result, camera_intrinsics, bbox = (
+                pickle.load(f)
+            )
 
     # Process to get the matching points on the mesh and on the image
     # Get the projected 3D matching points on the mesh
@@ -568,9 +505,6 @@ if __name__ == "__main__":
     initial_mesh_world.triangles = o3d.utility.Vector3iVector(np.asarray(mesh.faces))
     # Need to remove the duplicated vertices to enable open3d, however, the duplicated points are important in trimesh for texture
     initial_mesh_world = initial_mesh_world.remove_duplicated_vertices()
-    initial_mesh_world = initial_mesh_world.remove_degenerate_triangles()
-    initial_mesh_world = initial_mesh_world.remove_duplicated_triangles()
-    initial_mesh_world = initial_mesh_world.remove_non_manifold_edges()
     # Get the index from original vertices to the mesh vertices, mapping between trimesh and open3d
     kdtree = KDTree(initial_mesh_world.vertices)
     _, trimesh_indices = kdtree.query(np.asarray(mesh.vertices))
@@ -610,14 +544,10 @@ if __name__ == "__main__":
         vis.create_window(visible=False)
         dummy_frame = np.asarray(vis.capture_screen_float_buffer(do_render=True))
         height, width, _ = dummy_frame.shape
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        fourcc = cv2.VideoWriter_fourcc(*"avc1")
         video_writer = cv2.VideoWriter(
             f"{output_dir}/final_matching.mp4", fourcc, 30, (width, height)
         )
-        if not video_writer.isOpened():
-            raise RuntimeError(
-                f"Failed to open VideoWriter for {output_dir}/final_matching.mp4"
-            )
         # final_mesh_world.compute_vertex_normals()
         # final_mesh_world.translate([0, 0, 0.2])
         # mesh_wireframe = o3d.geometry.LineSet.create_from_triangle_mesh(final_mesh_world)
@@ -635,8 +565,11 @@ if __name__ == "__main__":
             frame = (frame * 255).astype(np.uint8)
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             video_writer.write(frame)
-        video_writer.release()
         vis.destroy_window()
 
     mesh.vertices = np.asarray(final_mesh_world.vertices)[trimesh_indices]
     mesh.export(f"{output_dir}/final_mesh.glb")
+
+
+if __name__ == "__main__":
+    main()
