@@ -53,35 +53,12 @@ def _unique(items: tuple[str, ...]) -> tuple[str, ...]:
 
 
 QUICK_UNITTEST_MODULES: tuple[str, ...] = (
-    "tests.test_agents_scope_contract_smoke",
-    "tests.test_recording_metadata_schema_v2",
-    "tests.test_single_camera_defaults_smoke",
-    "tests.test_cameras_viewer_fps_smoke",
-    "tests.test_camera_color_controls",
-    "tests.test_record_preflight_policy_smoke",
-    "tests.test_record_data_preflight_message_smoke",
-    "tests.test_record_data_realtime_align_smoke",
-    "tests.test_calibration_metadata_smoke",
-    "tests.test_calibration_board_profiles",
-    "tests.test_robopil_calibration_converter",
-    "tests.test_multi_realsense_order_smoke",
-    "tests.test_calibrate_loader_smoke",
-    "tests.test_aligned_metadata_loader_smoke",
-    "tests.test_experiment_boundary_smoke",
-    "tests.test_record_data_align_smoke",
-    "tests.test_depth_backend_contract_smoke",
-    "tests.test_ffs_intrinsic_file_format",
-    "tests.test_ffs_reprojection_smoke",
-    "tests.test_ffs_remove_invisible_mask_smoke",
-    "tests.test_sam31_still_object_benchmark_smoke",
-    "tests.test_sam21_checkpoint_ladder_panel_smoke",
-    "tests.test_recorded_rgbd_replay_source",
-    "tests.test_single_demo_v3_runtime",
-    "tests.test_realtime_masked_edgetam_pcd_filter",
-    "tests.test_single_demo_tapnextpp_overlay",
-    "tests.test_demo32_headless_render_helper",
-    "tests.test_render_fastpath",
-    "tests.test_check_all_smoke",
+    "tests.test_demo_v5_legacy_key_cleanup",
+    "tests.test_demo_v5_1_default_config",
+    "tests.test_demo_v5_1_shape_prior_simplification",
+    "tests.test_demo_v5_1_aggregate_invariants",
+    "tests.test_single_view_shape_align",
+    "tests.test_validation_smoke_manifest",
 )
 
 FULL_ONLY_UNITTEST_MODULES: tuple[str, ...] = (
@@ -250,7 +227,9 @@ def _check_commands(*, python: str) -> list[list[str]]:
     return commands
 
 
-def _unittest_commands(*, python: str, module_batches: tuple[tuple[str, ...], ...]) -> list[list[str]]:
+def _unittest_commands(
+    *, python: str, module_batches: tuple[tuple[str, ...], ...]
+) -> list[list[str]]:
     return [[python, "-m", "unittest", "-v", *modules] for modules in module_batches]
 
 
@@ -266,7 +245,11 @@ def _profile_unittest_batches(profile: str) -> tuple[tuple[str, ...], ...]:
         return tuple((module,) for module in modules)
     if profile == "exhaustive":
         modules = _unique(
-            (*SMOKE_UNITTEST_MODULES, *DETERMINISTIC_ONLY_UNITTEST_MODULES, *EXHAUSTIVE_ONLY_UNITTEST_MODULES)
+            (
+                *SMOKE_UNITTEST_MODULES,
+                *DETERMINISTIC_ONLY_UNITTEST_MODULES,
+                *EXHAUSTIVE_ONLY_UNITTEST_MODULES,
+            )
         )
         return tuple((module,) for module in modules)
     if profile == "hardware":
@@ -278,14 +261,25 @@ def _formal_scripts_for_profile(profile: str) -> tuple[str, ...]:
     if profile == "smoke":
         return BASE_FORMAL_HELP_SCRIPTS
     if profile in {"deterministic", "exhaustive"}:
-        return _unique((*BASE_FORMAL_HELP_SCRIPTS, *FULL_ONLY_FORMAL_HELP_SCRIPTS, *DEMO_HELP_SCRIPTS))
+        return _unique(
+            (
+                *BASE_FORMAL_HELP_SCRIPTS,
+                *FULL_ONLY_FORMAL_HELP_SCRIPTS,
+                *DEMO_HELP_SCRIPTS,
+            )
+        )
     if profile == "hardware":
         return ()
     raise ValueError(f"Unsupported profile: {profile}")
 
 
-def _catalog_help_commands(*, python: str, profile: str, include_manual: bool = False) -> list[list[str]]:
-    return [[python, script, "--help"] for script in help_scripts(profile, include_manual=include_manual)]
+def _catalog_help_commands(
+    *, python: str, profile: str, include_manual: bool = False
+) -> list[list[str]]:
+    return [
+        [python, script, "--help"]
+        for script in help_scripts(profile, include_manual=include_manual)
+    ]
 
 
 def build_commands(*, python: str, profile: str, run_hardware: bool = False) -> list[list[str]]:

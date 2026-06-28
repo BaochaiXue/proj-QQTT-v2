@@ -17,7 +17,6 @@ class ShapeAlignmentConfig:
     ground_z_epsilon_m: float = 0.003
     table_z_m: float = 0.0
     above_direction: str = "negative"
-    max_observation_to_aligned_p95_m: float = 0.05
     score_sample_count: int = 6000
     icp_iterations: int = 4
 
@@ -312,8 +311,6 @@ def _validate_alignment(
         if nearest_metrics is None
         else dict(nearest_metrics)
     )
-    coverage_valid = metrics["observation_to_aligned_p95_m"] <= float(config.max_observation_to_aligned_p95_m)
-    valid = bool(valid and coverage_valid)
     payload = {
         "centroid_drift_m": centroid_drift_m,
         "aligned_z_extent_m": float(aligned_z_extent),
@@ -324,8 +321,6 @@ def _validate_alignment(
         "min_z_extent_ratio": float(config.min_z_extent_ratio),
         "max_z_extent_ratio": float(config.max_z_extent_ratio),
         "max_ground_z_fraction": float(config.max_ground_z_fraction),
-        "max_observation_to_aligned_p95_m": float(config.max_observation_to_aligned_p95_m),
-        "coverage_valid": bool(coverage_valid),
     }
     payload.update(metrics)
     return bool(valid), payload

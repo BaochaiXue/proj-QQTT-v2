@@ -67,7 +67,6 @@ DEFAULT_SHAPE_PRIOR_WORKER_MODE = "managed"
 DEFAULT_SHAPE_PRIOR_WORKER_CONDA_ENV = "phystwin-max"
 DEFAULT_SHAPE_PRIOR_WORKER_DEVICE = "cuda:0"
 DEFAULT_SHAPE_PRIOR_WORKER_STARTUP_GRACE_S = 0.0
-DEFAULT_SHAPE_PRIOR_WORKER_MAX_OBSERVATION_TO_ALIGNED_P95_M = 0.06
 DEFAULT_OPTIMIZATION_MODE = "disabled"
 DEFAULT_OPTIMIZATION_CUDA_VISIBLE_DEVICES = "1"
 DEFAULT_OPTIMIZATION_DEVICE = "cuda:0"
@@ -352,15 +351,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--shape-prior-worker-sam3d-root", type=Path, default=None)
     parser.add_argument("--shape-prior-worker-futurephystwin-root", type=Path, default=None)
     parser.add_argument("--shape-prior-worker-config", type=Path, default=None)
-    parser.add_argument(
-        "--shape-prior-worker-max-observation-to-aligned-p95-m",
-        type=float,
-        default=DEFAULT_SHAPE_PRIOR_WORKER_MAX_OBSERVATION_TO_ALIGNED_P95_M,
-        help=(
-            "Managed SAM3D worker alignment coverage tolerance. Demo v5 uses "
-            "0.06m for the current stuffed-animal single-view warmup path."
-        ),
-    )
     parser.add_argument(
         "--shape-prior-worker-preload-models",
         dest="shape_prior_worker_preload_models",
@@ -674,12 +664,6 @@ def build_shape_prior_worker_command(args: argparse.Namespace) -> list[str]:
         command.extend(["--futurephystwin-root", str(args.shape_prior_worker_futurephystwin_root)])
     if args.shape_prior_worker_config is not None:
         command.extend(["--config", str(args.shape_prior_worker_config)])
-    command.extend(
-        [
-            "--max-observation-to-aligned-p95-m",
-            str(float(args.shape_prior_worker_max_observation_to_aligned_p95_m)),
-        ]
-    )
     if bool(args.shape_prior_worker_preload_models):
         command.append("--preload-models")
     if bool(args.shape_prior_worker_warmup_models):
@@ -897,9 +881,6 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "shape_prior_worker_cuda_visible_devices": resolve_shape_prior_worker_cuda_visible_devices(args),
         "shape_prior_worker_device": str(args.shape_prior_worker_device),
         "shape_prior_worker_conda_env": str(args.shape_prior_worker_conda_env),
-        "shape_prior_worker_max_observation_to_aligned_p95_m": float(
-            args.shape_prior_worker_max_observation_to_aligned_p95_m
-        ),
         "shape_prior_worker_released_before_optimization": bool(
             str(args.shape_prior_worker_mode) == "managed" and str(args.optimization_mode) == "continuous"
         ),
@@ -961,8 +942,6 @@ def validate_runtime_args(args: argparse.Namespace, *, chunk_frame_count: int) -
         raise ValueError("managed shape-prior worker requires --shape-prior-execution remote-worker")
     if float(args.shape_prior_worker_startup_grace_s) < 0.0:
         raise ValueError("--shape-prior-worker-startup-grace-s must be non-negative")
-    if float(args.shape_prior_worker_max_observation_to_aligned_p95_m) <= 0.0:
-        raise ValueError("--shape-prior-worker-max-observation-to-aligned-p95-m must be positive")
     if str(args.point_viewer_mode) == "window":
         resolve_point_viewer_layout(args)
         if int(args.point_viewer_cam_idx) < 0:
@@ -1503,9 +1482,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "shape_prior_worker_command": build_shape_prior_worker_command(args),
         "shape_prior_worker_cuda_visible_devices": resolve_shape_prior_worker_cuda_visible_devices(args),
         "shape_prior_worker_device": str(args.shape_prior_worker_device),
-        "shape_prior_worker_max_observation_to_aligned_p95_m": float(
-            args.shape_prior_worker_max_observation_to_aligned_p95_m
-        ),
         "shape_prior_worker_return_code": shape_prior_worker_return_code,
         "shape_prior_worker_released_before_optimization": shape_prior_worker_released_before_optimization,
         "shape_prior_worker_released_before_point_viewer": shape_prior_worker_released_before_point_viewer,

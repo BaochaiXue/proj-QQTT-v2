@@ -86,6 +86,50 @@ class DemoV5LegacyKeyCleanupTests(unittest.TestCase):
                 with self.assertRaises(ModuleNotFoundError):
                     importlib.import_module(f"{package}.data_process_schema")
 
+    def test_demo_v51_atomic_io_helpers_live_under_tools(self) -> None:
+        importlib.invalidate_caches()
+        with self.assertRaises(ModuleNotFoundError):
+            importlib.import_module("demo_v5_1.atomic_io")
+
+        helpers = importlib.import_module("demo_v5_1.tools.atomic_io")
+        self.assertTrue(hasattr(helpers, "atomic_json_dump"))
+        self.assertTrue(hasattr(helpers, "atomic_pickle_dump"))
+
+    def test_demo_v51_shape_prior_worker_lives_with_demo_runtime(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        old_worker_path = root / "services" / "shape_prior_remote" / "server.py"
+
+        self.assertTrue((root / "demo_v5_1" / "shape_prior_worker.py").is_file())
+        self.assertFalse(old_worker_path.exists())
+
+    def test_demo_v51_shape_prior_worker_uses_demo_relative_repo_root(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "demo_v5_1" / "shape_prior_worker.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("current_path.parent.parent", source)
+        self.assertNotIn("QQTT_REPO_ROOT", source)
+        self.assertNotIn('(root / "services").is_dir()', source)
+
+    def test_demo_v51_shape_prior_worker_uses_local_shape_prior_helpers(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source = (root / "demo_v5_1" / "shape_prior_worker.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertTrue((root / "demo_v5_1" / "shape_prior.py").is_file())
+        self.assertFalse((root / "demo_v5_1" / "shape_prior_runtime.py").exists())
+        self.assertFalse((root / "demo_v5_1" / "shape_prior_rpc.py").exists())
+        self.assertFalse((root / "demo_v5_1" / "single_view_shape_align.py").exists())
+        self.assertFalse(
+            (root / "demo_v5_1" / "single_view_shape_prior_sampling.py").exists()
+        )
+        self.assertNotIn("from qqtt.demo", source)
+        self.assertNotIn("import qqtt.demo", source)
+        self.assertNotIn("services.shape_prior_remote", source)
+        self.assertIn("from demo_v5_1.shape_prior import", source)
+
     def test_legacy_final_data_key_is_rejected_instead_of_normalized(self) -> None:
         for package in DEMO_PACKAGES:
             writer = importlib.import_module(f"{package}.data_process_chunk_writer")
@@ -99,7 +143,9 @@ class DemoV5LegacyKeyCleanupTests(unittest.TestCase):
     def test_futurephystwin_wrapper_does_not_export_old_alias_names(self) -> None:
         for package in DEMO_PACKAGES:
             try:
-                wrapper = importlib.import_module(f"{package}.futurephystwin_chunk_writer")
+                wrapper = importlib.import_module(
+                    f"{package}.futurephystwin_chunk_writer"
+                )
             except ModuleNotFoundError:
                 continue
             with self.subTest(package=package):
@@ -116,6 +162,26 @@ class DemoV5LegacyKeyCleanupTests(unittest.TestCase):
                     if token in source:
                         violations.append(f"{path.relative_to(root)}: {token}")
         self.assertEqual([], violations)
+
+    def test_demo_v51_realtime_dense_track_is_local_runtime(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        source_path = root / "demo_v5_1" / "realtime_dense_track.py"
+        source = source_path.read_text(encoding="utf-8")
+
+        forbidden_tokens = (
+            "from qqtt.demo import realtime_masked_edgetam_pcd",
+            "import qqtt.demo.realtime_masked_edgetam_pcd",
+            "from demo_v5 import realtime_dense_track",
+            "import demo_v5.realtime_dense_track",
+            "masked_pcd.main",
+            "thin wrapper",
+        )
+        for token in forbidden_tokens:
+            with self.subTest(token=token):
+                self.assertNotIn(token, source)
+        self.assertIn("class RealtimeMaskedEdgeTamPcdDemo", source)
+        self.assertIn("def build_parser(", source)
+        self.assertIn("def main(", source)
 
 
 if __name__ == "__main__":

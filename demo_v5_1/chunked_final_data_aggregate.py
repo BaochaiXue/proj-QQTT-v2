@@ -15,16 +15,18 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from demo_v5_1.atomic_io import (
-    atomic_json_dump as _atomic_json_dump,
-    atomic_pickle_dump as _atomic_pickle_dump,
-)
 from demo_v5_1.data_process_chunk_writer import (
     DATA_PROCESS_FINAL_DATA_KEYS,
     DATA_PROCESS_QUERY_SCHEMA_KEYS,
     DATA_PROCESS_TRACK_PROCESS_KEYS,
     validate_data_process_case,
 )
+from demo_v5_1.tools.atomic_io import (
+    atomic_json_dump as _atomic_json_dump,
+    atomic_pickle_dump as _atomic_pickle_dump,
+)
+from demo_v5_1.tools.io import load_json as _load_json
+from demo_v5_1.tools.io import load_pickle as _load_pickle
 
 
 FINAL_TIME_KEYS = (
@@ -87,6 +89,10 @@ METADATA_INVARIANT_KEYS = (
     "depth_backend",
     "depth_source_internal",
 )
+SCALAR_STATIC_KEYS = (
+    "query_schema_version",
+    "query_schema_hash",
+)
 GENERATED_FILES = (
     "final_data.pkl",
     "track_process_data.pkl",
@@ -108,55 +114,59 @@ GENERATED_DIRS = (
 )
 
 
-def _load_pickle(path: Path) -> Any:
-    with path.open("rb") as handle:
-        return pickle.load(handle)
-
-
-def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 def _frame_count_from_payload(payload: Mapping[str, Any]) -> int:
     return int(np.asarray(payload["object_points"]).shape[0])
 
 
-def _split_payload(frame_count: int) -> dict[str, Any]:
-    train_end = max(1, int(int(frame_count) * 0.7))
-    train_end = min(train_end, int(frame_count))
-    return {
-        "frame_len": int(frame_count),
-        "train": [0, int(train_end)],
-        "test": [int(train_end), int(frame_count)],
-    }
+def _require_matching_array_invariant(
+    name: str,
+    expected: np.ndarray,
+    actual: Any,
+) -> None:
+    if not isinstance(actual, np.ndarray):
+        raise ValueError(f"aggregate invariant mismatch for {name}")
+    if (
+        expected.shape != actual.shape
+        or expected.dtype != actual.dtype
+        or not np.array_equal(expected, actual)
+    ):
+        raise ValueError(f"aggregate invariant mismatch for {name}")
 
 
-def _arrays_match(left: Any, right: Any) -> bool:
-    left_arr = np.asarray(left)
-    right_arr = np.asarray(right)
-    if left_arr.shape != right_arr.shape and left_arr.size == 1 and right_arr.size == 1:
-        if not (
-            np.issubdtype(left_arr.dtype, np.number)
-            and np.issubdtype(right_arr.dtype, np.number)
-        ):
-            return str(left_arr.item()) == str(right_arr.item())
-    if left_arr.shape != right_arr.shape:
-        return False
-    if np.issubdtype(left_arr.dtype, np.number) and np.issubdtype(right_arr.dtype, np.number):
-        return bool(np.allclose(left_arr, right_arr, rtol=1e-6, atol=1e-6, equal_nan=True))
-    return bool(np.array_equal(left_arr, right_arr))
+def _require_matching_scalar_invariant(name: str, expected: Any, actual: Any) -> None:
+    if type(actual) is not type(expected) or actual != expected:
+        raise ValueError(f"aggregate invariant mismatch for {name}")
 
 
-def _require_matching_value(name: str, expected: Any, actual: Any) -> None:
-    if not _arrays_match(expected, actual):
-        raise ValueError(f"aggregate chunk invariant mismatch for {name}")
+def _require_matching_json_invariant(name: str, expected: Any, actual: Any) -> None:
+    if actual != expected:
+        raise ValueError(f"aggregate invariant mismatch for {name}")
 
 
-def _static_invariant_value(key: str, value: Any) -> Any:
-    """Normalize static values before comparing them across chunks."""
-    if key in {"query_schema_version", "query_schema_hash"}:
-        return str(np.asarray(value).item() if isinstance(value, np.ndarray) else value)
-    return np.ascontiguousarray(np.asarray(value))
+def _normalize_static_invariant_for_compare(
+    name: str,
+    key: str,
+    value: Any,
+) -> Any:
+    if key in SCALAR_STATIC_KEYS:
+        if not isinstance(value, str):
+            raise ValueError(f"aggregate invariant mismatch for {name}")
+        return value
+    if not isinstance(value, np.ndarray):
+        raise ValueError(f"aggregate invariant mismatch for {name}")
+    return np.ascontiguousarray(value)
+
+
+def _require_matching_static_invariant(
+    key: str,
+    name: str,
+    expected: Any,
+    actual: Any,
+) -> None:
+    if key in SCALAR_STATIC_KEYS:
+        _require_matching_scalar_invariant(name, expected, actual)
+        return
+    _require_matching_array_invariant(name, expected, actual)
 
 
 def _require_payload_keys(payload: Mapping[str, Any], keys: Sequence[str], *, label: str) -> None:
@@ -193,11 +203,23 @@ def _concatenate_payloads(
                 )
         combined[key] = np.ascontiguousarray(np.concatenate(arrays, axis=0))
     for key in static_keys:
-        first = _static_invariant_value(key, payloads[0][key])
+        first = _normalize_static_invariant_for_compare(
+            f"{label}.{key}",
+            key,
+            payloads[0][key],
+        )
         for chunk_idx, payload in enumerate(payloads[1:], start=1):
-            value = _static_invariant_value(key, payload[key])
-            if not _arrays_match(first, value):
-                raise ValueError(f"aggregate static invariant mismatch for {label}.{key} at chunk {chunk_idx}")
+            value = _normalize_static_invariant_for_compare(
+                f"{label}.{key} at chunk {chunk_idx}",
+                key,
+                payload[key],
+            )
+            _require_matching_static_invariant(
+                key,
+                f"{label}.{key} at chunk {chunk_idx}",
+                first,
+                value,
+            )
         combined[key] = first
     return combined
 
@@ -283,22 +305,52 @@ def _validate_chunk_cases(chunk_cases: Sequence[Path], *, allow_degraded: bool =
             # extend time, but cannot reinterpret cameras, calibration, or
             # query/sample ids.
             first_final_static = {
-                key: _static_invariant_value(key, final_data[key])
+                key: _normalize_static_invariant_for_compare(
+                    f"final_data.pkl {key}",
+                    key,
+                    final_data[key],
+                )
                 for key in FINAL_STATIC_KEYS
             }
             first_track_static = {
-                key: _static_invariant_value(key, track_process[key])
+                key: _normalize_static_invariant_for_compare(
+                    f"track_process_data.pkl {key}",
+                    key,
+                    track_process[key],
+                )
                 for key in TRACK_STATIC_KEYS
             }
         else:
             assert first_calibrate is not None
-            _require_matching_value("calibrate.pkl", first_calibrate, calibrate)
+            _require_matching_array_invariant("calibrate.pkl", first_calibrate, calibrate)
             for key in METADATA_INVARIANT_KEYS:
-                _require_matching_value(f"metadata.json {key}", first_metadata.get(key), metadata.get(key))
+                _require_matching_json_invariant(
+                    f"metadata.json {key}",
+                    first_metadata.get(key),
+                    metadata.get(key),
+                )
             for key, expected in first_final_static.items():
-                _require_matching_value(f"final_data.pkl {key}", expected, final_data[key])
+                _require_matching_static_invariant(
+                    key,
+                    f"final_data.pkl {key}",
+                    expected,
+                    _normalize_static_invariant_for_compare(
+                        f"final_data.pkl {key}",
+                        key,
+                        final_data[key],
+                    ),
+                )
             for key, expected in first_track_static.items():
-                _require_matching_value(f"track_process_data.pkl {key}", expected, track_process[key])
+                _require_matching_static_invariant(
+                    key,
+                    f"track_process_data.pkl {key}",
+                    expected,
+                    _normalize_static_invariant_for_compare(
+                        f"track_process_data.pkl {key}",
+                        key,
+                        track_process[key],
+                    ),
+                )
 
         for name in ("tracking", "cotracker"):
             tracking = _load_tracking_payload(chunk_case, name)
@@ -306,7 +358,11 @@ def _validate_chunk_cases(chunk_cases: Sequence[Path], *, allow_degraded: bool =
             if name not in first_queries:
                 first_queries[name] = queries
             else:
-                _require_matching_value(f"{name}/0.npz queries_txy", first_queries[name], queries)
+                _require_matching_array_invariant(
+                    f"{name}/0.npz queries_txy",
+                    first_queries[name],
+                    queries,
+                )
             if tracking["tracks"].shape[0] != _frame_count_from_payload(final_data):
                 raise ValueError(f"{name}/0.npz tracks frame count mismatch at chunk {chunk_idx}")
             if tracking["visibility"].shape != tracking["tracks"].shape[:2]:
@@ -393,7 +449,11 @@ def _write_tracking(chunk_cases: Sequence[Path], aggregate_case: Path, *, name: 
     payloads = [_load_tracking_payload(chunk_case, name) for chunk_case in chunk_cases]
     first_queries = payloads[0]["queries_txy"]
     for chunk_idx, payload in enumerate(payloads[1:], start=1):
-        _require_matching_value(f"{name}/0.npz queries_txy", first_queries, payload["queries_txy"])
+        _require_matching_array_invariant(
+            f"{name}/0.npz queries_txy at chunk {chunk_idx}",
+            first_queries,
+            payload["queries_txy"],
+        )
         if payload["tracks"].shape[1:] != payloads[0]["tracks"].shape[1:]:
             raise ValueError(f"cannot concatenate {name}/0.npz tracks at chunk {chunk_idx}")
     tracks = np.concatenate([payload["tracks"] for payload in payloads], axis=0)
@@ -533,7 +593,14 @@ def build_aggregate_case_from_chunk_cases(
     _atomic_pickle_dump(track_process, target / "track_process_data.pkl")
     shutil.copy2(cases[0] / "calibrate.pkl", target / "calibrate.pkl")
     _atomic_json_dump(_aggregate_metadata(_load_json(cases[0] / "metadata.json"), frame_count), target / "metadata.json")
-    _atomic_json_dump(_split_payload(frame_count), target / "split.json")
+    _atomic_json_dump(
+        {
+            "frame_len": int(frame_count),
+            "train": [0, int(frame_count)],
+            "test": [int(frame_count), int(frame_count)],
+        },
+        target / "split.json",
+    )
 
     manifest = _aggregate_manifest(
         aggregate_case=target,

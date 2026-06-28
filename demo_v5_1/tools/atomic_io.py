@@ -1,4 +1,4 @@
-"""Atomic file writers used by online consumers that tail Demo v5.1 outputs."""
+"""Atomic file writers shared by Demo v5.1 tools and online consumers."""
 from __future__ import annotations
 
 import json

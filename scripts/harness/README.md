@@ -98,3 +98,7 @@ For ordinary doc or narrow harness changes, run the `smoke` profile. Use
 `deterministic` when catalog shape, path routing, or public CLI coverage
 changes. Use `exhaustive` before broad harness lifecycle migrations or
 entrypoint reorganizations.
+
+The smoke unittest batch should list only test modules that exist in the
+current checkout. When tests are deleted or moved, update the validation
+manifest in the same change instead of leaving stale module names in smoke.

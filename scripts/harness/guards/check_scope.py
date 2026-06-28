@@ -69,9 +69,10 @@ FORBIDDEN_DATA_PROCESS_FILES = [
 ]
 
 DEMO32_SHAPE_PRIOR_CARVEOUTS = [
+    "demo_v5_1/shape_prior.py",
+    "demo_v5_1/shape_prior_worker.py",
     "qqtt/demo/shape_prior_warmup.py",
     "qqtt/demo/single_view_shape_align.py",
-    "services/shape_prior_remote",
 ]
 
 FORMAL_RECORDING_ALIGNMENT_FILES = [
@@ -112,7 +113,8 @@ ENV_INSTALL_BANNED_FRAGMENTS = [
 BRANCH_POLICY_REQUIRED_TEXT = {
     "AGENTS.md": [
         "Single-Camera Branch Policy",
-        "single-camera-specific modifications must be made, committed, and pushed on the `single-camera` branch",
+        "single-camera-specific modifications must be made, committed, "
+        "and pushed on the `single-camera` branch",
         "Do not commit or push single-camera changes directly to `main`",
         "git push origin single-camera",
     ],
@@ -159,7 +161,8 @@ def check_demo32_shape_prior_carveout(errors: list[str]) -> None:
         for fragment in FORMAL_SHAPE_PRIOR_BANNED_FRAGMENTS:
             if fragment in text:
                 errors.append(
-                    f"Formal recording/alignment file {relative} references shape-prior fragment: {fragment}"
+                    "Formal recording/alignment file "
+                    f"{relative} references shape-prior fragment: {fragment}"
                 )
 
 
@@ -181,10 +184,17 @@ def check_readme_scope(errors: list[str]) -> None:
 
 
 def check_env_install(errors: list[str]) -> None:
-    text = (ROOT / "env_install" / "env_install.sh").read_text(encoding="utf-8").lower()
+    text = (
+        (ROOT / "env_install" / "env_install.sh")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
     for fragment in ENV_INSTALL_BANNED_FRAGMENTS:
         if fragment in text:
-            errors.append(f"env_install/env_install.sh still references banned dependency: {fragment}")
+            errors.append(
+                "env_install/env_install.sh still references banned dependency: "
+                f"{fragment}"
+            )
 
 
 def check_single_camera_branch_policy(errors: list[str]) -> None:

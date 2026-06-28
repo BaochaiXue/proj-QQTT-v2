@@ -22,7 +22,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 
-DEFAULT_WINDOW_NAME = "Demo v5 visualize track"
+DEFAULT_WINDOW_NAME = "Demo v5.1 visualize track"
 DEFAULT_IMAGE_SIZE = (1280, 720)
 DEFAULT_OBJECT_RADIUS = 3
 DEFAULT_CONTROLLER_RADIUS = 6

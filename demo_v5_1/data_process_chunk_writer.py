@@ -707,16 +707,6 @@ def _metadata_payload(chunk: DataProcessChunk, frame_count: int, width_height: t
     }
 
 
-def _split_payload(frame_count: int) -> dict[str, Any]:
-    train_end = max(1, int(int(frame_count) * 0.7))
-    train_end = min(train_end, int(frame_count))
-    return {
-        "frame_len": int(frame_count),
-        "train": [0, int(train_end)],
-        "test": [int(train_end), int(frame_count)],
-    }
-
-
 def write_data_process_chunk_case(
     base_path: str | Path,
     case_name: str,
@@ -786,9 +776,6 @@ def write_data_process_chunk_case(
 
         metadata = _metadata_payload(chunk, frame_count, (width, height))
         (staging / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-        split = _split_payload(frame_count)
-        (staging / "split.json").write_text(json.dumps(split, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
         track_process = _track_process_payload(chunk.track_process_data)
         final_data = _final_data_payload(
@@ -1079,7 +1066,6 @@ def validate_data_process_case(case_dir: str | Path, *, require_ready: bool = Fa
         "track_process_data.pkl",
         "calibrate.pkl",
         "metadata.json",
-        "split.json",
         "color/0/0.png",
         "mask/processed_masks.pkl",
         "tracking/0.npz",
@@ -1116,10 +1102,6 @@ def validate_data_process_case(case_dir: str | Path, *, require_ready: bool = Fa
     frame_count = int(np.asarray(final_data["object_points"]).shape[0])
     if int(metadata.get("frame_num", -1)) != frame_count:
         raise ValueError("metadata.json frame_num must match final_data frame count")
-
-    split = json.loads((case / "split.json").read_text(encoding="utf-8"))
-    if int(split.get("frame_len", -1)) != frame_count:
-        raise ValueError("split.json frame_len must match final_data frame count")
 
     return {
         "valid": True,

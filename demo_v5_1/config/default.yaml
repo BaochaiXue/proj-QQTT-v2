@@ -6,7 +6,7 @@ paths:
   realtime_phystwin_root: "realtime_phystwin"
   # Optional tabletop calibration file used by capture/alignment helpers.
   table_calibrate_path: "table_calibrate.pkl"
-  # Default SAM 3.1 checkpoint path used when the env var is not set.
+  # SAM 3.1 checkpoint path passed when the env var is not set.
   sam31_checkpoint_path: "vendor/demo_runtime/checkpoints/sam31/sam3.1_multiplex.pt"
   # Environment variable that can override the SAM 3.1 checkpoint path.
   sam31_checkpoint_env: "QQTT_SAM31_CHECKPOINT"
@@ -47,12 +47,12 @@ camera:
   mask_radius_outlier_radius_m: 0.01
   # Minimum neighbor count for mask point-cloud radius outlier filtering.
   mask_radius_outlier_nb_points: 40
-  # Torch device used by the camera-side model runtime.
-  camera_device: "cuda"
-  # Torch device used by the camera-side tracker runtime.
-  camera_tracker_device: "cuda"
-  # Numeric dtype used by camera-side model inference.
-  camera_dtype: "bfloat16"
+  # Torch device used by segmentation/depth/perception inference.
+  perception_device: "cuda"
+  # Torch device used by point tracking inference.
+  tracker_device: "cuda"
+  # Torch autocast dtype used by camera-runtime model inference.
+  inference_dtype: "bfloat16"
 
 # GPU routing presets for the cooperating subprocesses.
 gpu:
@@ -60,27 +60,23 @@ gpu:
   realtime_gpu_mode: "single"
   # GPU routing preset for the warmup and shape-prior path.
   warmup_gpu_mode: "dual"
-  # Backward-compatible alias for realtime_gpu_mode.
-  gpu_mode: "single"
   # CUDA_VISIBLE_DEVICES mapping for camera/data-process GPU routing presets.
   gpu_mode_camera_cuda_visible_devices: {"single": "0", "dual": "1"}
   # Torch device mapping for shape-prior GPU routing presets.
   gpu_mode_shape_prior_device: {"single": "cuda:0", "dual": "cuda:1"}
 
-# SAM3D shape-prior worker lifecycle and readiness thresholds.
+# SAM3D shape-prior worker lifecycle.
 shape_prior:
   # ZeroMQ endpoint for the shape-prior worker service.
   shape_prior_endpoint: "tcp://127.0.0.1:7100"
   # How the shape-prior worker is launched and supervised.
   shape_prior_worker_mode: "managed"
   # Conda environment used for the managed shape-prior worker.
-  shape_prior_worker_conda_env: "phystwin-max"
+  shape_prior_worker_conda_env: "demo_2_max"
   # Torch device passed to the managed shape-prior worker.
   shape_prior_worker_device: "cuda:0"
   # Grace period, in seconds, after starting the shape-prior worker.
   shape_prior_worker_startup_grace_s: 0.0
-  # Maximum allowed p95 observation-to-aligned distance for shape-prior checks.
-  shape_prior_worker_max_observation_to_aligned_p95_m: 0.06
 
 # Optional realtime_phystwin online optimization.
 optimization:
