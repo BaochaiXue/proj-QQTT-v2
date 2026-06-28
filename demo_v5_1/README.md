@@ -252,7 +252,7 @@ query_schema_hash
 
 The query schema version is `data_process_sam3d_realtime_query_schema_v1`.
 Validators reject the legacy Demo v4 `demo_v4_session_topology_v1` version;
-Demo v5 artifacts must use the data_process_sam3d realtime query schema version.
+Demo v5.1 artifacts must use the data_process_sam3d realtime query schema version.
 
 Every Demo v5 case metadata also carries:
 

@@ -82,6 +82,16 @@ repo-wide default.
 - Keep external EdgeTAM repos, FFS repos, SAM checkpoints, and other weights
   outside this repo; reference them by documented local path.
 
+## Python Formatting Defaults
+
+- For Python files touched by Codex, target the project formatter line length
+  in `pyproject.toml` and split long code, comments, and docstrings into
+  readable multi-line form before finishing.
+- Do not leave newly written Python lines over 100 columns unless an
+  unavoidable literal, URL, or generated artifact requires it.
+- Keep formatting scoped to touched files or snippets; do not run broad
+  autoformatting across unrelated files.
+
 ## Single-Camera Branch Policy
 
 - All single-camera-specific modifications must be made, committed, and pushed on the `single-camera` branch.

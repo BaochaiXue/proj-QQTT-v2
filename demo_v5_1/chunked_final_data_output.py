@@ -7,15 +7,15 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from demo_v5.atomic_io import atomic_json_dump, atomic_pickle_dump
-from demo_v5.data_keys import TIME_KEYS
-from demo_v5.data_process_chunk_writer import (
+from demo_v5_1.atomic_io import atomic_json_dump, atomic_pickle_dump
+from demo_v5_1.data_keys import TIME_KEYS
+from demo_v5_1.data_process_chunk_writer import (
     DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
     DATA_PROCESS_QUERY_SCHEMA_KEYS,
     build_query_schema_payload,
 )
-from demo_v5.data_process_schema import normalize_data_process_keys
-from demo_v5.chunked_final_data_aggregate import FinalDataAggregateWriter
+from demo_v5_1.data_process_schema import normalize_data_process_keys
+from demo_v5_1.chunked_final_data_aggregate import FinalDataAggregateWriter
 
 STATIC_KEYS = (
     "surface_points",
@@ -358,8 +358,8 @@ class ChunkedFinalDataWriter:
         atomic_pickle_dump(payload, self.static_data_path)
         metadata = {
             "case_name": self.case_name,
-            "demo_version": "demo_v5",
-            "runtime_product_name": "demo_v5_realtime_dense_track",
+            "demo_version": "demo_v5_1",
+            "runtime_product_name": "demo_v5_1_realtime_dense_track",
             "runtime_contract": DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
             "reference_pipeline": "data_process_sam3d",
             "online_dir": str(self.online_dir),
@@ -378,8 +378,8 @@ class ChunkedFinalDataWriter:
         source_end = int(self.source_start_frame) + int(total) * int(self.source_frame_step)
         manifest = {
             "case_name": self.case_name,
-            "demo_version": "demo_v5",
-            "runtime_product_name": "demo_v5_realtime_dense_track",
+            "demo_version": "demo_v5_1",
+            "runtime_product_name": "demo_v5_1_realtime_dense_track",
             "runtime_contract": DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
             "reference_pipeline": "data_process_sam3d",
             "status": str(status),

@@ -2,7 +2,7 @@
 """Demo v5 realtime orchestration entrypoint.
 
 This runner owns process boundaries, GPU routing, and artifact publication. The
-actual camera/tracker stack runs in ``demo_v5/realtime_dense_track.py``;
+actual camera/tracker stack runs in ``demo_v5_1/realtime_dense_track.py``;
 SAM3D shape prior work can run in a separate managed worker; the default
 side-by-side point viewer starts as soon as capture starts, while optional
 realtime_phystwin optimization still starts only after a committed chunk.
@@ -31,18 +31,22 @@ if REPO_ROOT_STR in sys.path:
     sys.path.remove(REPO_ROOT_STR)
 sys.path.insert(0, REPO_ROOT_STR)
 
-from demo_v5.realtime_data_process_track import stream_chunks_from_headless_capture, write_chunks_from_headless_capture
-from demo_v5.chunked_final_data_aggregate import migrate_legacy_online_static_case
+from demo_v5_1.realtime_data_process_track import stream_chunks_from_headless_capture, write_chunks_from_headless_capture
+from demo_v5_1.chunked_final_data_aggregate import migrate_legacy_online_static_case
 
 
-DEFAULT_DATA_PROCESS_BASE_PATH = Path("result/demo_v5/data_process_sam3d_chunks")
+DEFAULT_DATA_PROCESS_BASE_PATH = Path("result/demo_v5_1/data_process_sam3d_chunks")
 DEFAULT_REALTIME_PHYSTWIN_ROOT = Path("realtime_phystwin")
 DEFAULT_INPUT_SOURCE = "fake-live"
 DEFAULT_REPLAY_FPS = 5.0
 DEFAULT_CHUNK_SECONDS = 7.0
 DEFAULT_CHUNK_POLL_INTERVAL_S = 0.001
 DEFAULT_CAMERA_LOSSLESS_INPUT_FPS = 5.0
-DEFAULT_CASE_PREFIX = "demo_v5"
+DEFAULT_CAMERA_FPS = 5
+CAMERA_FPS_CHOICES = (5, 15, 30, 60)
+DEFAULT_CAMERA_COLOR_EXPOSURE = 45.0
+DEFAULT_CAMERA_COLOR_GAIN = 45.0
+DEFAULT_CASE_PREFIX = "demo_v5_1"
 DEFAULT_DEPTH_BACKEND = "native-realsense"
 DEFAULT_MAX_CHUNKS: int | None = None
 DEFAULT_CAPTURE_EXTRA_SECONDS = 10.0
@@ -205,6 +209,25 @@ def build_parser() -> argparse.ArgumentParser:
             "Optional strict lossless replay backlog window passed to Demo v5. "
             "Omit it to keep Demo v5 defaults."
         ),
+    )
+    parser.add_argument(
+        "--camera-fps",
+        type=int,
+        choices=CAMERA_FPS_CHOICES,
+        default=DEFAULT_CAMERA_FPS,
+        help="RealSense capture FPS passed to Demo v5.1 live camera. Defaults to 5 FPS.",
+    )
+    parser.add_argument(
+        "--camera-color-exposure",
+        type=float,
+        default=DEFAULT_CAMERA_COLOR_EXPOSURE,
+        help="Manual RealSense RGB exposure passed to Demo v5.1 live camera.",
+    )
+    parser.add_argument(
+        "--camera-color-gain",
+        type=float,
+        default=DEFAULT_CAMERA_COLOR_GAIN,
+        help="Manual RealSense RGB gain passed to Demo v5.1 live camera.",
     )
     parser.add_argument(
         "--camera-headless-prepared-only",
@@ -754,7 +777,7 @@ def build_point_viewer_command(args: argparse.Namespace, *, capture_dir: Path | 
     input_timeline_text = "" if capture_dir is None else str(Path(capture_dir) / "input_frames.jsonl")
     command = [
         *_python_command_prefix(getattr(args, "point_viewer_conda_env", None)),
-        str(Path("demo_v5") / "visualize_track.py"),
+        str(Path("demo_v5_1") / "visualize_track.py"),
         "--layout",
         layout,
         "--online-dir",
@@ -851,7 +874,7 @@ def prepare_realtime_output_for_new_capture(base_path: str | Path, case_prefix: 
 def _contract(args: argparse.Namespace) -> dict[str, object]:
     chunk_frame_count = int(resolve_chunk_frame_count(args))
     return {
-        "demo_version": "demo_v5",
+        "demo_version": "demo_v5_1",
         "input_source": str(args.input_source),
         "replay_fps": float(args.replay_fps),
         "camera_source_replay_fps": resolve_camera_source_replay_fps(args),
@@ -1019,7 +1042,7 @@ def build_camera_realtime_command(
     chunk_frame_count: int,
 ) -> list[str]:
     """Build the subprocess command that emits prepared PhysTwin frames."""
-    script = Path("demo_v5") / "realtime_dense_track.py"
+    script = Path("demo_v5_1") / "realtime_dense_track.py"
     camera_source_replay_fps = resolve_camera_source_replay_fps(args)
     if str(args.depth_backend) == "ir-ffs":
         depth_source = "ffs"
@@ -1030,6 +1053,12 @@ def build_camera_realtime_command(
     command = [
         "python",
         str(script),
+        "--fps",
+        str(int(args.camera_fps)),
+        "--color-exposure",
+        str(float(args.camera_color_exposure)),
+        "--color-gain",
+        str(float(args.camera_color_gain)),
         "--input-source",
         str(args.input_source),
         "--depth-source",
@@ -1071,9 +1100,9 @@ def build_camera_realtime_command(
         str(DEFAULT_TABLE_CALIBRATE_PATH),
         "--enable-table-z-filter",
         "--runtime-product-name",
-        "demo_v5_realtime_dense_track",
+        "demo_v5_1_realtime_dense_track",
         "--metadata-demo-version",
-        "demo_v5",
+        "demo_v5_1",
         "--metadata-reference-pipeline",
         "data_process_sam3d",
     ]
@@ -1315,7 +1344,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         final_migration = migrate_legacy_online_static_case(base_path, str(args.case_prefix))
         summary = {
-            "demo_version": "demo_v5",
+            "demo_version": "demo_v5_1",
             "mode": "source-headless-capture",
             "source_headless_capture": str(args.source_headless_capture),
             "base_path": str(base_path),
@@ -1479,7 +1508,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         stop_reason = "camera_exited_before_target"
     summary = {
-        "demo_version": "demo_v5",
+        "demo_version": "demo_v5_1",
         "mode": "full-fake-realtime-camera" if str(args.input_source) == "fake-live" else "full-live-camera",
         "gpu_mode": resolve_realtime_gpu_mode(args),
         "realtime_gpu_mode": resolve_realtime_gpu_mode(args),

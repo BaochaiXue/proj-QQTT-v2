@@ -1,0 +1,15 @@
+[tool.black]
+line-length = 88
+
+[tool.ruff]
+line-length = 88
+extend-exclude = [
+    "data",
+    "data_collect",
+    "result",
+    "vendor",
+]
+
+[tool.ruff.format]
+docstring-code-format = true
+line-ending = "lf"

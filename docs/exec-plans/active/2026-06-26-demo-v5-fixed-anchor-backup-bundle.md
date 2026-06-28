@@ -33,7 +33,7 @@ be published into the realtime online stream.
 
 - `conda run -n demo_2_max --no-capture-output python -m unittest tests.test_phystwin_strict_product`
 - `conda run -n demo_2_max --no-capture-output python -m unittest tests.test_demo_v5_realtime_phystwin`
-- `conda run -n demo_2_max --no-capture-output python -m py_compile qqtt/demo/phystwin_strict_product.py demo_v5/futurephystwin_chunk_writer.py demo_v5/headless_chunk_bridge.py demo_v5/online_chunk_output.py demo_v5/online_case_aggregate.py demo_v5/realtime_futurephystwin_chunks.py`
+- `conda run -n demo_2_max --no-capture-output python -m py_compile qqtt/demo/phystwin_strict_product.py demo_v5/futurephystwin_chunk_writer.py demo_v5/headless_chunk_bridge.py demo_v5/chunked_final_data_output.py demo_v5/online_case_aggregate.py demo_v5/realtime_futurephystwin_chunks.py`
 - `conda run -n demo_2_max --no-capture-output python scripts/harness/validation/run.py --profile smoke`
 
 ## Status

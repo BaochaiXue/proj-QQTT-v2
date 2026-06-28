@@ -2032,6 +2032,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="RealSense emitter policy. Defaults to leaving the current device setting unchanged.",
     )
     parser.add_argument(
+        "--color-exposure",
+        type=float,
+        default=None,
+        help="Optional manual RealSense RGB exposure. When set, RGB auto exposure is disabled.",
+    )
+    parser.add_argument(
+        "--color-gain",
+        type=float,
+        default=None,
+        help="Optional manual RealSense RGB gain. When set, RGB auto exposure is disabled.",
+    )
+    parser.add_argument(
         "--init-mode",
         choices=INIT_MODES,
         default=DEFAULT_INIT_MODE,
@@ -2714,6 +2726,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--tracker-overlay-max-points must be >= 0")
     if float(args.tracker_marker_point_size) <= 0:
         raise ValueError("--tracker-marker-point-size must be positive")
+    if getattr(args, "color_exposure", None) is not None and float(args.color_exposure) <= 0.0:
+        raise ValueError("--color-exposure must be positive")
+    if getattr(args, "color_gain", None) is not None and float(args.color_gain) < 0.0:
+        raise ValueError("--color-gain must be >= 0")
     if tracker_enabled(args):
         if args.tracker_backend != TRACKER_BACKEND_TAPNEXTPP:
             raise ValueError("single-camera tracker overlay currently supports only tapnextpp")
@@ -2772,6 +2788,24 @@ def validate_args(args: argparse.Namespace) -> None:
                 raise ValueError(f"{flag} does not exist: {path}")
 
 
+def _apply_color_controls(profile: Any, args: argparse.Namespace, rs: Any) -> None:
+    exposure = getattr(args, "color_exposure", None)
+    gain = getattr(args, "color_gain", None)
+    if exposure is None and gain is None:
+        return
+    color_sensor = profile.get_device().first_color_sensor()
+    if color_sensor.supports(rs.option.enable_auto_exposure):
+        color_sensor.set_option(rs.option.enable_auto_exposure, 0.0)
+    if exposure is not None:
+        if not color_sensor.supports(rs.option.exposure):
+            raise RuntimeError("RealSense RGB sensor does not support exposure control")
+        color_sensor.set_option(rs.option.exposure, float(exposure))
+    if gain is not None:
+        if not color_sensor.supports(rs.option.gain):
+            raise RuntimeError("RealSense RGB sensor does not support gain control")
+        color_sensor.set_option(rs.option.gain, float(gain))
+
+
 def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime:
     rs = _load_realsense_module()
     width, height = parse_profile(args.profile)
@@ -2789,6 +2823,7 @@ def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime
     profile = pipeline.start(config)
     try:
         _apply_emitter(profile, args.emitter, rs)
+        _apply_color_controls(profile, args, rs)
         depth_sensor = profile.get_device().first_depth_sensor()
         depth_scale = float(depth_sensor.get_depth_scale())
         color_stream = profile.get_stream(rs.stream.color).as_video_stream_profile()
@@ -4506,6 +4541,16 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "recording_fps": recording_fps,
             "fake_live_frame_selection_policy": frame_selection_policy,
             "recording_frame_count": frame_count,
+            "color_exposure": (
+                None
+                if getattr(self.args, "color_exposure", None) is None
+                else float(getattr(self.args, "color_exposure"))
+            ),
+            "color_gain": (
+                None
+                if getattr(self.args, "color_gain", None) is None
+                else float(getattr(self.args, "color_gain"))
+            ),
             "depth_source": str(self.args.depth_source),
             "depth_source_internal": str(self.args.depth_source),
             "depth_units": "meters",

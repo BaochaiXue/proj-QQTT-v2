@@ -8,7 +8,7 @@ continuity for `realtime_phystwin`.
 
 - Keep the active runtime path as `realtime_camera_final_data.py` ->
   `headless_chunk_bridge.py` -> `futurephystwin_chunk_writer.py` ->
-  `online_chunk_output.py`.
+  `chunked_final_data_output.py`.
 - Do not introduce shadow quality helpers under `demo_v5`.
 - Keep the realtime 5 FPS defaults and dual GPU warmup/runtime split unchanged.
 - Strengthen product validation so a case can pass only when final_data sample

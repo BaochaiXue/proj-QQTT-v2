@@ -21,11 +21,10 @@ import uuid
 import numpy as np
 from PIL import Image
 
-from demo_v5.data_process_schema import (
+from demo_v5_1.data_process_schema import (
     TRACK_PROCESS_STATUSES,
     normalize_data_process_keys,
 )
-from demo_v5.pickle_compat import dump_pickle_legacy_numpy
 
 
 DATA_PROCESS_QUERY_SCHEMA_VERSION = "data_process_sam3d_realtime_query_schema_v1"
@@ -215,7 +214,7 @@ def _write_processed_masks(case_dir: Path, processed_masks: Sequence[Sequence[Ma
             )
         normalized.append(camera_entries)
     with (mask_dir / "processed_masks.pkl").open("wb") as handle:
-        dump_pickle_legacy_numpy(normalized, handle)
+        pickle.dump(normalized, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def _write_tracking(case_dir: Path, chunk: DataProcessChunk, frame_count: int) -> None:
@@ -666,8 +665,8 @@ def _metadata_payload(chunk: DataProcessChunk, frame_count: int, width_height: t
         "intrinsics": intrinsics.astype(float).tolist(),
         "serial_numbers": [str(chunk.serial_number)],
         "camera_count": 1,
-        "demo_version": "demo_v5",
-        "runtime_product_name": "demo_v5_realtime_dense_track",
+        "demo_version": "demo_v5_1",
+        "runtime_product_name": "demo_v5_1_realtime_dense_track",
         "runtime_contract": DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
         "reference_pipeline": "data_process_sam3d",
         "depth_backend": str(chunk.depth_backend),
@@ -746,7 +745,11 @@ def write_data_process_chunk_case(
         if c2w.shape != (4, 4):
             raise ValueError(f"camera_to_world_c2w must be 4x4, got {c2w.shape}")
         with (staging / "calibrate.pkl").open("wb") as handle:
-            dump_pickle_legacy_numpy([np.ascontiguousarray(c2w, dtype=np.float32)], handle)
+            pickle.dump(
+                [np.ascontiguousarray(c2w, dtype=np.float32)],
+                handle,
+                protocol=pickle.HIGHEST_PROTOCOL,
+            )
 
         metadata = _metadata_payload(chunk, frame_count, (width, height))
         (staging / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -766,9 +769,9 @@ def write_data_process_chunk_case(
         for key in DATA_PROCESS_QUERY_SCHEMA_KEYS:
             track_process[key] = final_data[key]
         with (staging / "track_process_data.pkl").open("wb") as handle:
-            dump_pickle_legacy_numpy(track_process, handle)
+            pickle.dump(track_process, handle, protocol=pickle.HIGHEST_PROTOCOL)
         with (staging / "final_data.pkl").open("wb") as handle:
-            dump_pickle_legacy_numpy(final_data, handle)
+            pickle.dump(final_data, handle, protocol=pickle.HIGHEST_PROTOCOL)
         final_data_written_wall_s = now_wall_s()
 
         manifest = {
