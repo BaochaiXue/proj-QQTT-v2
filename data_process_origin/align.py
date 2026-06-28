@@ -26,14 +26,14 @@ parser = ArgumentParser()
 parser.add_argument(
     "--base_path",
     type=str,
-    required=__name__ == "__main__",
+    required=True,
     default="",
 )
-parser.add_argument("--case_name", type=str, required=__name__ == "__main__", default="")
+parser.add_argument("--case_name", type=str, required=True, default="")
 parser.add_argument(
     "--controller_name",
     type=str,
-    required=__name__ == "__main__",
+    required=True,
     default="",
 )
 args = Namespace(

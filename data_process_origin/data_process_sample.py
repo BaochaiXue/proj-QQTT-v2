@@ -14,14 +14,14 @@ parser = ArgumentParser()
 parser.add_argument(
     "--base_path",
     type=str,
-    required=__name__ == "__main__",
+    required=True,
     default="",
 )
-parser.add_argument("--case_name", type=str, required=__name__ == "__main__", default="")
+parser.add_argument("--case_name", type=str, required=True, default="")
 parser.add_argument("--shape_prior", action="store_true", default=False)
 parser.add_argument("--num_surface_points", type=int, default=1024)
 parser.add_argument("--volume_sample_size", type=float, default=0.005)
-args = parser.parse_args() if __name__ == "__main__" else Namespace(
+args = Namespace(
     base_path="",
     case_name="",
     shape_prior=False,
