@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Demo 5.1 Warmup 与 Actual Run Pipeline</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">single-camera / Demo v5.1 / teachme</p>
+        <h1>Demo 5.1 warmup 与 actual run pipeline</h1>
+        <p class="lead">
+          这里把 shape prior warmup 和其他 runtime warmup 分开讲，并且在流程图里明确
+          分出 GPU 0、GPU 1 和 CPU/IO 编排。当前 actual run 的右侧消费者是
+          <code>demo_v5_1/visualize_track.py</code>，不是
+          <code>realtime_phystwin</code>。
+        </p>
+      </div>
+      <div class="status-stack" aria-label="当前默认配置摘要">
+        <span>默认 realtime GPU: physical GPU 0</span>
+        <span>默认 warmup/viewer GPU: physical GPU 1</span>
+        <span>默认 optimization: disabled</span>
+      </div>
+    </header>
+
+    <main class="page-shell">
+      <aside class="side-panel" aria-label="流程模式选择">
+        <section class="panel-block">
+          <h2>看哪条线</h2>
+          <div class="mode-control" role="tablist" aria-label="Pipeline mode">
+            <button class="mode-button is-active" type="button" data-mode="overview">
+              总览
+            </button>
+            <button class="mode-button" type="button" data-mode="shape">
+              Shape prior
+            </button>
+            <button class="mode-button" type="button" data-mode="runtime">
+              其他 warmup
+            </button>
+            <button class="mode-button" type="button" data-mode="actual">
+              Actual run
+            </button>
+          </div>
+        </section>
+
+        <section class="panel-block">
+          <h2 id="mode-title">总览</h2>
+          <p id="mode-summary">
+            Demo v5.1 是三层并行系统: orchestration 负责起进程和 chunk，
+            GPU 0 跑相机/分割/深度/追踪，GPU 1 跑 shape-prior worker 和当前
+            visualizer。
+          </p>
+        </section>
+
+        <section class="panel-block facts">
+          <h2>当前默认</h2>
+          <dl>
+            <div>
+              <dt>入口</dt>
+              <dd><code>demo_v5_1/main.py</code></dd>
+            </div>
+            <div>
+              <dt>相机/track</dt>
+              <dd><code>CUDA_VISIBLE_DEVICES=0</code></dd>
+            </div>
+            <div>
+              <dt>shape worker</dt>
+              <dd><code>CUDA_VISIBLE_DEVICES=1</code>, worker 内部 <code>cuda:0</code></dd>
+            </div>
+            <div>
+              <dt>visualizer</dt>
+              <dd><code>CUDA_VISIBLE_DEVICES=1</code></dd>
+            </div>
+            <div>
+              <dt>chunk</dt>
+              <dd><code>5 FPS * 7 s = 35 frames</code></dd>
+            </div>
+          </dl>
+        </section>
+      </aside>
+
+      <section class="main-board">
+        <nav class="mini-nav" aria-label="页面章节">
+          <a href="#flow">流程图</a>
+          <a href="#warmup">Warmup 拆解</a>
+          <a href="#actual">Actual run</a>
+          <a href="#source-map">代码依据</a>
+        </nav>
+
+        <section class="board-card" id="flow">
+          <div class="section-heading">
+            <p class="eyebrow">two-GPU swimlane</p>
+            <h2>流程图: GPU 0 / CPU 编排 / GPU 1 分开看</h2>
+          </div>
+          <div class="legend" aria-label="图例">
+            <span><i class="dot dot-warmup"></i>warmup</span>
+            <span><i class="dot dot-run"></i>actual run</span>
+            <span><i class="dot dot-optional"></i>可选分支</span>
+            <span><i class="dot dot-io"></i>artifact / IO</span>
+          </div>
+          <div class="flow-grid" id="flow-grid" aria-live="polite"></div>
+        </section>
+
+        <section class="board-card detail-grid" id="warmup">
+          <article>
+            <p class="eyebrow">warmup A</p>
+            <h2>Shape prior warmup: SAM3D worker 不是 per-frame loop</h2>
+            <p>
+              Demo v5.1 的 shape prior 是一次 frame-0-like 请求。主相机进程等到
+              第一帧 mask、depth、PCD 都齐了以后，把 RGB、object mask、用于对齐的
+              object observation mask、controller mask、color-aligned depth、
+              K 和 camera-to-world 发给 worker。worker 只需要生成一次结构先验，
+              写回 <code>shape_prior/points.npz</code>。
+            </p>
+            <ul class="tight-list">
+              <li>worker 启动在主相机进程之前，由 <code>main.py</code> 管理。</li>
+              <li>默认 warmup 模式是 dual: physical GPU 1 被暴露给 worker。</li>
+              <li>worker 先 preload x4 upscaler 和 SAM3D inference，然后绑定 ZMQ。</li>
+              <li>结果包含 combined points、surface points、interior points 和 metadata。</li>
+              <li>chunk writer 在写 <code>final_data.pkl</code> 前等待 surface/interior points。</li>
+            </ul>
+          </article>
+
+          <article>
+            <p class="eyebrow">warmup B</p>
+            <h2>其他 warmup: 相机、SAM3.1、EdgeTAM、TapNext++</h2>
+            <p>
+              这条 warmup 是主 runtime 的稳定启动链。它不是 shape prior 本身，
+              但会决定第一批 <code>frames.jsonl</code> 和 prepared PhysTwin frame 什么时候
+              开始稳定出现。
+            </p>
+            <ul class="tight-list">
+              <li>如果深度源是 FFS，先创建 TensorRT runner 并 warm up Numba align。</li>
+              <li>live 模式启动 RealSense；fake-live 模式启动 recording replay source。</li>
+              <li>SAM3.1 只在第一帧做 controller/object mask 初始化。</li>
+              <li>EdgeTAM 加载 HF runtime，应用 compile mode，并开始 streaming session。</li>
+              <li>TapNext++ 在 union/object/controller mask 上采样 query 并初始化 tracker。</li>
+            </ul>
+          </article>
+        </section>
+
+        <section class="board-card" id="actual">
+          <div class="section-heading">
+            <p class="eyebrow">actual run</p>
+            <h2>当前 actual run: 右侧是 visualizer，不是 realtime_phystwin</h2>
+          </div>
+          <div class="actual-layout">
+            <article class="callout primary-callout">
+              <h3>当前默认路径</h3>
+              <p>
+                <code>optimization_mode: disabled</code>，所以 actual run 不会启动
+                <code>realtime_phystwin/train_online_zero_then_first.py</code>。它会启动
+                <code>demo_v5_1/visualize_track.py</code>，默认
+                <code>side-by-side</code> 布局。
+              </p>
+            </article>
+            <article class="callout">
+              <h3>左侧画面</h3>
+              <p>
+                visualizer 读取 capture dir 里的 <code>input_frames.jsonl</code> 和
+                <code>input_rgb/*.png</code>，显示 camera/fake-live 输入时间线。
+              </p>
+            </article>
+            <article class="callout">
+              <h3>右侧画面</h3>
+              <p>
+                visualizer 读取 <code>online_data/&lt;case&gt;</code> 与
+                <code>data/&lt;case&gt;/final_data.pkl</code>，显示已经发布的
+                object/controller/shape-prior/tracker 结果。
+              </p>
+            </article>
+            <article class="callout muted-callout">
+              <h3>可选但当前不用</h3>
+              <p>
+                如果手动改成 <code>--optimization-mode continuous</code>，v5.1 会在第一
+                个 committed chunk 后先释放 managed shape-prior worker，再在 GPU 1
+                启动 realtime_phystwin online optimization。这不是当前默认 actual run。
+              </p>
+            </article>
+          </div>
+        </section>
+
+        <section class="board-card source-map" id="source-map">
+          <div class="section-heading">
+            <p class="eyebrow">source map</p>
+            <h2>这张图来自哪些文件</h2>
+          </div>
+          <div class="source-grid">
+            <a href="../../demo_v5_1/main.py">
+              <strong>demo_v5_1/main.py</strong>
+              <span>进程编排、GPU routing、shape worker、viewer、可选 optimization。</span>
+            </a>
+            <a href="../../demo_v5_1/config/default.yaml">
+              <strong>demo_v5_1/config/default.yaml</strong>
+              <span>默认 GPU 模式、chunk 长度、point viewer 和 optimization 默认值。</span>
+            </a>
+            <a href="../../demo_v5_1/realtime_dense_track.py">
+              <strong>demo_v5_1/realtime_dense_track.py</strong>
+              <span>相机/fake-live、SAM3.1、EdgeTAM、TapNext++、PCD、headless capture。</span>
+            </a>
+            <a href="../../demo_v5_1/shape_prior_worker.py">
+              <strong>demo_v5_1/shape_prior_worker.py</strong>
+              <span>x4 upscaler、SAM3D mesh、single-view alignment、sampling。</span>
+            </a>
+            <a href="../../demo_v5_1/shape_prior.py">
+              <strong>demo_v5_1/shape_prior.py</strong>
+              <span>一次 npz ZMQ request/response、warmup manager、shape-prior metadata。</span>
+            </a>
+            <a href="../../demo_v5_1/visualize_track.py">
+              <strong>demo_v5_1/visualize_track.py</strong>
+              <span>当前 actual run 的 side-by-side visualizer。</span>
+            </a>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
