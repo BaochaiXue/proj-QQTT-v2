@@ -6,7 +6,6 @@ import argparse
 from collections import OrderedDict, deque
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field, replace
-import gc
 import json
 import os
 from pathlib import Path
@@ -71,8 +70,6 @@ from qqtt.demo.realtime_single_camera_pointcloud import (  # noqa: E402
     _packet_seq,
     _load_open3d_modules,
     _load_realsense_module,
-    apply_wslg_open3d_env_defaults,
-    build_projection_grid,
     camera_intrinsics_from_rs,
     parse_profile,
     resolve_serial,
@@ -80,25 +77,23 @@ from qqtt.demo.realtime_single_camera_pointcloud import (  # noqa: E402
     rs_intrinsics_to_matrix,
     rs_translation_norm,
     validate_ffs_paths,
-    warm_up_numba_ffs_align,
 )
 from qqtt.demo.render_fastpath import Open3DSceneTensorLayer  # noqa: E402
 from qqtt.demo.pcd_filter_fast import (  # noqa: E402
-    AsyncPcdFilterWorker,
     FilterBudgetController,
     FilterInput,
     FilterOutput,
     voxel_cap_indices,
     voxel_density_indices,
 )
-from services.ffs_remote import FfsRemoteDepthClient  # noqa: E402
 from services.ffs_remote.protocol import (  # noqa: E402
     COMPRESSION_MODES,
     RETURN_TYPES,
     SPARSE_RETURN_TYPES,
 )
-from demo_v5_1.shape_prior import ShapePriorRemoteClient  # noqa: E402
-from demo_v5_1 import shape_prior as shape_prior_warmup  # noqa: E402
+from demo_v5_1 import runtime_warmup  # noqa: E402
+from demo_v5_1 import shape_prior_warmup  # noqa: E402
+from demo_v5_1.runtime_warmup import InitialMaskBundle  # noqa: E402
 from data_process.depth_backends.ffs_defaults import (  # noqa: E402
     DEFAULT_FFS_MAX_DISP,
     DEFAULT_FFS_MODEL_NAME,
@@ -763,14 +758,6 @@ class RecordedRgbdFrameSource:
 
 
 @dataclass(frozen=True)
-class InitialMaskBundle:
-    controller_mask: np.ndarray
-    object_mask: np.ndarray
-    hand_a_mask: np.ndarray | None = None
-    hand_b_mask: np.ndarray | None = None
-
-
-@dataclass(frozen=True)
 class MaskPacket:
     seq: int
     color_bgr: np.ndarray
@@ -1213,7 +1200,7 @@ class HeadlessCaptureWriter:
             "receive_perf_s": float(packet.receive_perf_s),
         }
         if self.write_input_rgb_timeline or not self.prepared_only:
-            _bgr_to_pil_rgb(packet.color_bgr).save(rgb_path)
+            runtime_warmup.bgr_to_pil_rgb(packet.color_bgr).save(rgb_path)
             row["input_rgb_path"] = self._relative(rgb_path)
         with self._lock:
             with self.input_frames_path.open("a", encoding="utf-8") as handle:
@@ -1250,7 +1237,7 @@ class HeadlessCaptureWriter:
         mask_path = self.mask_dir / f"{seq_name}.npz"
         prepared_phystwin_path = self.prepared_phystwin_dir / f"{seq_name}.npz"
         if not self.prepared_only:
-            _bgr_to_pil_rgb(mask_packet.color_bgr).save(rgb_path)
+            runtime_warmup.bgr_to_pil_rgb(mask_packet.color_bgr).save(rgb_path)
             np.save(
                 depth_path,
                 np.ascontiguousarray(depth_m, dtype=np.float32),
@@ -2878,25 +2865,6 @@ def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime
     )
 
 
-def _load_gray_image(path: Path) -> np.ndarray:
-    try:
-        from PIL import Image
-
-        return np.asarray(Image.open(path).convert("L"))
-    except Exception as exc:
-        raise ValueError(f"failed to load mask image {path}: {exc}") from exc
-
-
-def load_binary_mask(path: str | Path, *, expected_shape: tuple[int, int]) -> np.ndarray:
-    mask_path = _resolve_path(path)
-    image = _load_gray_image(mask_path)
-    if image.ndim != 2:
-        raise ValueError(f"mask must be a 2D image: {mask_path}")
-    if tuple(image.shape) != tuple(expected_shape):
-        raise ValueError(f"mask shape {tuple(image.shape)} does not match frame shape {tuple(expected_shape)}: {mask_path}")
-    return np.ascontiguousarray(image > 0)
-
-
 def _masked_sample_indices(
     *,
     depth_m: np.ndarray,
@@ -3273,267 +3241,6 @@ def _time_model_forward(
         _sync_if_needed(torch_module, device)
         post_sync_ms = _elapsed_ms(sync_start_s, time.perf_counter())
     return value, wall_ms, cuda_event_ms, pre_sync_ms, post_sync_ms
-
-
-def _bgr_to_pil_rgb(color_bgr: np.ndarray) -> Any:
-    from PIL import Image
-
-    return Image.fromarray(np.ascontiguousarray(color_bgr[:, :, ::-1]))
-
-
-def _union_masks(masks: list[np.ndarray], *, label: str) -> np.ndarray:
-    if not masks:
-        raise RuntimeError(f"SAM3.1 did not produce a mask for label {label!r}")
-    output = np.zeros_like(masks[0], dtype=bool)
-    for mask in masks:
-        if mask.shape != output.shape:
-            raise RuntimeError("SAM3.1 masks for one label have inconsistent shapes")
-        output |= mask.astype(bool)
-    return np.ascontiguousarray(output)
-
-
-def _mask_area(mask: np.ndarray) -> int:
-    return int(np.count_nonzero(np.asarray(mask, dtype=bool)))
-
-
-def _mask_centroid_x(mask: np.ndarray) -> float:
-    coords = np.argwhere(np.asarray(mask, dtype=bool))
-    if coords.size == 0:
-        return float("inf")
-    return float(coords[:, 1].mean())
-
-
-def _connected_components_by_area(mask: np.ndarray) -> list[np.ndarray]:
-    mask_bool = np.asarray(mask, dtype=bool)
-    if not np.any(mask_bool):
-        return []
-    try:
-        import cv2  # noqa: PLC0415
-
-        count, labels, stats, _centroids = cv2.connectedComponentsWithStats(mask_bool.astype(np.uint8), 8)
-        components: list[tuple[int, np.ndarray]] = []
-        for label_idx in range(1, int(count)):
-            area = int(stats[label_idx, cv2.CC_STAT_AREA])
-            if area > 0:
-                components.append((area, labels == label_idx))
-        components.sort(key=lambda item: item[0], reverse=True)
-        return [np.ascontiguousarray(component, dtype=bool) for _area, component in components]
-    except Exception:
-        # Small fallback for test/minimal environments without cv2.
-        height, width = mask_bool.shape[:2]
-        seen = np.zeros_like(mask_bool, dtype=bool)
-        components = []
-        for start_y, start_x in np.argwhere(mask_bool):
-            if seen[start_y, start_x]:
-                continue
-            stack = [(int(start_y), int(start_x))]
-            seen[start_y, start_x] = True
-            coords: list[tuple[int, int]] = []
-            while stack:
-                y, x = stack.pop()
-                coords.append((y, x))
-                for ny in (y - 1, y, y + 1):
-                    for nx in (x - 1, x, x + 1):
-                        if ny == y and nx == x:
-                            continue
-                        if 0 <= ny < height and 0 <= nx < width and mask_bool[ny, nx] and not seen[ny, nx]:
-                            seen[ny, nx] = True
-                            stack.append((ny, nx))
-            component = np.zeros_like(mask_bool, dtype=bool)
-            yy, xx = np.asarray(coords, dtype=np.int64).T
-            component[yy, xx] = True
-            components.append(component)
-        components.sort(key=_mask_area, reverse=True)
-        return [np.ascontiguousarray(component, dtype=bool) for component in components]
-
-
-def split_controller_hand_instances(controller_masks: list[np.ndarray], *, label: str) -> tuple[np.ndarray, np.ndarray]:
-    masks = [np.ascontiguousarray(mask, dtype=bool) for mask in controller_masks if _mask_area(mask) > 0]
-    if len(masks) >= 2:
-        candidates = sorted(masks, key=_mask_area, reverse=True)[:2]
-    elif len(masks) == 1:
-        candidates = _connected_components_by_area(masks[0])[:2]
-    else:
-        candidates = []
-    if len(candidates) < 2:
-        raise RuntimeError(
-            f"SAM3.1 did not produce two separable controller masks for {label!r}; "
-            "three-identity demo requires two visible hands in frame 0"
-        )
-    candidates = sorted(candidates, key=_mask_centroid_x)
-    return np.ascontiguousarray(candidates[0], dtype=bool), np.ascontiguousarray(candidates[1], dtype=bool)
-
-
-def release_sam31_runtime_resources(device: str = DEFAULT_DEVICE) -> float:
-    started_s = time.perf_counter()
-    helper = sys.modules.get("scripts.harness.support.sam31_mask_helper")
-    clear_cache = getattr(helper, "clear_sam31_image_processor_cache", None) if helper is not None else None
-    if clear_cache is not None:
-        clear_cache()
-    autocast_context = getattr(helper, "_CUDA_AUTOCAST_CONTEXT", None) if helper is not None else None
-    if autocast_context is not None:
-        try:
-            autocast_context.__exit__(None, None, None)
-        except Exception as exc:
-            print(f"[WARN] SAM3.1 autocast cleanup failed: {type(exc).__name__}: {exc}", flush=True)
-        if helper is not None:
-            setattr(helper, "_CUDA_AUTOCAST_CONTEXT", None)
-            contexts = getattr(helper, "_CUDA_AUTOCAST_CONTEXTS_BY_THREAD", None)
-            if isinstance(contexts, dict):
-                contexts.clear()
-
-    gc.collect()
-    try:
-        import torch  # noqa: PLC0415
-
-        if str(device).startswith("cuda") and torch.cuda.is_available():
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-            if hasattr(torch.cuda, "ipc_collect"):
-                torch.cuda.ipc_collect()
-    except Exception as exc:
-        print(f"[WARN] SAM3.1 CUDA cleanup failed: {type(exc).__name__}: {exc}", flush=True)
-    return _elapsed_ms(started_s, time.perf_counter())
-
-
-def trim_sam31_cuda_allocator(device: str = DEFAULT_DEVICE) -> float:
-    started_s = time.perf_counter()
-    gc.collect()
-    try:
-        import torch  # noqa: PLC0415
-
-        if str(device).startswith("cuda") and torch.cuda.is_available():
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-    except Exception as exc:
-        print(f"[WARN] SAM3.1 CUDA trim failed: {type(exc).__name__}: {exc}", flush=True)
-    return _elapsed_ms(started_s, time.perf_counter())
-
-
-def run_sam31_first_frame_mask_bundle(color_bgr: np.ndarray, args: argparse.Namespace) -> InitialMaskBundle:
-    from scripts.harness.support.sam31_mask_helper import parse_text_prompts, run_image_segmentation
-
-    prompt_labels = []
-    if object_tracking_enabled(args):
-        prompt_labels.append(str(args.object_prompt))
-    if controller_tracking_enabled(args):
-        prompt_labels.append(str(args.controller_prompt))
-    if not prompt_labels:
-        empty = np.zeros(tuple(color_bgr.shape[:2]), dtype=bool)
-        return InitialMaskBundle(controller_mask=empty, object_mask=empty)
-    text_prompt = ",".join(prompt_labels)
-    keep_runtime_until_all_cameras_init = bool(
-        getattr(args, "sam31_keep_runtime_until_all_cameras_init", False)
-    )
-    try:
-        result = run_image_segmentation(
-            image=_bgr_to_pil_rgb(color_bgr),
-            text_prompt=text_prompt,
-            checkpoint_path=None,
-            compile_model=False,
-            max_num_objects=16,
-            device=str(args.device),
-            reuse_model=bool(getattr(args, "sam31_cache_init_model", False)),
-        )
-        setattr(args, "_sam31_last_timing_ms", result.get("timing_ms", {}))
-    finally:
-        if keep_runtime_until_all_cameras_init:
-            trim_ms = trim_sam31_cuda_allocator(str(args.device))
-            setattr(args, "_sam31_last_trim_cleanup_ms", float(trim_ms))
-        else:
-            release_ms = release_sam31_runtime_resources(str(args.device))
-            setattr(args, "_sam31_last_release_cleanup_ms", float(release_ms))
-
-    masks_by_label = result["masks_by_label"]
-    object_mask: np.ndarray | None = None
-    controller_mask: np.ndarray | None = None
-    controller_masks: list[np.ndarray] = []
-    if object_tracking_enabled(args):
-        object_label = parse_text_prompts(str(args.object_prompt))[0]
-        object_mask = _union_masks(
-            list(masks_by_label.get(object_label, [])),
-            label=args.object_prompt,
-        )
-    if controller_tracking_enabled(args):
-        controller_label = parse_text_prompts(str(args.controller_prompt))[0]
-        controller_masks = list(masks_by_label.get(controller_label, []))
-        controller_mask = _union_masks(controller_masks, label=args.controller_prompt)
-    if object_mask is None and controller_mask is None:
-        empty = np.zeros(tuple(color_bgr.shape[:2]), dtype=bool)
-        return InitialMaskBundle(controller_mask=empty, object_mask=empty)
-    if object_mask is None:
-        object_mask = np.zeros_like(controller_mask, dtype=bool)
-    if controller_mask is None:
-        empty_controller = np.zeros_like(object_mask, dtype=bool)
-        return InitialMaskBundle(controller_mask=empty_controller, object_mask=object_mask)
-    if three_identity_controller_enabled(args):
-        hand_a_mask, hand_b_mask = split_controller_hand_instances(
-            controller_masks,
-            label=str(args.controller_prompt),
-        )
-        controller_mask = np.logical_or(hand_a_mask, hand_b_mask)
-    else:
-        hand_a_mask = np.ascontiguousarray(controller_mask, dtype=bool)
-        hand_b_mask = np.zeros_like(hand_a_mask, dtype=bool)
-    return InitialMaskBundle(
-        controller_mask=np.ascontiguousarray(controller_mask, dtype=bool),
-        object_mask=np.ascontiguousarray(object_mask, dtype=bool),
-        hand_a_mask=np.ascontiguousarray(hand_a_mask, dtype=bool),
-        hand_b_mask=np.ascontiguousarray(hand_b_mask, dtype=bool),
-    )
-
-
-def run_sam31_first_frame_masks(color_bgr: np.ndarray, args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
-    bundle = run_sam31_first_frame_mask_bundle(color_bgr, args)
-    return bundle.controller_mask, bundle.object_mask
-
-
-def resolve_initial_mask_bundle(frame: FramePacket, args: argparse.Namespace) -> InitialMaskBundle:
-    expected_shape = tuple(frame.color_bgr.shape[:2])
-    if args.init_mode == "saved-masks":
-        object_mask = (
-            load_binary_mask(args.object_init_mask, expected_shape=expected_shape)
-            if object_tracking_enabled(args)
-            else None
-        )
-        controller_mask = (
-            load_binary_mask(args.controller_init_mask, expected_shape=expected_shape)
-            if controller_tracking_enabled(args)
-            else None
-        )
-        if object_mask is None and controller_mask is None:
-            empty = np.zeros(expected_shape, dtype=bool)
-            return InitialMaskBundle(controller_mask=empty, object_mask=empty)
-        if object_mask is None:
-            object_mask = np.zeros_like(controller_mask, dtype=bool)
-        if controller_mask is None:
-            controller_mask = np.zeros_like(object_mask, dtype=bool)
-        if three_identity_controller_enabled(args):
-            hand_a_mask, hand_b_mask = split_controller_hand_instances(
-                [controller_mask],
-                label=str(args.controller_prompt),
-            )
-            controller_mask = np.logical_or(hand_a_mask, hand_b_mask)
-        else:
-            hand_a_mask = np.ascontiguousarray(controller_mask, dtype=bool)
-            hand_b_mask = np.zeros_like(hand_a_mask, dtype=bool)
-        return InitialMaskBundle(
-            controller_mask=np.ascontiguousarray(controller_mask, dtype=bool),
-            object_mask=np.ascontiguousarray(object_mask, dtype=bool),
-            hand_a_mask=np.ascontiguousarray(hand_a_mask, dtype=bool),
-            hand_b_mask=np.ascontiguousarray(hand_b_mask, dtype=bool),
-        )
-    if args.init_mode == "sam31-first-frame":
-        bundle = run_sam31_first_frame_mask_bundle(frame.color_bgr, args)
-        if bundle.controller_mask.shape != expected_shape or bundle.object_mask.shape != expected_shape:
-            raise RuntimeError("SAM3.1 frame-0 masks do not match captured frame shape")
-        return bundle
-    raise ValueError(f"unsupported init mode: {args.init_mode}")
-
-
-def resolve_initial_masks(frame: FramePacket, args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray]:
-    bundle = resolve_initial_mask_bundle(frame, args)
-    return bundle.controller_mask, bundle.object_mask
 
 
 def tracker_enabled(args: argparse.Namespace) -> bool:
@@ -4296,7 +4003,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         self.filter_submit_stats = StageStats()
         self.filter_output_stats = StageStats()
         self.render_stats = RenderStats()
-        self.filter_worker: AsyncPcdFilterWorker | None = None
+        self.filter_worker: Any | None = None
         self._filter_submit_skip_count = 0
         self._last_filter_output_seq_recorded = -1
         controller_filter_min_cap = int(args.filter_min_cap)
@@ -4326,8 +4033,8 @@ class RealtimeMaskedEdgeTamPcdDemo:
             tuple[float, ...],
             tuple[float, ...],
         ] | None = None
-        self.ffs_remote_client: FfsRemoteDepthClient | None = None
-        self.remote_quality_client: FfsRemoteDepthClient | None = None
+        self.ffs_remote_client: Any | None = None
+        self.remote_quality_client: Any | None = None
         self.recording_source: RecordedRgbdFrameSource | None = None
         self.headless_capture_writer: HeadlessCaptureWriter | None = None
         self.shape_prior_manager = self._create_shape_prior_manager()
@@ -4375,9 +4082,21 @@ class RealtimeMaskedEdgeTamPcdDemo:
         enabled = bool(getattr(self.args, "shape_prior_warmup", False))
         client = None
         if enabled:
-            client = ShapePriorRemoteClient(
-                endpoint=str(getattr(self.args, "shape_prior_endpoint", shape_prior_warmup.DEFAULT_SHAPE_PRIOR_ENDPOINT)),
-                timeout_ms=int(getattr(self.args, "shape_prior_timeout_ms", shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS)),
+            client = shape_prior_warmup.ShapePriorRemoteClient(
+                endpoint=str(
+                    getattr(
+                        self.args,
+                        "shape_prior_endpoint",
+                        shape_prior_warmup.DEFAULT_SHAPE_PRIOR_ENDPOINT,
+                    )
+                ),
+                timeout_ms=int(
+                    getattr(
+                        self.args,
+                        "shape_prior_timeout_ms",
+                        shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
+                    )
+                ),
             )
         return shape_prior_warmup.ShapePriorWarmupManager(
             enabled=enabled,
@@ -4698,67 +4417,21 @@ class RealtimeMaskedEdgeTamPcdDemo:
         )
 
     def run(self) -> int:
-        apply_wslg_open3d_env_defaults()
-        if self.args.depth_source == "ffs":
-            self.ffs_runner = self._create_ffs_runner()
-            warm_up_numba_ffs_align()
-        elif self.args.depth_source == "ffs_remote":
-            self.ffs_remote_client = FfsRemoteDepthClient(
-                endpoint=str(self.args.ffs_remote_endpoint),
-                timeout_ms=int(self.args.ffs_remote_timeout_ms),
-                return_type=str(self.args.ffs_remote_return),
-                compression=str(self.args.ffs_remote_compress),
-                max_inflight=int(self.args.ffs_remote_max_inflight),
-            )
-        if self.args.enable_remote_ffs_quality:
-            endpoint = str(self.args.remote_ffs_quality_endpoint or self.args.ffs_remote_endpoint)
-            self.remote_quality_client = FfsRemoteDepthClient(
-                endpoint=endpoint,
-                timeout_ms=int(self.args.remote_ffs_quality_timeout_ms),
-                return_type=str(self.args.remote_ffs_quality_return),
-                compression=str(self.args.remote_ffs_quality_compress),
-                max_inflight=1,
-            )
-        if pcd_filter_enabled(self.args) and str(self.args.pcd_filter_mode) == "async":
-            self.filter_worker = AsyncPcdFilterWorker(self._filter_pcd_input)
-            self.filter_worker.start()
-        if _is_replay_input_source(str(self.args.input_source)):
-            self.recording_source = RecordedRgbdFrameSource(
-                self.args.recording_case,
-                replay_fps=float(self.args.replay_fps),
-                depth_source=str(self.args.depth_source),
-            )
-            self.width = self.recording_source.width
-            self.height = self.recording_source.height
-            self.runtime = self.recording_source.make_runtime()
-            replay_label = "fake-live" if self.args.input_source == INPUT_SOURCE_FAKE_LIVE else "recording-replay"
-            print(
-                f"[{replay_label}] "
-                f"case={self.recording_source.case_path} frames={self.recording_source.frame_count} "
-                f"replay_fps={self.recording_source.effective_fps:g} "
-                f"recording_fps={self.recording_source.recording_fps:g} "
-                f"first_step={self.recording_source.steps[0]} "
-                f"serial={self.recording_source.serial} depth_source={self.recording_source.depth_source} "
-                f"ir_stereo={str(self.recording_source.has_ir_stereo).lower()} "
-                f"frame_selection={FAKE_LIVE_FRAME_SELECTION_POLICY if self.args.input_source == INPUT_SOURCE_FAKE_LIVE else 'sequential'}",
-                flush=True,
-            )
-        else:
-            self.runtime = _start_realsense_pipeline(self.args)
+        runtime_warmup.prepare_runtime_services_and_source(
+            self,
+            pcd_filter_enabled=pcd_filter_enabled,
+            is_replay_input_source=_is_replay_input_source,
+            recording_source_cls=RecordedRgbdFrameSource,
+            start_realsense_pipeline=_start_realsense_pipeline,
+            fake_live_input_source=INPUT_SOURCE_FAKE_LIVE,
+            fake_live_frame_selection_policy=FAKE_LIVE_FRAME_SELECTION_POLICY,
+        )
         try:
-            self._initialize_table_calibration()
-            self.ray_x, self.ray_y = build_projection_grid(
-                width=self.width,
-                height=self.height,
-                stride=1,
-                intrinsics=self.runtime.intrinsics,
+            runtime_warmup.prepare_runtime_projection_and_capture(
+                self,
+                headless_capture_enabled=headless_capture_enabled,
+                headless_capture_writer_cls=HeadlessCaptureWriter,
             )
-            if headless_capture_enabled(self.args):
-                self.headless_capture_writer = HeadlessCaptureWriter(
-                    self.args.headless_capture_dir,
-                    metadata=self._build_headless_capture_metadata(),
-                )
-                print(f"[headless-capture] dir={self.headless_capture_writer.output_dir}", flush=True)
             render_mode = str(self.args.render_mode)
             if render_mode == RENDER_MODE_NONE:
                 self._run_headless()
@@ -5472,27 +5145,32 @@ class RealtimeMaskedEdgeTamPcdDemo:
 
     def _seg_worker(self) -> None:
         try:
-            hf_stream, torch_module, dtype, model, processor = self._init_hf_model()
-            first_frame = self._wait_for_first_frame()
+            warmup = runtime_warmup.prepare_segmentation_warmup(
+                self,
+                repo_root=REPO_ROOT,
+            )
+            first_frame = warmup.first_frame
             if first_frame is None:
                 return
-            initial_masks = resolve_initial_mask_bundle(first_frame, self.args)
-            session = hf_stream.EdgeTamVideoInferenceSession(
+            initial_masks = warmup.initial_masks
+            if initial_masks is None:
+                raise RuntimeError("segmentation warmup did not produce frame-0 masks")
+            session = warmup.hf_stream.EdgeTamVideoInferenceSession(
                 video=None,
                 video_height=int(first_frame.color_bgr.shape[0]),
                 video_width=int(first_frame.color_bgr.shape[1]),
                 inference_device=self.args.device,
                 inference_state_device=self.args.device,
                 video_storage_device=self.args.device,
-                dtype=dtype,
+                dtype=warmup.dtype,
             )
-            with torch_module.inference_mode():
+            with warmup.torch_module.inference_mode():
                 first_packet = self._run_segmentation_frame(
-                    hf_stream=hf_stream,
-                    torch_module=torch_module,
-                    dtype=dtype,
-                    model=model,
-                    processor=processor,
+                    hf_stream=warmup.hf_stream,
+                    torch_module=warmup.torch_module,
+                    dtype=warmup.dtype,
+                    model=warmup.model,
+                    processor=warmup.processor,
                     session=session,
                     frame=first_frame,
                     initial_masks=initial_masks,
@@ -5516,11 +5194,11 @@ class RealtimeMaskedEdgeTamPcdDemo:
                     last_seq = frame.seq
                     try:
                         packet = self._run_segmentation_frame(
-                            hf_stream=hf_stream,
-                            torch_module=torch_module,
-                            dtype=dtype,
-                            model=model,
-                            processor=processor,
+                            hf_stream=warmup.hf_stream,
+                            torch_module=warmup.torch_module,
+                            dtype=warmup.dtype,
+                            model=warmup.model,
+                            processor=warmup.processor,
                             session=session,
                             frame=frame,
                             initial_masks=initial_masks,
@@ -6414,7 +6092,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         initial_masks: InitialMaskBundle,
         add_prompt: bool,
     ) -> MaskPacket:
-        image = _bgr_to_pil_rgb(frame.color_bgr)
+        image = runtime_warmup.bgr_to_pil_rgb(frame.color_bgr)
         inputs, preprocess_ms, preprocess_pre_sync_ms, preprocess_post_sync_ms = _time_runtime_ms(
             torch_module,
             self.args.device,

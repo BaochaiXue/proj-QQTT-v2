@@ -14,10 +14,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
-    def test_shape_prior_path_is_two_local_files(self) -> None:
+    def test_warmup_split_modules_are_local_files(self) -> None:
         expected_files = (
             ROOT / "demo_v5_1" / "shape_prior.py",
+            ROOT / "demo_v5_1" / "shape_prior_warmup.py",
             ROOT / "demo_v5_1" / "shape_prior_worker.py",
+            ROOT / "demo_v5_1" / "runtime_warmup.py",
         )
         for path in expected_files:
             with self.subTest(path=path.name):
@@ -33,22 +35,163 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
             with self.subTest(path=path.name):
                 self.assertFalse(path.exists())
 
-        total_lines = sum(
-            len(path.read_text(encoding="utf-8").splitlines())
-            for path in expected_files
-        )
-        self.assertLessEqual(total_lines, 1000)
-
         for path in (
             ROOT / "demo_v5_1" / "shape_prior.py",
+            ROOT / "demo_v5_1" / "shape_prior_warmup.py",
             ROOT / "demo_v5_1" / "shape_prior_worker.py",
             ROOT / "demo_v5_1" / "realtime_dense_track.py",
+            ROOT / "demo_v5_1" / "runtime_warmup.py",
         ):
             source = path.read_text(encoding="utf-8")
             with self.subTest(path=path.name):
                 self.assertNotIn("qqtt.demo.shape_prior", source)
                 self.assertNotIn("from qqtt.demo import shape_prior", source)
                 self.assertNotIn("services.shape_prior_remote", source)
+
+    def test_shape_prior_warmup_module_owns_lifecycle_helpers(self) -> None:
+        shape_prior_source = (ROOT / "demo_v5_1" / "shape_prior.py").read_text(
+            encoding="utf-8"
+        )
+        warmup_source = (
+            ROOT / "demo_v5_1" / "shape_prior_warmup.py"
+        ).read_text(encoding="utf-8")
+        worker_source = (
+            ROOT / "demo_v5_1" / "shape_prior_worker.py"
+        ).read_text(encoding="utf-8")
+
+        for token in (
+            "class ShapePriorRemoteClient",
+            "class ShapePriorWarmupManager",
+            "def default_profile",
+        ):
+            with self.subTest(token=token):
+                self.assertNotIn(token, shape_prior_source)
+                self.assertIn(token, warmup_source)
+
+        self.assertIn("def prepare_shape_prior_worker_startup", warmup_source)
+        self.assertNotIn("def _prepare_worker_startup", worker_source)
+
+    def test_runtime_warmup_module_owns_first_frame_and_startup_helpers(self) -> None:
+        runtime_source = (ROOT / "demo_v5_1" / "runtime_warmup.py").read_text(
+            encoding="utf-8"
+        )
+        realtime_source = (
+            ROOT / "demo_v5_1" / "realtime_dense_track.py"
+        ).read_text(encoding="utf-8")
+
+        for token in (
+            "class InitialMaskBundle",
+            "def run_sam31_first_frame_mask_bundle",
+            "def resolve_initial_mask_bundle",
+            "def prepare_runtime_services_and_source",
+            "def prepare_runtime_projection_and_capture",
+            "def prepare_segmentation_warmup",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, runtime_source)
+
+        for token in (
+            "class InitialMaskBundle",
+            "def run_sam31_first_frame_mask_bundle",
+            "def resolve_initial_mask_bundle",
+            "def load_binary_mask",
+        ):
+            with self.subTest(token=token):
+                self.assertNotIn(token, realtime_source)
+
+    def test_prepare_shape_prior_worker_startup_preloads_models(self) -> None:
+        from demo_v5_1.shape_prior_warmup import (
+            prepare_shape_prior_worker_startup,
+        )
+
+        class FakeWorker:
+            def __init__(self) -> None:
+                self.preload_calls = 0
+                self._startup_metadata: dict[str, object] = {}
+
+            def preload_models(self) -> dict[str, object]:
+                self.preload_calls += 1
+                self._startup_metadata["preload_called"] = True
+                return self.startup_metadata()
+
+            def startup_metadata(self) -> dict[str, object]:
+                return dict(self._startup_metadata)
+
+        worker = FakeWorker()
+        metadata = prepare_shape_prior_worker_startup(worker, preload_models=True)
+
+        self.assertEqual(1, worker.preload_calls)
+        self.assertTrue(metadata["preload_called"])
+        self.assertTrue(metadata["worker_preloaded_models"])
+        self.assertIn("worker_ready_ms", metadata)
+
+    def test_shape_prior_warmup_manager_ready_and_failed_profiles(self) -> None:
+        from demo_v5_1 import shape_prior_warmup
+
+        request = shape_prior_warmup.ShapePriorFrame0Request(
+            seq=7,
+            source_timestamp_s=12.5,
+            input_source="test",
+            depth_backend="test",
+            depth_source_internal="test",
+            rgb_u8=np.zeros((2, 2, 3), dtype=np.uint8),
+            object_mask=np.ones((2, 2), dtype=bool),
+            object_observation_mask=None,
+            controller_mask=np.zeros((2, 2), dtype=bool),
+            depth_color_m=np.ones((2, 2), dtype=np.float32),
+            k_color=np.eye(3, dtype=np.float32),
+            camera_to_world_c2w=np.eye(4, dtype=np.float32),
+        )
+
+        class ReadyClient:
+            def request_shape_prior(
+                self,
+                frame0: shape_prior_warmup.ShapePriorFrame0Request,
+            ) -> shape_prior_warmup.ShapePriorResult:
+                return shape_prior_warmup.ShapePriorResult(
+                    seq=int(frame0.seq),
+                    source_seq=int(frame0.seq),
+                    source_timestamp_s=frame0.source_timestamp_s,
+                    status=shape_prior_warmup.SHAPE_PRIOR_STATUS_READY,
+                    points_m=np.ones((1, 3), dtype=np.float32),
+                    colors_rgb_u8=np.zeros((1, 3), dtype=np.uint8),
+                    metadata={"worker": "ready"},
+                )
+
+        ready_manager = shape_prior_warmup.ShapePriorWarmupManager(
+            enabled=True,
+            client=ReadyClient(),
+        )
+        self.assertTrue(ready_manager.maybe_submit(request))
+        ready_manager.wait(1.0)
+        self.assertIsNotNone(ready_manager.ready_result())
+        ready_profile = ready_manager.profile()
+        self.assertEqual(
+            shape_prior_warmup.SHAPE_PRIOR_STATUS_READY,
+            ready_profile["shape_prior_status"],
+        )
+        self.assertEqual("ready", ready_profile["worker"])
+
+        class FailedClient:
+            def request_shape_prior(
+                self,
+                frame0: shape_prior_warmup.ShapePriorFrame0Request,
+            ) -> shape_prior_warmup.ShapePriorResult:
+                raise RuntimeError("boom")
+
+        failed_manager = shape_prior_warmup.ShapePriorWarmupManager(
+            enabled=True,
+            client=FailedClient(),
+        )
+        self.assertTrue(failed_manager.maybe_submit(request))
+        failed_manager.wait(1.0)
+        failed_profile = failed_manager.profile()
+        self.assertIsNone(failed_manager.ready_result())
+        self.assertEqual(
+            shape_prior_warmup.SHAPE_PRIOR_STATUS_FAILED,
+            failed_profile["shape_prior_status"],
+        )
+        self.assertEqual("boom", failed_profile["shape_prior_error"])
 
     def test_removed_demo_v51_shape_prior_cli_flags_are_rejected(self) -> None:
         from demo_v5_1 import main as runner

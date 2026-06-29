@@ -36,6 +36,9 @@ from demo_v5_1.shape_prior import (  # noqa: E402
     sample_shape_prior_points,
     unpack_shape_prior_request,
 )
+from demo_v5_1.shape_prior_warmup import (  # noqa: E402
+    prepare_shape_prior_worker_startup,
+)
 
 
 DEFAULT_RUNTIME_ASSET_ROOT = Path("vendor") / "demo_runtime"
@@ -354,19 +357,6 @@ class ShapePriorSam3DWorker:
             )
 
 
-def _prepare_worker_startup(
-    worker: ShapePriorSam3DWorker,
-    *,
-    preload_models: bool,
-) -> dict[str, Any]:
-    startup_start_s = time.perf_counter()
-    if bool(preload_models):
-        worker.preload_models()
-        worker._startup_metadata["worker_preloaded_models"] = True
-    worker._startup_metadata["worker_ready_ms"] = _elapsed_ms(startup_start_s)
-    return worker.startup_metadata()
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Long-lived remote SAM3D shape-prior worker for single-camera demos."
@@ -412,7 +402,7 @@ def main(argv: list[str] | None = None) -> int:
         upscale_category=str(args.upscale_category),
     )
     try:
-        startup_metadata = _prepare_worker_startup(
+        startup_metadata = prepare_shape_prior_worker_startup(
             worker,
             preload_models=bool(args.preload_models),
         )

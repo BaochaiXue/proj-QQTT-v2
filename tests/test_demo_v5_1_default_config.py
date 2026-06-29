@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -197,6 +198,59 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
                 self.assertNotIn(removed_option, command)
         worker_path = runner.REPO_ROOT / "demo_v5_1" / "shape_prior_worker.py"
         self.assertTrue(worker_path.is_file())
+
+    def test_dry_run_contract_preserves_warmup_and_viewer_defaults(self) -> None:
+        from demo_v5_1 import main as runner
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                exit_code = runner.main(
+                    [
+                        "--dry-run",
+                        "--base-path",
+                        tmpdir,
+                        "--case-prefix",
+                        "dry_contract",
+                    ]
+                )
+
+        contract = json.loads(stdout.getvalue())
+        self.assertEqual(0, exit_code)
+        self.assertTrue(contract["shape_prior_warmup"])
+        self.assertEqual(runner.DEFAULT_REALTIME_GPU_MODE, contract["realtime_gpu_mode"])
+        self.assertEqual(runner.DEFAULT_WARMUP_GPU_MODE, contract["warmup_gpu_mode"])
+        self.assertEqual(
+            runner.GPU_MODE_CAMERA_CUDA_VISIBLE_DEVICES[
+                runner.DEFAULT_REALTIME_GPU_MODE
+            ],
+            contract["camera_cuda_visible_devices"],
+        )
+        self.assertEqual(
+            runner.GPU_MODE_CAMERA_CUDA_VISIBLE_DEVICES[
+                runner.DEFAULT_WARMUP_GPU_MODE
+            ],
+            contract["shape_prior_worker_cuda_visible_devices"],
+        )
+        self.assertEqual(
+            runner.GPU_MODE_SHAPE_PRIOR_DEVICE[runner.DEFAULT_WARMUP_GPU_MODE],
+            contract["shape_prior_device"],
+        )
+        self.assertIn(
+            str(Path("demo_v5_1") / "shape_prior_worker.py"),
+            contract["shape_prior_worker_command"],
+        )
+        self.assertIn("--preload-models", contract["shape_prior_worker_command"])
+        self.assertIn(
+            str(Path("demo_v5_1") / "visualize_track.py"),
+            contract["point_viewer_command"],
+        )
+        self.assertEqual(
+            runner.DEFAULT_POINT_VIEWER_CUDA_VISIBLE_DEVICES,
+            contract["point_viewer_cuda_visible_devices"],
+        )
+        self.assertEqual(runner.DEFAULT_OPTIMIZATION_MODE, contract["optimization_mode"])
+        self.assertEqual("disabled", contract["optimization_scope"])
 
     def test_runtime_defaults_are_loaded_from_default_yaml(self) -> None:
         from demo_v5_1 import main as runner

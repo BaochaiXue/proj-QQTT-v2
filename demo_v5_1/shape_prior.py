@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 import io
 import json
-import threading
-import time
 from typing import Any
 from uuid import uuid4
 
@@ -197,136 +195,6 @@ def unpack_shape_prior_result(parts: list[bytes]) -> ShapePriorResult:
         metadata=metadata,
         error=metadata.get("error"),
     )
-
-
-def default_profile(*, enabled: bool) -> dict[str, Any]:
-    return {
-        "shape_prior_enabled": bool(enabled),
-        "shape_prior_status": (
-            SHAPE_PRIOR_STATUS_PENDING if enabled else SHAPE_PRIOR_STATUS_DISABLED
-        ),
-        "shape_backend": SHAPE_BACKEND_SAM3D_OBJECTS if enabled else None,
-        "shape_prior_error": None,
-    }
-
-
-class ShapePriorRemoteClient:
-    def __init__(self, *, endpoint: str, timeout_ms: int) -> None:
-        self.endpoint = str(endpoint)
-        self.timeout_ms = int(timeout_ms)
-        self._socket: Any | None = None
-
-    def close(self) -> None:
-        if self._socket is not None:
-            self._socket.close(linger=0)
-        self._socket = None
-
-    def _connect(self) -> Any:
-        if self._socket is not None:
-            return self._socket
-        import zmq
-
-        socket = zmq.Context.instance().socket(zmq.REQ)
-        socket.setsockopt(zmq.LINGER, 0)
-        socket.setsockopt(zmq.RCVTIMEO, self.timeout_ms)
-        socket.setsockopt(zmq.SNDTIMEO, self.timeout_ms)
-        socket.connect(self.endpoint)
-        self._socket = socket
-        return socket
-
-    def request_shape_prior(self, frame0: ShapePriorFrame0Request) -> ShapePriorResult:
-        socket = self._connect()
-        start_s = time.perf_counter()
-        try:
-            socket.send_multipart(pack_shape_prior_request(frame0))
-            result = unpack_shape_prior_result(socket.recv_multipart())
-        except Exception:
-            self.close()
-            raise
-        metadata = dict(result.metadata)
-        metadata.setdefault("response_download_ms", (time.perf_counter() - start_s) * 1000.0)
-        return replace(
-            result,
-            source_seq=int(frame0.seq),
-            source_timestamp_s=frame0.source_timestamp_s,
-            metadata=metadata,
-        )
-
-
-class ShapePriorWarmupManager:
-    def __init__(self, *, enabled: bool, client: Any | None) -> None:
-        self.enabled = bool(enabled)
-        self.client = client
-        self.created_perf_s = time.perf_counter()
-        self._lock = threading.Lock()
-        self._submitted = False
-        self._result: ShapePriorResult | None = None
-        self._profile = default_profile(enabled=self.enabled)
-        self._thread: threading.Thread | None = None
-
-    def maybe_submit(self, frame0: ShapePriorFrame0Request) -> bool:
-        if not self.enabled:
-            return False
-        with self._lock:
-            if self._submitted:
-                return False
-            self._submitted = True
-            self._profile.update(
-                {
-                    "shape_prior_status": SHAPE_PRIOR_STATUS_PENDING,
-                    "shape_prior_source_seq": int(frame0.seq),
-                    "shape_prior_source_time_s": frame0.source_timestamp_s,
-                    "shape_prior_submit_ms": (
-                        time.perf_counter() - self.created_perf_s
-                    )
-                    * 1000.0,
-                }
-            )
-        thread = threading.Thread(target=self._run, args=(frame0,), daemon=True)
-        self._thread = thread
-        thread.start()
-        return True
-
-    def _run(self, frame0: ShapePriorFrame0Request) -> None:
-        try:
-            if self.client is None:
-                raise RuntimeError("shape-prior client is unavailable")
-            result = self.client.request_shape_prior(frame0)
-            status = SHAPE_PRIOR_STATUS_READY if result.ready else result.status
-            with self._lock:
-                self._result = result if result.ready else None
-                self._profile.update(result.metadata)
-                self._profile.update(
-                    {
-                        "shape_prior_status": status,
-                        "shape_prior_ready_seq": int(result.seq),
-                        "shape_prior_error": result.error,
-                        "time_to_shape_prior_ready_ms": (
-                            time.perf_counter() - self.created_perf_s
-                        )
-                        * 1000.0,
-                    }
-                )
-        except Exception as exc:
-            with self._lock:
-                self._profile.update(
-                    {
-                        "shape_prior_status": SHAPE_PRIOR_STATUS_FAILED,
-                        "shape_prior_error": str(exc),
-                    }
-                )
-
-    def wait(self, timeout_s: float | None = None) -> None:
-        if self._thread is not None:
-            self._thread.join(timeout_s)
-
-    def ready_result(self) -> ShapePriorResult | None:
-        with self._lock:
-            return self._result
-
-    def profile(self) -> dict[str, Any]:
-        with self._lock:
-            return dict(self._profile)
 
 
 def observation_points_world(frame0: ShapePriorFrame0Request, *, max_points: int) -> np.ndarray:
