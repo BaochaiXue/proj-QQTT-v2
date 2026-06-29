@@ -6,40 +6,44 @@
     <title>Demo 5.1 Warmup 与 Actual Run Pipeline</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body>
+  <body data-mode="overview">
     <header class="topbar">
       <div>
         <p class="eyebrow">single-camera / Demo v5.1 / teachme</p>
         <h1>Demo 5.1 warmup 与 actual run pipeline</h1>
         <p class="lead">
-          这里把 shape prior warmup 和其他 runtime warmup 分开讲，并且在流程图里明确
-          分出 GPU 0、GPU 1 和 CPU/IO 编排。当前 actual run 的右侧消费者是
-          <code>demo_v5_1/visualize_track.py</code>，不是
-          <code>realtime_phystwin</code>。
+          这页先给一张思维导图总览，再把 shape-prior warmup、普通 runtime
+          warmup、actual run 分成三张阶段图。思维导图讲概念关系，阶段图讲
+          CPU、GPU 0、GPU 1、IO 具体怎么交接。
         </p>
       </div>
       <div class="status-stack" aria-label="当前默认配置摘要">
-        <span>默认 realtime GPU: physical GPU 0</span>
-        <span>默认 warmup/viewer GPU: physical GPU 1</span>
-        <span>默认 optimization: disabled</span>
+        <span><strong>GPU 0</strong> camera / segmentation / depth / tracking</span>
+        <span><strong>GPU 1</strong> shape worker / current visualizer</span>
+        <span><strong>actual run</strong> 默认 visualizer，不启动 realtime_phystwin</span>
       </div>
     </header>
 
     <main class="page-shell">
-      <aside class="side-panel" aria-label="流程模式选择">
+      <aside class="side-panel" aria-label="流程焦点选择">
         <section class="panel-block">
           <h2>看哪条线</h2>
-          <div class="mode-control" role="tablist" aria-label="Pipeline mode">
-            <button class="mode-button is-active" type="button" data-mode="overview">
-              总览
+          <div class="mode-control" role="tablist" aria-label="Pipeline focus">
+            <button
+              class="mode-button is-active"
+              type="button"
+              role="tab"
+              data-mode="overview"
+            >
+              思维导图总览
             </button>
-            <button class="mode-button" type="button" data-mode="shape">
-              Shape prior
+            <button class="mode-button" type="button" role="tab" data-mode="shape">
+              Shape prior warmup
             </button>
-            <button class="mode-button" type="button" data-mode="runtime">
-              其他 warmup
+            <button class="mode-button" type="button" role="tab" data-mode="runtime">
+              普通 warmup
             </button>
-            <button class="mode-button" type="button" data-mode="actual">
+            <button class="mode-button" type="button" role="tab" data-mode="actual">
               Actual run
             </button>
           </div>
@@ -48,30 +52,31 @@
         <section class="panel-block">
           <h2 id="mode-title">总览</h2>
           <p id="mode-summary">
-            Demo v5.1 是三层并行系统: orchestration 负责起进程和 chunk，
-            GPU 0 跑相机/分割/深度/追踪，GPU 1 跑 shape-prior worker 和当前
-            visualizer。
+            先看思维导图：中心是 Demo v5.1 pipeline，六条分支分别讲
+            warmup、actual run、GPU routing、artifacts 和代码 ownership。
+            actual run 默认让 GPU 1 跑
+            <code>visualize_track.py</code>。
           </p>
         </section>
 
         <section class="panel-block facts">
-          <h2>当前默认</h2>
+          <h2>默认值</h2>
           <dl>
             <div>
               <dt>入口</dt>
               <dd><code>demo_v5_1/main.py</code></dd>
             </div>
             <div>
-              <dt>相机/track</dt>
+              <dt>realtime GPU</dt>
               <dd><code>CUDA_VISIBLE_DEVICES=0</code></dd>
             </div>
             <div>
-              <dt>shape worker</dt>
-              <dd><code>CUDA_VISIBLE_DEVICES=1</code>, worker 内部 <code>cuda:0</code></dd>
+              <dt>warmup / viewer GPU</dt>
+              <dd><code>CUDA_VISIBLE_DEVICES=1</code></dd>
             </div>
             <div>
-              <dt>visualizer</dt>
-              <dd><code>CUDA_VISIBLE_DEVICES=1</code></dd>
+              <dt>shape worker 内部 device</dt>
+              <dd><code>cuda:0</code>，映射到 physical GPU 1</dd>
             </div>
             <div>
               <dt>chunk</dt>
@@ -83,134 +88,912 @@
 
       <section class="main-board">
         <nav class="mini-nav" aria-label="页面章节">
-          <a href="#flow">流程图</a>
-          <a href="#warmup">Warmup 拆解</a>
-          <a href="#actual">Actual run</a>
+          <a href="#mind-map">思维导图</a>
+          <a href="#shape-warmup">Shape prior</a>
+          <a href="#runtime-warmup">普通 warmup</a>
+          <a href="#actual-run">Actual run</a>
           <a href="#source-map">代码依据</a>
         </nav>
 
-        <section class="board-card" id="flow">
+        <section
+          class="diagram-section mind-map-section"
+          id="mind-map"
+          data-diagram="overview"
+        >
           <div class="section-heading">
-            <p class="eyebrow">two-GPU swimlane</p>
-            <h2>流程图: GPU 0 / CPU 编排 / GPU 1 分开看</h2>
+            <p class="eyebrow">mind map / first look</p>
+            <h2>思维导图: Demo v5.1 到底分成哪几条线</h2>
+            <p>
+              先不要按代码文件读。先按这张图看关系：shape prior 是 GPU 1
+              的一次性结构先验 warmup；普通 warmup 是 GPU 0 的实时感知启动链；
+              actual run 默认是 GPU 0 产出 online chunks，GPU 1 跑
+              <code>visualize_track.py</code> 看结果。
+            </p>
           </div>
-          <div class="legend" aria-label="图例">
-            <span><i class="dot dot-warmup"></i>warmup</span>
-            <span><i class="dot dot-run"></i>actual run</span>
-            <span><i class="dot dot-optional"></i>可选分支</span>
-            <span><i class="dot dot-io"></i>artifact / IO</span>
+
+          <div class="mind-map-board" aria-label="Demo v5.1 pipeline mind map">
+            <div class="mind-map-core">
+              <span>Demo v5.1</span>
+              <strong>Pipeline 总图</strong>
+              <p>先 warmup，后 actual run；两个 GPU 分工不混在一起。</p>
+            </div>
+
+            <article class="mind-branch branch-shape">
+              <h3>Shape-prior warmup</h3>
+              <p>GPU 1 managed worker，先 preload，再等 GPU 0 的首个有效请求。</p>
+              <ul>
+                <li><code>shape_prior_warmup.py</code> 管 client / manager / startup。</li>
+                <li>x4 upscaler + SAM3D 在 worker device 上预加载。</li>
+                <li>只提交一次 frame-0-like request，不是 per-frame loop。</li>
+              </ul>
+            </article>
+
+            <article class="mind-branch branch-runtime">
+              <h3>普通 runtime warmup</h3>
+              <p>GPU 0 realtime path，把相机、深度、mask、tracker 热起来。</p>
+              <ul>
+                <li><code>runtime_warmup.py</code> 管 source / FFS / PCD filter。</li>
+                <li>SAM3.1 只做第一帧 mask 初始化。</li>
+                <li>EdgeTAM 和 TapNext++ 进入后续实时循环。</li>
+              </ul>
+            </article>
+
+            <article class="mind-branch branch-gpu">
+              <h3>GPU routing</h3>
+              <p>默认 dual warmup，把 heavy warmup/viewer 和 realtime path 分开。</p>
+              <ul>
+                <li>GPU 0: camera / segmentation / depth / tracking。</li>
+                <li>GPU 1: shape worker / current visualizer。</li>
+                <li>worker 内部 <code>cuda:0</code> 映射到 physical GPU 1。</li>
+              </ul>
+            </article>
+
+            <article class="mind-branch branch-actual">
+              <h3>Actual run</h3>
+              <p>默认另一边是 visualizer，不是 realtime_phystwin。</p>
+              <ul>
+                <li><code>visualize_track.py</code> 启动在 GPU 1。</li>
+                <li>side-by-side: 左边 input timeline，右边 final_data。</li>
+                <li><code>optimization_mode=disabled</code>，所以不启动在线优化。</li>
+              </ul>
+            </article>
+
+            <article class="mind-branch branch-artifacts">
+              <h3>Artifacts / waits</h3>
+              <p>关键等待点是 shape prior 和 35-frame chunk window。</p>
+              <ul>
+                <li><code>shape_prior/points.npz</code> 给 chunk materialization。</li>
+                <li><code>frames.jsonl</code> 被 chunk bridge tail。</li>
+                <li><code>final_data.pkl</code> 出来后 visualizer 右侧才有内容。</li>
+              </ul>
+            </article>
+
+            <article class="mind-branch branch-code">
+              <h3>Code ownership</h3>
+              <p>不要再把 warmup 都理解成一个大 run block。</p>
+              <ul>
+                <li><code>main.py</code> 编排 worker、camera、viewer。</li>
+                <li><code>shape_prior.py</code> 留给协议、packing、alignment、sampling。</li>
+                <li><code>realtime_dense_track.py</code> 保留 per-frame loops。</li>
+              </ul>
+            </article>
           </div>
-          <div class="flow-grid" id="flow-grid" aria-live="polite"></div>
+
+          <div class="mind-map-order" aria-label="Pipeline order summary">
+            <span><b>1</b> GPU 1 worker preload</span>
+            <span><b>2</b> GPU 0 普通 warmup</span>
+            <span><b>3</b> 一次 shape-prior request</span>
+            <span><b>4</b> 35-frame chunk commit</span>
+            <span><b>5</b> visualize_track.py 显示</span>
+          </div>
         </section>
 
-        <section class="board-card detail-grid" id="warmup">
-          <article>
-            <p class="eyebrow">warmup A</p>
-            <h2>Shape prior warmup: SAM3D worker 不是 per-frame loop</h2>
-            <p>
-              Demo v5.1 的 shape prior 是一次 frame-0-like 请求。主相机进程等到
-              第一帧 mask、depth、PCD 都齐了以后，把 RGB、object mask、用于对齐的
-              object observation mask、controller mask、color-aligned depth、
-              K 和 camera-to-world 发给 worker。worker 只需要生成一次结构先验，
-              写回 <code>shape_prior/points.npz</code>。
-            </p>
-            <ul class="tight-list">
-              <li>worker 启动在主相机进程之前，由 <code>main.py</code> 管理。</li>
-              <li>默认 warmup 模式是 dual: physical GPU 1 被暴露给 worker。</li>
-              <li>worker 先 preload x4 upscaler 和 SAM3D inference，然后绑定 ZMQ。</li>
-              <li>结果包含 combined points、surface points、interior points 和 metadata。</li>
-              <li>chunk writer 在写 <code>final_data.pkl</code> 前等待 surface/interior points。</li>
-            </ul>
-          </article>
-
-          <article>
-            <p class="eyebrow">warmup B</p>
-            <h2>其他 warmup: 相机、SAM3.1、EdgeTAM、TapNext++</h2>
-            <p>
-              这条 warmup 是主 runtime 的稳定启动链。它不是 shape prior 本身，
-              但会决定第一批 <code>frames.jsonl</code> 和 prepared PhysTwin frame 什么时候
-              开始稳定出现。
-            </p>
-            <ul class="tight-list">
-              <li>如果深度源是 FFS，先创建 TensorRT runner 并 warm up Numba align。</li>
-              <li>live 模式启动 RealSense；fake-live 模式启动 recording replay source。</li>
-              <li>SAM3.1 只在第一帧做 controller/object mask 初始化。</li>
-              <li>EdgeTAM 加载 HF runtime，应用 compile mode，并开始 streaming session。</li>
-              <li>TapNext++ 在 union/object/controller mask 上采样 query 并初始化 tracker。</li>
-            </ul>
-          </article>
-        </section>
-
-        <section class="board-card" id="actual">
+        <section class="diagram-section" id="shape-warmup" data-diagram="shape">
           <div class="section-heading">
-            <p class="eyebrow">actual run</p>
-            <h2>当前 actual run: 右侧是 visualizer，不是 realtime_phystwin</h2>
+            <p class="eyebrow">warmup A / GPU 1 first</p>
+            <h2>Shape-prior warmup: worker 先在 GPU 1 ready，再等 GPU 0 的首帧请求</h2>
+            <p>
+              这条线不是 per-frame loop。它只需要在第一批有效 mask/depth/PCD
+              出来后提交一次 frame-0-like 请求，worker 生成一次 surface/interior
+              shape prior，chunk writer 在写 <code>final_data.pkl</code> 前等待它。
+            </p>
           </div>
-          <div class="actual-layout">
-            <article class="callout primary-callout">
-              <h3>当前默认路径</h3>
-              <p>
-                <code>optimization_mode: disabled</code>，所以 actual run 不会启动
-                <code>realtime_phystwin/train_online_zero_then_first.py</code>。它会启动
-                <code>demo_v5_1/visualize_track.py</code>，默认
-                <code>side-by-side</code> 布局。
-              </p>
-            </article>
-            <article class="callout">
-              <h3>左侧画面</h3>
-              <p>
-                visualizer 读取 capture dir 里的 <code>input_frames.jsonl</code> 和
-                <code>input_rgb/*.png</code>，显示 camera/fake-live 输入时间线。
-              </p>
-            </article>
-            <article class="callout">
-              <h3>右侧画面</h3>
-              <p>
-                visualizer 读取 <code>online_data/&lt;case&gt;</code> 与
-                <code>data/&lt;case&gt;/final_data.pkl</code>，显示已经发布的
-                object/controller/shape-prior/tracker 结果。
-              </p>
-            </article>
-            <article class="callout muted-callout">
-              <h3>可选但当前不用</h3>
-              <p>
-                如果手动改成 <code>--optimization-mode continuous</code>，v5.1 会在第一
-                个 committed chunk 后先释放 managed shape-prior worker，再在 GPU 1
-                启动 realtime_phystwin online optimization。这不是当前默认 actual run。
-              </p>
-            </article>
+
+          <div class="swimlane-board" aria-label="Shape-prior warmup swimlane">
+            <div class="swimlane-header">
+              <div>阶段</div>
+              <div class="lane-label lane-cpu">CPU 编排</div>
+              <div class="lane-label lane-gpu0">GPU 0 realtime</div>
+              <div class="lane-label lane-gpu1">GPU 1 shape worker</div>
+              <div class="lane-label lane-io">IO / artifact</div>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">S1</span>
+                <strong>解析默认配置</strong>
+                <small>main.py / default.yaml</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3>决定 warmup 拓扑</h3>
+                <p>
+                  <code>shape_prior_warmup=True</code>,
+                  <code>worker_mode=managed</code>,
+                  <code>warmup_gpu_mode=dual</code>。
+                </p>
+                <dl class="card-facts">
+                  <div><dt>输出</dt><dd>worker command + GPU namespace</dd></div>
+                  <div><dt>等待</dt><dd>不等 camera，worker 必须先启动</dd></div>
+                </dl>
+              </article>
+              <article class="lane-card lane-gpu0 is-idle">
+                <h3>尚未启动</h3>
+                <p>camera subprocess 还没起，GPU 0 暂时不参与 shape worker preload。</p>
+              </article>
+              <article class="lane-card lane-gpu1 is-pending">
+                <h3>等待被分配</h3>
+                <p>下一阶段由 <code>CUDA_VISIBLE_DEVICES=1</code> 暴露给 worker。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>dry-run contract</h3>
+                <p>同一套命令也会出现在 <code>--dry-run</code> summary 里。</p>
+              </article>
+              <p class="handoff">CPU 决策 -> GPU 1 worker 进程</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">S2</span>
+                <strong>先启动 worker</strong>
+                <small>managed worker before camera</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3><code>start_managed_shape_prior_worker()</code></h3>
+                <p>
+                  主进程先启动 <code>demo_v5_1/shape_prior_worker.py</code>，
+                  再启动 camera subprocess。
+                </p>
+                <dl class="card-facts">
+                  <div><dt>输入</dt><dd>endpoint / device / preload flag</dd></div>
+                  <div><dt>输出</dt><dd>worker PID</dd></div>
+                </dl>
+              </article>
+              <article class="lane-card lane-gpu0 is-idle">
+                <h3>仍未进入 realtime</h3>
+                <p>这里明确不是 GPU 0 的普通 warmup。</p>
+              </article>
+              <article class="lane-card lane-gpu1">
+                <h3>worker namespace</h3>
+                <p>
+                  外部 <code>CUDA_VISIBLE_DEVICES=1</code>，worker 内部
+                  <code>cuda:0</code> 实际就是 physical GPU 1。
+                </p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>ZMQ 地址准备</h3>
+                <p>默认 endpoint: <code>tcp://127.0.0.1:7100</code>。</p>
+              </article>
+              <p class="handoff">main.py starts worker -> worker enters startup preload</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">S3</span>
+                <strong>worker preload</strong>
+                <small>G1-1 / G1-2</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3><code>prepare_shape_prior_worker_startup()</code></h3>
+                <p>
+                  如果 <code>preload_models=True</code>，启动阶段直接调用
+                  <code>worker.preload_models()</code>。
+                </p>
+                <dl class="card-facts">
+                  <div><dt>记录</dt><dd><code>worker_ready_ms</code></dd></div>
+                  <div><dt>失败</dt><dd>启动失败就显式报错，不进入假 ready</dd></div>
+                </dl>
+              </article>
+              <article class="lane-card lane-gpu0 is-idle">
+                <h3>普通 warmup 还没开始</h3>
+                <p>GPU 0 不加载 x4 upscaler 或 SAM3D。</p>
+              </article>
+              <article class="lane-card lane-gpu1">
+                <h3>x4 upscaler + SAM3D</h3>
+                <p>
+                  <code>StableDiffusionUpscalePipeline</code> 先加载到 GPU 1。
+                  意思是后面 object crop 会先放大 4 倍再送 SAM3D；这只是预载，
+                  不是每帧实时放大。
+                </p>
+                <dl class="card-facts">
+                  <div><dt>输入</dt><dd>worker config / checkpoints</dd></div>
+                  <div><dt>输出</dt><dd>SAM3D inference ready</dd></div>
+                </dl>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>startup metadata</h3>
+                <p><code>worker_preloaded_models=True</code> 写入 ready metadata。</p>
+              </article>
+              <p class="handoff">preload complete -> bind REP socket -> worker ready</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">S4</span>
+                <strong>GPU 0 做普通 warmup</strong>
+                <small>runtime_warmup.py</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3>启动 camera subprocess</h3>
+                <p>
+                  <code>main.py</code> 把 camera command 放到
+                  <code>CUDA_VISIBLE_DEVICES=0</code>。
+                </p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>准备首帧数据</h3>
+                <p>source、depth、PCD、SAM3.1、EdgeTAM、tracker 逐步 ready。</p>
+                <dl class="card-facts">
+                  <div><dt>输出</dt><dd>mask + depth + PCD + camera c2w</dd></div>
+                  <div><dt>等待</dt><dd>首个有效 PCD result</dd></div>
+                </dl>
+              </article>
+              <article class="lane-card lane-gpu1 is-waiting">
+                <h3>worker 空闲等待</h3>
+                <p>模型已在 GPU 1，等待一次 ZMQ request。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>capture 目录开始出现</h3>
+                <p><code>prepared_phystwin/*.npz</code> 和 timeline 由 GPU 0 runtime 写。</p>
+              </article>
+              <p class="handoff">GPU 0 首个有效 PCD -> ShapePriorWarmupManager.maybe_submit()</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">S5</span>
+                <strong>提交一次请求</strong>
+                <small>frame-0-like request</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3><code>ShapePriorWarmupManager</code></h3>
+                <p>
+                  <code>maybe_submit()</code> 只允许提交一次，并用后台线程调用
+                  <code>ShapePriorRemoteClient</code>。
+                </p>
+                <dl class="card-facts">
+                  <div><dt>状态</dt><dd>pending -> ready 或 failed</dd></div>
+                  <div><dt>输出</dt><dd>profile timing</dd></div>
+                </dl>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>组装请求内容</h3>
+                <p>
+                  RGB、object mask、observation mask、controller mask、
+                  color-aligned depth、K、camera-to-world。
+                </p>
+              </article>
+              <article class="lane-card lane-gpu1">
+                <h3>接收 ZMQ request</h3>
+                <p>worker 从 ready idle 进入单次 SAM3D shape-prior 推理。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>npz request/response</h3>
+                <p>协议 packing 在 <code>shape_prior.py</code>，生命周期在 warmup 模块。</p>
+              </article>
+              <p class="handoff">GPU 0 frame0 request -> GPU 1 SAM3D worker</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">S6</span>
+                <strong>生成 shape prior</strong>
+                <small>SAM3D + alignment + sampling</small>
+              </div>
+              <article class="lane-card lane-cpu is-waiting">
+                <h3>等待 response</h3>
+                <p>后台线程等待，不阻塞每帧 segmentation/tracking loop。</p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>继续 realtime loop</h3>
+                <p>GPU 0 继续写帧和 PCD，shape prior 不变成 per-frame 负担。</p>
+              </article>
+              <article class="lane-card lane-gpu1">
+                <h3>crop -> x4 -> SAM3D -> align</h3>
+                <p>
+                  worker 裁剪 object crop，x4 upscale，跑 SAM3D mesh，再按 depth
+                  observation 对齐并采样 surface/interior points。
+                </p>
+                <dl class="card-facts">
+                  <div><dt>输出</dt><dd>combined / surface / interior points</dd></div>
+                  <div><dt>代码</dt><dd><code>shape_prior_worker.py</code></dd></div>
+                </dl>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>metadata</h3>
+                <p>记录 backend、target counts、timing、error 字段。</p>
+              </article>
+              <p class="handoff">GPU 1 result -> manager ready_result()</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">S7</span>
+                <strong>写入 shape-prior artifact</strong>
+                <small>points.npz</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3>profile ready</h3>
+                <p><code>shape_prior_status=ready</code> 时，结果进入 chunk materialization。</p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>runtime 接收结果</h3>
+                <p>主 runtime 把 shape prior 写入 capture 下的 shape-prior 输出。</p>
+              </article>
+              <article class="lane-card lane-gpu1 is-idle">
+                <h3>worker 回到 idle</h3>
+                <p>默认 side-by-side viewer 下，worker 可保持到结束时由 main 清理。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3><code>shape_prior/points.npz</code></h3>
+                <p>surface/interior points 和 metadata 成为 chunk 的外部输入。</p>
+              </article>
+              <p class="handoff">points.npz -> chunk writer final_data materialization</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">S8</span>
+                <strong>chunk 等 shape prior</strong>
+                <small>before final_data.pkl</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3><code>stream_chunks_from_headless_capture()</code></h3>
+                <p>
+                  <code>require_shape_prior=True</code> 时，chunk writer 在写
+                  <code>final_data.pkl</code> 前等待 surface/interior points。
+                </p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>继续产出帧</h3>
+                <p>实时帧流继续追加到 <code>frames.jsonl</code>。</p>
+              </article>
+              <article class="lane-card lane-gpu1 is-idle">
+                <h3>不参与 chunk 写入</h3>
+                <p>GPU 1 的 shape worker 已完成这次 shape-prior 任务。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3><code>final_data.pkl</code></h3>
+                <p>最终 chunk 同时带 object/controller tracking 与 shape-prior points。</p>
+              </article>
+              <p class="handoff">shape prior ready + 35-frame window -> committed online chunk</p>
+            </div>
           </div>
         </section>
 
-        <section class="board-card source-map" id="source-map">
+        <section class="diagram-section" id="runtime-warmup" data-diagram="runtime">
+          <div class="section-heading">
+            <p class="eyebrow">warmup B / GPU 0 realtime path</p>
+            <h2>普通 runtime warmup: 相机、深度、mask、EdgeTAM、tracker 全在 GPU 0 路径准备</h2>
+            <p>
+              这条线是 <code>runtime_warmup.py</code> 拆出来的普通启动链。它的目标是让
+              GPU 0 runtime 稳定地产生 mask、depth、PCD、tracker query 和 headless
+              capture，而不是生成 SAM3D shape prior。
+            </p>
+          </div>
+
+          <div class="swimlane-board" aria-label="Ordinary runtime warmup swimlane">
+            <div class="swimlane-header">
+              <div>阶段</div>
+              <div class="lane-label lane-cpu">CPU / service</div>
+              <div class="lane-label lane-gpu0">GPU 0 realtime</div>
+              <div class="lane-label lane-gpu1">GPU 1</div>
+              <div class="lane-label lane-io">IO / artifact</div>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">R1</span>
+                <strong>环境默认值</strong>
+                <small>WSLG / Open3D</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3><code>apply_wslg_open3d_env_defaults()</code></h3>
+                <p>先把 Open3D/WSLG 的环境默认值固定，减少窗口和渲染初始化抖动。</p>
+              </article>
+              <article class="lane-card lane-gpu0 is-pending">
+                <h3>等待 service ready</h3>
+                <p>GPU 0 还没有进入模型和相机初始化。</p>
+              </article>
+              <article class="lane-card lane-gpu1 is-idle">
+                <h3>不跑普通 warmup</h3>
+                <p>GPU 1 只负责 shape worker 或 actual-run visualizer。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>无新 artifact</h3>
+                <p>这是进程环境准备阶段。</p>
+              </article>
+              <p class="handoff">runtime_warmup.prepare_runtime_services_and_source() starts</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">R2</span>
+                <strong>深度服务</strong>
+                <small>FFS / remote FFS / native RGB-D</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3>选择 depth backend</h3>
+                <p>
+                  <code>ffs</code> 创建 TensorRT runner 并 warm up Numba align；
+                  <code>ffs_remote</code> 创建 remote client；native 直接用 RGB-D。
+                </p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>准备 depth compute</h3>
+                <p>本地 FFS 时，深度推理属于 realtime path 的启动成本。</p>
+              </article>
+              <article class="lane-card lane-gpu1 is-idle">
+                <h3>无普通 depth 工作</h3>
+                <p>shape worker 的 SAM3D 不参与 FFS depth warmup。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>remote endpoint 可选</h3>
+                <p><code>FfsRemoteDepthClient</code> 只在 remote 模式建立连接参数。</p>
+              </article>
+              <p class="handoff">depth backend ready -> source can start</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">R3</span>
+                <strong>PCD filter worker</strong>
+                <small>async mode only</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3><code>AsyncPcdFilterWorker</code></h3>
+                <p>如果开启 async PCD filter，就先启动后台 filter worker。</p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>后续消费过滤结果</h3>
+                <p>PCD 结果可在后续帧路径中异步过滤。</p>
+              </article>
+              <article class="lane-card lane-gpu1 is-idle">
+                <h3>无工作</h3>
+                <p>GPU 1 不处理普通 PCD filter。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>无直接文件输出</h3>
+                <p>这是 runtime 内部 worker 状态。</p>
+              </article>
+              <p class="handoff">filter worker ready -> camera/fake-live source start</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">R4</span>
+                <strong>输入源</strong>
+                <small>live 或 fake-live</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3>建立 source</h3>
+                <p>
+                  live 启动 RealSense；fake-live 用
+                  <code>RecordedRgbdFrameSource</code> 按 replay fps 模拟实时节奏。
+                </p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>获得 runtime intrinsics</h3>
+                <p>后续 projection grid、PCD、mask 对齐都依赖这个 runtime。</p>
+              </article>
+              <article class="lane-card lane-gpu1 is-idle">
+                <h3>继续空闲</h3>
+                <p>普通 source 建立不使用 GPU 1。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>recording replay 可读</h3>
+                <p>fake-live 模式从 recording case 读 RGB-D/IR stereo。</p>
+              </article>
+              <p class="handoff">runtime intrinsics -> calibration and projection grid</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">R5</span>
+                <strong>标定和 capture writer</strong>
+                <small>projection grid</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3>table calibration</h3>
+                <p>初始化 table calibration，构建每个像素的 projection ray grid。</p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>PCD 投影准备</h3>
+                <p>后续 depth -> point cloud 会使用 <code>ray_x/ray_y</code>。</p>
+              </article>
+              <article class="lane-card lane-gpu1 is-idle">
+                <h3>无工作</h3>
+                <p>这个阶段仍是 GPU 0 runtime 的几何准备。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3><code>HeadlessCaptureWriter</code></h3>
+                <p>如果启用 headless capture，先创建输出目录和 metadata。</p>
+              </article>
+              <p class="handoff">projection + writer ready -> segmentation warmup</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">R6</span>
+                <strong>加载 EdgeTAM</strong>
+                <small>prepare_segmentation_warmup()</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3>等待第一帧</h3>
+                <p>
+                  <code>prepare_segmentation_warmup()</code> 先加载 HF EdgeTAM，
+                  再等待第一帧进入。
+                </p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>HF model + stream</h3>
+                <p>模型、processor、dtype、torch stream 都返回给后续 segmentation worker。</p>
+              </article>
+              <article class="lane-card lane-gpu1 is-idle">
+                <h3>不加载 EdgeTAM</h3>
+                <p>EdgeTAM/SAM3.1 属于 realtime camera process。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>第一帧仍未写 chunk</h3>
+                <p>此时只是 segmentation 初始状态准备。</p>
+              </article>
+              <p class="handoff">first frame -> initial mask bundle</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">R7</span>
+                <strong>第一帧 mask</strong>
+                <small>SAM3.1 或 saved masks</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3><code>InitialMaskBundle</code></h3>
+                <p>
+                  根据 <code>init_mode</code> 选择 SAM3.1 first-frame 或 saved masks，
+                  two-hands 模式会拆出 hand A/B。
+                </p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>SAM3.1 first-frame</h3>
+                <p>只做初始化 mask，不作为每帧 mask 主循环；后面交给 EdgeTAM propagation。</p>
+              </article>
+              <article class="lane-card lane-gpu1 is-idle">
+                <h3>无 SAM3.1 工作</h3>
+                <p>GPU 1 的 SAM3D shape worker 和 SAM3.1 first-frame mask 是两条线。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>saved-mask fallback 只按配置</h3>
+                <p>saved masks 必须 shape 匹配，否则显式失败。</p>
+              </article>
+              <p class="handoff">initial masks -> EdgeTAM streaming session</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">R8</span>
+                <strong>EdgeTAM session</strong>
+                <small>segmentation worker</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3>发布第一包 mask</h3>
+                <p>first-frame segmented event 置位，让 recording/fake-live warmup 可继续。</p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>streaming propagation</h3>
+                <p>EdgeTAM 接管后续帧，生成 object/controller masks。</p>
+              </article>
+              <article class="lane-card lane-gpu1 is-idle">
+                <h3>不参与</h3>
+                <p>GPU 1 不跑 EdgeTAM streaming。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>mask state ready</h3>
+                <p>后续 PCD/tracker 可消费同序 mask。</p>
+              </article>
+              <p class="handoff">masks ready -> TapNext++ query initialization</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">R9</span>
+                <strong>tracker 初始化</strong>
+                <small>TapNext++</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3>同序输出约束</h3>
+                <p>controller/object mask、PCD、tracker query 必须按 frame seq 对齐。</p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>query sampling + tracker</h3>
+                <p>在 union/object/controller mask 上采样 query，初始化 TapNext++ adapter。</p>
+              </article>
+              <article class="lane-card lane-gpu1 is-idle">
+                <h3>无工作</h3>
+                <p>GPU 1 等 actual-run visualizer 或保持 shape worker。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>runtime ready</h3>
+                <p><code>frames.jsonl</code> 和 prepared PhysTwin frame 开始稳定追加。</p>
+              </article>
+              <p class="handoff">ordinary warmup ready -> per-frame realtime loop</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="diagram-section" id="actual-run" data-diagram="actual">
+          <div class="section-heading">
+            <p class="eyebrow">actual run / current default</p>
+            <h2>Actual run: 另一边是 <code>visualize_track.py</code>，不是 realtime_phystwin</h2>
+            <p>
+              默认 <code>optimization_mode=disabled</code>。所以 actual run 的右侧消费者是
+              point visualizer：它读左侧 input timeline 和右侧
+              <code>final_data.pkl</code> / online stream。<code>realtime_phystwin</code>
+              只有手动打开 continuous optimization 才会启动。
+            </p>
+          </div>
+
+          <div class="swimlane-board" aria-label="Actual run swimlane">
+            <div class="swimlane-header">
+              <div>阶段</div>
+              <div class="lane-label lane-cpu">CPU / chunk bridge</div>
+              <div class="lane-label lane-gpu0">GPU 0 camera runtime</div>
+              <div class="lane-label lane-gpu1">GPU 1 visualizer</div>
+              <div class="lane-label lane-io">IO / artifact</div>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">A1</span>
+                <strong>启动 camera process</strong>
+                <small>after managed worker</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3><code>build_camera_realtime_command()</code></h3>
+                <p>主进程把 shape-prior endpoint、capture dir、GPU namespace 传给 camera。</p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>camera / segmentation / depth / tracking</h3>
+                <p><code>CUDA_VISIBLE_DEVICES=0</code>，持续运行 realtime path。</p>
+              </article>
+              <article class="lane-card lane-gpu1 is-waiting">
+                <h3>worker 或 viewer GPU</h3>
+                <p>此时 GPU 1 已有 shape worker；side-by-side viewer 下一步启动。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>capture root</h3>
+                <p>准备写 input timeline、prepared frames 和 shape-prior artifacts。</p>
+              </article>
+              <p class="handoff">camera subprocess live -> side-by-side viewer starts immediately</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">A2</span>
+                <strong>启动 current visualizer</strong>
+                <small>not realtime_phystwin</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3><code>_start_point_viewer()</code></h3>
+                <p>
+                  因为默认 layout 是 <code>side-by-side</code>，viewer 在 camera
+                  启动后立刻启动，不等第一个 chunk。
+                </p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>继续写 input</h3>
+                <p>camera 端负责写左侧 timeline 的 RGB 和 frame metadata。</p>
+              </article>
+              <article class="lane-card lane-gpu1">
+                <h3><code>visualize_track.py</code></h3>
+                <p>
+                  <code>CUDA_VISIBLE_DEVICES=1</code>，当前 actual run 的另一边就是它。
+                </p>
+                <dl class="card-facts">
+                  <div><dt>layout</dt><dd><code>side-by-side</code></dd></div>
+                  <div><dt>render</dt><dd><code>sam3d-final-data</code></dd></div>
+                </dl>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>左侧输入</h3>
+                <p><code>input_frames.jsonl</code> + <code>input_rgb/*.png</code>。</p>
+              </article>
+              <p class="handoff">input timeline -> visualizer left panel</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">A3</span>
+                <strong>实时帧输出</strong>
+                <small>per-frame loop</small>
+              </div>
+              <article class="lane-card lane-cpu is-waiting">
+                <h3>chunk bridge tailing</h3>
+                <p>bridge 持续 tail append-only <code>frames.jsonl</code>。</p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>写 prepared PhysTwin frame</h3>
+                <p>每帧输出 RGB/depth/masks/PCD/tracks 等 prepared data。</p>
+              </article>
+              <article class="lane-card lane-gpu1">
+                <h3>viewer 左侧刷新</h3>
+                <p>左侧跟随 camera/fake-live input；右侧如果没 chunk 就显示 waiting。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3><code>prepared_phystwin/*.npz</code></h3>
+                <p><code>frames.jsonl</code> 记录每个 frame 的可消费路径。</p>
+              </article>
+              <p class="handoff">35 frame window closes -> chunk materialization</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">A4</span>
+                <strong>提交 online chunk</strong>
+                <small>5 FPS * 7 s</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3><code>stream_chunks_from_headless_capture()</code></h3>
+                <p>
+                  默认 35 帧关闭一个窗口，写 data-process case，并调用
+                  <code>on_chunk_written</code>。
+                </p>
+                <dl class="card-facts">
+                  <div><dt>等待</dt><dd>shape prior surface/interior points</dd></div>
+                  <div><dt>输出</dt><dd>committed online chunk manifest</dd></div>
+                </dl>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>继续运行</h3>
+                <p>chunk 写入不要求 camera process 停止。</p>
+              </article>
+              <article class="lane-card lane-gpu1 is-waiting">
+                <h3>viewer 等右侧数据</h3>
+                <p>第一个 chunk commit 后，右侧才有完整 final_data 可显示。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3><code>online_data/&lt;case&gt;</code></h3>
+                <p>同时更新 <code>data/&lt;case&gt;/final_data.pkl</code>。</p>
+              </article>
+              <p class="handoff">final_data.pkl appears -> visualizer right panel</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">A5</span>
+                <strong>side-by-side 显示</strong>
+                <small>input left / output right</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3>online case 持续发布</h3>
+                <p>bridge 继续处理下一段窗口，不阻塞 viewer。</p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>camera loop 持续追加</h3>
+                <p>GPU 0 继续产出新的 realtime frames。</p>
+              </article>
+              <article class="lane-card lane-gpu1">
+                <h3>同步左/右时间线</h3>
+                <p>
+                  左侧读 input timeline；右侧按目标 latency 选择最接近的
+                  <code>final_data</code> frame。
+                </p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>viewer inputs</h3>
+                <p>left: capture input；right: online/data final_data。</p>
+              </article>
+              <p class="handoff">visualizer keeps running while chunks keep committing</p>
+            </div>
+
+            <div class="stage-row">
+              <div class="stage-cell">
+                <span class="stage-no">A6</span>
+                <strong>默认不启动 optimization</strong>
+                <small>optimization_mode=disabled</small>
+              </div>
+              <article class="lane-card lane-cpu">
+                <h3>显式 disabled</h3>
+                <p>
+                  dry-run 和 run manifest 都会显示
+                  <code>optimization_mode=disabled</code>。
+                </p>
+              </article>
+              <article class="lane-card lane-gpu0">
+                <h3>不受 optimization 影响</h3>
+                <p>camera process 继续自己负责实时帧。</p>
+              </article>
+              <article class="lane-card lane-gpu1">
+                <h3>GPU 1 给 visualizer</h3>
+                <p>当前默认 actual run 的 GPU 1 消费者是 viewer。</p>
+              </article>
+              <article class="lane-card lane-io">
+                <h3>无 realtime_phystwin case</h3>
+                <p>不会启动 <code>train_online_zero_then_first.py</code>。</p>
+              </article>
+              <p class="handoff">default path ends here: visualizer yes, realtime_phystwin no</p>
+            </div>
+
+            <div class="stage-row is-optional-row">
+              <div class="stage-cell">
+                <span class="stage-no">A7</span>
+                <strong>可选 continuous</strong>
+                <small>非默认</small>
+              </div>
+              <article class="lane-card lane-cpu is-optional">
+                <h3>手动开启才走</h3>
+                <p>
+                  只有 <code>--optimization-mode continuous</code> 时，第一个 committed
+                  chunk 后才启动 realtime_phystwin。
+                </p>
+              </article>
+              <article class="lane-card lane-gpu0 is-optional">
+                <h3>camera 仍在 GPU 0</h3>
+                <p>优化进程不是 camera runtime。</p>
+              </article>
+              <article class="lane-card lane-gpu1 is-optional">
+                <h3>释放 worker 后启动 optimization</h3>
+                <p>managed shape worker 会先被释放，再让 realtime_phystwin 使用 GPU 1。</p>
+              </article>
+              <article class="lane-card lane-io is-optional">
+                <h3>online stream input</h3>
+                <p>optimization 读已经发布的 online case。</p>
+              </article>
+              <p class="handoff is-optional">optional only: first chunk -> release worker -> realtime_phystwin</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="diagram-section source-map" id="source-map">
           <div class="section-heading">
             <p class="eyebrow">source map</p>
-            <h2>这张图来自哪些文件</h2>
+            <h2>代码依据</h2>
+            <p>
+              页面只映射当前代码结构。Warmup 已经拆分：shape-prior 生命周期不再写在
+              <code>shape_prior.py</code>，普通 startup helper 不再藏在
+              <code>realtime_dense_track.py</code> 的大块 run 逻辑里。
+            </p>
           </div>
           <div class="source-grid">
             <a href="../../demo_v5_1/main.py">
               <strong>demo_v5_1/main.py</strong>
-              <span>进程编排、GPU routing、shape worker、viewer、可选 optimization。</span>
+              <span>进程编排、GPU routing、camera subprocess、viewer、可选 optimization。</span>
             </a>
-            <a href="../../demo_v5_1/config/default.yaml">
-              <strong>demo_v5_1/config/default.yaml</strong>
-              <span>默认 GPU 模式、chunk 长度、point viewer 和 optimization 默认值。</span>
+            <a href="../../demo_v5_1/runtime_warmup.py">
+              <strong>demo_v5_1/runtime_warmup.py</strong>
+              <span>普通 warmup：source、depth、PCD filter、projection、SAM3.1、EdgeTAM。</span>
             </a>
-            <a href="../../demo_v5_1/realtime_dense_track.py">
-              <strong>demo_v5_1/realtime_dense_track.py</strong>
-              <span>相机/fake-live、SAM3.1、EdgeTAM、TapNext++、PCD、headless capture。</span>
-            </a>
-            <a href="../../demo_v5_1/shape_prior_worker.py">
-              <strong>demo_v5_1/shape_prior_worker.py</strong>
-              <span>x4 upscaler、SAM3D mesh、single-view alignment、sampling。</span>
+            <a href="../../demo_v5_1/shape_prior_warmup.py">
+              <strong>demo_v5_1/shape_prior_warmup.py</strong>
+              <span>shape-prior client、manager、managed worker startup/preload helpers。</span>
             </a>
             <a href="../../demo_v5_1/shape_prior.py">
               <strong>demo_v5_1/shape_prior.py</strong>
-              <span>一次 npz ZMQ request/response、warmup manager、shape-prior metadata。</span>
+              <span>协议与数据：request/result packing、alignment、sampling metadata。</span>
+            </a>
+            <a href="../../demo_v5_1/shape_prior_worker.py">
+              <strong>demo_v5_1/shape_prior_worker.py</strong>
+              <span>x4 upscaler、SAM3D mesh、single-view alignment、surface/interior sampling。</span>
             </a>
             <a href="../../demo_v5_1/visualize_track.py">
               <strong>demo_v5_1/visualize_track.py</strong>
-              <span>当前 actual run 的 side-by-side visualizer。</span>
+              <span>当前 actual run 的 side-by-side point visualizer。</span>
+            </a>
+            <a href="../../demo_v5_1/config/default.yaml">
+              <strong>demo_v5_1/config/default.yaml</strong>
+              <span>默认 GPU 模式、shape-prior warmup、viewer layout、optimization disabled。</span>
+            </a>
+            <a href="../../demo_v5_1/realtime_dense_track.py">
+              <strong>demo_v5_1/realtime_dense_track.py</strong>
+              <span>per-frame segmentation、PCD、tracker、render loop，调用 runtime warmup helpers。</span>
             </a>
           </div>
         </section>
