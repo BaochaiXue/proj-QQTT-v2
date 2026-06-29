@@ -41,7 +41,7 @@
               Shape prior warmup
             </button>
             <button class="mode-button" type="button" role="tab" data-mode="runtime">
-              普通 warmup
+              Main warmup
             </button>
             <button class="mode-button" type="button" role="tab" data-mode="actual">
               Actual run
@@ -90,7 +90,7 @@
         <nav class="mini-nav" aria-label="页面章节">
           <a href="#mind-map">思维导图</a>
           <a href="#shape-warmup">Shape prior</a>
-          <a href="#runtime-warmup">普通 warmup</a>
+          <a href="#runtime-warmup">Main warmup</a>
           <a href="#actual-run">Actual run</a>
           <a href="#source-map">代码依据</a>
         </nav>
@@ -105,7 +105,7 @@
             <h2>思维导图: Demo v5.1 到底分成哪几条线</h2>
             <p>
               先不要按代码文件读。先按这张图看关系：shape prior 是 GPU 1
-              的一次性结构先验 warmup；普通 warmup 是 GPU 0 的实时感知启动链；
+              的一次性结构先验 warmup；main warmup 是 GPU 0 的实时感知启动链；
               actual run 默认是 GPU 0 产出 online chunks，GPU 1 跑
               <code>visualize_track.py</code> 看结果。
             </p>
@@ -129,10 +129,10 @@
             </article>
 
             <article class="mind-branch branch-runtime">
-              <h3>普通 runtime warmup</h3>
+              <h3>Main warmup</h3>
               <p>GPU 0 realtime path，把相机、深度、mask、tracker 热起来。</p>
               <ul>
-                <li><code>runtime_warmup.py</code> 管 source / FFS / PCD filter。</li>
+                <li><code>main_warmup.py</code> 管 source / FFS / PCD filter。</li>
                 <li>SAM3.1 只做第一帧 mask 初始化。</li>
                 <li>EdgeTAM 和 TapNext++ 进入后续实时循环。</li>
               </ul>
@@ -174,14 +174,14 @@
               <ul>
                 <li><code>main.py</code> 编排 worker、camera、viewer。</li>
                 <li><code>shape_prior.py</code> 留给协议、packing、alignment、sampling。</li>
-                <li><code>realtime_dense_track.py</code> 保留 per-frame loops。</li>
+                <li><code>main_data_processing.py</code> 保留 per-frame loops。</li>
               </ul>
             </article>
           </div>
 
           <div class="mind-map-order" aria-label="Pipeline order summary">
             <span><b>1</b> GPU 1 worker preload</span>
-            <span><b>2</b> GPU 0 普通 warmup</span>
+            <span><b>2</b> GPU 0 main warmup</span>
             <span><b>3</b> 一次 shape-prior request</span>
             <span><b>4</b> 35-frame chunk commit</span>
             <span><b>5</b> visualize_track.py 显示</span>
@@ -260,7 +260,7 @@
               </article>
               <article class="lane-card lane-gpu0 is-idle">
                 <h3>仍未进入 realtime</h3>
-                <p>这里明确不是 GPU 0 的普通 warmup。</p>
+                <p>这里明确不是 GPU 0 的 main warmup。</p>
               </article>
               <article class="lane-card lane-gpu1">
                 <h3>worker namespace</h3>
@@ -294,7 +294,7 @@
                 </dl>
               </article>
               <article class="lane-card lane-gpu0 is-idle">
-                <h3>普通 warmup 还没开始</h3>
+                <h3>Main warmup 还没开始</h3>
                 <p>GPU 0 不加载 x4 upscaler 或 SAM3D。</p>
               </article>
               <article class="lane-card lane-gpu1">
@@ -319,8 +319,8 @@
             <div class="stage-row">
               <div class="stage-cell">
                 <span class="stage-no">S4</span>
-                <strong>GPU 0 做普通 warmup</strong>
-                <small>runtime_warmup.py</small>
+                <strong>GPU 0 做 main warmup</strong>
+                <small>main_warmup.py</small>
               </div>
               <article class="lane-card lane-cpu">
                 <h3>启动 camera subprocess</h3>
@@ -473,15 +473,15 @@
         <section class="diagram-section" id="runtime-warmup" data-diagram="runtime">
           <div class="section-heading">
             <p class="eyebrow">warmup B / GPU 0 realtime path</p>
-            <h2>普通 runtime warmup: 相机、深度、mask、EdgeTAM、tracker 全在 GPU 0 路径准备</h2>
+            <h2>Main warmup: 相机、深度、mask、EdgeTAM、tracker 全在 GPU 0 路径准备</h2>
             <p>
-              这条线是 <code>runtime_warmup.py</code> 拆出来的普通启动链。它的目标是让
+              这条线是 <code>main_warmup.py</code> 拆出来的 main warmup 启动链。它的目标是让
               GPU 0 runtime 稳定地产生 mask、depth、PCD、tracker query 和 headless
               capture，而不是生成 SAM3D shape prior。
             </p>
           </div>
 
-          <div class="swimlane-board" aria-label="Ordinary runtime warmup swimlane">
+          <div class="swimlane-board" aria-label="Main warmup swimlane">
             <div class="swimlane-header">
               <div>阶段</div>
               <div class="lane-label lane-cpu">CPU / service</div>
@@ -505,14 +505,14 @@
                 <p>GPU 0 还没有进入模型和相机初始化。</p>
               </article>
               <article class="lane-card lane-gpu1 is-idle">
-                <h3>不跑普通 warmup</h3>
+                <h3>不跑 main warmup</h3>
                 <p>GPU 1 只负责 shape worker 或 actual-run visualizer。</p>
               </article>
               <article class="lane-card lane-io">
                 <h3>无新 artifact</h3>
                 <p>这是进程环境准备阶段。</p>
               </article>
-              <p class="handoff">runtime_warmup.prepare_runtime_services_and_source() starts</p>
+              <p class="handoff">main_warmup.prepare_runtime_services_and_source() starts</p>
             </div>
 
             <div class="stage-row">
@@ -959,7 +959,7 @@
             <p>
               页面只映射当前代码结构。Warmup 已经拆分：shape-prior 生命周期不再写在
               <code>shape_prior.py</code>，普通 startup helper 不再藏在
-              <code>realtime_dense_track.py</code> 的大块 run 逻辑里。
+              <code>main_data_processing.py</code> 的大块 run 逻辑里。
             </p>
           </div>
           <div class="source-grid">
@@ -967,9 +967,9 @@
               <strong>demo_v5_1/main.py</strong>
               <span>进程编排、GPU routing、camera subprocess、viewer、可选 optimization。</span>
             </a>
-            <a href="../../demo_v5_1/runtime_warmup.py">
-              <strong>demo_v5_1/runtime_warmup.py</strong>
-              <span>普通 warmup：source、depth、PCD filter、projection、SAM3.1、EdgeTAM。</span>
+            <a href="../../demo_v5_1/main_warmup.py">
+              <strong>demo_v5_1/main_warmup.py</strong>
+              <span>main warmup：source、depth、PCD filter、projection、SAM3.1、EdgeTAM。</span>
             </a>
             <a href="../../demo_v5_1/shape_prior_warmup.py">
               <strong>demo_v5_1/shape_prior_warmup.py</strong>
@@ -991,9 +991,9 @@
               <strong>demo_v5_1/config/default.yaml</strong>
               <span>默认 GPU 模式、shape-prior warmup、viewer layout、optimization disabled。</span>
             </a>
-            <a href="../../demo_v5_1/realtime_dense_track.py">
-              <strong>demo_v5_1/realtime_dense_track.py</strong>
-              <span>per-frame segmentation、PCD、tracker、render loop，调用 runtime warmup helpers。</span>
+            <a href="../../demo_v5_1/main_data_processing.py">
+              <strong>demo_v5_1/main_data_processing.py</strong>
+              <span>per-frame segmentation、PCD、tracker、render loop，调用 main warmup helpers。</span>
             </a>
           </div>
         </section>

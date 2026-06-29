@@ -1,3 +1,5 @@
+"""Main warmup helpers for Demo v5.1 realtime capture and perception."""
+
 from __future__ import annotations
 
 import argparse

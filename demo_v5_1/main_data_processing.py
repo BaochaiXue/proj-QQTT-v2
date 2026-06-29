@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Demo v5.1 local realtime camera/tracker runtime."""
+"""Demo v5.1 main data processing runtime."""
 from __future__ import annotations
 
 import argparse
@@ -91,9 +91,9 @@ from services.ffs_remote.protocol import (  # noqa: E402
     RETURN_TYPES,
     SPARSE_RETURN_TYPES,
 )
-from demo_v5_1 import runtime_warmup  # noqa: E402
+from demo_v5_1 import main_warmup  # noqa: E402
 from demo_v5_1 import shape_prior_warmup  # noqa: E402
-from demo_v5_1.runtime_warmup import InitialMaskBundle  # noqa: E402
+from demo_v5_1.main_warmup import InitialMaskBundle  # noqa: E402
 from data_process.depth_backends.ffs_defaults import (  # noqa: E402
     DEFAULT_FFS_MAX_DISP,
     DEFAULT_FFS_MODEL_NAME,
@@ -1200,7 +1200,7 @@ class HeadlessCaptureWriter:
             "receive_perf_s": float(packet.receive_perf_s),
         }
         if self.write_input_rgb_timeline or not self.prepared_only:
-            runtime_warmup.bgr_to_pil_rgb(packet.color_bgr).save(rgb_path)
+            main_warmup.bgr_to_pil_rgb(packet.color_bgr).save(rgb_path)
             row["input_rgb_path"] = self._relative(rgb_path)
         with self._lock:
             with self.input_frames_path.open("a", encoding="utf-8") as handle:
@@ -1237,7 +1237,7 @@ class HeadlessCaptureWriter:
         mask_path = self.mask_dir / f"{seq_name}.npz"
         prepared_phystwin_path = self.prepared_phystwin_dir / f"{seq_name}.npz"
         if not self.prepared_only:
-            runtime_warmup.bgr_to_pil_rgb(mask_packet.color_bgr).save(rgb_path)
+            main_warmup.bgr_to_pil_rgb(mask_packet.color_bgr).save(rgb_path)
             np.save(
                 depth_path,
                 np.ascontiguousarray(depth_m, dtype=np.float32),
@@ -3956,7 +3956,7 @@ def _latest_tracker_arrays(result: Any) -> tuple[np.ndarray, np.ndarray]:
     )
 
 
-class RealtimeMaskedEdgeTamPcdDemo:
+class MainDataProcessingDemo:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
         self.width, self.height = parse_profile(args.profile)
@@ -4440,7 +4440,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         )
 
     def run(self) -> int:
-        runtime_warmup.prepare_runtime_services_and_source(
+        main_warmup.prepare_runtime_services_and_source(
             self,
             pcd_filter_enabled=pcd_filter_enabled,
             is_replay_input_source=_is_replay_input_source,
@@ -4450,7 +4450,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
             fake_live_frame_selection_policy=FAKE_LIVE_FRAME_SELECTION_POLICY,
         )
         try:
-            runtime_warmup.prepare_runtime_projection_and_capture(
+            main_warmup.prepare_runtime_projection_and_capture(
                 self,
                 headless_capture_enabled=headless_capture_enabled,
                 headless_capture_writer_cls=HeadlessCaptureWriter,
@@ -5162,7 +5162,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
 
     def _seg_worker(self) -> None:
         try:
-            warmup = runtime_warmup.prepare_segmentation_warmup(
+            warmup = main_warmup.prepare_segmentation_warmup(
                 self,
                 repo_root=REPO_ROOT,
             )
@@ -6111,7 +6111,7 @@ class RealtimeMaskedEdgeTamPcdDemo:
         initial_masks: InitialMaskBundle,
         add_prompt: bool,
     ) -> MaskPacket:
-        image = runtime_warmup.bgr_to_pil_rgb(frame.color_bgr)
+        image = main_warmup.bgr_to_pil_rgb(frame.color_bgr)
         inputs, preprocess_ms, preprocess_pre_sync_ms, preprocess_post_sync_ms = _time_runtime_ms(
             torch_module,
             self.args.device,
@@ -8923,7 +8923,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         apply_demo_preset(args)
         validate_args(args)
-        return RealtimeMaskedEdgeTamPcdDemo(args).run()
+        return MainDataProcessingDemo(args).run()
     except (RuntimeError, ValueError, FileNotFoundError) as exc:
         parser.exit(2, f"{parser.prog}: error: {exc}\n")
     return 2

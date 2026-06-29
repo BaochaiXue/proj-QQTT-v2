@@ -168,9 +168,9 @@ class DemoV5LegacyKeyCleanupTests(unittest.TestCase):
                         violations.append(f"{path.relative_to(root)}: {token}")
         self.assertEqual([], violations)
 
-    def test_demo_v51_realtime_dense_track_is_local_runtime(self) -> None:
+    def test_demo_v51_main_data_processing_is_local_runtime(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        source_path = root / "demo_v5_1" / "realtime_dense_track.py"
+        source_path = root / "demo_v5_1" / "main_data_processing.py"
         source = source_path.read_text(encoding="utf-8")
 
         forbidden_tokens = (
@@ -178,13 +178,16 @@ class DemoV5LegacyKeyCleanupTests(unittest.TestCase):
             "import qqtt.demo.realtime_masked_edgetam_pcd",
             "from demo_v5 import realtime_dense_track",
             "import demo_v5.realtime_dense_track",
+            "from demo_v5 import main_data_processing",
+            "import demo_v5.main_data_processing",
+            "RealtimeMaskedEdgeTamPcdDemo",
             "masked_pcd.main",
             "thin wrapper",
         )
         for token in forbidden_tokens:
             with self.subTest(token=token):
                 self.assertNotIn(token, source)
-        self.assertIn("class RealtimeMaskedEdgeTamPcdDemo", source)
+        self.assertIn("class MainDataProcessingDemo", source)
         self.assertIn("def build_parser(", source)
         self.assertIn("def main(", source)
 

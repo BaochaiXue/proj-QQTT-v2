@@ -4,19 +4,19 @@
 启动，warmup 分成两条线路：
 
 1. **main warmup**：实时 RGB-D、mask、PCD、tracker 运行在
-   `main_realtime_data_process` 进程。
+   `main_data_processing` 进程。
 2. **Shape-prior warmup**：首个有效 object observation 触发一次 SAM3D
    shape-prior pipeline。
 
 默认 GPU 分工固定且直接：
 
-- `main_warmup` 和 `main_realtime_data_process`：`CUDA_VISIBLE_DEVICES=0`
+- `main_warmup` 和 `main_data_processing`：`CUDA_VISIBLE_DEVICES=0`
 - `shape_prior_warmup` 三阶段子进程：`CUDA_VISIBLE_DEVICES=1`
 - `visualizer`：`CUDA_VISIBLE_DEVICES=1`
 
 CLI 只保留少数必要 override：
 
-- `--main-realtime-data-process-cuda-visible-devices`
+- `--main-data-processing-cuda-visible-devices`
 - `--shape-prior-warmup-cuda-visible-devices`
 - `--visualizer-cuda-visible-devices`
 - `--shape-prior-controller-name`
@@ -29,7 +29,7 @@ CLI 只保留少数必要 override：
 
 ```mermaid
 flowchart TD
-    A["main.py parse args / load default.yaml"] --> B["launch realtime_dense_track.py on GPU 0"]
+    A["main.py parse args / load default.yaml"] --> B["launch main_data_processing.py on GPU 0"]
     B --> C["main warmup"]
     C --> D["projection + table calibration + headless writer"]
     D --> E["EdgeTAM/SAM3.1 segmentation warmup"]
@@ -66,7 +66,7 @@ The old remote worker files are intentionally gone:
 
 ## Frame-0 Request
 
-`realtime_dense_track.py` constructs `ShapePriorFrame0Request` only after one
+`main_data_processing.py` constructs `ShapePriorFrame0Request` only after one
 valid same-sequence `MaskPacket + depth + PCD` exists. The request contains:
 
 - RGB in original camera resolution

@@ -2,7 +2,7 @@
 
 The camera process appends ``frames.jsonl`` and prepared per-frame NPZ payloads.
 This bridge tails that stream, waits for the shape prior only at chunk materialize
-time, and publishes both per-window cases and the online aggregate output.
+time, and publishes online chunk payloads plus the static final_data view.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from PIL import Image
 
 from demo_v5_1.data_process_chunk_writer import (
     DataProcessChunk,
-    write_data_process_chunk_case,
+    build_data_process_chunk_payload,
 )
 from demo_v5_1.chunked_final_data_output import ChunkedFinalDataWriter
 from qqtt.demo.pcd_postprocess import _detect_radius_outlier_indices
@@ -271,9 +271,8 @@ def _apply_depth_validity_to_mask_frame(
     frame: Mapping[str, np.ndarray],
     depth_m: np.ndarray,
 ) -> dict[str, np.ndarray]:
-    # Offline parity with data_process_sam3d/data_process_mask.py:L56-L80.
     # The offline path intersects semantic object/controller masks with valid
-    # depth support before processed_masks.pkl is written.
+    # depth support before track classification.
     depth = np.asarray(depth_m, dtype=np.float32)
     valid = np.isfinite(depth) & (depth > 0.0)
     normalized = strict.normalize_processed_mask_frame(frame)
@@ -689,7 +688,6 @@ def _chunk_payload_from_rows(
     mask_radius_outlier_filter: bool,
     mask_radius_outlier_radius_m: float,
     mask_radius_outlier_nb_points: int,
-    write_final_pcd: bool = True,
     object_track_selector: strict.StreamingObjectTrackSelector | None = None,
     controller_track_selector: strict.StreamingControllerTrackSelector | None = None,
     session_query_schema: dict[str, np.ndarray] | None = None,
@@ -703,7 +701,6 @@ def _chunk_payload_from_rows(
     c2w = _camera_to_world(metadata)
     intrinsics = _intrinsics_matrix(metadata)
 
-    rgb_frames: list[np.ndarray] = []
     processed_masks: list[list[dict[str, np.ndarray]]] = []
     pcd_points: list[np.ndarray] = []
     pcd_colors: list[np.ndarray] = []
@@ -724,14 +721,12 @@ def _chunk_payload_from_rows(
             intrinsics=intrinsics,
             c2w=c2w,
         )
-        rgb_frames.append(rgb)
         pcd_points.append(points)
         pcd_colors.append(colors)
         mask_frame = _load_mask_frame(capture_dir / str(row["mask_path"]))
-        # Offline parity with data_process_sam3d/data_process_mask.py:L42-L152.
-        # That stage turns raw semantic masks plus PCD validity into
-        # processed_masks.pkl. The realtime fallback keeps that product in
-        # memory until case write.
+        # Offline parity with data_process_sam3d/data_process_mask.py:L42-L152:
+        # raw semantic masks plus PCD validity become processed masks. The
+        # realtime fallback keeps that product in memory.
         depth_valid_mask_frame = _apply_depth_validity_to_mask_frame(mask_frame, depth)
         processed_masks.append(
             [
@@ -756,11 +751,6 @@ def _chunk_payload_from_rows(
     tracker_visibility = np.stack(visibility, axis=0)
     if query_points_yx is None:
         query_points_yx = np.empty((0, 2), dtype=np.float32)
-    queries_txy = np.zeros((len(query_points_yx), 3), dtype=np.float32)
-    if len(query_points_yx):
-        queries_txy[:, 1] = query_points_yx[:, 1]
-        queries_txy[:, 2] = query_points_yx[:, 0]
-
     pcd_points_arr = np.stack(pcd_points, axis=0)
     pcd_colors_arr = np.stack(pcd_colors, axis=0)
     track_input = _track_input_with_session_query_schema(
@@ -795,14 +785,7 @@ def _chunk_payload_from_rows(
         track_process = controller_track_selector.select(filtered)
 
     return DataProcessChunk(
-        rgb_frames=rgb_frames,
-        processed_masks=processed_masks,
         track_process_data=track_process,
-        intrinsics=intrinsics,
-        camera_to_world_c2w=c2w,
-        tracks_yx=tracks_yx,
-        tracker_visibility=tracker_visibility,
-        queries_txy=queries_txy,
         surface_points=surface_points,
         interior_points=interior_points,
         fps=int(fps),
@@ -815,19 +798,7 @@ def _chunk_payload_from_rows(
         ),
         chunk_index=int(chunk_index),
         source_frame_indices=[int(row.get("seq", idx)) for idx, row in enumerate(rows)],
-        pcd_points=pcd_points_arr if bool(write_final_pcd) else None,
-        pcd_colors=pcd_colors_arr if bool(write_final_pcd) else None,
     )
-
-
-def _queries_txy_from_yx(query_points_yx: np.ndarray) -> np.ndarray:
-    queries_yx = np.asarray(query_points_yx, dtype=np.float32).reshape(-1, 2)
-    queries_txy = np.zeros((len(queries_yx), 3), dtype=np.float32)
-    if len(queries_yx):
-        queries_txy[:, 1] = queries_yx[:, 1]
-        queries_txy[:, 2] = queries_yx[:, 0]
-    return np.ascontiguousarray(queries_txy, dtype=np.float32)
-
 
 def _prepared_frame_from_row(
     capture_dir: Path,
@@ -848,7 +819,6 @@ def _chunk_payload_from_prepared_frames(
     fps: int,
     serial_number: str,
     chunk_index: int,
-    write_final_pcd: bool = True,
     object_track_selector: strict.StreamingObjectTrackSelector | None = None,
     controller_track_selector: strict.StreamingControllerTrackSelector | None = None,
     session_query_schema: dict[str, np.ndarray] | None = None,
@@ -866,7 +836,6 @@ def _chunk_payload_from_prepared_frames(
     intrinsics = _intrinsics_matrix(metadata)
     first_queries = np.asarray(frames[0].query_points_yx, dtype=np.float32).reshape(-1, 2)
 
-    rgb_frames: list[np.ndarray] = []
     processed_masks: list[list[dict[str, np.ndarray]]] = []
     tracks: list[np.ndarray] = []
     visibility: list[np.ndarray] = []
@@ -878,7 +847,6 @@ def _chunk_payload_from_prepared_frames(
         queries = np.asarray(frame.query_points_yx, dtype=np.float32).reshape(-1, 2)
         if queries.shape != first_queries.shape or not np.allclose(queries, first_queries):
             raise ValueError("prepared data_process frames in one chunk must share query_points_yx")
-        rgb_frames.append(np.ascontiguousarray(frame.rgb_frame, dtype=np.uint8))
         processed_masks.append([strict.normalize_processed_mask_frame(frame.processed_mask_frame)])
         tracks.append(np.ascontiguousarray(frame.tracks_yx, dtype=np.float32).reshape(-1, 2))
         visibility.append(np.ascontiguousarray(frame.visibility, dtype=bool).reshape(-1))
@@ -928,14 +896,7 @@ def _chunk_payload_from_prepared_frames(
         track_process = controller_track_selector.select(filtered)
 
     return DataProcessChunk(
-        rgb_frames=rgb_frames,
-        processed_masks=processed_masks,
         track_process_data=track_process,
-        intrinsics=intrinsics,
-        camera_to_world_c2w=c2w,
-        tracks_yx=tracks_yx,
-        tracker_visibility=tracker_visibility,
-        queries_txy=_queries_txy_from_yx(first_queries),
         surface_points=surface_points,
         interior_points=interior_points,
         fps=int(fps),
@@ -948,8 +909,6 @@ def _chunk_payload_from_prepared_frames(
         ),
         chunk_index=int(chunk_index),
         source_frame_indices=source_frame_indices,
-        pcd_points=pcd_points_arr if bool(write_final_pcd) else None,
-        pcd_colors=pcd_colors_arr if bool(write_final_pcd) else None,
     )
 
 
@@ -958,7 +917,6 @@ def _write_chunk_from_rows(
     capture: Path,
     metadata: Mapping[str, Any],
     rows: Sequence[Mapping[str, Any]],
-    base_path: str | Path,
     case_prefix: str,
     chunk_index: int,
     row_start: int,
@@ -974,7 +932,6 @@ def _write_chunk_from_rows(
     window_closed_wall_s: float,
     prepared_frames: Sequence[strict.PreparedPhysTwinFrame | None] | None = None,
     backlog_chunks: Callable[[], int] | None = None,
-    write_final_pcd: bool = True,
     online_writer: ChunkedFinalDataWriter | None = None,
     allow_degraded_online: bool = False,
     object_track_selector: strict.StreamingObjectTrackSelector | None = None,
@@ -982,8 +939,8 @@ def _write_chunk_from_rows(
     session_query_schema: dict[str, np.ndarray] | None = None,
     warmup_skipped_rows: int = 0,
 ) -> dict[str, Any]:
-    """Write one data_process_sam3d case and optionally commit it to online output."""
-    case_name = f"{case_prefix}_chunk_{chunk_index:04d}"
+    """Materialize one final_data window and optionally commit it online."""
+    chunk_name = f"{case_prefix}_online_chunk_{chunk_index:04d}"
     source_window_start_s = float(row_start) / float(fps)
     source_window_end_s = float(row_end) / float(fps)
     materialize_start_wall_s = _relative_wall_s(float(wall_time_origin_s))
@@ -1005,7 +962,6 @@ def _write_chunk_from_rows(
             fps=int(fps),
             serial_number=serial_number,
             chunk_index=chunk_index,
-            write_final_pcd=bool(write_final_pcd),
             object_track_selector=object_track_selector,
             controller_track_selector=controller_track_selector,
             session_query_schema=session_query_schema,
@@ -1027,7 +983,6 @@ def _write_chunk_from_rows(
             mask_radius_outlier_filter=bool(mask_radius_outlier_filter),
             mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
             mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
-            write_final_pcd=bool(write_final_pcd),
             object_track_selector=object_track_selector,
             controller_track_selector=controller_track_selector,
             session_query_schema=session_query_schema,
@@ -1073,13 +1028,23 @@ def _write_chunk_from_rows(
         payload.update(track_fields)
         return payload
 
-    manifest = write_data_process_chunk_case(
-        base_path,
-        case_name,
-        chunk,
-        manifest_extras=manifest_extras,
-        relative_wall_time_s=lambda: _relative_wall_s(float(wall_time_origin_s)),
+    final_data, track_process, manifest = build_data_process_chunk_payload(chunk)
+    manifest.update(
+        {
+            "chunk_name": chunk_name,
+            "online_publish_skipped": False,
+        }
     )
+    manifest.update(manifest_extras())
+    timing_floor_s = max(
+        float(manifest.get("window_closed_wall_s", 0.0) or 0.0),
+        float(manifest.get("track_finalize_done_wall_s", 0.0) or 0.0),
+    )
+    final_data_written_wall_s = max(
+        _relative_wall_s(float(wall_time_origin_s)),
+        timing_floor_s,
+    )
+    manifest["final_data_written_wall_s"] = float(final_data_written_wall_s)
     skip_reason = _track_process_online_publish_skip_reason(
         manifest,
         allow_degraded_online=bool(allow_degraded_online),
@@ -1091,10 +1056,15 @@ def _write_chunk_from_rows(
                 "online_publish_skip_reason": str(skip_reason),
             }
         )
+        publish_wall_s = max(_relative_wall_s(float(wall_time_origin_s)), final_data_written_wall_s)
+        manifest["publish_wall_s"] = float(publish_wall_s)
+        manifest["publish_latency_ms"] = float((publish_wall_s - window_closed_wall_s) * 1000.0)
+        manifest["publish_lag_ms"] = float((publish_wall_s - source_window_end_s) * 1000.0)
         return manifest
     if online_writer is not None:
-        online_result = online_writer.commit_case_chunk(
-            Path(manifest["data_process_case_root"]),
+        online_result = online_writer.commit_final_data_with_track(
+            final_data,
+            track_process,
             source_frame_indices=chunk_source_frame_indices,
             source_timestamps_s=chunk_source_timestamps_s,
             status="recording",
@@ -1109,7 +1079,10 @@ def _write_chunk_from_rows(
                 "static_data_path": online_result["static_data_path"],
             }
         )
-    manifest.setdefault("online_publish_skipped", False)
+    publish_wall_s = max(_relative_wall_s(float(wall_time_origin_s)), final_data_written_wall_s)
+    manifest["publish_wall_s"] = float(publish_wall_s)
+    manifest["publish_latency_ms"] = float((publish_wall_s - window_closed_wall_s) * 1000.0)
+    manifest["publish_lag_ms"] = float((publish_wall_s - source_window_end_s) * 1000.0)
     return manifest
 
 
@@ -1127,12 +1100,11 @@ def write_chunks_from_headless_capture(
     mask_radius_outlier_radius_m: float = 0.01,
     mask_radius_outlier_nb_points: int = 40,
     on_chunk_written: Callable[[dict[str, Any]], None] | None = None,
-    write_final_pcd: bool = True,
     write_online_output: bool = True,
     online_case_name: str | None = None,
     allow_degraded_online: bool = False,
 ) -> list[dict[str, Any]]:
-    """Convert a completed headless capture into chunk cases."""
+    """Convert a completed headless capture into online final_data chunks."""
     capture = Path(capture_dir)
     if int(chunk_frame_count) <= 0:
         raise ValueError("chunk_frame_count must be positive")
@@ -1196,7 +1168,6 @@ def write_chunks_from_headless_capture(
             capture=capture,
             metadata=metadata,
             rows=chunk_rows,
-            base_path=base_path,
             case_prefix=case_prefix,
             chunk_index=chunk_index,
             row_start=row_start,
@@ -1216,7 +1187,6 @@ def write_chunks_from_headless_capture(
                 chunk_size=size,
                 published_chunk_count=published,
             ),
-            write_final_pcd=bool(write_final_pcd),
             online_writer=online_writer,
             allow_degraded_online=bool(allow_degraded_online),
             object_track_selector=object_track_selector,
@@ -1275,7 +1245,6 @@ def stream_chunks_from_headless_capture(
     mask_radius_outlier_radius_m: float = 0.01,
     mask_radius_outlier_nb_points: int = 40,
     on_chunk_written: Callable[[dict[str, Any]], None] | None = None,
-    write_final_pcd: bool = True,
     write_online_output: bool = True,
     online_case_name: str | None = None,
     allow_degraded_online: bool = False,
@@ -1356,7 +1325,6 @@ def stream_chunks_from_headless_capture(
                 capture=capture,
                 metadata=latest_metadata,
                 rows=row_buffer,
-                base_path=base_path,
                 case_prefix=case_prefix,
                 chunk_index=chunk_index,
                 row_start=row_start,
@@ -1376,7 +1344,6 @@ def stream_chunks_from_headless_capture(
                     chunk_size=size,
                     published_chunk_count=published,
                 ),
-                write_final_pcd=bool(write_final_pcd),
                 online_writer=online_writer,
                 allow_degraded_online=bool(allow_degraded_online),
                 object_track_selector=object_track_selector,

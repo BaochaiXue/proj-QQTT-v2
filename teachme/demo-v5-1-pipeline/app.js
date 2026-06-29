@@ -2,7 +2,7 @@ const modes = {
   overview: {
     title: "思维导图总览",
     summary:
-      "先看中心思维导图：shape-prior warmup、普通 runtime warmup、actual run、GPU routing、artifacts 和代码 ownership 分开理解。",
+      "先看中心思维导图：shape-prior warmup、main warmup、actual run、GPU routing、artifacts 和代码 ownership 分开理解。",
   },
   shape: {
     title: "Shape prior warmup",
@@ -10,9 +10,9 @@ const modes = {
       "只看 shape prior：managed worker 先在 GPU 1 preload x4 upscaler 和 SAM3D，等 GPU 0 的首个有效 PCD 后提交一次请求。",
   },
   runtime: {
-    title: "普通 runtime warmup",
+    title: "Main warmup",
     summary:
-      "只看普通 warmup：GPU 0 准备 source、depth、PCD filter、table calibration、SAM3.1、EdgeTAM 和 tracker。",
+      "只看 main warmup：GPU 0 准备 source、depth、PCD filter、table calibration、SAM3.1、EdgeTAM 和 tracker。",
   },
   actual: {
     title: "Actual run",

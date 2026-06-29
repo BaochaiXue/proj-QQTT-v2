@@ -2,7 +2,7 @@
 """Demo v5.1 realtime orchestration entrypoint.
 
 This runner owns process boundaries, GPU routing, and artifact publication. The
-actual camera/tracker stack runs in ``demo_v5_1/realtime_dense_track.py``;
+actual camera/tracker stack runs in ``demo_v5_1/main_data_processing.py``;
 SAM3D shape prior warmup runs as local one-shot stages; the default
 side-by-side visualizer starts as soon as capture starts.
 """
@@ -34,7 +34,6 @@ if REPO_ROOT_STR in sys.path:
     sys.path.remove(REPO_ROOT_STR)
 sys.path.insert(0, REPO_ROOT_STR)
 
-from demo_v5_1.chunked_final_data_aggregate import migrate_legacy_online_static_case
 from demo_v5_1.realtime_data_process_track import (
     stream_chunks_from_headless_capture,
     write_chunks_from_headless_capture,
@@ -100,8 +99,8 @@ DEFAULT_MASK_RADIUS_OUTLIER_RADIUS_M = float(
 DEFAULT_MASK_RADIUS_OUTLIER_NB_POINTS = int(
     _cfg("camera", "mask_radius_outlier_nb_points")
 )
-DEFAULT_MAIN_REALTIME_DATA_PROCESS_CUDA_VISIBLE_DEVICES = str(
-    _cfg("gpu", "main_realtime_data_process_cuda_visible_devices")
+DEFAULT_MAIN_DATA_PROCESSING_CUDA_VISIBLE_DEVICES = str(
+    _cfg("gpu", "main_data_processing_cuda_visible_devices")
 )
 DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES = str(
     _cfg("gpu", "shape_prior_warmup_cuda_visible_devices")
@@ -207,8 +206,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-path", type=Path, default=DEFAULT_DATA_PROCESS_BASE_PATH)
     parser.add_argument("--case-prefix", default=DEFAULT_CASE_PREFIX)
     parser.add_argument(
-        "--main-realtime-data-process-cuda-visible-devices",
-        default=DEFAULT_MAIN_REALTIME_DATA_PROCESS_CUDA_VISIBLE_DEVICES,
+        "--main-data-processing-cuda-visible-devices",
+        default=DEFAULT_MAIN_DATA_PROCESSING_CUDA_VISIBLE_DEVICES,
         help=(
             "CUDA_VISIBLE_DEVICES for main warmup and the realtime "
             "data_process subprocess."
@@ -324,25 +323,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--surface-points-npy", type=Path, default=None)
     parser.add_argument("--interior-points-npy", type=Path, default=None)
-    parser.add_argument(
-        "--write-final-pcd",
-        dest="write_final_pcd",
-        action="store_true",
-        help=(
-            "Write dense per-frame pcd/*.npz into each published chunk case "
-            "for diagnostics/export."
-        ),
-    )
-    parser.add_argument(
-        "--no-write-final-pcd",
-        dest="write_final_pcd",
-        action="store_false",
-        help=(
-            "Skip dense per-frame pcd/*.npz in chunk cases; "
-            "final_data/tracking/mask/color remain complete."
-        ),
-    )
-    parser.set_defaults(write_final_pcd=False)
     parser.add_argument(
         "--shape-prior-warmup",
         dest="shape_prior_warmup",
@@ -504,14 +484,14 @@ def resolve_camera_source_replay_fps(args: argparse.Namespace) -> float:
     return fps
 
 
-def resolve_main_realtime_data_process_cuda_visible_devices(
+def resolve_main_data_processing_cuda_visible_devices(
     args: argparse.Namespace,
 ) -> str:
-    """Resolve the GPU namespace for main warmup and realtime data_process."""
-    value = str(args.main_realtime_data_process_cuda_visible_devices).strip()
+    """Resolve the GPU namespace for the main data processing process."""
+    value = str(args.main_data_processing_cuda_visible_devices).strip()
     if not value:
         raise ValueError(
-            "--main-realtime-data-process-cuda-visible-devices must be non-empty"
+            "--main-data-processing-cuda-visible-devices must be non-empty"
         )
     return value
 
@@ -658,14 +638,6 @@ def resolve_static_data_path(args: argparse.Namespace) -> Path:
     return Path(args.base_path) / "data" / str(args.case_prefix) / "final_data.pkl"
 
 
-def _is_chunk_case_dir_name(name: str, case_prefix: str) -> bool:
-    prefix = f"{case_prefix}_chunk_"
-    if not str(name).startswith(prefix):
-        return False
-    suffix = str(name)[len(prefix) :]
-    return bool(suffix) and suffix.isdigit()
-
-
 def _remove_generated_path(path: Path) -> bool:
     if path.is_dir():
         shutil.rmtree(path)
@@ -683,17 +655,10 @@ def prepare_realtime_output_for_new_capture(
     """Remove stale generated outputs for a new live/fake-live run of one case."""
     base = Path(base_path)
     case_name = str(case_prefix)
-    removed_chunk_cases: list[str] = []
-    if base.is_dir():
-        for child in sorted(base.iterdir()):
-            if child.is_dir() and _is_chunk_case_dir_name(child.name, case_name):
-                shutil.rmtree(child)
-                removed_chunk_cases.append(str(child))
     removed_online_dir = _remove_generated_path(base / "online_data" / case_name)
     removed_data_dir = _remove_generated_path(base / "data" / case_name)
     removed_manifest = _remove_generated_path(base / f"{case_name}_chunks_manifest.json")
     return {
-        "removed_chunk_cases": removed_chunk_cases,
         "removed_online_dir": bool(removed_online_dir),
         "removed_data_dir": bool(removed_data_dir),
         "removed_manifest": bool(removed_manifest),
@@ -722,11 +687,11 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "static_data_path": str(resolve_static_data_path(args)),
         "max_chunks": args.max_chunks,
         "depth_backend": str(args.depth_backend),
-        "main_realtime_data_process_capture_dir": (
+        "main_data_processing_capture_dir": (
             None if args.camera_capture_dir is None else str(args.camera_capture_dir)
         ),
-        "main_realtime_data_process_cuda_visible_devices": (
-            resolve_main_realtime_data_process_cuda_visible_devices(args)
+        "main_data_processing_cuda_visible_devices": (
+            resolve_main_data_processing_cuda_visible_devices(args)
         ),
         "perception_device": str(args.perception_device),
         "tracker_device": str(args.tracker_device),
@@ -749,7 +714,6 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "mask_radius_outlier_filter": bool(args.mask_radius_outlier_filter),
         "mask_radius_outlier_radius_m": float(args.mask_radius_outlier_radius_m),
         "mask_radius_outlier_nb_points": int(args.mask_radius_outlier_nb_points),
-        "write_final_pcd": bool(args.write_final_pcd),
         "source_headless_capture": (
             None
             if args.source_headless_capture is None
@@ -773,7 +737,7 @@ def validate_runtime_args(args: argparse.Namespace, *, chunk_frame_count: int) -
     resolve_camera_source_replay_fps(args)
     if int(chunk_frame_count) <= 0:
         raise ValueError("chunk frame count must be positive")
-    resolve_main_realtime_data_process_cuda_visible_devices(args)
+    resolve_main_data_processing_cuda_visible_devices(args)
     if bool(args.shape_prior_warmup):
         resolve_shape_prior_warmup_cuda_visible_devices(args)
     if str(args.visualizer_mode) == "window":
@@ -791,7 +755,7 @@ def validate_runtime_args(args: argparse.Namespace, *, chunk_frame_count: int) -
         resolve_visualizer_cuda_visible_devices(args)
 
 
-def _main_realtime_data_process_duration_s(
+def _main_data_processing_duration_s(
     args: argparse.Namespace,
     *,
     chunk_frame_count: int,
@@ -802,7 +766,7 @@ def _main_realtime_data_process_duration_s(
     return 0.0
 
 
-def build_main_realtime_data_process_command(
+def build_main_data_processing_command(
     args: argparse.Namespace,
     *,
     capture_dir: Path,
@@ -810,7 +774,7 @@ def build_main_realtime_data_process_command(
     chunk_frame_count: int,
 ) -> list[str]:
     """Build the subprocess command that emits prepared realtime frames."""
-    script = Path("demo_v5_1") / "realtime_dense_track.py"
+    script = Path("demo_v5_1") / "main_data_processing.py"
     camera_source_replay_fps = resolve_camera_source_replay_fps(args)
     if str(args.depth_backend) == "ir-ffs":
         depth_source = "ffs"
@@ -818,7 +782,7 @@ def build_main_realtime_data_process_command(
         depth_source = "realsense"
     else:
         raise ValueError(f"unsupported depth backend: {args.depth_backend!r}")
-    duration_s = _main_realtime_data_process_duration_s(
+    duration_s = _main_data_processing_duration_s(
         args,
         chunk_frame_count=chunk_frame_count,
     )
@@ -879,7 +843,7 @@ def build_main_realtime_data_process_command(
         str(DEFAULT_TABLE_CALIBRATE_PATH),
         "--enable-table-z-filter",
         "--runtime-product-name",
-        "demo_v5_1_realtime_dense_track",
+        "demo_v5_1_main_data_processing",
         "--metadata-demo-version",
         "demo_v5_1",
         "--metadata-reference-pipeline",
@@ -975,19 +939,6 @@ def _start_visualizer(
     )
 
 
-def select_validation_chunk_cases(manifests: Sequence[dict[str, object]]) -> list[str]:
-    """Select representative chunk cases for post-run validation."""
-    if len(manifests) < 5:
-        raise ValueError(
-            "at least five chunks are required for second-last and "
-            "fifth-last validation"
-        )
-    return [
-        str(manifests[-2]["case_name"]),
-        str(manifests[-5]["case_name"]),
-    ]
-
-
 def _runtime_chunk_summary(manifests: Sequence[dict[str, object]]) -> dict[str, object]:
     publish_times = [
         float(item["publish_wall_s"])
@@ -1022,7 +973,7 @@ def _runtime_chunk_summary(manifests: Sequence[dict[str, object]]) -> dict[str, 
         for status in ("normal", "degraded", "invalid")
     }
     invalid_chunks = [
-        str(item.get("case_name", ""))
+        str(item.get("chunk_name", item.get("chunk_index", "")))
         for item in manifests
         if str(item.get("track_process_status", "normal")) == "invalid"
     ]
@@ -1063,11 +1014,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             base_path,
             str(args.case_prefix),
         )
-    startup_migration = migrate_legacy_online_static_case(base_path, str(args.case_prefix))
     if args.source_headless_capture is not None:
         # Offline conversion path: consume an existing capture directory and
-        # write the same chunk/aggregate products without launching camera,
-        # or visualizer subprocesses.
+        # write online/static final_data products without launching camera or
+        # visualizer subprocesses.
         manifests = write_chunks_from_headless_capture(
             args.source_headless_capture,
             base_path=base_path,
@@ -1080,10 +1030,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             mask_radius_outlier_filter=bool(args.mask_radius_outlier_filter),
             mask_radius_outlier_radius_m=float(args.mask_radius_outlier_radius_m),
             mask_radius_outlier_nb_points=int(args.mask_radius_outlier_nb_points),
-            write_final_pcd=bool(args.write_final_pcd),
             allow_degraded_online=bool(args.allow_degraded_online),
         )
-        final_migration = migrate_legacy_online_static_case(base_path, str(args.case_prefix))
         summary = {
             "demo_version": "demo_v5_1",
             "mode": "source-headless-capture",
@@ -1098,9 +1046,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             "max_chunks": args.max_chunks,
             "chunk_count": int(len(manifests)),
             "chunks": manifests,
-            "write_final_pcd": bool(args.write_final_pcd),
-            "startup_legacy_static_case_migration": startup_migration,
-            "final_legacy_static_case_migration": final_migration,
         }
         summary.update(_runtime_chunk_summary(manifests))
         summary_path = base_path / f"{args.case_prefix}_chunks_manifest.json"
@@ -1118,23 +1063,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.shape_prior_profile_json is not None
         else capture_dir / "shape_prior_profile.json"
     )
-    main_realtime_data_process_command = build_main_realtime_data_process_command(
+    main_data_processing_command = build_main_data_processing_command(
         args,
         capture_dir=capture_dir,
         profile_json=profile_json,
         chunk_frame_count=chunk_frame_count,
     )
-    main_realtime_data_process_env = os.environ.copy()
-    if not main_realtime_data_process_env.get(SAM31_CHECKPOINT_ENV):
-        main_realtime_data_process_env[SAM31_CHECKPOINT_ENV] = str(
+    main_data_processing_env = os.environ.copy()
+    if not main_data_processing_env.get(SAM31_CHECKPOINT_ENV):
+        main_data_processing_env[SAM31_CHECKPOINT_ENV] = str(
             _repo_path(DEFAULT_SAM31_CHECKPOINT_PATH)
         )
-    main_realtime_data_process_cuda_visible_devices = (
-        resolve_main_realtime_data_process_cuda_visible_devices(args).strip()
+    main_data_processing_cuda_visible_devices = (
+        resolve_main_data_processing_cuda_visible_devices(args).strip()
     )
-    if main_realtime_data_process_cuda_visible_devices:
-        main_realtime_data_process_env["CUDA_VISIBLE_DEVICES"] = (
-            main_realtime_data_process_cuda_visible_devices
+    if main_data_processing_cuda_visible_devices:
+        main_data_processing_env["CUDA_VISIBLE_DEVICES"] = (
+            main_data_processing_cuda_visible_devices
         )
     visualizer_process: subprocess.Popen[bytes] | None = None
     visualizer_started = False
@@ -1162,9 +1107,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             visualizer_started_manifest = dict(manifest)
             visualizer_start_wall_s = time.monotonic()
 
-    main_realtime_data_process = subprocess.Popen(
-        main_realtime_data_process_command,
-        env=main_realtime_data_process_env,
+    main_data_processing = subprocess.Popen(
+        main_data_processing_command,
+        env=main_data_processing_env,
         start_new_session=True,
     )
     if str(args.visualizer_mode) == "window" and visualizer_uses_side_by_side(args):
@@ -1188,7 +1133,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             chunk_frame_count=chunk_frame_count,
             fps=int(round(float(args.replay_fps))),
             max_chunks=args.max_chunks,
-            capture_finished=lambda: main_realtime_data_process.poll() is not None,
+            capture_finished=lambda: main_data_processing.poll() is not None,
             require_shape_prior=bool(args.shape_prior_warmup),
             shape_prior_wait_timeout_s=float(args.shape_prior_chunk_wait_timeout_s),
             poll_interval_s=float(args.chunk_poll_interval_s),
@@ -1197,41 +1142,38 @@ def main(argv: Sequence[str] | None = None) -> int:
             mask_radius_outlier_filter=bool(args.mask_radius_outlier_filter),
             mask_radius_outlier_radius_m=float(args.mask_radius_outlier_radius_m),
             mask_radius_outlier_nb_points=int(args.mask_radius_outlier_nb_points),
-            write_final_pcd=bool(args.write_final_pcd),
             on_chunk_written=on_chunk_written,
             allow_degraded_online=bool(args.allow_degraded_online),
         )
     finally:
-        main_realtime_data_process_return_code = _stop_process(
-            main_realtime_data_process
+        main_data_processing_return_code = _stop_process(
+            main_data_processing
         )
         if visualizer_process is not None:
             visualizer_return_code = visualizer_process.poll()
             visualizer_left_running = visualizer_return_code is None
-    final_migration = migrate_legacy_online_static_case(base_path, str(args.case_prefix))
-    validation_cases = select_validation_chunk_cases(manifests) if len(manifests) >= 5 else []
     runtime_summary = _runtime_chunk_summary(manifests)
     track_process_invalid = str(runtime_summary.get("track_process_status", "normal")) == "invalid"
     if track_process_invalid:
         stop_reason = "track_process_invalid"
     elif args.max_chunks is not None and len(manifests) >= int(args.max_chunks):
         stop_reason = "max_chunks_reached"
-    elif main_realtime_data_process_return_code == 0:
-        stop_reason = "main_realtime_data_process_completed"
-    elif main_realtime_data_process_return_code is None:
-        stop_reason = "main_realtime_data_process_status_unknown"
+    elif main_data_processing_return_code == 0:
+        stop_reason = "main_data_processing_completed"
+    elif main_data_processing_return_code is None:
+        stop_reason = "main_data_processing_status_unknown"
     else:
-        stop_reason = "main_realtime_data_process_exited_before_target"
+        stop_reason = "main_data_processing_exited_before_target"
     summary = {
         "demo_version": "demo_v5_1",
         "mode": (
-            "full-fake-main-realtime-data-process"
+            "full-fake-main-data-processing"
             if str(args.input_source) == "fake-live"
-            else "full-live-main-realtime-data-process"
+            else "full-live-main-data-processing"
         ),
-        "main_realtime_data_process_command": main_realtime_data_process_command,
-        "main_realtime_data_process_cuda_visible_devices": (
-            main_realtime_data_process_cuda_visible_devices
+        "main_data_processing_command": main_data_processing_command,
+        "main_data_processing_cuda_visible_devices": (
+            main_data_processing_cuda_visible_devices
         ),
         "camera_lossless_max_backlog_seconds": args.camera_lossless_max_backlog_seconds,
         "camera_headless_prepared_only": bool(args.camera_headless_prepared_only),
@@ -1250,11 +1192,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "shape_prior_config": (
             None if args.shape_prior_config is None else str(args.shape_prior_config)
         ),
-        "main_realtime_data_process_return_code": (
-            main_realtime_data_process_return_code
+        "main_data_processing_return_code": (
+            main_data_processing_return_code
         ),
-        "main_realtime_data_process_stop_reason": stop_reason,
-        "main_realtime_data_process_capture_dir": str(capture_dir),
+        "main_data_processing_stop_reason": stop_reason,
+        "main_data_processing_capture_dir": str(capture_dir),
         "base_path": str(base_path),
         "case_prefix": str(args.case_prefix),
         "output_format": "online-primary-static-case",
@@ -1267,11 +1209,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "max_chunks": args.max_chunks,
         "chunk_count": int(len(manifests)),
         "chunks": manifests,
-        "validation_chunk_cases": validation_cases,
         "external_shape_prior_points": bool(
             surface_points is not None or interior_points is not None
         ),
-        "write_final_pcd": bool(args.write_final_pcd),
         "visualizer_mode": str(args.visualizer_mode),
         "visualizer_layout": resolve_visualizer_layout(args),
         "visualizer_started": visualizer_started,
@@ -1288,8 +1228,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "visualizer_object_color_mode": str(args.visualizer_object_color_mode),
         "visualizer_return_code": visualizer_return_code,
         "visualizer_left_running": visualizer_left_running,
-        "startup_legacy_static_case_migration": startup_migration,
-        "final_legacy_static_case_migration": final_migration,
     }
     summary.update(runtime_summary)
     summary_path = base_path / f"{args.case_prefix}_chunks_manifest.json"
@@ -1300,8 +1238,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(json.dumps(summary, indent=2, sort_keys=True))
     if track_process_invalid:
         return 1
-    if main_realtime_data_process_return_code not in (0, None) and not manifests:
-        return int(main_realtime_data_process_return_code)
+    if main_data_processing_return_code not in (0, None) and not manifests:
+        return int(main_data_processing_return_code)
     if args.max_chunks is not None and len(manifests) < int(args.max_chunks):
         return 1
     if str(args.visualizer_mode) == "window" and not visualizer_started:

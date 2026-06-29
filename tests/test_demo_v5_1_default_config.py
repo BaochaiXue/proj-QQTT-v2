@@ -61,11 +61,6 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
                     "stream_chunks_from_headless_capture",
                     return_value=[],
                 ),
-                mock.patch.object(
-                    runner,
-                    "migrate_legacy_online_static_case",
-                    return_value={},
-                ),
                 mock.patch.dict(runner.os.environ, {}, clear=True),
             ):
                 exit_code = runner.main(
@@ -116,6 +111,7 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
             "--gpu-mode",
             "--realtime-gpu-mode",
             "--warmup-gpu-mode",
+            "--main-realtime-data-process-cuda-visible-devices",
             "--" + "-".join(("camera", "cuda", "visible", "devices")),
             "--" + "-".join(("shape", "prior", "cuda", "visible", "devices")),
             "--" + "-".join(("point", "viewer", "mode")),
@@ -142,8 +138,8 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
             hasattr(parsed, "_".join(("shape", "prior", "cuda", "visible", "devices")))
         )
         self.assertEqual(
-            runner.DEFAULT_MAIN_REALTIME_DATA_PROCESS_CUDA_VISIBLE_DEVICES,
-            parsed.main_realtime_data_process_cuda_visible_devices,
+            runner.DEFAULT_MAIN_DATA_PROCESSING_CUDA_VISIBLE_DEVICES,
+            parsed.main_data_processing_cuda_visible_devices,
         )
         self.assertEqual(
             runner.DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
@@ -237,7 +233,7 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
                 ]
             )
             capture_dir = Path(tmpdir) / "capture"
-            command = runner.build_main_realtime_data_process_command(
+            command = runner.build_main_data_processing_command(
                 parsed,
                 capture_dir=capture_dir,
                 profile_json=capture_dir / "shape_prior_profile.json",
@@ -275,8 +271,8 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
         self.assertEqual(0, exit_code)
         self.assertTrue(contract["shape_prior_warmup"])
         self.assertEqual(
-            runner.DEFAULT_MAIN_REALTIME_DATA_PROCESS_CUDA_VISIBLE_DEVICES,
-            contract["main_realtime_data_process_cuda_visible_devices"],
+            runner.DEFAULT_MAIN_DATA_PROCESSING_CUDA_VISIBLE_DEVICES,
+            contract["main_data_processing_cuda_visible_devices"],
         )
         self.assertEqual(
             runner.DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
@@ -414,8 +410,8 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
             )
         )
         self.assertEqual(
-            defaults["gpu"]["main_realtime_data_process_cuda_visible_devices"],
-            runner.DEFAULT_MAIN_REALTIME_DATA_PROCESS_CUDA_VISIBLE_DEVICES,
+            defaults["gpu"]["main_data_processing_cuda_visible_devices"],
+            runner.DEFAULT_MAIN_DATA_PROCESSING_CUDA_VISIBLE_DEVICES,
         )
         self.assertEqual(
             defaults["gpu"]["shape_prior_warmup_cuda_visible_devices"],

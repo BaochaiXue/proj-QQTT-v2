@@ -1,6 +1,6 @@
 # Filesystem paths and external checkpoint locations.
 paths:
-  # Directory where Demo v5.1 writes realtime data_process chunk cases.
+  # Directory where Demo v5.1 writes online chunks and static final_data.
   data_process_base_path: "outputs"
   # Optional tabletop calibration file used by capture/alignment helpers.
   table_calibrate_path: "table_calibrate.pkl"
@@ -55,7 +55,7 @@ camera:
 # GPU namespaces for the cooperating subprocesses.
 gpu:
   # Main warmup and realtime data_process stages see physical GPU 0 as cuda:0.
-  main_realtime_data_process_cuda_visible_devices: "0"
+  main_data_processing_cuda_visible_devices: "0"
   # Shape-prior SAM3D stages see physical GPU 1 as cuda:0.
   shape_prior_warmup_cuda_visible_devices: "1"
   # Visualizer process sees physical GPU 1 as cuda:0.

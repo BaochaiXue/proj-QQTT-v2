@@ -16,7 +16,7 @@ understand:
 
 - a top-level mind map for Demo v5.1 pipeline ownership and data flow;
 - shape-prior warmup on GPU 1 and its CPU/GPU 0 handoff;
-- ordinary runtime warmup on GPU 0 with CPU/IO service setup;
+- main warmup on GPU 0 with CPU/IO service setup;
 - actual run where the other side is `visualize_track.py`, not
   `realtime_phystwin` by default.
 

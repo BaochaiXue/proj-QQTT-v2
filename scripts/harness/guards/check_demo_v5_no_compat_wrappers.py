@@ -14,11 +14,14 @@ ROOT = _find_repo_root(Path(__file__).resolve())
 DEMO_ROOTS = (ROOT / "demo_v5", ROOT / "demo_v5_1")
 FORBIDDEN_MARKER = "Legacy compatibility wrapper"
 FORBIDDEN_SOURCE_TOKENS = {
-    Path("demo_v5_1/realtime_dense_track.py"): (
+    Path("demo_v5_1/main_data_processing.py"): (
         "from qqtt.demo import realtime_masked_edgetam_pcd",
         "import qqtt.demo.realtime_masked_edgetam_pcd",
         "from demo_v5 import realtime_dense_track",
         "import demo_v5.realtime_dense_track",
+        "from demo_v5 import main_data_processing",
+        "import demo_v5.main_data_processing",
+        "RealtimeMaskedEdgeTamPcdDemo",
         "masked_pcd.main",
         "thin wrapper",
     ),

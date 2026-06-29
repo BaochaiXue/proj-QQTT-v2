@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use inline execution for this
 > refactor. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Split Demo v5.1 warmup code into ordinary runtime warmup and
+**Goal:** Split Demo v5.1 warmup code into main warmup and
 shape-prior warmup modules without changing CLI behavior, GPU routing, output
 layout, or run timing semantics.
 
@@ -11,7 +11,7 @@ layout, or run timing semantics.
 sampling in `demo_v5_1/shape_prior.py`. Move shape-prior lifecycle and managed
 worker startup orchestration to `demo_v5_1/shape_prior_warmup.py`. Move
 ordinary runtime startup and first-frame mask helpers to
-`demo_v5_1/runtime_warmup.py`, leaving `demo_v5_1/realtime_dense_track.py` as
+`demo_v5_1/main_warmup.py`, leaving `demo_v5_1/main_data_processing.py` as
 the per-frame runtime loop owner.
 
 **Tech Stack:** Python, argparse subprocess orchestration, unittest.
@@ -62,11 +62,11 @@ preserving.
 
 Files or modules to change:
 - Create: `demo_v5_1/shape_prior_warmup.py`
-- Create: `demo_v5_1/runtime_warmup.py`
+- Create: `demo_v5_1/main_warmup.py`
 - Modify: `demo_v5_1/shape_prior.py`
 - Modify: `demo_v5_1/shape_prior_worker.py`
 - Modify: `demo_v5_1/main.py`
-- Modify: `demo_v5_1/realtime_dense_track.py`
+- Modify: `demo_v5_1/main_data_processing.py`
 - Modify: `tests/test_demo_v5_1_shape_prior_simplification.py`
 - Modify: `tests/test_demo_v5_1_default_config.py`
 - Add or modify focused tests for module ownership and behavior preservation.
@@ -83,10 +83,10 @@ fallback, degraded mode, or compatibility modules.
 Data flow:
 `main.py` resolves CLI and starts managed worker through
 `shape_prior_warmup.py`; `shape_prior_worker.py` prepares startup through
-`shape_prior_warmup.py`; `realtime_dense_track.py` prepares ordinary runtime
-startup and first-frame masks through `runtime_warmup.py`; per-frame
+`shape_prior_warmup.py`; `main_data_processing.py` prepares ordinary runtime
+startup and first-frame masks through `main_warmup.py`; per-frame
 segmentation, PCD, tracking, and rendering remain local to
-`realtime_dense_track.py`.
+`main_data_processing.py`.
 
 Why this is sufficient:
 The split matches the two warmup domains requested by the user and removes the
@@ -109,17 +109,17 @@ behavior.
 - [x] **Step 3: Move managed worker command/env/start helpers from `main.py`**
 - [x] **Step 4: Update call sites and focused tests**
 
-### Task 2: Ordinary Runtime Warmup Module
+### Task 2: Main Warmup Module
 
 **Files:**
-- Create: `demo_v5_1/runtime_warmup.py`
-- Modify: `demo_v5_1/realtime_dense_track.py`
+- Create: `demo_v5_1/main_warmup.py`
+- Modify: `demo_v5_1/main_data_processing.py`
 - Test: `tests/test_demo_v5_1_shape_prior_simplification.py`
 
 - [x] **Step 1: Move first-frame mask bundle and SAM3.1 helpers**
 - [x] **Step 2: Move ordinary startup preparation into runtime helpers**
 - [x] **Step 3: Add `prepare_segmentation_warmup(demo)` for `_seg_worker`**
-- [x] **Step 4: Keep per-frame runtime loops in `realtime_dense_track.py`**
+- [x] **Step 4: Keep per-frame runtime loops in `main_data_processing.py`**
 
 ### Task 3: Behavior Preservation Tests
 

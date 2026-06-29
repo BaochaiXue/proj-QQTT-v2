@@ -4,13 +4,13 @@
 > documentation task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a static teachme page that explains Demo v5.1 warmup and actual
-run pipelines, including separate shape-prior warmup, other runtime warmups,
+run pipelines, including separate shape-prior warmup, other main warmups,
 two-GPU routing, and the current visualizer actual-run branch.
 
 **Architecture:** Add a standalone static page under `teachme/` so it can be
 opened directly in a browser without a dev server. Keep runtime code untouched;
 the page derives its explanation from `demo_v5_1/main.py`,
-`demo_v5_1/realtime_dense_track.py`, `demo_v5_1/shape_prior.py`,
+`demo_v5_1/main_data_processing.py`, `demo_v5_1/shape_prior.py`,
 `demo_v5_1/shape_prior_worker.py`, and `demo_v5_1/visualize_track.py`.
 
 **Tech Stack:** HTML, CSS, vanilla JavaScript.

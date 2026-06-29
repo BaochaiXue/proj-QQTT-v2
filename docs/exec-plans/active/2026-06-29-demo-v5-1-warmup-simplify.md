@@ -2,7 +2,7 @@
 
 **Goal:** Replace the old defensive shape-prior warmup orchestration with the
 current single-camera Demo v5.1 flow: `main_warmup` and
-`main_realtime_data_process` on GPU namespace 0, `shape_prior_warmup` and
+`main_data_processing` on GPU namespace 0, `shape_prior_warmup` and
 `visualizer` on GPU namespace 1, and one local shape-prior pipeline that writes
 the agreed artifacts.
 
@@ -60,7 +60,7 @@ Files or modules to change:
 Core logic change:
 Move shape-prior warmup from managed remote-worker orchestration to a local
 one-shot pipeline manager. Replace GPU modes with direct default namespaces:
-`main_realtime_data_process=0`, `shape_prior_warmup=1`, `visualizer=1`, with
+`main_data_processing=0`, `shape_prior_warmup=1`, `visualizer=1`, with
 explicit override flags.
 
 Error handling:
@@ -68,7 +68,7 @@ Fail fast for invalid frame/case data and failed stage commands. The manager
 records `failed` status and the error string in the profile.
 
 Data flow:
-`realtime_dense_track.py` builds `ShapePriorFrame0Request`; the manager writes
+`main_data_processing.py` builds `ShapePriorFrame0Request`; the manager writes
 the shape-prior case under the capture dir, runs generate/align/sample, reads
 `final_data.pkl`, and returns `ShapePriorResult`.
 
@@ -81,7 +81,7 @@ worker-mode/mode-mapping configuration without adding fallback paths.
 - [x] Rewrite `shape_prior_warmup.py` around the new single-camera case flow.
 - [x] Simplify `main.py` GPU and shape-prior worker configuration.
 - [x] Remove Demo v5.1 realtime PhysTwin/optimization launch plumbing.
-- [x] Rename GPU keys/CLI/summary fields to main realtime data process,
+- [x] Rename GPU keys/CLI/summary fields to main data processing,
       shape-prior warmup, and visualizer.
 - [x] Update default config and pipeline docs.
 - [x] Update focused tests for the new flow.

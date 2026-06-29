@@ -1,25 +1,15 @@
-"""Write and validate Demo v5.1 data_process_sam3d-compatible chunk cases.
+"""Build and validate Demo v5.1 realtime final_data chunk payloads.
 
-The writer produces the Demo v5.1 realtime data_process file set
-(``final_data.pkl``, ``track_process_data.pkl``, ``tracking/0.npz``,
-``mask/processed_masks.pkl``, and camera metadata) while keeping Demo v5.1's
-query schema explicit in every chunk.
+Demo v5.1 publishes online chunks directly. It no longer materializes each
+window as a data_process-style case directory.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 import hashlib
-import json
-import os
-from pathlib import Path
-import pickle
-import shutil
-import time
-from typing import Any, Callable, Mapping, Sequence
-import uuid
+from typing import Any, Mapping, Sequence
 
 import numpy as np
-from PIL import Image
 
 DATA_PROCESS_QUERY_SCHEMA_VERSION = "data_process_sam3d_realtime_query_schema_v1"
 DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION = "data_process_sam3d_realtime_final_data_v1"
@@ -145,20 +135,11 @@ DATA_PROCESS_SAM3D_METRICS = {
 
 @dataclass(frozen=True)
 class DataProcessChunk:
-    """In-memory representation of one fixed-size data_process_sam3d window."""
+    """In-memory representation of one fixed-size realtime final_data window."""
 
-    rgb_frames: Sequence[np.ndarray]
-    processed_masks: Sequence[Sequence[Mapping[str, np.ndarray]]]
     track_process_data: Mapping[str, np.ndarray]
-    intrinsics: np.ndarray
-    camera_to_world_c2w: np.ndarray
-    tracks_yx: np.ndarray | None = None
-    tracker_visibility: np.ndarray | None = None
-    queries_txy: np.ndarray | None = None
     surface_points: np.ndarray = field(default_factory=lambda: np.empty((0, 3), dtype=np.float64))
     interior_points: np.ndarray = field(default_factory=lambda: np.empty((0, 3), dtype=np.float64))
-    pcd_points: np.ndarray | None = None
-    pcd_colors: np.ndarray | None = None
     fps: int = 5
     serial_number: str = "demo-v5-single-camera"
     depth_backend: str = ""
@@ -175,110 +156,13 @@ def _array(name: str, value: Any, shape_tail: tuple[int, ...] | None = None) -> 
 
 
 def _ensure_frame_count(chunk: DataProcessChunk) -> int:
-    frame_count = len(chunk.rgb_frames)
-    if frame_count <= 0:
-        raise ValueError("data_process_sam3d chunk requires at least one RGB frame")
     track_points = np.asarray(chunk.track_process_data["object_points"])
-    if track_points.ndim != 3 or track_points.shape[0] != frame_count or track_points.shape[-1] != 3:
-        raise ValueError("track_process_data['object_points'] must have shape T,N,3 matching RGB frame count")
-    if len(chunk.processed_masks) != frame_count:
-        raise ValueError("processed_masks must have one entry per RGB frame")
+    if track_points.ndim != 3 or track_points.shape[-1] != 3:
+        raise ValueError("track_process_data['object_points'] must have shape T,N,3")
+    frame_count = int(track_points.shape[0])
+    if frame_count <= 0:
+        raise ValueError("realtime final_data chunk requires at least one frame")
     return int(frame_count)
-
-
-def _write_rgb_frames(case_dir: Path, rgb_frames: Sequence[np.ndarray]) -> None:
-    color_dir = case_dir / "color" / "0"
-    color_dir.mkdir(parents=True, exist_ok=True)
-    for frame_idx, frame in enumerate(rgb_frames):
-        rgb = np.asarray(frame, dtype=np.uint8)
-        if rgb.ndim != 3 or rgb.shape[2] != 3:
-            raise ValueError(f"rgb frame {frame_idx} must be HxWx3, got {rgb.shape}")
-        Image.fromarray(np.ascontiguousarray(rgb, dtype=np.uint8), mode="RGB").save(
-            color_dir / f"{frame_idx}.png",
-            compress_level=0,
-        )
-
-
-def _write_processed_masks(case_dir: Path, processed_masks: Sequence[Sequence[Mapping[str, np.ndarray]]]) -> None:
-    # Offline parity with data_process_sam3d/data_process_mask.py:L213-L215.
-    # That path serializes processed_masks.pkl after semantic, depth, and
-    # radius-outlier filtering. Demo v5.1 writes the same payload after
-    # realtime filtering.
-    mask_dir = case_dir / "mask"
-    mask_dir.mkdir(parents=True, exist_ok=True)
-    normalized: list[list[dict[str, np.ndarray]]] = []
-    for frame in processed_masks:
-        camera_entries: list[dict[str, np.ndarray]] = []
-        for camera_frame in frame:
-            if "object" not in camera_frame or "controller" not in camera_frame:
-                raise ValueError("processed mask entries require object and controller masks")
-            camera_entries.append(
-                {
-                    key: np.ascontiguousarray(np.asarray(value, dtype=bool))
-                    for key, value in camera_frame.items()
-                }
-            )
-        normalized.append(camera_entries)
-    with (mask_dir / "processed_masks.pkl").open("wb") as handle:
-        pickle.dump(normalized, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-
-def _write_tracking(case_dir: Path, chunk: DataProcessChunk, frame_count: int) -> None:
-    # Offline parity with data_process_sam3d/data_process_track.py:L49-L55.
-    # That path reads cotracker/*.npz with tracks and visibility. Demo v5.1
-    # writes both tracking/0.npz and cotracker/0.npz for the same downstream
-    # contract.
-    if chunk.tracks_yx is None:
-        tracks = np.zeros((frame_count, 0, 2), dtype=np.float32)
-    else:
-        tracks = np.ascontiguousarray(np.asarray(chunk.tracks_yx, dtype=np.float32))
-    if tracks.ndim != 3 or tracks.shape[0] != frame_count or tracks.shape[-1] != 2:
-        raise ValueError("tracks_yx must have shape T,N,2")
-    if chunk.tracker_visibility is None:
-        visibility = np.zeros(tracks.shape[:2], dtype=bool)
-    else:
-        visibility = np.ascontiguousarray(np.asarray(chunk.tracker_visibility, dtype=bool))
-    if visibility.shape != tracks.shape[:2]:
-        raise ValueError("tracker_visibility must have shape T,N")
-    if chunk.queries_txy is None:
-        queries = np.zeros((tracks.shape[1], 3), dtype=np.float32)
-    else:
-        queries = np.ascontiguousarray(np.asarray(chunk.queries_txy, dtype=np.float32))
-    if queries.ndim != 2 or queries.shape[1] != 3 or queries.shape[0] != tracks.shape[1]:
-        raise ValueError("queries_txy must have shape N,3 matching tracks")
-
-    for name in ("tracking", "cotracker"):
-        directory = case_dir / name
-        directory.mkdir(parents=True, exist_ok=True)
-        np.savez(
-            directory / "0.npz",
-            tracks=tracks,
-            visibility=visibility,
-            queries_txy=queries,
-        )
-
-
-def _write_optional_pcd(case_dir: Path, chunk: DataProcessChunk, frame_count: int) -> None:
-    # Offline parity with data_process_sam3d/data_process_pcd.py:L224-L229.
-    # That path writes pcd/<frame>.npz with points, colors, and masks. The
-    # realtime writer persists points/colors for diagnostics when requested;
-    # masks live in processed_masks.
-    if chunk.pcd_points is None and chunk.pcd_colors is None:
-        return
-    if chunk.pcd_points is None or chunk.pcd_colors is None:
-        raise ValueError("pcd_points and pcd_colors must be provided together")
-    points = np.asarray(chunk.pcd_points, dtype=np.float32)
-    colors = np.asarray(chunk.pcd_colors)
-    if points.shape != colors.shape or points.ndim != 5 or points.shape[0] != frame_count or points.shape[-1] != 3:
-        raise ValueError("pcd_points and pcd_colors must have shape T,C,H,W,3")
-    pcd_dir = case_dir / "pcd"
-    pcd_dir.mkdir(parents=True, exist_ok=True)
-    for frame_idx in range(frame_count):
-        np.savez(
-            pcd_dir / f"{frame_idx}.npz",
-            points=np.ascontiguousarray(points[frame_idx]),
-            colors=np.ascontiguousarray(colors[frame_idx]),
-        )
 
 
 def _int_vector(value: Any, *, default: np.ndarray | None = None) -> np.ndarray:
@@ -681,184 +565,43 @@ def _quality_manifest_fields(
     return payload
 
 
-def _metadata_payload(chunk: DataProcessChunk, frame_count: int, width_height: tuple[int, int]) -> dict[str, Any]:
-    """Write single-camera metadata in the shape expected by data_process_sam3d."""
-    intrinsics = np.asarray(chunk.intrinsics, dtype=np.float32)
-    if intrinsics.shape == (3, 3):
-        intrinsics = intrinsics.reshape(1, 3, 3)
-    if intrinsics.shape != (1, 3, 3):
-        raise ValueError(f"intrinsics must have shape 3,3 or 1,3,3 for single-camera Demo v5; got {intrinsics.shape}")
-    width, height = width_height
-    return {
-        "fps": int(chunk.fps),
-        "WH": [int(width), int(height)],
-        "frame_num": int(frame_count),
-        "start_step": 0,
-        "end_step": int(frame_count),
-        "intrinsics": intrinsics.astype(float).tolist(),
-        "serial_numbers": [str(chunk.serial_number)],
+def build_data_process_chunk_payload(
+    chunk: DataProcessChunk,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Build final_data, track_process diagnostics, and manifest fields."""
+    frame_count = _ensure_frame_count(chunk)
+    track_process = _track_process_payload(chunk.track_process_data)
+    final_data = _final_data_payload(
+        track_process,
+        surface_points=chunk.surface_points,
+        interior_points=chunk.interior_points,
+    )
+    # Keep the same query schema hash in both payloads so online chunks can be
+    # concatenated without changing query semantic identity.
+    for key in DATA_PROCESS_QUERY_SCHEMA_KEYS:
+        track_process[key] = final_data[key]
+    _validate_query_schema_payload(track_process, label="track_process")
+    manifest = {
+        "frame_count": int(frame_count),
+        "chunk_index": None if chunk.chunk_index is None else int(chunk.chunk_index),
         "camera_count": 1,
-        "demo_version": "demo_v5_1",
-        "runtime_product_name": "demo_v5_1_realtime_dense_track",
-        "runtime_contract": DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
-        "reference_pipeline": "data_process_sam3d",
+        "surface_point_count": int(final_data["surface_points"].shape[0]),
+        "interior_point_count": int(final_data["interior_points"].shape[0]),
         "depth_backend": str(chunk.depth_backend),
         "depth_source_internal": str(chunk.depth_source_internal),
+        "runtime_contract": DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
+        "chunk_continuity_contract": "stable_query_schema_hash_and_contiguous_frames",
+        "data_process_sam3d_metrics": dict(DATA_PROCESS_SAM3D_METRICS),
+        "publish_contract": "online_final_data_chunk",
+        "query_schema_version": _scalar_str(final_data["query_schema_version"]),
+        "query_schema_hash": _scalar_str(final_data["query_schema_hash"]),
     }
-
-
-def write_data_process_chunk_case(
-    base_path: str | Path,
-    case_name: str,
-    chunk: DataProcessChunk,
-    manifest_extras: Mapping[str, Any] | Callable[[], Mapping[str, Any]] | None = None,
-    *,
-    relative_wall_time_s: Callable[[], float] | None = None,
-) -> dict[str, Any]:
-    """Atomically publish one READY chunk case.
-
-    Files are first written under ``.publishing`` and validated there. Only after
-    validation succeeds does ``os.replace`` expose the case directory, so online
-    consumers never read a half-written ``final_data.pkl``.
-    """
-    base = Path(base_path)
-    base.mkdir(parents=True, exist_ok=True)
-    local_wall_origin_s = time.monotonic()
-
-    def now_wall_s() -> float:
-        if relative_wall_time_s is not None:
-            return float(relative_wall_time_s())
-        return float(time.monotonic() - local_wall_origin_s)
-
-    def apply_publish_timing(manifest_payload: dict[str, Any], *, atomic_rename_done_wall_s: float) -> None:
-        manifest_payload["atomic_rename_done_wall_s"] = float(atomic_rename_done_wall_s)
-        manifest_payload["publish_wall_s"] = float(atomic_rename_done_wall_s)
-        if "materialize_start_wall_s" in manifest_payload:
-            manifest_payload["materialize_end_wall_s"] = float(atomic_rename_done_wall_s)
-            manifest_payload["materialize_latency_ms"] = float(
-                (float(atomic_rename_done_wall_s) - float(manifest_payload["materialize_start_wall_s"])) * 1000.0
-            )
-        if "window_closed_wall_s" in manifest_payload:
-            manifest_payload["publish_latency_ms"] = float(
-                (float(atomic_rename_done_wall_s) - float(manifest_payload["window_closed_wall_s"])) * 1000.0
-            )
-        if "source_window_end_s" in manifest_payload:
-            manifest_payload["publish_lag_ms"] = float(
-                (float(atomic_rename_done_wall_s) - float(manifest_payload["source_window_end_s"])) * 1000.0
-            )
-
-    case = base / str(case_name)
-    if case.exists():
-        raise FileExistsError(f"data_process_sam3d chunk case already exists: {case}")
-    staging_root = base / ".publishing"
-    staging_root.mkdir(parents=True, exist_ok=True)
-    staging = staging_root / f"{case.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
-    staging.mkdir(parents=True)
-    frame_count = _ensure_frame_count(chunk)
-    first_rgb = np.asarray(chunk.rgb_frames[0], dtype=np.uint8)
-    height, width = first_rgb.shape[:2]
-
-    try:
-        _write_rgb_frames(staging, chunk.rgb_frames)
-        _write_processed_masks(staging, chunk.processed_masks)
-        _write_tracking(staging, chunk, frame_count)
-        _write_optional_pcd(staging, chunk, frame_count)
-
-        c2w = np.asarray(chunk.camera_to_world_c2w, dtype=np.float32)
-        if c2w.shape != (4, 4):
-            raise ValueError(f"camera_to_world_c2w must be 4x4, got {c2w.shape}")
-        with (staging / "calibrate.pkl").open("wb") as handle:
-            pickle.dump(
-                [np.ascontiguousarray(c2w, dtype=np.float32)],
-                handle,
-                protocol=pickle.HIGHEST_PROTOCOL,
-            )
-
-        metadata = _metadata_payload(chunk, frame_count, (width, height))
-        (staging / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-        track_process = _track_process_payload(chunk.track_process_data)
-        final_data = _final_data_payload(
-            track_process,
-            surface_points=chunk.surface_points,
-            interior_points=chunk.interior_points,
-        )
-        # Offline parity with data_process_sam3d/data_process_track.py:L462-L463
-        # and data_process_sam3d/data_process_sample.py:L437-L440. Demo v5.1
-        # writes both track_process_data.pkl and final_data.pkl atomically inside
-        # the realtime chunk case.
-        # Keep the same query schema hash in both payloads. This is the guard that
-        # lets the online aggregate concatenate chunks without changing query
-        # semantic identity.
-        for key in DATA_PROCESS_QUERY_SCHEMA_KEYS:
-            track_process[key] = final_data[key]
-        with (staging / "track_process_data.pkl").open("wb") as handle:
-            pickle.dump(track_process, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        with (staging / "final_data.pkl").open("wb") as handle:
-            pickle.dump(final_data, handle, protocol=pickle.HIGHEST_PROTOCOL)
-        final_data_written_wall_s = now_wall_s()
-
-        manifest = {
-            "case_name": str(case_name),
-            "frame_count": int(frame_count),
-            "chunk_index": None if chunk.chunk_index is None else int(chunk.chunk_index),
-            "camera_count": 1,
-            "data_process_case_root": str(case),
-            "final_data_path": "final_data.pkl",
-            "track_process_data_path": "track_process_data.pkl",
-            "surface_point_count": int(final_data["surface_points"].shape[0]),
-            "interior_point_count": int(final_data["interior_points"].shape[0]),
-            "depth_backend": str(chunk.depth_backend),
-            "depth_source_internal": str(chunk.depth_source_internal),
-            "runtime_contract": DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
-            "chunk_continuity_contract": "stable_query_schema_hash_and_contiguous_frames",
-            "data_process_sam3d_metrics": dict(DATA_PROCESS_SAM3D_METRICS),
-            "publish_contract": "ready_marker_atomic_rename",
-            "final_data_written_wall_s": float(final_data_written_wall_s),
-            "query_schema_version": _scalar_str(final_data["query_schema_version"]),
-            "query_schema_hash": _scalar_str(final_data["query_schema_hash"]),
-        }
-        manifest.update(_quality_manifest_fields(final_data, track_process))
-        if manifest_extras is not None:
-            extras = manifest_extras() if callable(manifest_extras) else manifest_extras
-            manifest.update(dict(extras))
-        quality_status = str(manifest.get("track_process_status", "normal"))
-        marker_name = "READY" if quality_status == "normal" else quality_status.upper()
-        manifest["publish_marker"] = marker_name
-        timing_floor_s = max(
-            float(manifest.get("window_closed_wall_s", 0.0) or 0.0),
-            float(manifest.get("track_finalize_done_wall_s", 0.0) or 0.0),
-        )
-        manifest["final_data_written_wall_s"] = float(max(final_data_written_wall_s, timing_floor_s))
-        validate_data_process_case(staging)
-        validation_done_wall_s = max(now_wall_s(), float(manifest["final_data_written_wall_s"]))
-        manifest["validation_done_wall_s"] = float(validation_done_wall_s)
-        atomic_rename_done_wall_s = max(now_wall_s(), validation_done_wall_s)
-        apply_publish_timing(manifest, atomic_rename_done_wall_s=atomic_rename_done_wall_s)
-        (staging / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        (staging / marker_name).write_text(marker_name.lower() + "\n", encoding="utf-8")
-        os.replace(staging, case)
-        try:
-            staging_root.rmdir()
-        except OSError:
-            pass
-        return manifest
-    except Exception:
-        shutil.rmtree(staging, ignore_errors=True)
-        try:
-            staging_root.rmdir()
-        except OSError:
-            pass
-        raise
-
-
-def _load_pickle(path: Path) -> Any:
-    with path.open("rb") as handle:
-        return pickle.load(handle)
+    manifest.update(_quality_manifest_fields(final_data, track_process))
+    return final_data, track_process, manifest
 
 
 def _validate_track_shapes(payload: Mapping[str, np.ndarray]) -> None:
-    """Validate the richer track_process_data.pkl payload before publishing."""
+    """Validate the richer track-process payload before publishing."""
     object_points = _array("object_points", payload["object_points"], (3,))
     if object_points.ndim != 3:
         raise ValueError("object_points must have shape T,N,3")
@@ -988,12 +731,6 @@ def _validate_query_schema_sample_semantics(payload: Mapping[str, Any], *, label
     require_sample_semantics("controller_sample_query_ids", int(2), "controller")
 
 
-def _query_schema_values_equal(left: Any, right: Any) -> bool:
-    if isinstance(left, str) or isinstance(right, str):
-        return str(left) == str(right)
-    return bool(np.array_equal(np.asarray(left), np.asarray(right)))
-
-
 def _validate_final_shapes(payload: Mapping[str, np.ndarray]) -> None:
     """Validate final_data.pkl shape, query schema, and finite-point invariants."""
     payload = dict(payload)
@@ -1047,73 +784,6 @@ def _validate_final_shapes(payload: Mapping[str, np.ndarray]) -> None:
         if arr.ndim != 2 or arr.shape[1] != 3:
             raise ValueError(f"{key} must have shape N,3")
 
-
-def validate_data_process_case(case_dir: str | Path, *, require_ready: bool = False) -> dict[str, Any]:
-    """Check that a chunk or aggregate case is ready for final_data readers."""
-    case = Path(case_dir)
-    if require_ready and not (case / "READY").is_file():
-        raise ValueError(f"missing READY marker for data_process_sam3d case: {case / 'READY'}")
-    final_path = case / "final_data.pkl"
-    if not final_path.is_file():
-        raise ValueError(f"missing final_data.pkl: {final_path}")
-    final_data = _load_pickle(final_path)
-    if not isinstance(final_data, Mapping):
-        raise ValueError("final_data.pkl must contain a mapping")
-    final_data = dict(final_data)
-    _validate_final_shapes(final_data)
-
-    required_files = (
-        "track_process_data.pkl",
-        "calibrate.pkl",
-        "metadata.json",
-        "color/0/0.png",
-        "mask/processed_masks.pkl",
-        "tracking/0.npz",
-        "cotracker/0.npz",
-    )
-    for relative in required_files:
-        path = case / relative
-        if not path.is_file():
-            raise ValueError(f"missing required data_process_sam3d case file: {relative}")
-
-    track_process = _load_pickle(case / "track_process_data.pkl")
-    if not isinstance(track_process, Mapping):
-        raise ValueError("track_process_data.pkl must contain a mapping")
-    track_process = dict(track_process)
-    for key in DATA_PROCESS_TRACK_PROCESS_KEYS:
-        if key not in track_process:
-            raise ValueError(f"track_process_data.pkl missing required key: {key}")
-    _validate_track_shapes(track_process)
-    _validate_query_schema_payload(track_process, label="track_process_data.pkl")
-    # final_data and track_process_data must describe the same query topology. A
-    # mismatch here means online concatenation would silently mix identities.
-    for key in DATA_PROCESS_QUERY_SCHEMA_KEYS:
-        if not _query_schema_values_equal(final_data[key], track_process[key]):
-            raise ValueError(f"track_process_data.pkl query schema key {key} does not match final_data.pkl")
-
-    c2ws = _load_pickle(case / "calibrate.pkl")
-    if len(c2ws) != 1 or np.asarray(c2ws[0]).shape != (4, 4):
-        raise ValueError("calibrate.pkl must contain one 4x4 camera-to-world matrix")
-
-    metadata = json.loads((case / "metadata.json").read_text(encoding="utf-8"))
-    intrinsics = np.asarray(metadata.get("intrinsics"), dtype=np.float32)
-    if intrinsics.shape != (1, 3, 3):
-        raise ValueError("metadata.json intrinsics must have shape 1,3,3")
-    frame_count = int(np.asarray(final_data["object_points"]).shape[0])
-    if int(metadata.get("frame_num", -1)) != frame_count:
-        raise ValueError("metadata.json frame_num must match final_data frame count")
-
-    return {
-        "valid": True,
-        "case_dir": str(case),
-        "frame_count": frame_count,
-        "object_point_count": int(np.asarray(final_data["object_points"]).shape[1]),
-        "controller_point_count": int(np.asarray(final_data["controller_points"]).shape[1]),
-        "surface_point_count": int(np.asarray(final_data["surface_points"]).shape[0]),
-        "interior_point_count": int(np.asarray(final_data["interior_points"]).shape[0]),
-    }
-
-
 __all__ = [
     "DATA_PROCESS_FINAL_DATA_KEYS",
     "DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION",
@@ -1122,7 +792,6 @@ __all__ = [
     "DATA_PROCESS_TRACK_PROCESS_KEYS",
     "DATA_PROCESS_SAM3D_METRICS",
     "DataProcessChunk",
+    "build_data_process_chunk_payload",
     "build_query_schema_payload",
-    "validate_data_process_case",
-    "write_data_process_chunk_case",
 ]

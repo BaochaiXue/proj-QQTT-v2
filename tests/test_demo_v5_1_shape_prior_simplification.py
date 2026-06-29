@@ -49,7 +49,7 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
             ROOT / "demo_v5_1" / "shape_prior_align.py",
             ROOT / "demo_v5_1" / "shape_prior_match_pairs.py",
             ROOT / "demo_v5_1" / "shape_prior_sample.py",
-            ROOT / "demo_v5_1" / "runtime_warmup.py",
+            ROOT / "demo_v5_1" / "main_warmup.py",
         )
         for path in expected_files:
             with self.subTest(path=path.name):
@@ -67,7 +67,7 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
             with self.subTest(path=path.name):
                 self.assertFalse(path.exists())
 
-        for path in expected_files + (ROOT / "demo_v5_1" / "realtime_dense_track.py",):
+        for path in expected_files + (ROOT / "demo_v5_1" / "main_data_processing.py",):
             source = path.read_text(encoding="utf-8")
             with self.subTest(path=path.name):
                 self.assertNotIn("qqtt.demo.shape_prior", source)
@@ -228,7 +228,7 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
 
         checked_files = (
             ROOT / "demo_v5_1" / "shape_prior_warmup.py",
-            ROOT / "demo_v5_1" / "realtime_dense_track.py",
+            ROOT / "demo_v5_1" / "main_data_processing.py",
             ROOT / "demo_v5_1" / "data_process_chunk_writer.py",
         )
         for path in checked_files:
@@ -255,7 +255,7 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
                 )
 
     def test_shape_prior_controller_name_has_no_warmup_default(self) -> None:
-        from demo_v5_1 import realtime_dense_track
+        from demo_v5_1 import main_data_processing
         from demo_v5_1 import shape_prior_warmup
 
         self.assertFalse(
@@ -270,11 +270,11 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
                 controller_name="",
             )
 
-        parser = realtime_dense_track.build_parser()
+        parser = main_data_processing.build_parser()
         args = parser.parse_args(["--shape-prior-warmup"])
         self.assertIsNone(args.shape_prior_controller_name)
         with self.assertRaisesRegex(ValueError, "--shape-prior-controller-name"):
-            realtime_dense_track.validate_args(args)
+            main_data_processing.validate_args(args)
 
     def test_removed_demo_v51_shape_prior_cli_flags_are_rejected(self) -> None:
         from demo_v5_1 import main as runner

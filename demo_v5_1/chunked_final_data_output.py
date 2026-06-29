@@ -7,7 +7,6 @@ static case for tools that expect a normal final_data directory.
 from __future__ import annotations
 
 from pathlib import Path
-import pickle
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -18,7 +17,6 @@ from demo_v5_1.data_process_chunk_writer import (
     DATA_PROCESS_QUERY_SCHEMA_KEYS,
     build_query_schema_payload,
 )
-from demo_v5_1.chunked_final_data_aggregate import FinalDataAggregateWriter
 from demo_v5_1.utils.atomic_io import atomic_json_dump, atomic_pickle_dump
 
 STATIC_KEYS = (
@@ -238,10 +236,6 @@ class ChunkedFinalDataWriter:
         self.version = 0
         self._time_arrays: dict[str, list[np.ndarray]] = {key: [] for key in TIME_KEYS}
         self._static_arrays: dict[str, Any] = {}
-        self._aggregate_writer = FinalDataAggregateWriter(
-            self.static_case_dir,
-            allow_degraded=self.allow_degraded,
-        )
         self.chunks_dir.mkdir(parents=True, exist_ok=True)
         self.static_case_dir.mkdir(parents=True, exist_ok=True)
         self._write_manifest(status="recording")
@@ -297,48 +291,31 @@ class ChunkedFinalDataWriter:
             "online_manifest": manifest,
         }
 
-    def commit_case_chunk(
+    def commit_final_data_with_track(
         self,
-        case_dir: str | Path,
+        final_data: Mapping[str, Any],
+        track_process: Mapping[str, Any],
         *,
         source_frame_indices: Sequence[int] | None = None,
         source_timestamps_s: Sequence[float] | None = None,
         status: str = "recording",
     ) -> dict[str, Any]:
-        """Commit a validated chunk case and mirror it into the aggregate case."""
-        # Offline parity with data_process_sam3d/data_process_track.py:L462-L463
-        # and data_process_sam3d/data_process_sample.py:L437-L440. Those paths
-        # write the completed per-case pickles. Demo v5.1 loads those same
-        # pickles before appending online data.
-        chunk_case_dir = Path(case_dir)
-        self._aggregate_writer.validate_next_chunk_case(chunk_case_dir)
-        with (chunk_case_dir / "final_data.pkl").open("rb") as handle:
-            final_data = dict(pickle.load(handle))
-        with (chunk_case_dir / "track_process_data.pkl").open("rb") as handle:
-            track_process = dict(pickle.load(handle))
-        # Online chunks include final_data tensors plus diagnostic track fields;
-        # the aggregate case still stores final_data and track_process_data as
-        # separate files through FinalDataAggregateWriter.
-        online_data = {**final_data, **_track_diagnostics(track_process)}
-        result = self.commit_final_data_chunk(
+        """Commit one in-memory final_data window plus track diagnostics."""
+        online_data = {
+            **dict(final_data),
+            **_track_diagnostics(track_process),
+        }
+        return self.commit_final_data_chunk(
             online_data,
             source_frame_indices=source_frame_indices,
             source_timestamps_s=source_timestamps_s,
             status=status,
         )
-        aggregate_manifest = self._aggregate_writer.add_chunk_case(chunk_case_dir)
-        result["aggregate_case_dir"] = str(self.static_case_dir)
-        result["aggregate_manifest"] = aggregate_manifest
-        return result
 
     def finish(self) -> dict[str, Any]:
-        """Publish a finished online manifest and finalize the aggregate case."""
-        aggregate_manifest = self._aggregate_writer.finish()
+        """Publish a finished online manifest."""
         self.version += 1
-        manifest = self._write_manifest(status="finished")
-        if aggregate_manifest is not None:
-            manifest["aggregate_case_dir"] = str(self.static_case_dir)
-        return manifest
+        return self._write_manifest(status="finished")
 
     def _append_static_data(self, data: Mapping[str, Any], *, frame_count: int) -> None:
         """Update data/<case>/final_data.pkl as a prefix aggregate."""
@@ -391,7 +368,7 @@ class ChunkedFinalDataWriter:
         metadata = {
             "case_name": self.case_name,
             "demo_version": "demo_v5_1",
-            "runtime_product_name": "demo_v5_1_realtime_dense_track",
+            "runtime_product_name": "demo_v5_1_main_data_processing",
             "runtime_contract": DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
             "reference_pipeline": "data_process_sam3d",
             "online_dir": str(self.online_dir),
@@ -411,7 +388,7 @@ class ChunkedFinalDataWriter:
         manifest = {
             "case_name": self.case_name,
             "demo_version": "demo_v5_1",
-            "runtime_product_name": "demo_v5_1_realtime_dense_track",
+            "runtime_product_name": "demo_v5_1_main_data_processing",
             "runtime_contract": DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
             "reference_pipeline": "data_process_sam3d",
             "status": str(status),
