@@ -100,7 +100,6 @@ COMMON_ASSET_PATHS = (
     "vendor/demo_runtime/checkpoints/tapnextpp/tapnextpp_ckpt.pt",
     "vendor/demo_runtime/checkpoints/sam31/sam3.1_multiplex.pt",
     "vendor/demo_runtime/checkpoints/sam31/bpe_simple_vocab_16e6.txt.gz",
-    "realtime_phystwin/train_online_zero_then_first.py",
     "table_calibrate.pkl",
 )
 
@@ -111,7 +110,6 @@ SHAPE_PRIOR_ASSET_PATHS = (
     "vendor/demo_runtime/stable-diffusion-x4-upscaler/text_encoder/model.safetensors",
     "vendor/demo_runtime/stable-diffusion-x4-upscaler/unet/diffusion_pytorch_model.safetensors",
     "vendor/demo_runtime/stable-diffusion-x4-upscaler/vae/diffusion_pytorch_model.safetensors",
-    "vendor/demo_runtime/FuturePhysTwin",
     "vendor/demo_runtime/dinov2",
     "vendor/demo_runtime/checkpoints/dinov2/dinov2_vitl14_reg4_pretrain.pth",
     "vendor/demo_runtime/checkpoints/MoGe-vitl/model.pt",
@@ -181,20 +179,6 @@ def _check_main_source_imports() -> list[str]:
             errors.append(f"load EdgeTAM config: {type(exc).__name__}: {exc}")
         else:
             print("[ok] load EdgeTAM config: import-ok")
-    phystwin_root = REPO_ROOT / "realtime_phystwin"
-    phystwin_root_s = str(phystwin_root)
-    if phystwin_root_s not in sys.path:
-        sys.path.insert(0, phystwin_root_s)
-    for name in (
-        "optimize_online_cma",
-        "train_online_warp",
-    ):
-        try:
-            module = importlib.import_module(name)
-        except Exception as exc:
-            errors.append(f"import {name} from realtime_phystwin: {type(exc).__name__}: {exc}")
-            continue
-        print(f"[ok] import {name} from realtime_phystwin: {_version(module)}")
     return errors
 
 
@@ -343,7 +327,9 @@ def _check_gsplat_runtime_smoke() -> list[str]:
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the Demo v5.1 environment-check CLI parser."""
-    parser = argparse.ArgumentParser(description="Check Demo v5 runtime environment and repo-local assets.")
+    parser = argparse.ArgumentParser(
+        description="Check Demo v5 runtime environment and repo-local assets."
+    )
     parser.add_argument("--role", choices=("main", "shape-prior", "all"), default="all")
     parser.add_argument("--require-cuda", action="store_true")
     return parser

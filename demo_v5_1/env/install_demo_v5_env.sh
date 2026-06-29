@@ -103,16 +103,6 @@ install_main_compiled_extras() {
             PYTORCH3D_DISABLE_PULSAR=1 \
             python -m pip install --no-build-isolation --no-deps "${PYTORCH3D_SOURCE}"
 
-    local ext
-    for ext in \
-        "${REPO_ROOT}/realtime_phystwin/gaussian_splatting/submodules/simple-knn" \
-        "${REPO_ROOT}/realtime_phystwin/gaussian_splatting/submodules/diff-gaussian-rasterization"
-    do
-        rm -rf "${ext}/build"
-        conda run -n "${MAIN_ENV}" --no-capture-output \
-            env "${build_env[@]}" \
-                python -m pip install --no-build-isolation --no-deps "${ext}"
-    done
 }
 
 install_shape_prior_compiled_extras() {

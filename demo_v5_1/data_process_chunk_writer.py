@@ -1,6 +1,6 @@
 """Write and validate Demo v5.1 data_process_sam3d-compatible chunk cases.
 
-The writer produces the same file names realtime_phystwin expects
+The writer produces the Demo v5.1 realtime data_process file set
 (``final_data.pkl``, ``track_process_data.pkl``, ``tracking/0.npz``,
 ``mask/processed_masks.pkl``, and camera metadata) while keeping Demo v5.1's
 query schema explicit in every chunk.
@@ -130,10 +130,9 @@ DATA_PROCESS_SAM3D_METRICS = {
     "controller_final_count": 30,
     "object_sampling_source": "data_process_sam3d/data_process_sample.py::process_unique_points",
     "object_volume_sample_size_m": 0.005,
-    "shape_prior_sampling_backend": "sam3d-single-view",
     "shape_prior_sampling_source": "data_process_sam3d/data_process_sample.py",
-    "shape_prior_target_surface_points": 700,
-    "shape_prior_target_interior_points": 1000,
+    "shape_prior_target_surface_points": 1024,
+    "shape_prior_interior_candidate_points": 10000,
     "shape_prior_volume_sample_size_m": 0.005,
     "shape_prior_configured_max_dist_m": 0.05,
     "shape_prior_effective_max_dist_m": 0.05,
@@ -531,7 +530,7 @@ def _final_data_payload(
     surface_points: np.ndarray,
     interior_points: np.ndarray,
 ) -> dict[str, np.ndarray]:
-    """Assemble the final_data.pkl contract consumed by realtime_phystwin."""
+    """Assemble the realtime final_data.pkl contract."""
     # Offline parity with data_process_sam3d/data_process_sample.py:L250-L352.
     # That path reduces track_process_data into final_data.pkl, carrying object
     # samples, controller handles, and optional surface/interior shape-prior
@@ -644,7 +643,9 @@ def _quality_manifest_fields(
         track_process.get("controller_mask", np.ones((controller_points.shape[1],), dtype=bool)),
         dtype=bool,
     )
-    target_counts_met = bool(surface_points.shape[0] >= 700 and interior_points.shape[0] >= 1000)
+    shape_prior_fields_present = bool(
+        surface_points.shape[0] > 0 and interior_points.shape[0] > 0
+    )
     payload = {
         "object_point_count": int(object_points.shape[1]),
         "controller_point_count": int(controller_points.shape[1]),
@@ -652,9 +653,8 @@ def _quality_manifest_fields(
         "controller_valid_candidate_count": int(np.count_nonzero(controller_mask)),
         "surface_point_count": int(surface_points.shape[0]),
         "interior_point_count": int(interior_points.shape[0]),
-        "shape_prior_fields_present": bool(surface_points.shape[0] > 0 and interior_points.shape[0] > 0),
-        "shape_prior_target_counts_met": target_counts_met,
-        "shape_prior_complete": target_counts_met,
+        "shape_prior_fields_present": shape_prior_fields_present,
+        "shape_prior_complete": shape_prior_fields_present,
         "object_points_finite": bool(np.isfinite(object_points).all()),
         "controller_points_finite": bool(np.isfinite(controller_points).all()),
         "shape_prior_points_finite": bool(np.isfinite(surface_points).all() and np.isfinite(interior_points).all()),
@@ -789,7 +789,7 @@ def write_data_process_chunk_case(
         # the realtime chunk case.
         # Keep the same query schema hash in both payloads. This is the guard that
         # lets the online aggregate concatenate chunks without changing query
-        # semantic identity under realtime_phystwin.
+        # semantic identity.
         for key in DATA_PROCESS_QUERY_SCHEMA_KEYS:
             track_process[key] = final_data[key]
         with (staging / "track_process_data.pkl").open("wb") as handle:
@@ -1049,7 +1049,7 @@ def _validate_final_shapes(payload: Mapping[str, np.ndarray]) -> None:
 
 
 def validate_data_process_case(case_dir: str | Path, *, require_ready: bool = False) -> dict[str, Any]:
-    """Check that a chunk or aggregate case is ready for realtime_phystwin."""
+    """Check that a chunk or aggregate case is ready for final_data readers."""
     case = Path(case_dir)
     if require_ready and not (case / "READY").is_file():
         raise ValueError(f"missing READY marker for data_process_sam3d case: {case / 'READY'}")

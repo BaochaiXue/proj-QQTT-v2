@@ -4,7 +4,7 @@ This folder contains the install and verification material for Demo v5. Demo v5
 uses two environments:
 
 - `demo_2_max`: main camera/fake-camera, tracking, chunk writer, and
-  `realtime_phystwin` optimization environment.
+  visualizer environment.
 - `phystwin-max`: managed SAM3D shape-prior worker environment.
 
 Use existing validated environments when they are already present:
@@ -22,7 +22,7 @@ The shape-prior `--require-cuda` check validates that `nvcc` is reachable throug
 `gsplat.rasterization` call. This intentionally warms `gsplat_cuda` before the
 first SAM3D request so a missing compiler or broken JIT cache fails during
 environment validation instead of surfacing as a SAM3D layout
-post-optimization error.
+postprocess error.
 
 Create environments on a new machine:
 
@@ -69,5 +69,4 @@ If the shape-prior checker reports a missing `nvcc`, rerun
 `bin/nvcc` matches the active PyTorch CUDA stack before running SAM3D.
 
 The checker also verifies that repo-local runtime assets exist under
-`vendor/demo_runtime/` and that `realtime_phystwin/train_online_zero_then_first.py`
-is available.
+`vendor/demo_runtime/`.

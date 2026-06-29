@@ -804,7 +804,7 @@ class MaskedPcdPacket:
     source_step: int | None = None
     shape_prior_points_m: np.ndarray = field(default_factory=lambda: np.empty((0, 3), dtype=np.float32))
     shape_prior_colors_rgb_u8: np.ndarray = field(default_factory=lambda: np.empty((0, 3), dtype=np.uint8))
-    shape_prior_status: str = shape_prior_warmup.SHAPE_PRIOR_STATUS_DISABLED
+    shape_prior_status: str = shape_prior_warmup.STATUS_DISABLED
     shape_prior_profile: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -2158,14 +2158,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable the optional SAM3D shape-prior warmup request path.",
     )
     parser.set_defaults(shape_prior_warmup=False)
-    parser.add_argument("--shape-prior-endpoint", default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_ENDPOINT)
     parser.add_argument(
         "--shape-prior-timeout-ms",
         type=int,
         default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
     )
     parser.add_argument("--shape-prior-profile-json", type=Path, default=None)
-    parser.add_argument("--shape-prior-device", default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_DEVICE)
+    parser.add_argument(
+        "--shape-prior-warmup-cuda-visible-devices",
+        default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
+    )
+    parser.add_argument(
+        "--shape-prior-controller-name",
+        default=None,
+    )
+    parser.add_argument("--shape-prior-sam3d-root", type=Path, default=None)
+    parser.add_argument("--shape-prior-config", type=Path, default=None)
     parser.add_argument(
         "--shape-prior-skip-route-visualizations",
         dest="shape_prior_skip_route_visualizations",
@@ -2562,6 +2570,11 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--recording-case/--fake-live-case requires --input-source recording or fake-live")
     if args.demo_preset == "local-ffs-professor" and args.depth_source != "ffs":
         raise ValueError("--demo-preset local-ffs-professor requires --depth-source ffs")
+    if bool(args.shape_prior_warmup) and not str(args.shape_prior_controller_name or "").strip():
+        raise ValueError(
+            "--shape-prior-controller-name is required when --shape-prior-warmup "
+            "is enabled"
+        )
     if str(args.controller_instance_mode) not in CONTROLLER_INSTANCE_MODES:
         raise ValueError(f"--controller-instance-mode must be one of {', '.join(CONTROLLER_INSTANCE_MODES)}")
     if str(args.controller_instance_mode) == CONTROLLER_INSTANCE_MODE_TWO_HANDS and not controller_tracking_enabled(args):
@@ -4082,21 +4095,21 @@ class RealtimeMaskedEdgeTamPcdDemo:
         enabled = bool(getattr(self.args, "shape_prior_warmup", False))
         client = None
         if enabled:
-            client = shape_prior_warmup.ShapePriorRemoteClient(
-                endpoint=str(
+            headless_dir = getattr(self.args, "headless_capture_dir", None)
+            if headless_dir is None:
+                raise RuntimeError("shape-prior warmup requires --headless-capture-dir")
+            client = shape_prior_warmup.ShapePriorLocalClient(
+                case_root=Path(headless_dir) / "shape_prior_case",
+                cuda_visible_devices=str(
                     getattr(
                         self.args,
-                        "shape_prior_endpoint",
-                        shape_prior_warmup.DEFAULT_SHAPE_PRIOR_ENDPOINT,
+                        "shape_prior_warmup_cuda_visible_devices",
+                        shape_prior_warmup.DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
                     )
                 ),
-                timeout_ms=int(
-                    getattr(
-                        self.args,
-                        "shape_prior_timeout_ms",
-                        shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
-                    )
-                ),
+                controller_name=str(self.args.shape_prior_controller_name),
+                sam3d_root=getattr(self.args, "shape_prior_sam3d_root", None),
+                sam3d_config=getattr(self.args, "shape_prior_config", None),
             )
         return shape_prior_warmup.ShapePriorWarmupManager(
             enabled=enabled,
@@ -4118,8 +4131,6 @@ class RealtimeMaskedEdgeTamPcdDemo:
             payload["depth_backend"] = depth_backend_label(self.args)
         if payload.get("depth_source_internal") is None:
             payload["depth_source_internal"] = str(getattr(self.args, "depth_source", ""))
-        if payload.get("shape_backend") is None and bool(getattr(self.args, "shape_prior_warmup", False)):
-            payload["shape_backend"] = shape_prior_warmup.SHAPE_BACKEND_SAM3D_OBJECTS
         return payload
 
     def _write_shape_prior_profile_json(self, profile: dict[str, Any] | None = None) -> None:
@@ -4287,13 +4298,25 @@ class RealtimeMaskedEdgeTamPcdDemo:
             "mask_backend": "edgetam",
             "depth_backend": depth_backend_label(self.args),
             "shape_prior_enabled": bool(shape_profile.get("shape_prior_enabled", False)),
-            "shape_prior_status": str(shape_profile.get("shape_prior_status", shape_prior_warmup.SHAPE_PRIOR_STATUS_DISABLED)),
-            "shape_backend": shape_profile.get("shape_backend"),
-            "shape_prior_endpoint": str(getattr(self.args, "shape_prior_endpoint", "")),
+            "shape_prior_status": str(
+                shape_profile.get(
+                    "shape_prior_status",
+                    shape_prior_warmup.STATUS_DISABLED,
+                )
+            ),
             "shape_prior_timeout_ms": int(
                 getattr(self.args, "shape_prior_timeout_ms", shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS)
             ),
-            "shape_prior_device": str(getattr(self.args, "shape_prior_device", "")),
+            "shape_prior_warmup_cuda_visible_devices": str(
+                getattr(
+                    self.args,
+                    "shape_prior_warmup_cuda_visible_devices",
+                    shape_prior_warmup.DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
+                )
+            ),
+            "shape_prior_controller_name": str(
+                getattr(self.args, "shape_prior_controller_name", "")
+            ),
             "shape_prior_skip_route_visualizations": bool(
                 getattr(self.args, "shape_prior_skip_route_visualizations", True)
             ),
@@ -4492,15 +4515,9 @@ class RealtimeMaskedEdgeTamPcdDemo:
             self.ffs_remote_client = None
         if self.remote_quality_client is not None:
             self.remote_quality_client.close()
-            self.remote_quality_client = None
+        self.remote_quality_client = None
         self._run_deferred_shape_prior_after_teardown()
         self._write_shape_prior_profile_json()
-        shape_prior_client = getattr(self.shape_prior_manager, "client", None)
-        if shape_prior_client is not None and hasattr(shape_prior_client, "close"):
-            try:
-                shape_prior_client.close()
-            except Exception:
-                pass
         self.headless_capture_writer = None
         if self.filter_worker is not None:
             self.filter_worker.stop()
@@ -5801,14 +5818,16 @@ class RealtimeMaskedEdgeTamPcdDemo:
                 packet,
                 shape_prior_points_m=np.ascontiguousarray(result.points_m, dtype=np.float32).reshape(-1, 3),
                 shape_prior_colors_rgb_u8=np.ascontiguousarray(result.colors_rgb_u8, dtype=np.uint8).reshape(-1, 3),
-                shape_prior_status=shape_prior_warmup.SHAPE_PRIOR_STATUS_READY,
+                shape_prior_status=shape_prior_warmup.STATUS_READY,
                 shape_prior_profile=profile,
             )
         return replace(
             packet,
             shape_prior_points_m=np.empty((0, 3), dtype=np.float32),
             shape_prior_colors_rgb_u8=np.empty((0, 3), dtype=np.uint8),
-            shape_prior_status=str(profile.get("shape_prior_status", shape_prior_warmup.SHAPE_PRIOR_STATUS_DISABLED)),
+            shape_prior_status=str(
+                profile.get("shape_prior_status", shape_prior_warmup.STATUS_DISABLED)
+            ),
             shape_prior_profile=profile,
         )
 

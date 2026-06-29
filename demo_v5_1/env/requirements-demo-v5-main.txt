@@ -42,5 +42,5 @@ pycocotools==2.0.10
 # sam3 is installed by install_demo_v5_env.sh with --no-deps so pip does not
 # downgrade the Demo v5 main NumPy stack; its compatible runtime dependencies
 # are pinned above instead.
-# PyTorch3D and FuturePhysTwin's CUDA extensions are built from local source by
-# install_demo_v5_env.sh so they match the main env's Torch/CUDA ABI.
+# PyTorch3D is built from local source by install_demo_v5_env.sh so it matches
+# the main env's Torch/CUDA ABI.

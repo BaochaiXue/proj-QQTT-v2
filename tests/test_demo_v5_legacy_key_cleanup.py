@@ -86,39 +86,42 @@ class DemoV5LegacyKeyCleanupTests(unittest.TestCase):
                 with self.assertRaises(ModuleNotFoundError):
                     importlib.import_module(f"{package}.data_process_schema")
 
-    def test_demo_v51_atomic_io_helpers_live_under_tools(self) -> None:
+    def test_demo_v51_atomic_io_helpers_live_under_utils(self) -> None:
         importlib.invalidate_caches()
         with self.assertRaises(ModuleNotFoundError):
             importlib.import_module("demo_v5_1.atomic_io")
+        with self.assertRaises(ModuleNotFoundError):
+            importlib.import_module("demo_v5_1.tools.atomic_io")
 
-        helpers = importlib.import_module("demo_v5_1.tools.atomic_io")
+        helpers = importlib.import_module("demo_v5_1.utils.atomic_io")
         self.assertTrue(hasattr(helpers, "atomic_json_dump"))
         self.assertTrue(hasattr(helpers, "atomic_pickle_dump"))
 
-    def test_demo_v51_shape_prior_worker_lives_with_demo_runtime(self) -> None:
+    def test_demo_v51_shape_prior_warmup_lives_with_demo_runtime(self) -> None:
         root = Path(__file__).resolve().parents[1]
         old_worker_path = root / "services" / "shape_prior_remote" / "server.py"
 
-        self.assertTrue((root / "demo_v5_1" / "shape_prior_worker.py").is_file())
+        self.assertTrue((root / "demo_v5_1" / "shape_prior_warmup.py").is_file())
+        self.assertFalse((root / "demo_v5_1" / "shape_prior_worker.py").exists())
         self.assertFalse(old_worker_path.exists())
 
-    def test_demo_v51_shape_prior_worker_uses_demo_relative_repo_root(self) -> None:
+    def test_demo_v51_shape_prior_warmup_uses_demo_relative_repo_root(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        source = (root / "demo_v5_1" / "shape_prior_worker.py").read_text(
+        source = (root / "demo_v5_1" / "shape_prior_warmup.py").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn("current_path.parent.parent", source)
+        self.assertIn("Path(__file__).resolve().parents[1]", source)
         self.assertNotIn("QQTT_REPO_ROOT", source)
         self.assertNotIn('(root / "services").is_dir()', source)
 
-    def test_demo_v51_shape_prior_worker_uses_local_shape_prior_helpers(self) -> None:
+    def test_demo_v51_shape_prior_warmup_uses_local_shape_prior_helpers(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        source = (root / "demo_v5_1" / "shape_prior_worker.py").read_text(
+        source = (root / "demo_v5_1" / "shape_prior_warmup.py").read_text(
             encoding="utf-8"
         )
 
-        self.assertTrue((root / "demo_v5_1" / "shape_prior.py").is_file())
+        self.assertFalse((root / "demo_v5_1" / "shape_prior.py").exists())
         self.assertFalse((root / "demo_v5_1" / "shape_prior_runtime.py").exists())
         self.assertFalse((root / "demo_v5_1" / "shape_prior_rpc.py").exists())
         self.assertFalse((root / "demo_v5_1" / "single_view_shape_align.py").exists())
@@ -128,7 +131,9 @@ class DemoV5LegacyKeyCleanupTests(unittest.TestCase):
         self.assertNotIn("from qqtt.demo", source)
         self.assertNotIn("import qqtt.demo", source)
         self.assertNotIn("services.shape_prior_remote", source)
-        self.assertIn("from demo_v5_1.shape_prior import", source)
+        self.assertIn("demo_v5_1.shape_prior_generate", source)
+        self.assertIn("demo_v5_1.shape_prior_align", source)
+        self.assertIn("demo_v5_1.shape_prior_sample", source)
 
     def test_legacy_final_data_key_is_rejected_instead_of_normalized(self) -> None:
         for package in DEMO_PACKAGES:

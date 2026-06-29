@@ -1,4 +1,4 @@
-"""Publish Demo v5.1 chunks in the online format consumed by realtime_phystwin.
+"""Publish Demo v5.1 chunks in the online final_data format.
 
 The online stream has two views of the same data: small per-window chunk pickle
 files for low-latency readers, and a continuously rewritten ``data/<case>``
@@ -19,7 +19,7 @@ from demo_v5_1.data_process_chunk_writer import (
     build_query_schema_payload,
 )
 from demo_v5_1.chunked_final_data_aggregate import FinalDataAggregateWriter
-from demo_v5_1.tools.atomic_io import atomic_json_dump, atomic_pickle_dump
+from demo_v5_1.utils.atomic_io import atomic_json_dump, atomic_pickle_dump
 
 STATIC_KEYS = (
     "surface_points",

@@ -9,7 +9,7 @@ import unittest
 
 class DemoV51ToolsIoTest(unittest.TestCase):
     def test_load_pickle_and_json_read_standard_artifacts(self) -> None:
-        from demo_v5_1.tools.io import load_json, load_pickle
+        from demo_v5_1.utils.io import load_json, load_pickle
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             base = Path(tmp_dir)

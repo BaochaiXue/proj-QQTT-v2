@@ -50,6 +50,4 @@ vendor/demo_runtime/tapnet
 vendor/demo_runtime/checkpoints/tapnextpp/tapnextpp_ckpt.pt
 vendor/demo_runtime/sam-3d-objects
 vendor/demo_runtime/stable-diffusion-x4-upscaler
-vendor/demo_runtime/FuturePhysTwin
-realtime_phystwin/train_online_zero_then_first.py
 table_calibrate.pkl

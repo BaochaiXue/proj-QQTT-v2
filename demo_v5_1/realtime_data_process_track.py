@@ -2,8 +2,7 @@
 
 The camera process appends ``frames.jsonl`` and prepared per-frame NPZ payloads.
 This bridge tails that stream, waits for the shape prior only at chunk materialize
-time, and publishes both per-window cases and the online aggregate output used
-by realtime_phystwin.
+time, and publishes both per-window cases and the online aggregate output.
 """
 from __future__ import annotations
 
@@ -641,7 +640,7 @@ def _track_input_with_session_query_schema(
 
     The first chunk fixes the query id/semantic-label arrays. Later chunks must
     reuse the same arrays so online output can be concatenated without changing
-    the object/controller topology underneath realtime_phystwin.
+    object/controller topology.
     """
     # Offline parity with data_process_sam3d/data_process_track.py:L58-L118.
     # That stage labels first-frame tracks by object/controller masks and lifts

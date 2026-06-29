@@ -68,9 +68,12 @@ FORBIDDEN_DATA_PROCESS_FILES = [
     "shape_prior.py",
 ]
 
-DEMO32_SHAPE_PRIOR_CARVEOUTS = [
-    "demo_v5_1/shape_prior.py",
-    "demo_v5_1/shape_prior_worker.py",
+DEMO_SHAPE_PRIOR_CARVEOUTS = [
+    "demo_v5_1/shape_prior_warmup.py",
+    "demo_v5_1/shape_prior_generate.py",
+    "demo_v5_1/shape_prior_align.py",
+    "demo_v5_1/shape_prior_match_pairs.py",
+    "demo_v5_1/shape_prior_sample.py",
     "qqtt/demo/shape_prior_warmup.py",
     "qqtt/demo/single_view_shape_align.py",
 ]
@@ -149,10 +152,10 @@ def check_data_process_scope(errors: list[str]) -> None:
             errors.append(f"Forbidden data_process file still present: data_process/{name}")
 
 
-def check_demo32_shape_prior_carveout(errors: list[str]) -> None:
-    for relative in DEMO32_SHAPE_PRIOR_CARVEOUTS:
+def check_demo_shape_prior_carveout(errors: list[str]) -> None:
+    for relative in DEMO_SHAPE_PRIOR_CARVEOUTS:
         if not (ROOT / relative).exists():
-            errors.append(f"Missing Demo 3.2 shape-prior carveout path: {relative}")
+            errors.append(f"Missing demo shape-prior carveout path: {relative}")
     for relative in FORMAL_RECORDING_ALIGNMENT_FILES:
         path = ROOT / relative
         if not path.exists():
@@ -215,7 +218,7 @@ def main() -> int:
     check_absent(FORBIDDEN_TOP_LEVEL_FILES, errors)
     check_top_level_patterns(errors)
     check_data_process_scope(errors)
-    check_demo32_shape_prior_carveout(errors)
+    check_demo_shape_prior_carveout(errors)
     check_qqtt_exports(errors)
     check_readme_scope(errors)
     check_env_install(errors)
