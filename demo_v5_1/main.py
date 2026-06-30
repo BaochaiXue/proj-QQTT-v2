@@ -6,6 +6,7 @@ actual camera/tracker stack runs in ``demo_v5_1/main_data_processing.py``;
 SAM3D shape prior warmup runs as local one-shot stages; the default
 side-by-side visualizer starts as soon as capture starts.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,7 +19,6 @@ import shutil
 import subprocess
 import sys
 import time
-from datetime import datetime
 from typing import Sequence
 
 import numpy as np
@@ -91,7 +91,9 @@ DEFAULT_SHAPE_PRIOR_CHUNK_WAIT_TIMEOUT_S = float(
 CONFIG_SHAPE_PRIOR_CONTROLLER_NAME = str(
     _cfg("shape_prior", "shape_prior_controller_name")
 )
-DEFAULT_SHAPE_PRIOR_SAM3D_ROOT = _cfg_optional_path("shape_prior", "shape_prior_sam3d_root")
+DEFAULT_SHAPE_PRIOR_SAM3D_ROOT = _cfg_optional_path(
+    "shape_prior", "shape_prior_sam3d_root"
+)
 DEFAULT_SHAPE_PRIOR_CONFIG = _cfg_optional_path("shape_prior", "shape_prior_config")
 DEFAULT_MASK_RADIUS_OUTLIER_RADIUS_M = float(
     _cfg("camera", "mask_radius_outlier_radius_m")
@@ -112,19 +114,11 @@ DEFAULT_PERCEPTION_DEVICE = str(_cfg("camera", "perception_device"))
 DEFAULT_TRACKER_DEVICE = str(_cfg("camera", "tracker_device"))
 DEFAULT_INFERENCE_DTYPE = str(_cfg("camera", "inference_dtype"))
 DEFAULT_VISUALIZER_MODE = str(_cfg("visualizer", "visualizer_mode"))
-DEFAULT_VISUALIZER_CONDA_ENV = str(
-    _cfg("visualizer", "visualizer_conda_env")
-)
+DEFAULT_VISUALIZER_CONDA_ENV = str(_cfg("visualizer", "visualizer_conda_env"))
 DEFAULT_VISUALIZER_CAM_IDX = int(_cfg("visualizer", "visualizer_cam_idx"))
-DEFAULT_VISUALIZER_POLL_SEC = float(
-    _cfg("visualizer", "visualizer_poll_sec")
-)
-DEFAULT_VISUALIZER_OBJECT_STRIDE = int(
-    _cfg("visualizer", "visualizer_object_stride")
-)
-DEFAULT_VISUALIZER_OBJECT_RADIUS = int(
-    _cfg("visualizer", "visualizer_object_radius")
-)
+DEFAULT_VISUALIZER_POLL_SEC = float(_cfg("visualizer", "visualizer_poll_sec"))
+DEFAULT_VISUALIZER_OBJECT_STRIDE = int(_cfg("visualizer", "visualizer_object_stride"))
+DEFAULT_VISUALIZER_OBJECT_RADIUS = int(_cfg("visualizer", "visualizer_object_radius"))
 DEFAULT_VISUALIZER_CONTROLLER_RADIUS = int(
     _cfg("visualizer", "visualizer_controller_radius")
 )
@@ -134,19 +128,22 @@ DEFAULT_VISUALIZER_OBJECT_COLOR_MODE = str(
 VISUALIZER_LAYOUT_SIDE_BY_SIDE = str(
     _cfg("visualizer", "visualizer_layout_side_by_side")
 )
-VISUALIZER_LAYOUT_OUTPUT_ONLY = str(
-    _cfg("visualizer", "visualizer_layout_output_only")
-)
+VISUALIZER_LAYOUT_OUTPUT_ONLY = str(_cfg("visualizer", "visualizer_layout_output_only"))
 VISUALIZER_LAYOUTS = tuple(
     str(item) for item in _cfg("visualizer", "visualizer_layouts")
 )
 DEFAULT_VISUALIZER_LAYOUT = str(_cfg("visualizer", "visualizer_layout"))
-DEFAULT_VISUALIZER_RENDER_MODE = str(
-    _cfg("visualizer", "visualizer_render_mode")
-)
+DEFAULT_VISUALIZER_RENDER_MODE = str(_cfg("visualizer", "visualizer_render_mode"))
 DEFAULT_TABLE_CALIBRATE_PATH = Path(str(_cfg("paths", "table_calibrate_path")))
 DEFAULT_SAM31_CHECKPOINT_PATH = Path(str(_cfg("paths", "sam31_checkpoint_path")))
 SAM31_CHECKPOINT_ENV = str(_cfg("paths", "sam31_checkpoint_env"))
+
+CAPTURE_DIR_NAME = "capture"
+DATA_DIR_NAME = "data"
+ONLINE_DATA_DIR_NAME = "online_data"
+SHAPE_PRIOR_CASE_DIR_NAME = "shape_prior_case"
+SHAPE_PRIOR_DIR_NAME = "shape_prior"
+RUN_SUMMARY_NAME = "run_summary.json"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -203,7 +200,9 @@ def build_parser() -> argparse.ArgumentParser:
             "are always diagnostic-only."
         ),
     )
-    parser.add_argument("--base-path", type=Path, default=DEFAULT_DATA_PROCESS_BASE_PATH)
+    parser.add_argument(
+        "--base-path", type=Path, default=DEFAULT_DATA_PROCESS_BASE_PATH
+    )
     parser.add_argument("--case-prefix", default=DEFAULT_CASE_PREFIX)
     parser.add_argument(
         "--main-data-processing-cuda-visible-devices",
@@ -416,8 +415,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--visualizer-cuda-visible-devices",
         default=DEFAULT_VISUALIZER_CUDA_VISIBLE_DEVICES,
     )
-    parser.add_argument("--visualizer-cam-idx", type=int, default=DEFAULT_VISUALIZER_CAM_IDX)
-    parser.add_argument("--visualizer-poll-sec", type=float, default=DEFAULT_VISUALIZER_POLL_SEC)
+    parser.add_argument(
+        "--visualizer-cam-idx", type=int, default=DEFAULT_VISUALIZER_CAM_IDX
+    )
+    parser.add_argument(
+        "--visualizer-poll-sec", type=float, default=DEFAULT_VISUALIZER_POLL_SEC
+    )
     parser.add_argument(
         "--visualizer-object-stride",
         type=int,
@@ -548,10 +551,9 @@ def resolve_write_input_rgb_timeline(args: argparse.Namespace) -> bool:
     value = getattr(args, "write_input_rgb_timeline", None)
     if value is not None:
         return bool(value)
-    return (
-        str(getattr(args, "visualizer_mode", DEFAULT_VISUALIZER_MODE)) == "window"
-        and visualizer_uses_side_by_side(args)
-    )
+    return str(
+        getattr(args, "visualizer_mode", DEFAULT_VISUALIZER_MODE)
+    ) == "window" and visualizer_uses_side_by_side(args)
 
 
 def _repo_path(path: str | Path) -> Path:
@@ -587,7 +589,7 @@ def build_visualizer_command(
         "--online-dir",
         str(resolve_online_dir(args)),
         "--case-dir",
-        str(Path(args.base_path) / "data" / str(args.case_prefix)),
+        str(resolve_static_data_dir(args)),
         "--render-mode",
         str(args.visualizer_render_mode),
         "--cam-idx",
@@ -629,13 +631,33 @@ def _load_optional_points(path: Path | None) -> np.ndarray | None:
 
 
 def resolve_online_dir(args: argparse.Namespace) -> Path:
-    """Return the online_data directory for the active case."""
-    return Path(args.base_path) / "online_data" / str(args.case_prefix)
+    """Return the fixed online_data directory."""
+    return Path(args.base_path) / ONLINE_DATA_DIR_NAME
+
+
+def resolve_static_data_dir(args: argparse.Namespace) -> Path:
+    """Return the fixed aggregate data directory."""
+    return Path(args.base_path) / DATA_DIR_NAME
 
 
 def resolve_static_data_path(args: argparse.Namespace) -> Path:
-    """Return the aggregate final_data.pkl path for the active case."""
-    return Path(args.base_path) / "data" / str(args.case_prefix) / "final_data.pkl"
+    """Return the aggregate final_data.pkl path."""
+    return resolve_static_data_dir(args) / "final_data.pkl"
+
+
+def resolve_shape_prior_case_root(args: argparse.Namespace) -> Path:
+    """Return the fixed shape-prior case root."""
+    return Path(args.base_path) / SHAPE_PRIOR_CASE_DIR_NAME
+
+
+def resolve_shape_prior_points_npz(args: argparse.Namespace) -> Path:
+    """Return the fixed shape-prior points export path."""
+    return Path(args.base_path) / SHAPE_PRIOR_DIR_NAME / "points.npz"
+
+
+def resolve_run_summary_path(base_path: str | Path) -> Path:
+    """Return the fixed run summary path."""
+    return Path(base_path) / RUN_SUMMARY_NAME
 
 
 def _remove_generated_path(path: Path) -> bool:
@@ -648,20 +670,28 @@ def _remove_generated_path(path: Path) -> bool:
     return False
 
 
-def prepare_realtime_output_for_new_capture(
+def prepare_realtime_output_for_new_run(
     base_path: str | Path,
-    case_prefix: str,
+    *,
+    clear_capture: bool,
+    legacy_case_prefix: str,
 ) -> dict[str, object]:
-    """Remove stale generated outputs for a new live/fake-live run of one case."""
+    """Remove stale generated outputs before writing fixed Demo v5.1 paths."""
     base = Path(base_path)
-    case_name = str(case_prefix)
-    removed_online_dir = _remove_generated_path(base / "online_data" / case_name)
-    removed_data_dir = _remove_generated_path(base / "data" / case_name)
-    removed_manifest = _remove_generated_path(base / f"{case_name}_chunks_manifest.json")
+    cleanup_paths = {
+        "capture": base / CAPTURE_DIR_NAME,
+        "shape_prior_case": base / SHAPE_PRIOR_CASE_DIR_NAME,
+        "shape_prior": base / SHAPE_PRIOR_DIR_NAME,
+        "data": base / DATA_DIR_NAME,
+        "online_data": base / ONLINE_DATA_DIR_NAME,
+        "run_summary": resolve_run_summary_path(base),
+        "legacy_chunks_manifest": base / f"{legacy_case_prefix}_chunks_manifest.json",
+    }
+    if not bool(clear_capture):
+        cleanup_paths.pop("capture")
     return {
-        "removed_online_dir": bool(removed_online_dir),
-        "removed_data_dir": bool(removed_data_dir),
-        "removed_manifest": bool(removed_manifest),
+        f"removed_{name}": bool(_remove_generated_path(path))
+        for name, path in cleanup_paths.items()
     }
 
 
@@ -674,7 +704,9 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "replay_fps": float(args.replay_fps),
         "camera_source_replay_fps": resolve_camera_source_replay_fps(args),
         "camera_source_replay_fps_override": (
-            None if args.camera_source_replay_fps is None else float(args.camera_source_replay_fps)
+            None
+            if args.camera_source_replay_fps is None
+            else float(args.camera_source_replay_fps)
         ),
         "chunk_seconds": float(args.chunk_seconds),
         "chunk_poll_interval_s": float(args.chunk_poll_interval_s),
@@ -685,10 +717,12 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "output_format": "online-primary-static-case",
         "online_dir": str(resolve_online_dir(args)),
         "static_data_path": str(resolve_static_data_path(args)),
+        "shape_prior_case_root": str(resolve_shape_prior_case_root(args)),
+        "shape_prior_points_npz": str(resolve_shape_prior_points_npz(args)),
         "max_chunks": args.max_chunks,
         "depth_backend": str(args.depth_backend),
-        "main_data_processing_capture_dir": (
-            None if args.camera_capture_dir is None else str(args.camera_capture_dir)
+        "main_data_processing_capture_dir": str(
+            _default_capture_dir(args, Path(args.base_path))
         ),
         "main_data_processing_cuda_visible_devices": (
             resolve_main_data_processing_cuda_visible_devices(args)
@@ -705,12 +739,16 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         ),
         "shape_prior_controller_name": str(args.shape_prior_controller_name),
         "shape_prior_sam3d_root": (
-            None if args.shape_prior_sam3d_root is None else str(args.shape_prior_sam3d_root)
+            None
+            if args.shape_prior_sam3d_root is None
+            else str(args.shape_prior_sam3d_root)
         ),
         "shape_prior_config": (
             None if args.shape_prior_config is None else str(args.shape_prior_config)
         ),
-        "shape_prior_chunk_wait_timeout_s": float(args.shape_prior_chunk_wait_timeout_s),
+        "shape_prior_chunk_wait_timeout_s": float(
+            args.shape_prior_chunk_wait_timeout_s
+        ),
         "mask_radius_outlier_filter": bool(args.mask_radius_outlier_filter),
         "mask_radius_outlier_radius_m": float(args.mask_radius_outlier_radius_m),
         "mask_radius_outlier_nb_points": int(args.mask_radius_outlier_nb_points),
@@ -722,7 +760,9 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "visualizer_mode": str(args.visualizer_mode),
         "visualizer_layout": resolve_visualizer_layout(args),
         "visualizer_command": build_visualizer_command(args),
-        "visualizer_cuda_visible_devices": resolve_visualizer_cuda_visible_devices(args),
+        "visualizer_cuda_visible_devices": resolve_visualizer_cuda_visible_devices(
+            args
+        ),
         "visualizer_start_policy": visualizer_start_policy(args),
         "visualizer_capture_dir": None,
         "visualizer_fps": float(args.replay_fps),
@@ -874,10 +914,16 @@ def build_main_data_processing_command(
                 resolve_shape_prior_warmup_cuda_visible_devices(args),
                 "--shape-prior-controller-name",
                 str(args.shape_prior_controller_name),
+                "--shape-prior-case-root",
+                str(resolve_shape_prior_case_root(args)),
+                "--shape-prior-points-npz",
+                str(resolve_shape_prior_points_npz(args)),
             ]
         )
         if args.shape_prior_sam3d_root is not None:
-            command.extend(["--shape-prior-sam3d-root", str(args.shape_prior_sam3d_root)])
+            command.extend(
+                ["--shape-prior-sam3d-root", str(args.shape_prior_sam3d_root)]
+            )
         if args.shape_prior_config is not None:
             command.extend(["--shape-prior-config", str(args.shape_prior_config)])
         if bool(args.shape_prior_skip_route_visualizations):
@@ -892,8 +938,7 @@ def build_main_data_processing_command(
 def _default_capture_dir(args: argparse.Namespace, base_path: Path) -> Path:
     if args.camera_capture_dir is not None:
         return Path(args.camera_capture_dir)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return base_path / f"{args.case_prefix}_camera_capture_{stamp}"
+    return base_path / CAPTURE_DIR_NAME
 
 
 def _stop_process(process: subprocess.Popen[bytes]) -> int | None:
@@ -962,12 +1007,13 @@ def _runtime_chunk_summary(manifests: Sequence[dict[str, object]]) -> dict[str, 
     ]
     quality_order = {"normal": 0, "degraded": 1, "invalid": 2}
     quality_values = [
-        str(item.get("track_process_status", "normal"))
-        for item in manifests
+        str(item.get("track_process_status", "normal")) for item in manifests
     ]
     track_process_status = "normal"
     if quality_values:
-        track_process_status = max(quality_values, key=lambda value: quality_order.get(value, -1))
+        track_process_status = max(
+            quality_values, key=lambda value: quality_order.get(value, -1)
+        )
     quality_counts = {
         status: int(sum(1 for value in quality_values if value == status))
         for status in ("normal", "degraded", "invalid")
@@ -990,7 +1036,11 @@ def _runtime_chunk_summary(manifests: Sequence[dict[str, object]]) -> dict[str, 
         "track_process_invalid_chunk_count": int(len(invalid_chunks)),
         "track_process_invalid_chunks": invalid_chunks,
         "online_publish_skipped_chunk_count": int(
-            sum(1 for item in manifests if bool(item.get("online_publish_skipped", False)))
+            sum(
+                1
+                for item in manifests
+                if bool(item.get("online_publish_skipped", False))
+            )
         ),
     }
 
@@ -1008,12 +1058,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     base_path = Path(args.base_path)
     base_path.mkdir(parents=True, exist_ok=True)
-    startup_realtime_case_cleanup = None
-    if args.source_headless_capture is None:
-        startup_realtime_case_cleanup = prepare_realtime_output_for_new_capture(
-            base_path,
-            str(args.case_prefix),
-        )
+    startup_output_cleanup = prepare_realtime_output_for_new_run(
+        base_path,
+        clear_capture=args.source_headless_capture is None,
+        legacy_case_prefix=str(args.case_prefix),
+    )
     if args.source_headless_capture is not None:
         # Offline conversion path: consume an existing capture directory and
         # write online/static final_data products without launching camera or
@@ -1041,6 +1090,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "output_format": "online-primary-static-case",
             "online_dir": str(resolve_online_dir(args)),
             "static_data_path": str(resolve_static_data_path(args)),
+            "shape_prior_case_root": str(resolve_shape_prior_case_root(args)),
+            "shape_prior_points_npz": str(resolve_shape_prior_points_npz(args)),
+            "startup_output_cleanup": startup_output_cleanup,
             "chunk_frame_count": int(chunk_frame_count),
             "allow_degraded_online": bool(args.allow_degraded_online),
             "max_chunks": args.max_chunks,
@@ -1048,13 +1100,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             "chunks": manifests,
         }
         summary.update(_runtime_chunk_summary(manifests))
-        summary_path = base_path / f"{args.case_prefix}_chunks_manifest.json"
+        summary_path = resolve_run_summary_path(base_path)
         summary_path.write_text(
             json.dumps(summary, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         print(json.dumps(summary, indent=2, sort_keys=True))
-        return 1 if str(summary.get("track_process_status", "normal")) == "invalid" else 0
+        return (
+            1 if str(summary.get("track_process_status", "normal")) == "invalid" else 0
+        )
 
     capture_dir = _default_capture_dir(args, base_path)
     capture_dir.mkdir(parents=True, exist_ok=True)
@@ -1146,14 +1200,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             allow_degraded_online=bool(args.allow_degraded_online),
         )
     finally:
-        main_data_processing_return_code = _stop_process(
-            main_data_processing
-        )
+        main_data_processing_return_code = _stop_process(main_data_processing)
         if visualizer_process is not None:
             visualizer_return_code = visualizer_process.poll()
             visualizer_left_running = visualizer_return_code is None
     runtime_summary = _runtime_chunk_summary(manifests)
-    track_process_invalid = str(runtime_summary.get("track_process_status", "normal")) == "invalid"
+    track_process_invalid = (
+        str(runtime_summary.get("track_process_status", "normal")) == "invalid"
+    )
     if track_process_invalid:
         stop_reason = "track_process_invalid"
     elif args.max_chunks is not None and len(manifests) >= int(args.max_chunks):
@@ -1180,21 +1234,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         "write_input_rgb_timeline": resolve_write_input_rgb_timeline(args),
         "camera_source_replay_fps": resolve_camera_source_replay_fps(args),
         "camera_source_replay_fps_override": (
-            None if args.camera_source_replay_fps is None else float(args.camera_source_replay_fps)
+            None
+            if args.camera_source_replay_fps is None
+            else float(args.camera_source_replay_fps)
         ),
         "shape_prior_warmup_cuda_visible_devices": (
             resolve_shape_prior_warmup_cuda_visible_devices(args)
         ),
         "shape_prior_controller_name": str(args.shape_prior_controller_name),
         "shape_prior_sam3d_root": (
-            None if args.shape_prior_sam3d_root is None else str(args.shape_prior_sam3d_root)
+            None
+            if args.shape_prior_sam3d_root is None
+            else str(args.shape_prior_sam3d_root)
         ),
         "shape_prior_config": (
             None if args.shape_prior_config is None else str(args.shape_prior_config)
         ),
-        "main_data_processing_return_code": (
-            main_data_processing_return_code
-        ),
+        "main_data_processing_return_code": (main_data_processing_return_code),
         "main_data_processing_stop_reason": stop_reason,
         "main_data_processing_capture_dir": str(capture_dir),
         "base_path": str(base_path),
@@ -1202,7 +1258,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "output_format": "online-primary-static-case",
         "online_dir": str(resolve_online_dir(args)),
         "static_data_path": str(resolve_static_data_path(args)),
-        "startup_realtime_case_cleanup": startup_realtime_case_cleanup,
+        "shape_prior_case_root": str(resolve_shape_prior_case_root(args)),
+        "shape_prior_points_npz": str(resolve_shape_prior_points_npz(args)),
+        "startup_output_cleanup": startup_output_cleanup,
         "chunk_frame_count": int(chunk_frame_count),
         "chunk_poll_interval_s": float(args.chunk_poll_interval_s),
         "allow_degraded_online": bool(args.allow_degraded_online),
@@ -1216,21 +1274,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         "visualizer_layout": resolve_visualizer_layout(args),
         "visualizer_started": visualizer_started,
         "visualizer_start_policy": visualizer_start_policy(args),
-        "visualizer_capture_dir": str(capture_dir) if visualizer_uses_side_by_side(args) else None,
+        "visualizer_capture_dir": str(capture_dir)
+        if visualizer_uses_side_by_side(args)
+        else None,
         "visualizer_started_from_chunk": visualizer_started_manifest,
         "visualizer_start_wall_s": visualizer_start_wall_s,
         "visualizer_command": build_visualizer_command(
             args,
             capture_dir=capture_dir if visualizer_uses_side_by_side(args) else None,
         ),
-        "visualizer_cuda_visible_devices": resolve_visualizer_cuda_visible_devices(args),
+        "visualizer_cuda_visible_devices": resolve_visualizer_cuda_visible_devices(
+            args
+        ),
         "visualizer_fps": float(args.replay_fps),
         "visualizer_object_color_mode": str(args.visualizer_object_color_mode),
         "visualizer_return_code": visualizer_return_code,
         "visualizer_left_running": visualizer_left_running,
     }
     summary.update(runtime_summary)
-    summary_path = base_path / f"{args.case_prefix}_chunks_manifest.json"
+    summary_path = resolve_run_summary_path(base_path)
     summary_path.write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",

@@ -27,6 +27,7 @@ DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES = "1"
 CASE_NAME = "shape_prior_frame0"
 DEFAULT_SURFACE_POINT_COUNT = 1024
 DEFAULT_VOLUME_SAMPLE_SIZE_M = 0.005
+POINTS_NPZ = Path("outputs") / "shape_prior" / "points.npz"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -170,6 +171,35 @@ def _case_dir(case_root: Path, case_name: str) -> Path:
     return Path(case_root) / str(case_name)
 
 
+def _points_array(value: np.ndarray, *, name: str) -> np.ndarray:
+    points = np.asarray(value, dtype=np.float32)
+    if points.size == 0:
+        return np.empty((0, 3), dtype=np.float32)
+    if points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError(f"{name} must have shape Nx3")
+    return np.ascontiguousarray(points, dtype=np.float32)
+
+
+def write_shape_prior_points_npz(
+    path: str | Path,
+    *,
+    surface_points: np.ndarray,
+    interior_points: np.ndarray,
+) -> Path:
+    output_path = Path(path)
+    surface = _points_array(surface_points, name="surface_points")
+    interior = _points_array(interior_points, name="interior_points")
+    points = np.concatenate([surface, interior], axis=0)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        output_path,
+        surface_points=surface,
+        interior_points=interior,
+        points=np.ascontiguousarray(points, dtype=np.float32),
+    )
+    return output_path
+
+
 def write_shape_prior_case(
     frame0: ShapePriorFrame0Request,
     *,
@@ -285,6 +315,7 @@ class ShapePriorLocalClient:
         controller_name: str,
         cuda_visible_devices: str = DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
         case_name: str = CASE_NAME,
+        points_npz: str | Path = POINTS_NPZ,
         sam3d_root: str | Path | None = None,
         sam3d_config: str | Path | None = None,
     ) -> None:
@@ -292,6 +323,7 @@ class ShapePriorLocalClient:
         self.cuda_visible_devices = str(cuda_visible_devices)
         self.controller_name = _require_controller_name(controller_name)
         self.case_name = str(case_name)
+        self.points_npz = Path(points_npz)
         self.sam3d_root = None if sam3d_root is None else Path(sam3d_root)
         self.sam3d_config = None if sam3d_config is None else Path(sam3d_config)
 
@@ -358,14 +390,22 @@ class ShapePriorLocalClient:
         with final_data_path.open("rb") as handle:
             final_data = pickle.load(handle)
 
-        surface = np.asarray(final_data["surface_points"], dtype=np.float32).reshape(-1, 3)
-        interior = np.asarray(final_data["interior_points"], dtype=np.float32).reshape(-1, 3)
-        object_points = np.asarray(final_data["object_points"], dtype=np.float32).reshape(-1, 3)
-        points = np.concatenate([surface, interior, object_points], axis=0)
-        colors = np.tile(np.array([[86, 180, 233]], dtype=np.uint8), (points.shape[0], 1))
+        surface = _points_array(final_data["surface_points"], name="surface_points")
+        interior = _points_array(final_data["interior_points"], name="interior_points")
+        points = np.concatenate([surface, interior], axis=0)
+        write_shape_prior_points_npz(
+            self.points_npz,
+            surface_points=surface,
+            interior_points=interior,
+        )
+        colors = np.tile(
+            np.array([[86, 180, 233]], dtype=np.uint8),
+            (points.shape[0], 1),
+        )
         metadata = {
             **timings,
             "shape_prior_case_dir": str(paths["case"]),
+            "shape_prior_points_npz": str(self.points_npz),
             "shape_prior_warmup_cuda_visible_devices": self.cuda_visible_devices,
             "shape_prior_controller_name": self.controller_name,
             "shape_prior_surface_point_count": int(surface.shape[0]),
@@ -469,6 +509,7 @@ class ShapePriorWarmupManager:
 __all__ = [
     "DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES",
     "DEFAULT_SHAPE_PRIOR_TIMEOUT_MS",
+    "POINTS_NPZ",
     "STATUS_DISABLED",
     "STATUS_FAILED",
     "STATUS_PENDING",
@@ -480,4 +521,5 @@ __all__ = [
     "ShapePriorWarmupManager",
     "default_profile",
     "write_shape_prior_case",
+    "write_shape_prior_points_npz",
 ]

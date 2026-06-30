@@ -133,7 +133,9 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
         self.assertFalse(hasattr(parsed, "gpu_mode"))
         self.assertFalse(hasattr(parsed, "realtime_gpu_mode"))
         self.assertFalse(hasattr(parsed, "warmup_gpu_mode"))
-        self.assertFalse(hasattr(parsed, "_".join(("camera", "cuda", "visible", "devices"))))
+        self.assertFalse(
+            hasattr(parsed, "_".join(("camera", "cuda", "visible", "devices")))
+        )
         self.assertFalse(
             hasattr(parsed, "_".join(("shape", "prior", "cuda", "visible", "devices")))
         )
@@ -247,6 +249,10 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
         )
         self.assertIn("--shape-prior-controller-name", command)
         self.assertIn(runner.CONFIG_SHAPE_PRIOR_CONTROLLER_NAME, command)
+        self.assertIn("--shape-prior-case-root", command)
+        self.assertIn(str(Path(tmpdir) / "shape_prior_case"), command)
+        self.assertIn("--shape-prior-points-npz", command)
+        self.assertIn(str(Path(tmpdir) / "shape_prior" / "points.npz"), command)
         self.assertNotIn("shape_prior_worker.py", " ".join(command))
         self.assertNotIn("--shape-prior-endpoint", command)
         self.assertNotIn("--shape-prior-device", command)
@@ -269,6 +275,23 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
 
         contract = json.loads(stdout.getvalue())
         self.assertEqual(0, exit_code)
+        self.assertEqual(
+            str(Path(tmpdir) / "capture"),
+            contract["main_data_processing_capture_dir"],
+        )
+        self.assertEqual(str(Path(tmpdir) / "online_data"), contract["online_dir"])
+        self.assertEqual(
+            str(Path(tmpdir) / "data" / "final_data.pkl"),
+            contract["static_data_path"],
+        )
+        self.assertEqual(
+            str(Path(tmpdir) / "shape_prior_case"),
+            contract["shape_prior_case_root"],
+        )
+        self.assertEqual(
+            str(Path(tmpdir) / "shape_prior" / "points.npz"),
+            contract["shape_prior_points_npz"],
+        )
         self.assertTrue(contract["shape_prior_warmup"])
         self.assertEqual(
             runner.DEFAULT_MAIN_DATA_PROCESSING_CUDA_VISIBLE_DEVICES,
@@ -336,7 +359,9 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
             hasattr(runner, "_".join(("DEFAULT", "REALTIME", "PHYSTWIN", "ROOT")))
         )
         self.assertEqual(defaults["input"]["input_source"], runner.DEFAULT_INPUT_SOURCE)
-        self.assertEqual(float(defaults["input"]["replay_fps"]), runner.DEFAULT_REPLAY_FPS)
+        self.assertEqual(
+            float(defaults["input"]["replay_fps"]), runner.DEFAULT_REPLAY_FPS
+        )
         self.assertEqual(
             float(defaults["chunking"]["chunk_seconds"]),
             runner.DEFAULT_CHUNK_SECONDS,
@@ -349,7 +374,9 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
             float(defaults["input"]["camera_source_replay_fps"]),
             runner.DEFAULT_CAMERA_SOURCE_REPLAY_FPS,
         )
-        self.assertEqual(int(defaults["camera"]["camera_fps"]), runner.DEFAULT_CAMERA_FPS)
+        self.assertEqual(
+            int(defaults["camera"]["camera_fps"]), runner.DEFAULT_CAMERA_FPS
+        )
         self.assertEqual(
             tuple(defaults["camera"]["camera_fps_choices"]),
             runner.CAMERA_FPS_CHOICES,
@@ -363,7 +390,9 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
             runner.DEFAULT_CAMERA_COLOR_GAIN,
         )
         self.assertEqual(defaults["camera"]["case_prefix"], runner.DEFAULT_CASE_PREFIX)
-        self.assertEqual(defaults["camera"]["depth_backend"], runner.DEFAULT_DEPTH_BACKEND)
+        self.assertEqual(
+            defaults["camera"]["depth_backend"], runner.DEFAULT_DEPTH_BACKEND
+        )
         self.assertIsNone(runner.DEFAULT_MAX_CHUNKS)
         self.assertEqual(
             int(defaults["shape_prior"]["shape_prior_timeout_ms"]),
@@ -440,7 +469,9 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
             defaults["camera"]["perception_device"],
             runner.DEFAULT_PERCEPTION_DEVICE,
         )
-        self.assertEqual(defaults["camera"]["tracker_device"], runner.DEFAULT_TRACKER_DEVICE)
+        self.assertEqual(
+            defaults["camera"]["tracker_device"], runner.DEFAULT_TRACKER_DEVICE
+        )
         self.assertEqual(
             defaults["camera"]["inference_dtype"],
             runner.DEFAULT_INFERENCE_DTYPE,
@@ -543,7 +574,9 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
             Path(defaults["paths"]["sam31_checkpoint_path"]),
             runner.DEFAULT_SAM31_CHECKPOINT_PATH,
         )
-        self.assertEqual(defaults["paths"]["sam31_checkpoint_env"], runner.SAM31_CHECKPOINT_ENV)
+        self.assertEqual(
+            defaults["paths"]["sam31_checkpoint_env"], runner.SAM31_CHECKPOINT_ENV
+        )
 
 
 if __name__ == "__main__":

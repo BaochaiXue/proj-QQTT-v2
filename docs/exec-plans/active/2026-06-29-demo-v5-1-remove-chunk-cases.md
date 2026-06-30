@@ -1,45 +1,55 @@
-# Demo v5.1 Remove Data-Process Chunk Cases
+# Demo v5.1 Flatten Output Paths
 
 ## Requirement
 
 Problem:
-Demo v5.1 currently materializes every realtime window as a full
-data_process-compatible case named `demo_v5_1_chunk_XXXX`. That artifact was not
-approved and is not part of the needed realtime flow.
+Demo v5.1 outputs are nested under run-specific capture directories and
+case-prefix directories. That makes the active shape-prior, online chunks, and
+aggregate final data hard to inspect.
 
 Required final behavior:
-Realtime chunking must publish only the online chunk stream and the growing
-`data/<case>/final_data.pkl` view. It must not create `demo_v5_1_chunk_XXXX`
-case directories, `track_process_data.pkl`, `mask/processed_masks.pkl`,
-`tracking/0.npz`, or per-window case metadata for each chunk.
+Demo v5.1 writes the user-visible products to fixed paths under `outputs/`:
+
+- `outputs/shape_prior_case/shape_prior_frame0/final_data.pkl`
+- `outputs/shape_prior/points.npz`
+- `outputs/data/final_data.pkl`
+- `outputs/online_data/chunks/chunk_000000.pkl`
+
+The capture producer may use `outputs/capture/` for `frames.jsonl`,
+`prepared_phystwin/`, and metadata. That directory is internal scratch, not a
+final result directory.
 
 Inputs:
-Existing headless capture frames, prepared per-frame payloads, masks, tracks,
-shape-prior points, and CLI chunk settings.
+Existing live/fake-live capture frames, source-headless captures, shape-prior
+surface/interior arrays, chunk settings, and visualizer settings.
 
 Outputs:
-`online_data/<case>/chunks/chunk_*.pkl`, `online_data/<case>/manifest.json`,
-and `data/<case>/final_data.pkl`.
+Fixed `outputs/` paths above plus `outputs/online_data/manifest.json` and
+`outputs/run_summary.json`.
 
 State changes:
-Remove the runtime dependency on case-directory chunk publishing and aggregate
-from in-memory final_data/track_process payloads.
+Each new live/fake-live run clears stale `capture`, `shape_prior_case`,
+`shape_prior`, `data`, and `online_data` outputs before writing. Source-headless
+conversion clears generated outputs but does not delete the source capture.
 
 Invalid cases:
 Keep existing fail-fast validation for malformed chunk tensors, changed query
 schema, invalid/degraded track status, and missing required shape prior.
 
 Constraints:
-Do not add a compatibility switch. Do not preserve the old case-directory path.
-Do not revert unrelated in-progress local changes.
+Do not add compatibility switches. Do not preserve case-prefix output
+directories. Do not change shape-prior geometry behavior in this path-only
+change.
 
 Unknowns:
 None affecting correctness.
 
 ## Plan
 
-- [ ] Replace per-window case writing with an in-memory final_data builder.
-- [ ] Make online output commit final_data plus diagnostics directly.
-- [ ] Remove aggregate-from-chunk-case runtime wiring and stale CLI text.
-- [ ] Update tests/docs to assert no chunk-case writer path remains.
-- [ ] Run focused tests and syntax checks.
+- [x] Flatten online chunk and aggregate final-data writer paths.
+- [x] Fix orchestrator capture, cleanup, and run-summary paths.
+- [x] Route shape-prior case and points export to fixed `outputs/` paths.
+- [x] Update visualizer path inference for flat `online_data`.
+- [x] Update focused tests for fixed output paths and pure shape-prior
+      `points.npz`.
+- [x] Run focused compile/unit validation.

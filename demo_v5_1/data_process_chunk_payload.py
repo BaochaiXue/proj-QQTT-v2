@@ -3,6 +3,7 @@
 Demo v5.1 publishes online chunks directly. It no longer materializes each
 window as a data_process-style case directory.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -12,7 +13,9 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 DATA_PROCESS_QUERY_SCHEMA_VERSION = "data_process_sam3d_realtime_query_schema_v1"
-DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION = "data_process_sam3d_realtime_final_data_v1"
+DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION = (
+    "data_process_sam3d_realtime_final_data_v1"
+)
 TRACK_PROCESS_STATUSES = ("normal", "degraded", "invalid")
 # Query schema fields are static over an online run. The hash is intentionally
 # part of both final_data and track_process_data so readers can reject mixed
@@ -87,9 +90,7 @@ CONTROLLER_CANDIDATE_TIME_KEYS = (
     "controller_measurement_valid",
     "controller_motions_valid",
 )
-CONTROLLER_CANDIDATE_POINT_KEYS = (
-    "controller_raw_points",
-)
+CONTROLLER_CANDIDATE_POINT_KEYS = ("controller_raw_points",)
 CONTROLLER_TRACK_TIME_KEYS = (
     "controller_source_query_ids",
     "controller_track_mode",
@@ -102,13 +103,13 @@ CONTROLLER_TRACK_TIME_KEYS = (
     "controller_neighbor_motion_valid_count",
     "controller_neighbor_fit_residual",
 )
-CONTROLLER_TRACK_STATIC_KEYS = (
-    "controller_neighbor_query_ids",
-)
+CONTROLLER_TRACK_STATIC_KEYS = ("controller_neighbor_query_ids",)
 
 DATA_PROCESS_SAM3D_METRICS = {
     "runtime_contract": DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
-    "mask_radius_outlier_filter_source": "data_process_sam3d/data_process_mask.py::process_pcd_mask",
+    "mask_radius_outlier_filter_source": (
+        "data_process_sam3d/data_process_mask.py::process_pcd_mask"
+    ),
     "mask_radius_outlier_radius_m": 0.01,
     "mask_radius_outlier_nb_points": 40,
     "semantic_filter": "first_frame_object_controller_labels_then_per_frame_mask_visibility",
@@ -138,8 +139,12 @@ class DataProcessChunk:
     """In-memory representation of one fixed-size realtime final_data window."""
 
     track_process_data: Mapping[str, np.ndarray]
-    surface_points: np.ndarray = field(default_factory=lambda: np.empty((0, 3), dtype=np.float64))
-    interior_points: np.ndarray = field(default_factory=lambda: np.empty((0, 3), dtype=np.float64))
+    surface_points: np.ndarray = field(
+        default_factory=lambda: np.empty((0, 3), dtype=np.float64)
+    )
+    interior_points: np.ndarray = field(
+        default_factory=lambda: np.empty((0, 3), dtype=np.float64)
+    )
     fps: int = 5
     serial_number: str = "demo-v5-single-camera"
     depth_backend: str = ""
@@ -148,9 +153,13 @@ class DataProcessChunk:
     source_frame_indices: Sequence[int] | None = None
 
 
-def _array(name: str, value: Any, shape_tail: tuple[int, ...] | None = None) -> np.ndarray:
+def _array(
+    name: str, value: Any, shape_tail: tuple[int, ...] | None = None
+) -> np.ndarray:
     arr = np.asarray(value)
-    if shape_tail is not None and tuple(arr.shape[-len(shape_tail):]) != tuple(shape_tail):
+    if shape_tail is not None and tuple(arr.shape[-len(shape_tail) :]) != tuple(
+        shape_tail
+    ):
         raise ValueError(f"{name} must end with shape {shape_tail}, got {arr.shape}")
     return np.ascontiguousarray(arr)
 
@@ -176,8 +185,17 @@ def _int_vector(value: Any, *, default: np.ndarray | None = None) -> np.ndarray:
 def _query_schema_hash(payload: Mapping[str, Any]) -> str:
     """Hash query identity fields that must stay stable across online chunks."""
     digest = hashlib.sha256()
-    digest.update(_scalar_str(payload.get("query_schema_version", DATA_PROCESS_QUERY_SCHEMA_VERSION)).encode("utf-8"))
-    for key in ("query_ids", "query_semantic_labels", "object_sample_query_ids", "controller_sample_query_ids"):
+    digest.update(
+        _scalar_str(
+            payload.get("query_schema_version", DATA_PROCESS_QUERY_SCHEMA_VERSION)
+        ).encode("utf-8")
+    )
+    for key in (
+        "query_ids",
+        "query_semantic_labels",
+        "object_sample_query_ids",
+        "controller_sample_query_ids",
+    ):
         arr = np.ascontiguousarray(np.asarray(payload[key]))
         digest.update(str(arr.dtype).encode("utf-8"))
         digest.update(str(arr.shape).encode("utf-8"))
@@ -202,21 +220,36 @@ def build_query_schema_payload(
 ) -> dict[str, Any]:
     """Build query-id metadata shared by final_data and track_process_data."""
     track_process_data = dict(track_process_data)
-    object_points = np.asarray(track_process_data.get("object_points", np.empty((0, 0, 3))))
-    controller_points = np.asarray(track_process_data.get("controller_points", np.empty((0, 0, 3))))
+    object_points = np.asarray(
+        track_process_data.get("object_points", np.empty((0, 0, 3)))
+    )
+    controller_points = np.asarray(
+        track_process_data.get("controller_points", np.empty((0, 0, 3)))
+    )
     object_count = int(object_points.shape[1]) if object_points.ndim >= 2 else 0
-    controller_count = int(controller_points.shape[1]) if controller_points.ndim >= 2 else 0
+    controller_count = (
+        int(controller_points.shape[1]) if controller_points.ndim >= 2 else 0
+    )
 
     # Prepared v5.1 frames usually carry explicit query identity. Synthetic or
     # reconstructed inputs can still derive ids from object/controller query
     # arrays before the canonical payload is written.
-    if "query_ids" in track_process_data and "query_semantic_labels" in track_process_data:
-        query_ids = np.ascontiguousarray(np.asarray(track_process_data["query_ids"], dtype=np.int64).reshape(-1))
+    if (
+        "query_ids" in track_process_data
+        and "query_semantic_labels" in track_process_data
+    ):
+        query_ids = np.ascontiguousarray(
+            np.asarray(track_process_data["query_ids"], dtype=np.int64).reshape(-1)
+        )
         query_semantic_labels = np.ascontiguousarray(
-            np.asarray(track_process_data["query_semantic_labels"], dtype=np.int8).reshape(-1)
+            np.asarray(
+                track_process_data["query_semantic_labels"], dtype=np.int8
+            ).reshape(-1)
         )
         if query_ids.shape != query_semantic_labels.shape:
-            raise ValueError("query_ids and query_semantic_labels must have matching shape")
+            raise ValueError(
+                "query_ids and query_semantic_labels must have matching shape"
+            )
     else:
         object_query_ids = _int_vector(
             track_process_data.get(
@@ -230,9 +263,13 @@ def build_query_schema_payload(
                 "controller_candidate_query_ids",
                 track_process_data.get("controller_query_indices"),
             ),
-            default=np.arange(object_count, object_count + controller_count, dtype=np.int64),
+            default=np.arange(
+                object_count, object_count + controller_count, dtype=np.int64
+            ),
         )
-        query_ids = np.ascontiguousarray(np.concatenate([object_query_ids, controller_query_ids]), dtype=np.int64)
+        query_ids = np.ascontiguousarray(
+            np.concatenate([object_query_ids, controller_query_ids]), dtype=np.int64
+        )
         query_semantic_labels = np.ascontiguousarray(
             np.concatenate(
                 [
@@ -254,7 +291,9 @@ def build_query_schema_payload(
             "controller_candidate_query_ids",
             track_process_data.get("controller_query_indices"),
         ),
-        default=np.arange(object_count, object_count + controller_count, dtype=np.int64),
+        default=np.arange(
+            object_count, object_count + controller_count, dtype=np.int64
+        ),
     )
 
     if object_sample_query_ids is None:
@@ -284,7 +323,9 @@ def build_query_schema_payload(
         "query_schema_version": DATA_PROCESS_QUERY_SCHEMA_VERSION,
         "query_ids": query_ids,
         "query_semantic_labels": query_semantic_labels,
-        "object_sample_query_ids": np.ascontiguousarray(np.asarray(object_sample_query_ids, dtype=np.int64).reshape(-1)),
+        "object_sample_query_ids": np.ascontiguousarray(
+            np.asarray(object_sample_query_ids, dtype=np.int64).reshape(-1)
+        ),
         "controller_sample_query_ids": np.ascontiguousarray(
             np.asarray(controller_sample_query_ids, dtype=np.int64).reshape(-1)
         ),
@@ -293,7 +334,9 @@ def build_query_schema_payload(
     return payload
 
 
-def _track_process_payload(track_process_data: Mapping[str, np.ndarray]) -> dict[str, Any]:
+def _track_process_payload(
+    track_process_data: Mapping[str, np.ndarray],
+) -> dict[str, Any]:
     """Normalize strict tracking output into data_process_sam3d track payload."""
     # Offline parity with data_process_sam3d/data_process_track.py:L127-L135
     # and L321-L322. That path assembles object/controller point, color, and
@@ -321,7 +364,9 @@ def _track_process_payload(track_process_data: Mapping[str, np.ndarray]) -> dict
         if key == "controller_motions_valid":
             continue
         if key in track_process_data:
-            payload[key] = np.ascontiguousarray(np.asarray(track_process_data[key], dtype=bool))
+            payload[key] = np.ascontiguousarray(
+                np.asarray(track_process_data[key], dtype=bool)
+            )
     controller_motion_source = track_process_data.get(
         "controller_candidate_motions_valid",
         track_process_data.get("controller_motions_valid"),
@@ -332,7 +377,9 @@ def _track_process_payload(track_process_data: Mapping[str, np.ndarray]) -> dict
         )
     for key in CONTROLLER_CANDIDATE_POINT_KEYS:
         if key in track_process_data:
-            payload[key] = np.ascontiguousarray(np.asarray(track_process_data[key], dtype=np.float32))
+            payload[key] = np.ascontiguousarray(
+                np.asarray(track_process_data[key], dtype=np.float32)
+            )
     for key in CONTROLLER_TRACK_TIME_KEYS:
         if key not in track_process_data:
             continue
@@ -345,11 +392,17 @@ def _track_process_payload(track_process_data: Mapping[str, np.ndarray]) -> dict
             payload[key] = np.ascontiguousarray(arr.astype(np.float32))
     for key in CONTROLLER_TRACK_STATIC_KEYS:
         if key in track_process_data:
-            payload[key] = np.ascontiguousarray(np.asarray(track_process_data[key], dtype=np.int64))
+            payload[key] = np.ascontiguousarray(
+                np.asarray(track_process_data[key], dtype=np.int64)
+            )
     if "track_process_status" in track_process_data:
-        payload["track_process_status"] = str(np.asarray(track_process_data["track_process_status"]).item())
+        payload["track_process_status"] = str(
+            np.asarray(track_process_data["track_process_status"]).item()
+        )
     selected_controller_count = int(np.asarray(payload["controller_points"]).shape[1])
-    controller_mask_len = int(np.asarray(payload["controller_mask"]).reshape(-1).shape[0])
+    controller_mask_len = int(
+        np.asarray(payload["controller_mask"]).reshape(-1).shape[0]
+    )
     if (
         "controller_mask" in payload
         and "controller_candidate_mask" not in payload
@@ -442,11 +495,15 @@ def _final_data_payload(
         if object_sample_indices.shape[0] != indices.shape[0]:
             object_sample_indices = indices
     object_query_indices = np.asarray(
-        track_process.get("object_query_indices", np.arange(object_points.shape[1], dtype=np.int64)),
+        track_process.get(
+            "object_query_indices", np.arange(object_points.shape[1], dtype=np.int64)
+        ),
         dtype=np.int64,
     ).reshape(-1)
     if "object_track_query_indices" in track_process:
-        object_selected_query_ids = np.asarray(track_process["object_track_query_indices"], dtype=np.int64).reshape(-1)
+        object_selected_query_ids = np.asarray(
+            track_process["object_track_query_indices"], dtype=np.int64
+        ).reshape(-1)
     elif object_query_indices.shape[0] == object_points.shape[1]:
         object_selected_query_ids = object_query_indices[indices]
     else:
@@ -464,38 +521,77 @@ def _final_data_payload(
         ).reshape(-1)
     else:
         controller_final_indices = np.asarray(
-            track_process.get("controller_final_indices", np.arange(controller_count, dtype=np.int64)),
+            track_process.get(
+                "controller_final_indices", np.arange(controller_count, dtype=np.int64)
+            ),
             dtype=np.int64,
         ).reshape(-1)
         if controller_final_indices.shape[0] != controller_count:
             controller_final_indices = np.arange(controller_count, dtype=np.int64)
-        candidate_count = int(max(controller_count, int(np.max(controller_final_indices)) + 1 if controller_final_indices.size else 0))
+        candidate_count = int(
+            max(
+                controller_count,
+                int(np.max(controller_final_indices)) + 1
+                if controller_final_indices.size
+                else 0,
+            )
+        )
         default_controller_query_indices = np.arange(
             object_points.shape[1],
             object_points.shape[1] + candidate_count,
             dtype=np.int64,
         )
         controller_query_indices = np.asarray(
-            track_process.get("controller_query_indices", default_controller_query_indices),
+            track_process.get(
+                "controller_query_indices", default_controller_query_indices
+            ),
             dtype=np.int64,
         ).reshape(-1)
         controller_selected_query_ids = np.full((controller_count,), -1, dtype=np.int64)
-        valid = (controller_final_indices >= 0) & (controller_final_indices < controller_query_indices.shape[0])
-        controller_selected_query_ids[valid] = controller_query_indices[controller_final_indices[valid]]
+        valid = (controller_final_indices >= 0) & (
+            controller_final_indices < controller_query_indices.shape[0]
+        )
+        controller_selected_query_ids[valid] = controller_query_indices[
+            controller_final_indices[valid]
+        ]
     final = {
         "controller_points": np.ascontiguousarray(controller_points.astype(np.float64)),
-        "controller_final_indices": np.ascontiguousarray(controller_final_indices.astype(np.int64)),
-        "controller_selected_query_ids": np.ascontiguousarray(controller_selected_query_ids.astype(np.int64)),
-        "controller_sample_query_ids": np.ascontiguousarray(controller_selected_query_ids.astype(np.int64)),
-        "object_points": np.ascontiguousarray(np.asarray(track_process["object_points"], dtype=np.float64)[:, indices, :]),
-        "object_colors": np.ascontiguousarray(np.asarray(track_process["object_colors"], dtype=np.float64)[:, indices, :]),
-        "object_visibilities": np.ascontiguousarray(np.asarray(track_process["object_visibilities"], dtype=bool)[:, indices]),
-        "object_motions_valid": np.ascontiguousarray(np.asarray(track_process["object_motions_valid"], dtype=bool)[:, indices]),
-        "object_sample_indices": np.ascontiguousarray(object_sample_indices.astype(np.int64)),
-        "object_selected_query_ids": np.ascontiguousarray(object_selected_query_ids.astype(np.int64)),
-        "object_sample_query_ids": np.ascontiguousarray(object_selected_query_ids.astype(np.int64)),
-        "surface_points": np.ascontiguousarray(np.asarray(surface_points, dtype=np.float64).reshape(-1, 3)),
-        "interior_points": np.ascontiguousarray(np.asarray(interior_points, dtype=np.float64).reshape(-1, 3)),
+        "controller_final_indices": np.ascontiguousarray(
+            controller_final_indices.astype(np.int64)
+        ),
+        "controller_selected_query_ids": np.ascontiguousarray(
+            controller_selected_query_ids.astype(np.int64)
+        ),
+        "controller_sample_query_ids": np.ascontiguousarray(
+            controller_selected_query_ids.astype(np.int64)
+        ),
+        "object_points": np.ascontiguousarray(
+            np.asarray(track_process["object_points"], dtype=np.float64)[:, indices, :]
+        ),
+        "object_colors": np.ascontiguousarray(
+            np.asarray(track_process["object_colors"], dtype=np.float64)[:, indices, :]
+        ),
+        "object_visibilities": np.ascontiguousarray(
+            np.asarray(track_process["object_visibilities"], dtype=bool)[:, indices]
+        ),
+        "object_motions_valid": np.ascontiguousarray(
+            np.asarray(track_process["object_motions_valid"], dtype=bool)[:, indices]
+        ),
+        "object_sample_indices": np.ascontiguousarray(
+            object_sample_indices.astype(np.int64)
+        ),
+        "object_selected_query_ids": np.ascontiguousarray(
+            object_selected_query_ids.astype(np.int64)
+        ),
+        "object_sample_query_ids": np.ascontiguousarray(
+            object_selected_query_ids.astype(np.int64)
+        ),
+        "surface_points": np.ascontiguousarray(
+            np.asarray(surface_points, dtype=np.float64).reshape(-1, 3)
+        ),
+        "interior_points": np.ascontiguousarray(
+            np.asarray(interior_points, dtype=np.float64).reshape(-1, 3)
+        ),
     }
     final.update(
         build_query_schema_payload(
@@ -521,10 +617,16 @@ def _quality_manifest_fields(
 ) -> dict[str, Any]:
     object_points = np.asarray(final_data["object_points"], dtype=np.float64)
     controller_points = np.asarray(final_data["controller_points"], dtype=np.float64)
-    surface_points = np.asarray(final_data["surface_points"], dtype=np.float64).reshape(-1, 3)
-    interior_points = np.asarray(final_data["interior_points"], dtype=np.float64).reshape(-1, 3)
+    surface_points = np.asarray(final_data["surface_points"], dtype=np.float64).reshape(
+        -1, 3
+    )
+    interior_points = np.asarray(
+        final_data["interior_points"], dtype=np.float64
+    ).reshape(-1, 3)
     controller_mask = np.asarray(
-        track_process.get("controller_mask", np.ones((controller_points.shape[1],), dtype=bool)),
+        track_process.get(
+            "controller_mask", np.ones((controller_points.shape[1],), dtype=bool)
+        ),
         dtype=bool,
     )
     shape_prior_fields_present = bool(
@@ -541,19 +643,29 @@ def _quality_manifest_fields(
         "shape_prior_complete": shape_prior_fields_present,
         "object_points_finite": bool(np.isfinite(object_points).all()),
         "controller_points_finite": bool(np.isfinite(controller_points).all()),
-        "shape_prior_points_finite": bool(np.isfinite(surface_points).all() and np.isfinite(interior_points).all()),
+        "shape_prior_points_finite": bool(
+            np.isfinite(surface_points).all() and np.isfinite(interior_points).all()
+        ),
         "first_frame_zero_object_points": _zero_point_count(object_points),
         "first_frame_zero_controller_points": _zero_point_count(controller_points),
     }
     if "controller_track_confidence" in track_process:
-        confidence = np.asarray(track_process["controller_track_confidence"], dtype=np.float32)
-        payload["controller_track_mean_confidence"] = float(np.mean(confidence)) if confidence.size else 1.0
+        confidence = np.asarray(
+            track_process["controller_track_confidence"], dtype=np.float32
+        )
+        payload["controller_track_mean_confidence"] = (
+            float(np.mean(confidence)) if confidence.size else 1.0
+        )
         payload["controller_track_low_confidence_ratio"] = (
-            float(np.count_nonzero(confidence < 0.25) / confidence.size) if confidence.size else 0.0
+            float(np.count_nonzero(confidence < 0.25) / confidence.size)
+            if confidence.size
+            else 0.0
         )
     if "controller_track_mode" in track_process:
         modes = np.asarray(track_process["controller_track_mode"], dtype=str)
-        payload["controller_track_direct_frame_count"] = int(np.count_nonzero(modes == "direct_valid"))
+        payload["controller_track_direct_frame_count"] = int(
+            np.count_nonzero(modes == "direct_valid")
+        )
         payload["controller_track_neighbor_recovered_frame_count"] = int(
             np.count_nonzero(np.char.find(modes.astype(str), "bundle_recovered") >= 0)
         )
@@ -615,52 +727,93 @@ def _validate_track_shapes(payload: Mapping[str, np.ndarray]) -> None:
             raise ValueError(f"{key} must have shape T,N matching object_points")
     controller_points = _array("controller_points", payload["controller_points"], (3,))
     if controller_points.ndim != 3 or controller_points.shape[0] != frame_count:
-        raise ValueError("controller_points must have shape T,M,3 matching object frame count")
+        raise ValueError(
+            "controller_points must have shape T,M,3 matching object frame count"
+        )
     controller_mask = np.asarray(payload["controller_mask"])
     if controller_mask.ndim != 1:
-        raise ValueError("controller_mask must be a 1D mask over candidate controller points")
-    controller_mask_is_candidate_level = controller_mask.shape[0] != controller_points.shape[1]
+        raise ValueError(
+            "controller_mask must be a 1D mask over candidate controller points"
+        )
+    controller_mask_is_candidate_level = (
+        controller_mask.shape[0] != controller_points.shape[1]
+    )
     controller_candidate_count = int(controller_mask.shape[0])
     controller_count = int(controller_points.shape[1])
     if "controller_final_indices" in payload:
-        fps = np.asarray(payload["controller_final_indices"], dtype=np.int64).reshape(-1)
+        fps = np.asarray(payload["controller_final_indices"], dtype=np.int64).reshape(
+            -1
+        )
         if fps.shape[0] != controller_points.shape[1]:
-            raise ValueError("controller_final_indices must match selected controller point count")
-        if controller_mask_is_candidate_level and fps.size and np.any((fps >= controller_mask.shape[0]) | (fps < -1)):
-            raise ValueError("controller_final_indices must index controller_mask candidates or be -1")
+            raise ValueError(
+                "controller_final_indices must match selected controller point count"
+            )
+        if (
+            controller_mask_is_candidate_level
+            and fps.size
+            and np.any((fps >= controller_mask.shape[0]) | (fps < -1))
+        ):
+            raise ValueError(
+                "controller_final_indices must index controller_mask candidates or be -1"
+            )
     if "controller_query_indices" in payload:
-        query_ids = np.asarray(payload["controller_query_indices"], dtype=np.int64).reshape(-1)
-        if controller_mask_is_candidate_level and query_ids.shape[0] != controller_mask.shape[0]:
-            raise ValueError("controller_query_indices must match controller candidate count")
+        query_ids = np.asarray(
+            payload["controller_query_indices"], dtype=np.int64
+        ).reshape(-1)
+        if (
+            controller_mask_is_candidate_level
+            and query_ids.shape[0] != controller_mask.shape[0]
+        ):
+            raise ValueError(
+                "controller_query_indices must match controller candidate count"
+            )
     if "controller_candidate_query_ids" in payload:
-        query_ids = np.asarray(payload["controller_candidate_query_ids"], dtype=np.int64).reshape(-1)
-        if controller_mask_is_candidate_level and query_ids.shape[0] != controller_mask.shape[0]:
-            raise ValueError("controller_candidate_query_ids must match controller candidate count")
+        query_ids = np.asarray(
+            payload["controller_candidate_query_ids"], dtype=np.int64
+        ).reshape(-1)
+        if (
+            controller_mask_is_candidate_level
+            and query_ids.shape[0] != controller_mask.shape[0]
+        ):
+            raise ValueError(
+                "controller_candidate_query_ids must match controller candidate count"
+            )
     for key in CONTROLLER_CANDIDATE_TIME_KEYS:
         if key not in payload:
             continue
         arr = np.asarray(payload[key])
         if arr.shape != (frame_count, controller_candidate_count):
-            raise ValueError(f"{key} must have shape T,N matching controller candidates")
+            raise ValueError(
+                f"{key} must have shape T,N matching controller candidates"
+            )
     for key in CONTROLLER_CANDIDATE_POINT_KEYS:
         if key not in payload:
             continue
         arr = np.asarray(payload[key])
         if arr.shape != (frame_count, controller_candidate_count, 3):
-            raise ValueError(f"{key} must have shape T,N,3 matching controller candidates")
+            raise ValueError(
+                f"{key} must have shape T,N,3 matching controller candidates"
+            )
     for key in CONTROLLER_TRACK_TIME_KEYS:
         if key not in payload:
             continue
         arr = np.asarray(payload[key])
         if arr.shape != (frame_count, controller_count):
-            raise ValueError(f"{key} must have shape T,M matching selected controller tracks")
+            raise ValueError(
+                f"{key} must have shape T,M matching selected controller tracks"
+            )
     for key in CONTROLLER_TRACK_STATIC_KEYS:
         if key not in payload:
             continue
         arr = np.asarray(payload[key])
         if arr.ndim != 2 or arr.shape[0] != controller_count:
-            raise ValueError(f"{key} must have shape M,K matching selected controller tracks")
-    if "track_process_status" in payload and str(payload["track_process_status"]) not in TRACK_PROCESS_STATUSES:
+            raise ValueError(
+                f"{key} must have shape M,K matching selected controller tracks"
+            )
+    if (
+        "track_process_status" in payload
+        and str(payload["track_process_status"]) not in TRACK_PROCESS_STATUSES
+    ):
         raise ValueError("track_process_status must be normal, degraded, or invalid")
     for key in ("object_volume_sample_indices", "object_track_query_indices"):
         if key not in payload:
@@ -676,9 +829,13 @@ def _validate_query_schema_payload(payload: Mapping[str, Any], *, label: str) ->
         if key not in payload:
             raise ValueError(f"{label} missing required query schema key: {key}")
     query_ids = np.asarray(payload["query_ids"], dtype=np.int64).reshape(-1)
-    query_semantic_labels = np.asarray(payload["query_semantic_labels"], dtype=np.int8).reshape(-1)
+    query_semantic_labels = np.asarray(
+        payload["query_semantic_labels"], dtype=np.int8
+    ).reshape(-1)
     if query_ids.shape != query_semantic_labels.shape:
-        raise ValueError(f"{label} query_ids and query_semantic_labels must have matching shape")
+        raise ValueError(
+            f"{label} query_ids and query_semantic_labels must have matching shape"
+        )
     if not bool(
         np.all(
             np.isin(
@@ -688,44 +845,70 @@ def _validate_query_schema_payload(payload: Mapping[str, Any], *, label: str) ->
         )
     ):
         raise ValueError(f"{label} query_semantic_labels must contain only 0, 1, or 2")
-    if _scalar_str(payload["query_schema_version"]) != DATA_PROCESS_QUERY_SCHEMA_VERSION:
+    if (
+        _scalar_str(payload["query_schema_version"])
+        != DATA_PROCESS_QUERY_SCHEMA_VERSION
+    ):
         raise ValueError(f"{label} unsupported query_schema_version")
     _validate_query_schema_sample_semantics(payload, label=label)
     expected_hash = _query_schema_hash(payload)
     if _scalar_str(payload["query_schema_hash"]) != expected_hash:
-        raise ValueError(f"{label} query_schema_hash does not match query identity fields")
+        raise ValueError(
+            f"{label} query_schema_hash does not match query identity fields"
+        )
 
 
-def _validate_query_schema_sample_semantics(payload: Mapping[str, Any], *, label: str) -> None:
+def _validate_query_schema_sample_semantics(
+    payload: Mapping[str, Any], *, label: str
+) -> None:
     query_ids = np.asarray(payload["query_ids"], dtype=np.int64).reshape(-1)
-    query_semantic_labels = np.asarray(payload["query_semantic_labels"], dtype=np.int8).reshape(-1)
+    query_semantic_labels = np.asarray(
+        payload["query_semantic_labels"], dtype=np.int8
+    ).reshape(-1)
     unique_query_ids, counts = np.unique(query_ids, return_counts=True)
     duplicate_ids = unique_query_ids[counts > 1]
     if duplicate_ids.size:
-        raise ValueError(f"{label} query_ids must be unique; duplicates={duplicate_ids[:5].tolist()}")
+        raise ValueError(
+            f"{label} query_ids must be unique; duplicates={duplicate_ids[:5].tolist()}"
+        )
     label_by_query_id = {
         int(query_id): int(semantic_label)
-        for query_id, semantic_label in zip(query_ids.tolist(), query_semantic_labels.tolist())
+        for query_id, semantic_label in zip(
+            query_ids.tolist(), query_semantic_labels.tolist()
+        )
     }
 
-    def require_sample_semantics(key: str, expected_label: int, semantic_name: str) -> None:
+    def require_sample_semantics(
+        key: str, expected_label: int, semantic_name: str
+    ) -> None:
         sample_ids = np.asarray(payload[key], dtype=np.int64).reshape(-1)
         if sample_ids.size == 0:
             return
         unique_sample_ids, sample_counts = np.unique(sample_ids, return_counts=True)
         duplicate_sample_ids = unique_sample_ids[sample_counts > 1]
         if duplicate_sample_ids.size:
-            raise ValueError(f"{label} {key} must be unique; duplicates={duplicate_sample_ids[:5].tolist()}")
-        missing = [int(value) for value in sample_ids.tolist() if int(value) not in label_by_query_id]
+            raise ValueError(
+                f"{label} {key} must be unique; duplicates={duplicate_sample_ids[:5].tolist()}"
+            )
+        missing = [
+            int(value)
+            for value in sample_ids.tolist()
+            if int(value) not in label_by_query_id
+        ]
         if missing:
-            raise ValueError(f"{label} {key} contains ids not present in query_ids: {missing[:5]}")
+            raise ValueError(
+                f"{label} {key} contains ids not present in query_ids: {missing[:5]}"
+            )
         wrong = [
             int(value)
             for value in sample_ids.tolist()
             if label_by_query_id[int(value)] != int(expected_label)
         ]
         if wrong:
-            raise ValueError(f"{label} {key} must reference {semantic_name} semantic queries; wrong_ids={wrong[:5]}")
+            raise ValueError(
+                f"{label} {key} must reference {semantic_name} "
+                f"semantic queries; wrong_ids={wrong[:5]}"
+            )
 
     require_sample_semantics("object_sample_query_ids", int(1), "object")
     require_sample_semantics("controller_sample_query_ids", int(2), "controller")
@@ -741,7 +924,9 @@ def _validate_final_shapes(payload: Mapping[str, np.ndarray]) -> None:
         if key not in payload:
             raise ValueError(f"final_data.pkl missing required key: {key}")
     if "controller_mask" in payload:
-        raise ValueError("final_data.pkl must not contain candidate-level controller_mask")
+        raise ValueError(
+            "final_data.pkl must not contain candidate-level controller_mask"
+        )
     object_points = np.asarray(payload["object_points"], dtype=np.float64)
     if object_points.ndim != 3 or object_points.shape[-1] != 3:
         raise ValueError("object_points must have shape T,N,3")
@@ -754,24 +939,44 @@ def _validate_final_shapes(payload: Mapping[str, np.ndarray]) -> None:
         if arr.shape != (frame_count, object_count):
             raise ValueError(f"{key} must have shape T,N matching object_points")
     controller_points = np.asarray(payload["controller_points"], dtype=np.float64)
-    if controller_points.ndim != 3 or controller_points.shape[0] != frame_count or controller_points.shape[-1] != 3:
-        raise ValueError("controller_points must have shape T,M,3 matching object frame count")
+    if (
+        controller_points.ndim != 3
+        or controller_points.shape[0] != frame_count
+        or controller_points.shape[-1] != 3
+    ):
+        raise ValueError(
+            "controller_points must have shape T,M,3 matching object frame count"
+        )
     controller_count = int(controller_points.shape[1])
-    for key in ("controller_final_indices", "controller_selected_query_ids", "controller_sample_query_ids"):
+    for key in (
+        "controller_final_indices",
+        "controller_selected_query_ids",
+        "controller_sample_query_ids",
+    ):
         arr = np.asarray(payload[key], dtype=np.int64).reshape(-1)
         if arr.shape[0] != controller_count:
             raise ValueError(f"{key} must match selected controller point count")
-    for key in ("object_sample_indices", "object_selected_query_ids", "object_sample_query_ids"):
+    for key in (
+        "object_sample_indices",
+        "object_selected_query_ids",
+        "object_sample_query_ids",
+    ):
         arr = np.asarray(payload[key], dtype=np.int64).reshape(-1)
         if arr.shape[0] != object_count:
             raise ValueError(f"{key} must match object point count")
     _validate_query_schema_payload(payload, label="final_data.pkl")
     if not np.isfinite(object_points).all() or not np.isfinite(controller_points).all():
         raise ValueError("object/controller points must be finite")
-    if object_points.shape[1] and np.any(np.linalg.norm(object_points[0], axis=1) <= 1e-9):
+    if object_points.shape[1] and np.any(
+        np.linalg.norm(object_points[0], axis=1) <= 1e-9
+    ):
         raise ValueError("first-frame object points contain zero-depth placeholders")
-    if controller_points.shape[1] and np.any(np.linalg.norm(controller_points[0], axis=1) <= 1e-9):
-        raise ValueError("first-frame controller points contain zero-depth placeholders")
+    if controller_points.shape[1] and np.any(
+        np.linalg.norm(controller_points[0], axis=1) <= 1e-9
+    ):
+        raise ValueError(
+            "first-frame controller points contain zero-depth placeholders"
+        )
     if object_points.shape[1] and controller_points.shape[1]:
         distances = np.linalg.norm(
             object_points[0, :, None, :] - controller_points[0, None, :, :],
@@ -783,6 +988,7 @@ def _validate_final_shapes(payload: Mapping[str, np.ndarray]) -> None:
         arr = np.asarray(payload[key])
         if arr.ndim != 2 or arr.shape[1] != 3:
             raise ValueError(f"{key} must have shape N,3")
+
 
 __all__ = [
     "DATA_PROCESS_FINAL_DATA_KEYS",

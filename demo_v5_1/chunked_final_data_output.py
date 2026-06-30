@@ -1,9 +1,10 @@
 """Publish Demo v5.1 chunks in the online final_data format.
 
 The online stream has two views of the same data: small per-window chunk pickle
-files for low-latency readers, and a continuously rewritten ``data/<case>``
-static case for tools that expect a normal final_data directory.
+files for low-latency readers, and a continuously rewritten ``data`` directory
+with the current aggregate ``final_data.pkl``.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from demo_v5_1.data_keys import TIME_KEYS
-from demo_v5_1.data_process_chunk_writer import (
+from demo_v5_1.data_process_chunk_payload import (
     DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
     DATA_PROCESS_QUERY_SCHEMA_KEYS,
     build_query_schema_payload,
@@ -35,9 +36,7 @@ FINAL_DATA_STATIC_KEYS = (
     "object_sample_query_ids",
     *DATA_PROCESS_QUERY_SCHEMA_KEYS,
 )
-OPTIONAL_STATIC_KEYS = (
-    "controller_neighbor_query_ids",
-)
+OPTIONAL_STATIC_KEYS = ("controller_neighbor_query_ids",)
 TRACK_DIAGNOSTIC_KEYS = (
     "controller_source_query_ids",
     "controller_track_mode",
@@ -58,7 +57,9 @@ def _infer_frame_count(data: Mapping[str, Any]) -> int:
     for key in ("object_points", "controller_points"):
         if key in data and data[key] is not None:
             return int(np.asarray(data[key]).shape[0])
-    raise KeyError("Cannot infer online frame count: missing object_points/controller_points")
+    raise KeyError(
+        "Cannot infer online frame count: missing object_points/controller_points"
+    )
 
 
 def _take_source_frames(value: Any, source_frame_indices: Sequence[int]) -> Any:
@@ -83,15 +84,24 @@ def _static_mapping_vectors(data: Mapping[str, Any]) -> dict[str, Any]:
     if has_query_schema:
         for key in DATA_PROCESS_QUERY_SCHEMA_KEYS:
             value = data[key]
-            vectors[key] = value if isinstance(value, str) else np.ascontiguousarray(np.asarray(value))
+            vectors[key] = (
+                value
+                if isinstance(value, str)
+                else np.ascontiguousarray(np.asarray(value))
+            )
     controller_points = np.asarray(data["controller_points"])
     controller_count = int(controller_points.shape[1])
     controller_fps = _as_static_vector(data, "controller_final_indices")
     if controller_fps is None or controller_fps.shape[0] != controller_count:
         controller_fps = np.arange(controller_count, dtype=np.int64)
-    vectors["controller_final_indices"] = np.ascontiguousarray(controller_fps, dtype=np.int64)
+    vectors["controller_final_indices"] = np.ascontiguousarray(
+        controller_fps, dtype=np.int64
+    )
     selected_controller_ids = _as_static_vector(data, "controller_selected_query_ids")
-    if selected_controller_ids is None or selected_controller_ids.shape[0] != controller_count:
+    if (
+        selected_controller_ids is None
+        or selected_controller_ids.shape[0] != controller_count
+    ):
         query_ids = _as_static_vector(data, "controller_query_indices")
         selected_controller_ids = np.full((controller_count,), -1, dtype=np.int64)
         if query_ids is not None:
@@ -99,11 +109,18 @@ def _static_mapping_vectors(data: Mapping[str, Any]) -> dict[str, Any]:
             selected_controller_ids[valid] = query_ids[controller_fps[valid]]
         else:
             selected_controller_ids = controller_fps.copy()
-    vectors["controller_selected_query_ids"] = np.ascontiguousarray(selected_controller_ids, dtype=np.int64)
+    vectors["controller_selected_query_ids"] = np.ascontiguousarray(
+        selected_controller_ids, dtype=np.int64
+    )
     controller_sample_query_ids = _as_static_vector(data, "controller_sample_query_ids")
-    if controller_sample_query_ids is None or controller_sample_query_ids.shape[0] != controller_count:
+    if (
+        controller_sample_query_ids is None
+        or controller_sample_query_ids.shape[0] != controller_count
+    ):
         controller_sample_query_ids = selected_controller_ids
-    vectors["controller_sample_query_ids"] = np.ascontiguousarray(controller_sample_query_ids, dtype=np.int64)
+    vectors["controller_sample_query_ids"] = np.ascontiguousarray(
+        controller_sample_query_ids, dtype=np.int64
+    )
 
     object_points = np.asarray(data["object_points"])
     object_count = int(object_points.shape[1])
@@ -112,7 +129,9 @@ def _static_mapping_vectors(data: Mapping[str, Any]) -> dict[str, Any]:
         object_sample = _as_static_vector(data, "object_volume_sample_indices")
     if object_sample is None or object_sample.shape[0] != object_count:
         object_sample = np.arange(object_count, dtype=np.int64)
-    vectors["object_sample_indices"] = np.ascontiguousarray(object_sample, dtype=np.int64)
+    vectors["object_sample_indices"] = np.ascontiguousarray(
+        object_sample, dtype=np.int64
+    )
     selected_object_ids = _as_static_vector(data, "object_selected_query_ids")
     if selected_object_ids is None or selected_object_ids.shape[0] != object_count:
         query_ids = _as_static_vector(data, "object_track_query_indices")
@@ -120,15 +139,26 @@ def _static_mapping_vectors(data: Mapping[str, Any]) -> dict[str, Any]:
             query_ids = _as_static_vector(data, "object_query_indices")
         if query_ids is not None and query_ids.shape[0] == object_count:
             selected_object_ids = query_ids
-        elif query_ids is not None and object_sample.size and int(np.max(object_sample)) < query_ids.shape[0]:
+        elif (
+            query_ids is not None
+            and object_sample.size
+            and int(np.max(object_sample)) < query_ids.shape[0]
+        ):
             selected_object_ids = query_ids[object_sample]
         else:
             selected_object_ids = object_sample.copy()
-    vectors["object_selected_query_ids"] = np.ascontiguousarray(selected_object_ids, dtype=np.int64)
+    vectors["object_selected_query_ids"] = np.ascontiguousarray(
+        selected_object_ids, dtype=np.int64
+    )
     object_sample_query_ids = _as_static_vector(data, "object_sample_query_ids")
-    if object_sample_query_ids is None or object_sample_query_ids.shape[0] != object_count:
+    if (
+        object_sample_query_ids is None
+        or object_sample_query_ids.shape[0] != object_count
+    ):
         object_sample_query_ids = selected_object_ids
-    vectors["object_sample_query_ids"] = np.ascontiguousarray(object_sample_query_ids, dtype=np.int64)
+    vectors["object_sample_query_ids"] = np.ascontiguousarray(
+        object_sample_query_ids, dtype=np.int64
+    )
     if not has_query_schema:
         vectors.update(
             build_query_schema_payload(
@@ -168,7 +198,9 @@ def build_online_chunk(
     if source_timestamps_s is not None:
         timestamps = [float(value) for value in source_timestamps_s]
         if len(timestamps) != len(indices):
-            raise ValueError("source_timestamps_s length must match source_frame_indices")
+            raise ValueError(
+                "source_timestamps_s length must match source_frame_indices"
+            )
         chunk["source_timestamps_s"] = timestamps
     # TIME_KEYS are indexed by local frame inside this chunk. Static query and
     # sampling vectors are attached below unchanged so every chunk can be read
@@ -176,7 +208,9 @@ def build_online_chunk(
     for key in TIME_KEYS:
         value = data.get(key)
         if value is not None:
-            chunk[key] = _take_source_frames(value, list(range(0, int(end_frame) - int(start_frame))))
+            chunk[key] = _take_source_frames(
+                value, list(range(0, int(end_frame) - int(start_frame)))
+            )
     chunk.update(_static_mapping_vectors(data))
     for key in OPTIONAL_STATIC_KEYS:
         if key in data:
@@ -193,7 +227,11 @@ def _track_diagnostics(track_process: Mapping[str, Any]) -> dict[str, Any]:
         if key not in track_process:
             continue
         value = track_process[key]
-        payload[key] = str(value) if key == "track_process_status" else np.ascontiguousarray(np.asarray(value))
+        payload[key] = (
+            str(value)
+            if key == "track_process_status"
+            else np.ascontiguousarray(np.asarray(value))
+        )
     return payload
 
 
@@ -223,13 +261,15 @@ class ChunkedFinalDataWriter:
         self.base_path = Path(base_path)
         self.case_name = str(case_name)
         self.chunk_size = int(chunk_size)
-        self.num_frames_total = None if num_frames_total is None else int(num_frames_total)
+        self.num_frames_total = (
+            None if num_frames_total is None else int(num_frames_total)
+        )
         self.source_start_frame = int(source_start_frame)
         self.source_frame_step = int(source_frame_step)
         self.allow_degraded = bool(allow_degraded)
-        self.online_dir = self.base_path / "online_data" / self.case_name
+        self.online_dir = self.base_path / "online_data"
         self.chunks_dir = self.online_dir / "chunks"
-        self.static_case_dir = self.base_path / "data" / self.case_name
+        self.static_case_dir = self.base_path / "data"
         self.static_data_path = self.static_case_dir / "final_data.pkl"
         self.latest_committed_chunk = -1
         self.latest_committed_frame = 0
@@ -256,8 +296,10 @@ class ChunkedFinalDataWriter:
         if source_frame_indices is None:
             source_frame_indices = list(
                 range(
-                    int(self.source_start_frame) + start_frame * int(self.source_frame_step),
-                    int(self.source_start_frame) + end_frame * int(self.source_frame_step),
+                    int(self.source_start_frame)
+                    + start_frame * int(self.source_frame_step),
+                    int(self.source_start_frame)
+                    + end_frame * int(self.source_frame_step),
                     int(self.source_frame_step),
                 )
             )
@@ -318,7 +360,7 @@ class ChunkedFinalDataWriter:
         return self._write_manifest(status="finished")
 
     def _append_static_data(self, data: Mapping[str, Any], *, frame_count: int) -> None:
-        """Update data/<case>/final_data.pkl as a prefix aggregate."""
+        """Update data/final_data.pkl as a prefix aggregate."""
         # Offline parity with data_process_sam3d/data_process_sample.py:L335-L352.
         # That path writes one static final_data.pkl. Demo v5.1 continuously
         # rewrites the same schema as a prefix aggregate for realtime consumers.
@@ -332,7 +374,9 @@ class ChunkedFinalDataWriter:
                 continue
             arr = np.asarray(value)
             if int(arr.shape[0]) != int(frame_count):
-                raise ValueError(f"{key} has {arr.shape[0]} frames, expected {frame_count}")
+                raise ValueError(
+                    f"{key} has {arr.shape[0]} frames, expected {frame_count}"
+                )
             self._time_arrays[key].append(np.ascontiguousarray(arr))
         for key in STATIC_KEYS:
             value = data.get(key)
@@ -343,7 +387,9 @@ class ChunkedFinalDataWriter:
             if value is not None:
                 self._static_arrays[key] = np.ascontiguousarray(np.asarray(value))
         if "track_process_status" in data:
-            self._static_arrays["track_process_status"] = str(data["track_process_status"])
+            self._static_arrays["track_process_status"] = str(
+                data["track_process_status"]
+            )
         self._static_arrays.update(_static_mapping_vectors(data))
         payload: dict[str, Any] = {}
         for key, values in self._time_arrays.items():
@@ -358,7 +404,9 @@ class ChunkedFinalDataWriter:
             if value is not None:
                 payload[key] = value
         if "track_process_status" in self._static_arrays:
-            payload["track_process_status"] = str(self._static_arrays["track_process_status"])
+            payload["track_process_status"] = str(
+                self._static_arrays["track_process_status"]
+            )
         for key in STATIC_KEYS:
             payload[key] = self._static_arrays.get(
                 key,
@@ -376,15 +424,25 @@ class ChunkedFinalDataWriter:
             "latest_committed_frame": int(self.latest_committed_frame + frame_count),
         }
         if "query_schema_version" in self._static_arrays:
-            metadata["query_schema_version"] = str(self._static_arrays["query_schema_version"])
+            metadata["query_schema_version"] = str(
+                self._static_arrays["query_schema_version"]
+            )
         if "query_schema_hash" in self._static_arrays:
-            metadata["query_schema_hash"] = str(self._static_arrays["query_schema_hash"])
+            metadata["query_schema_hash"] = str(
+                self._static_arrays["query_schema_hash"]
+            )
         atomic_json_dump(metadata, self.static_case_dir / "metadata.json")
 
     def _write_manifest(self, *, status: str) -> dict[str, Any]:
         latest_frame = int(self.latest_committed_frame)
-        total = latest_frame if self.num_frames_total is None else int(self.num_frames_total)
-        source_end = int(self.source_start_frame) + int(total) * int(self.source_frame_step)
+        total = (
+            latest_frame
+            if self.num_frames_total is None
+            else int(self.num_frames_total)
+        )
+        source_end = int(self.source_start_frame) + int(total) * int(
+            self.source_frame_step
+        )
         manifest = {
             "case_name": self.case_name,
             "demo_version": "demo_v5_1",
@@ -405,10 +463,14 @@ class ChunkedFinalDataWriter:
         }
         if "query_schema_version" in self._static_arrays:
             value = self._static_arrays["query_schema_version"]
-            manifest["query_schema_version"] = str(np.asarray(value).item() if isinstance(value, np.ndarray) else value)
+            manifest["query_schema_version"] = str(
+                np.asarray(value).item() if isinstance(value, np.ndarray) else value
+            )
         if "query_schema_hash" in self._static_arrays:
             value = self._static_arrays["query_schema_hash"]
-            manifest["query_schema_hash"] = str(np.asarray(value).item() if isinstance(value, np.ndarray) else value)
+            manifest["query_schema_hash"] = str(
+                np.asarray(value).item() if isinstance(value, np.ndarray) else value
+            )
         atomic_json_dump(manifest, self.online_dir / "manifest.json")
         return manifest
 

@@ -4,6 +4,7 @@ The camera process appends ``frames.jsonl`` and prepared per-frame NPZ payloads.
 This bridge tails that stream, waits for the shape prior only at chunk materialize
 time, and publishes online chunk payloads plus the static final_data view.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -15,7 +16,7 @@ from typing import Any, Callable, Iterator, Mapping, Sequence
 import numpy as np
 from PIL import Image
 
-from demo_v5_1.data_process_chunk_writer import (
+from demo_v5_1.data_process_chunk_payload import (
     DataProcessChunk,
     build_data_process_chunk_payload,
 )
@@ -37,7 +38,9 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _read_jsonl_from_offset(path: Path, offset: int) -> tuple[list[dict[str, Any]], int]:
+def _read_jsonl_from_offset(
+    path: Path, offset: int
+) -> tuple[list[dict[str, Any]], int]:
     """Read only newly appended complete JSONL rows.
 
     ``frames.jsonl`` is written by another process. If the writer is in the
@@ -101,7 +104,9 @@ def _relative_wall_s(origin_s: float) -> float:
     return float(time.monotonic() - float(origin_s))
 
 
-def _complete_chunk_backlog(frames_path: Path, *, chunk_size: int, published_chunk_count: int) -> int:
+def _complete_chunk_backlog(
+    frames_path: Path, *, chunk_size: int, published_chunk_count: int
+) -> int:
     if int(chunk_size) <= 0:
         return 0
     complete_chunks = _count_jsonl_rows(frames_path) // int(chunk_size)
@@ -137,7 +142,9 @@ def _row_source_frame_index(row: Mapping[str, Any], fallback: int) -> int:
     return int(fallback)
 
 
-def _rows_source_frame_indices(rows: Sequence[Mapping[str, Any]], *, fallback_start: int) -> list[int]:
+def _rows_source_frame_indices(
+    rows: Sequence[Mapping[str, Any]], *, fallback_start: int
+) -> list[int]:
     return [
         _row_source_frame_index(row, int(fallback_start) + offset)
         for offset, row in enumerate(rows)
@@ -164,7 +171,9 @@ def _row_ready_for_realtime_chunk_start(row: Mapping[str, Any]) -> bool:
     return True
 
 
-def _trim_warmup_delayed_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+def _trim_warmup_delayed_rows(
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
     """Drop leading warmup rows before chunking realtime output.
 
     Demo v5.1 writes ``input_frames.jsonl`` from camera start, but
@@ -197,13 +206,26 @@ def _trim_warmup_delayed_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[list[d
             third_source = _optional_int(trimmed[2].get("source_frame_index"))
             if third_source is not None:
                 following_gap = int(third_source) - int(second_source)
-        expected_gap = max(2, int(following_gap) if following_gap is not None and following_gap > 0 else 2)
+        expected_gap = max(
+            2,
+            int(following_gap)
+            if following_gap is not None and following_gap > 0
+            else 2,
+        )
 
-        startup_hold_s = _optional_float(first.get("startup_hold_s")) or _optional_float(second.get("startup_hold_s")) or 0.0
+        startup_hold_s = (
+            _optional_float(first.get("startup_hold_s"))
+            or _optional_float(second.get("startup_hold_s"))
+            or 0.0
+        )
         latency_ms = _optional_float(first.get("pipeline_latency_ms")) or 0.0
         first_time = _optional_float(first.get("source_timestamp_s"))
         second_time = _optional_float(second.get("source_timestamp_s"))
-        timestamp_gap_s = 0.0 if first_time is None or second_time is None else float(second_time - first_time)
+        timestamp_gap_s = (
+            0.0
+            if first_time is None or second_time is None
+            else float(second_time - first_time)
+        )
 
         looks_like_warmup_hold = (
             startup_hold_s > 0.0
@@ -280,7 +302,9 @@ def _apply_depth_validity_to_mask_frame(
     for key, mask in normalized.items():
         arr = np.asarray(mask, dtype=bool)
         if arr.shape != valid.shape:
-            raise ValueError(f"mask {key!r} shape {arr.shape} does not match depth shape {valid.shape}")
+            raise ValueError(
+                f"mask {key!r} shape {arr.shape} does not match depth shape {valid.shape}"
+            )
         filtered[key] = np.ascontiguousarray(arr & valid, dtype=bool)
     return strict.normalize_processed_mask_frame(filtered)
 
@@ -304,18 +328,26 @@ def _apply_radius_outlier_to_mask_frame(
     if grid.ndim == 4:
         grid = grid[0]
     if grid.ndim != 3 or grid.shape[-1] != 3:
-        raise ValueError(f"points_grid must have shape H,W,3 or 1,H,W,3; got {grid.shape}")
+        raise ValueError(
+            f"points_grid must have shape H,W,3 or 1,H,W,3; got {grid.shape}"
+        )
 
-    filtered = {key: np.asarray(value, dtype=bool).copy() for key, value in normalized.items()}
+    filtered = {
+        key: np.asarray(value, dtype=bool).copy() for key, value in normalized.items()
+    }
     for key in ("object", "controller"):
         mask = filtered[key]
         if mask.shape != grid.shape[:2]:
-            raise ValueError(f"mask {key!r} shape {mask.shape} does not match points grid {grid.shape[:2]}")
+            raise ValueError(
+                f"mask {key!r} shape {mask.shape} does not match points grid {grid.shape[:2]}"
+            )
         yy, xx = np.nonzero(mask)
         if len(yy) == 0:
             continue
         points = grid[yy, xx]
-        point_valid = np.isfinite(points).all(axis=1) & (np.linalg.norm(points, axis=1) > 1e-9)
+        point_valid = np.isfinite(points).all(axis=1) & (
+            np.linalg.norm(points, axis=1) > 1e-9
+        )
         if not np.all(point_valid):
             mask[yy[~point_valid], xx[~point_valid]] = False
         if not np.any(point_valid):
@@ -340,7 +372,9 @@ def _depth_path(capture_dir: Path, row: Mapping[str, Any]) -> Path:
         return capture_dir / str(row["depth_color_m_path"])
     if "ffs_depth_path" in row:
         return capture_dir / str(row["ffs_depth_path"])
-    raise ValueError("headless capture frame is missing depth_color_m_path or legacy ffs_depth_path")
+    raise ValueError(
+        "headless capture frame is missing depth_color_m_path or legacy ffs_depth_path"
+    )
 
 
 def _intrinsics_matrix(metadata: Mapping[str, Any]) -> np.ndarray:
@@ -364,34 +398,56 @@ def _camera_to_world(metadata: Mapping[str, Any]) -> np.ndarray:
     value = metadata.get("camera_to_world_c2w")
     if value is None:
         return np.eye(4, dtype=np.float32)
-    return np.ascontiguousarray(np.asarray(value, dtype=np.float32).reshape(4, 4), dtype=np.float32)
+    return np.ascontiguousarray(
+        np.asarray(value, dtype=np.float32).reshape(4, 4), dtype=np.float32
+    )
 
 
-def _full_tracks_and_visibility(trajectory: np.lib.npyio.NpzFile, query_count: int) -> tuple[np.ndarray, np.ndarray]:
+def _full_tracks_and_visibility(
+    trajectory: np.lib.npyio.NpzFile, query_count: int
+) -> tuple[np.ndarray, np.ndarray]:
     """Expand a trajectory payload to one row per session query."""
     if "all_tracks_yx" in trajectory.files:
-        tracks = np.asarray(trajectory["all_tracks_yx"], dtype=np.float32).reshape(-1, 2)
-        vis_key = "all_tracker_visibility" if "all_tracker_visibility" in trajectory.files else "visibility"
+        tracks = np.asarray(trajectory["all_tracks_yx"], dtype=np.float32).reshape(
+            -1, 2
+        )
+        vis_key = (
+            "all_tracker_visibility"
+            if "all_tracker_visibility" in trajectory.files
+            else "visibility"
+        )
         visibility = np.asarray(trajectory[vis_key], dtype=bool).reshape(-1)
-        if tracks.shape[0] != int(query_count) or visibility.shape[0] != int(query_count):
-            raise ValueError("all_tracks_yx/all_tracker_visibility must match query_points_yx length")
-        return np.ascontiguousarray(tracks, dtype=np.float32), np.ascontiguousarray(visibility, dtype=bool)
+        if tracks.shape[0] != int(query_count) or visibility.shape[0] != int(
+            query_count
+        ):
+            raise ValueError(
+                "all_tracks_yx/all_tracker_visibility must match query_points_yx length"
+            )
+        return np.ascontiguousarray(tracks, dtype=np.float32), np.ascontiguousarray(
+            visibility, dtype=bool
+        )
 
     track_key = "tracks_yx"
     vis_key = "visibility"
     if track_key not in trajectory.files or vis_key not in trajectory.files:
-        raise ValueError("trajectory payload requires all_tracks_yx or tracks_yx plus visibility")
+        raise ValueError(
+            "trajectory payload requires all_tracks_yx or tracks_yx plus visibility"
+        )
     active_tracks = np.asarray(trajectory[track_key], dtype=np.float32).reshape(-1, 2)
     active_visibility = np.asarray(trajectory[vis_key], dtype=bool).reshape(-1)
     if active_tracks.shape[0] != active_visibility.shape[0]:
-        raise ValueError("tracks_yx and visibility must have matching active query count")
+        raise ValueError(
+            "tracks_yx and visibility must have matching active query count"
+        )
     if active_tracks.shape[0] == int(query_count):
         return (
             np.ascontiguousarray(active_tracks, dtype=np.float32),
             np.ascontiguousarray(active_visibility, dtype=bool),
         )
     if "query_indices" not in trajectory.files:
-        raise ValueError("sparse tracks_yx payload requires query_indices to expand to full query count")
+        raise ValueError(
+            "sparse tracks_yx payload requires query_indices to expand to full query count"
+        )
     indices = np.asarray(trajectory["query_indices"], dtype=np.int64).reshape(-1)
     if indices.shape[0] != active_tracks.shape[0]:
         raise ValueError("query_indices length must match active tracks_yx length")
@@ -401,7 +457,9 @@ def _full_tracks_and_visibility(trajectory: np.lib.npyio.NpzFile, query_count: i
     visibility = np.zeros((int(query_count),), dtype=bool)
     tracks[indices] = active_tracks
     visibility[indices] = active_visibility
-    return np.ascontiguousarray(tracks, dtype=np.float32), np.ascontiguousarray(visibility, dtype=bool)
+    return np.ascontiguousarray(tracks, dtype=np.float32), np.ascontiguousarray(
+        visibility, dtype=bool
+    )
 
 
 def _shape_points_from_capture(
@@ -425,10 +483,14 @@ def _shape_points_from_capture(
         return (
             np.empty((0, 3), dtype=np.float64)
             if surface_points is None
-            else np.ascontiguousarray(np.asarray(surface_points, dtype=np.float64).reshape(-1, 3)),
+            else np.ascontiguousarray(
+                np.asarray(surface_points, dtype=np.float64).reshape(-1, 3)
+            ),
             np.empty((0, 3), dtype=np.float64)
             if interior_points is None
-            else np.ascontiguousarray(np.asarray(interior_points, dtype=np.float64).reshape(-1, 3)),
+            else np.ascontiguousarray(
+                np.asarray(interior_points, dtype=np.float64).reshape(-1, 3)
+            ),
         )
     shape_path = metadata.get("shape_prior_path")
     if shape_path:
@@ -437,25 +499,43 @@ def _shape_points_from_capture(
             return (
                 np.empty((0, 3), dtype=np.float64)
                 if "surface_points_m" not in payload.files
-                else np.ascontiguousarray(np.asarray(payload["surface_points_m"], dtype=np.float64).reshape(-1, 3)),
+                else np.ascontiguousarray(
+                    np.asarray(payload["surface_points_m"], dtype=np.float64).reshape(
+                        -1, 3
+                    )
+                ),
                 np.empty((0, 3), dtype=np.float64)
                 if "interior_points_m" not in payload.files
-                else np.ascontiguousarray(np.asarray(payload["interior_points_m"], dtype=np.float64).reshape(-1, 3)),
+                else np.ascontiguousarray(
+                    np.asarray(payload["interior_points_m"], dtype=np.float64).reshape(
+                        -1, 3
+                    )
+                ),
             )
-        points = np.ascontiguousarray(np.asarray(payload["points_m"], dtype=np.float64).reshape(-1, 3))
+        points = np.ascontiguousarray(
+            np.asarray(payload["points_m"], dtype=np.float64).reshape(-1, 3)
+        )
         return points, np.empty((0, 3), dtype=np.float64)
     return np.empty((0, 3), dtype=np.float64), np.empty((0, 3), dtype=np.float64)
 
 
 def _has_shape_points(surface_points: np.ndarray, interior_points: np.ndarray) -> bool:
-    return int(np.asarray(surface_points).reshape(-1, 3).shape[0]) + int(np.asarray(interior_points).reshape(-1, 3).shape[0]) > 0
+    return (
+        int(np.asarray(surface_points).reshape(-1, 3).shape[0])
+        + int(np.asarray(interior_points).reshape(-1, 3).shape[0])
+        > 0
+    )
 
 
 def _shape_prior_terminal_error(metadata: Mapping[str, Any]) -> str | None:
     status = str(metadata.get("shape_prior_status") or "").strip().lower()
     if status not in {"failed", "unavailable", "disabled"}:
         return None
-    detail = metadata.get("shape_prior_error") or metadata.get("error") or "no surface/interior points became ready"
+    detail = (
+        metadata.get("shape_prior_error")
+        or metadata.get("error")
+        or "no surface/interior points became ready"
+    )
     return f"shape prior {status}: {detail}"
 
 
@@ -478,7 +558,9 @@ def _read_json_file_stable(
         except (FileNotFoundError, json.JSONDecodeError, ValueError) as exc:
             last_error = exc
             if time.monotonic() >= float(deadline_s):
-                raise RuntimeError(f"timed out waiting for stable JSON metadata at {path}") from last_error
+                raise RuntimeError(
+                    f"timed out waiting for stable JSON metadata at {path}"
+                ) from last_error
             time.sleep(max(0.0, float(poll_interval_s)))
 
 
@@ -513,67 +595,112 @@ def _shape_points_for_chunk(
             surface_points=surface_points,
             interior_points=interior_points,
         )
-        if explicit_points or not bool(require_shape_prior) or _has_shape_points(shape_surface, shape_interior):
+        if (
+            explicit_points
+            or not bool(require_shape_prior)
+            or _has_shape_points(shape_surface, shape_interior)
+        ):
             return metadata, shape_surface, shape_interior
         terminal_error = _shape_prior_terminal_error(metadata)
         if terminal_error is not None:
             raise RuntimeError(terminal_error)
         if time.monotonic() >= deadline:
             raise RuntimeError(
-                "shape prior is required for Demo v5 final_data chunks, but no surface/interior points became ready"
+                "shape prior is required for Demo v5 final_data chunks, "
+                "but no surface/interior points became ready"
             )
         if before_poll is not None:
             before_poll()
-        if capture_finished is not None and capture_finished() and time.monotonic() >= deadline:
-            raise RuntimeError("capture finished before required shape prior became ready")
+        if (
+            capture_finished is not None
+            and capture_finished()
+            and time.monotonic() >= deadline
+        ):
+            raise RuntimeError(
+                "capture finished before required shape prior became ready"
+            )
         time.sleep(max(0.0, float(poll_interval_s)))
 
 
-def _controller_track_manifest_fields(track_process_data: Mapping[str, Any]) -> dict[str, Any]:
+def _controller_track_manifest_fields(
+    track_process_data: Mapping[str, Any],
+) -> dict[str, Any]:
     track_process_data = dict(track_process_data)
     if "controller_track_query_indices" not in track_process_data:
-        controller_points = np.asarray(track_process_data.get("controller_points", np.empty((0, 0, 3))))
+        controller_points = np.asarray(
+            track_process_data.get("controller_points", np.empty((0, 0, 3)))
+        )
         return {
             "controller_track_selection_mode": "independent_fps",
-            "controller_track_count": int(controller_points.shape[1] if controller_points.ndim >= 2 else 0),
+            "controller_track_count": int(
+                controller_points.shape[1] if controller_points.ndim >= 2 else 0
+            ),
         }
-    query_indices = np.asarray(track_process_data["controller_track_query_indices"], dtype=np.int64).reshape(-1)
+    query_indices = np.asarray(
+        track_process_data["controller_track_query_indices"], dtype=np.int64
+    ).reshape(-1)
     active_indices = np.asarray(
         track_process_data.get("controller_track_active_query_indices", query_indices),
         dtype=np.int64,
     ).reshape(-1)
-    statuses = np.asarray(track_process_data.get("controller_track_status", []), dtype=str).reshape(-1)
+    statuses = np.asarray(
+        track_process_data.get("controller_track_status", []), dtype=str
+    ).reshape(-1)
     payload = {
         "controller_track_selection_mode": "streaming_stable",
         "controller_track_count": int(len(query_indices)),
-        "controller_track_query_indices": [int(value) for value in query_indices.tolist()],
-        "controller_track_active_query_indices": [int(value) for value in active_indices.tolist()],
+        "controller_track_query_indices": [
+            int(value) for value in query_indices.tolist()
+        ],
+        "controller_track_active_query_indices": [
+            int(value) for value in active_indices.tolist()
+        ],
         "controller_track_direct_count": int(np.count_nonzero(statuses == "direct")),
-        "controller_track_recovered_count": int(np.count_nonzero(statuses == "recovered")),
-        "controller_track_revived_count": int(np.count_nonzero((statuses == "revived") | (statuses == "recovered"))),
-        "controller_track_fallback_count": int(np.count_nonzero(statuses == "fallback")),
+        "controller_track_recovered_count": int(
+            np.count_nonzero(statuses == "recovered")
+        ),
+        "controller_track_revived_count": int(
+            np.count_nonzero((statuses == "revived") | (statuses == "recovered"))
+        ),
+        "controller_track_fallback_count": int(
+            np.count_nonzero(statuses == "fallback")
+        ),
         "controller_track_missing_count": int(np.count_nonzero(statuses == "missing")),
         "controller_track_status": [str(value) for value in statuses.tolist()],
     }
     if "controller_track_confidence" in track_process_data:
-        confidence = np.asarray(track_process_data["controller_track_confidence"], dtype=np.float32)
-        payload["controller_track_mean_confidence"] = float(np.mean(confidence)) if confidence.size else 1.0
+        confidence = np.asarray(
+            track_process_data["controller_track_confidence"], dtype=np.float32
+        )
+        payload["controller_track_mean_confidence"] = (
+            float(np.mean(confidence)) if confidence.size else 1.0
+        )
         payload["controller_track_low_confidence_ratio"] = (
-            float(np.count_nonzero(confidence < 0.25) / confidence.size) if confidence.size else 0.0
+            float(np.count_nonzero(confidence < 0.25) / confidence.size)
+            if confidence.size
+            else 0.0
         )
     if "controller_track_mode" in track_process_data:
         modes = np.asarray(track_process_data["controller_track_mode"], dtype=str)
         bundle_recovered = np.char.find(modes.astype(str), "bundle_recovered") >= 0
         unrecoverable = np.char.find(modes.astype(str), "unrecoverable") >= 0
-        payload["controller_track_direct_frame_count"] = int(np.count_nonzero(modes == "direct_valid"))
-        payload["controller_track_neighbor_recovered_frame_count"] = int(np.count_nonzero(bundle_recovered))
-        payload["controller_track_unrecoverable_frame_count"] = int(np.count_nonzero(unrecoverable))
+        payload["controller_track_direct_frame_count"] = int(
+            np.count_nonzero(modes == "direct_valid")
+        )
+        payload["controller_track_neighbor_recovered_frame_count"] = int(
+            np.count_nonzero(bundle_recovered)
+        )
+        payload["controller_track_unrecoverable_frame_count"] = int(
+            np.count_nonzero(unrecoverable)
+        )
         payload["controller_track_mode_summary"] = {
             str(mode): int(np.count_nonzero(modes == mode))
             for mode in sorted(set(str(value) for value in modes.reshape(-1).tolist()))
         }
     if "track_process_status" in track_process_data:
-        payload["track_process_status"] = str(np.asarray(track_process_data["track_process_status"]).item())
+        payload["track_process_status"] = str(
+            np.asarray(track_process_data["track_process_status"]).item()
+        )
     return payload
 
 
@@ -594,25 +721,37 @@ def _track_process_online_publish_skip_reason(
     return None
 
 
-def _object_track_manifest_fields(track_process_data: Mapping[str, Any]) -> dict[str, Any]:
+def _object_track_manifest_fields(
+    track_process_data: Mapping[str, Any],
+) -> dict[str, Any]:
     track_process_data = dict(track_process_data)
     if "object_track_query_indices" not in track_process_data:
-        object_points = np.asarray(track_process_data.get("object_points", np.empty((0, 0, 3))))
+        object_points = np.asarray(
+            track_process_data.get("object_points", np.empty((0, 0, 3)))
+        )
         return {
             "object_track_selection_mode": "per_chunk_volume_sample",
-            "object_track_count": int(object_points.shape[1] if object_points.ndim >= 2 else 0),
+            "object_track_count": int(
+                object_points.shape[1] if object_points.ndim >= 2 else 0
+            ),
         }
-    query_indices = np.asarray(track_process_data["object_track_query_indices"], dtype=np.int64).reshape(-1)
+    query_indices = np.asarray(
+        track_process_data["object_track_query_indices"], dtype=np.int64
+    ).reshape(-1)
     active_indices = np.asarray(
         track_process_data.get("object_track_active_query_indices", query_indices),
         dtype=np.int64,
     ).reshape(-1)
-    statuses = np.asarray(track_process_data.get("object_track_status", []), dtype=str).reshape(-1)
+    statuses = np.asarray(
+        track_process_data.get("object_track_status", []), dtype=str
+    ).reshape(-1)
     return {
         "object_track_selection_mode": "streaming_stable",
         "object_track_count": int(len(query_indices)),
         "object_track_query_indices": [int(value) for value in query_indices.tolist()],
-        "object_track_active_query_indices": [int(value) for value in active_indices.tolist()],
+        "object_track_active_query_indices": [
+            int(value) for value in active_indices.tolist()
+        ],
         "object_track_direct_count": int(np.count_nonzero(statuses == "direct")),
         "object_track_revived_count": int(np.count_nonzero(statuses == "revived")),
         "object_track_fallback_count": int(np.count_nonzero(statuses == "fallback")),
@@ -662,7 +801,9 @@ def _track_input_with_session_query_schema(
     if session_query_schema is None:
         return track_input
     if "query_ids" not in session_query_schema:
-        session_query_schema["query_ids"] = np.ascontiguousarray(track_input["query_ids"], dtype=np.int64)
+        session_query_schema["query_ids"] = np.ascontiguousarray(
+            track_input["query_ids"], dtype=np.int64
+        )
         session_query_schema["query_semantic_labels"] = np.ascontiguousarray(
             track_input["query_semantic_labels"],
             dtype=np.int8,
@@ -670,7 +811,10 @@ def _track_input_with_session_query_schema(
         return track_input
     if not np.array_equal(session_query_schema["query_ids"], track_input["query_ids"]):
         raise ValueError("Demo v5 session query_ids changed across chunks")
-    if not np.array_equal(session_query_schema["query_semantic_labels"], track_input["query_semantic_labels"]):
+    if not np.array_equal(
+        session_query_schema["query_semantic_labels"],
+        track_input["query_semantic_labels"],
+    ):
         raise ValueError("Demo v5 session query_semantic_labels changed across chunks")
     return track_input
 
@@ -740,10 +884,16 @@ def _chunk_payload_from_rows(
             ]
         )
 
-        trajectory = np.load(capture_dir / str(row["query_trajectory_path"]), allow_pickle=False)
+        trajectory = np.load(
+            capture_dir / str(row["query_trajectory_path"]), allow_pickle=False
+        )
         if query_points_yx is None:
-            query_points_yx = np.asarray(trajectory["query_points_yx"], dtype=np.float32)
-        full_tracks, full_visibility = _full_tracks_and_visibility(trajectory, int(len(query_points_yx)))
+            query_points_yx = np.asarray(
+                trajectory["query_points_yx"], dtype=np.float32
+            )
+        full_tracks, full_visibility = _full_tracks_and_visibility(
+            trajectory, int(len(query_points_yx))
+        )
         tracks.append(full_tracks)
         visibility.append(full_visibility)
 
@@ -790,7 +940,9 @@ def _chunk_payload_from_rows(
         interior_points=interior_points,
         fps=int(fps),
         serial_number=serial_number,
-        depth_backend=str(metadata.get("depth_backend") or metadata.get("depth_source", "")),
+        depth_backend=str(
+            metadata.get("depth_backend") or metadata.get("depth_source", "")
+        ),
         depth_source_internal=str(
             metadata.get("depth_source_internal")
             or metadata.get("depth_source")
@@ -800,11 +952,14 @@ def _chunk_payload_from_rows(
         source_frame_indices=[int(row.get("seq", idx)) for idx, row in enumerate(rows)],
     )
 
+
 def _prepared_frame_from_row(
     capture_dir: Path,
     row: Mapping[str, Any],
 ) -> strict.PreparedPhysTwinFrame | None:
-    path_value = row.get("prepared_data_process_frame_path", row.get("prepared_phystwin_frame_path"))
+    path_value = row.get(
+        "prepared_data_process_frame_path", row.get("prepared_phystwin_frame_path")
+    )
     if path_value is None:
         return None
     return strict.load_prepared_phystwin_frame(capture_dir / str(path_value))
@@ -834,7 +989,9 @@ def _chunk_payload_from_prepared_frames(
         raise ValueError("prepared data_process chunk requires at least one frame")
     c2w = _camera_to_world(metadata)
     intrinsics = _intrinsics_matrix(metadata)
-    first_queries = np.asarray(frames[0].query_points_yx, dtype=np.float32).reshape(-1, 2)
+    first_queries = np.asarray(frames[0].query_points_yx, dtype=np.float32).reshape(
+        -1, 2
+    )
 
     processed_masks: list[list[dict[str, np.ndarray]]] = []
     tracks: list[np.ndarray] = []
@@ -845,14 +1002,30 @@ def _chunk_payload_from_prepared_frames(
 
     for frame in frames:
         queries = np.asarray(frame.query_points_yx, dtype=np.float32).reshape(-1, 2)
-        if queries.shape != first_queries.shape or not np.allclose(queries, first_queries):
-            raise ValueError("prepared data_process frames in one chunk must share query_points_yx")
-        processed_masks.append([strict.normalize_processed_mask_frame(frame.processed_mask_frame)])
-        tracks.append(np.ascontiguousarray(frame.tracks_yx, dtype=np.float32).reshape(-1, 2))
-        visibility.append(np.ascontiguousarray(frame.visibility, dtype=bool).reshape(-1))
+        if queries.shape != first_queries.shape or not np.allclose(
+            queries, first_queries
+        ):
+            raise ValueError(
+                "prepared data_process frames in one chunk must share query_points_yx"
+            )
+        processed_masks.append(
+            [strict.normalize_processed_mask_frame(frame.processed_mask_frame)]
+        )
+        tracks.append(
+            np.ascontiguousarray(frame.tracks_yx, dtype=np.float32).reshape(-1, 2)
+        )
+        visibility.append(
+            np.ascontiguousarray(frame.visibility, dtype=bool).reshape(-1)
+        )
         pcd_points.append(np.ascontiguousarray(frame.pcd_points, dtype=np.float32))
         pcd_colors.append(np.ascontiguousarray(frame.pcd_colors, dtype=np.uint8))
-        source_frame_indices.append(int(frame.source_frame_index if frame.source_frame_index is not None else frame.seq))
+        source_frame_indices.append(
+            int(
+                frame.source_frame_index
+                if frame.source_frame_index is not None
+                else frame.seq
+            )
+        )
 
     tracks_yx = np.stack(tracks, axis=0)
     tracker_visibility = np.stack(visibility, axis=0)
@@ -901,7 +1074,9 @@ def _chunk_payload_from_prepared_frames(
         interior_points=interior_points,
         fps=int(fps),
         serial_number=serial_number,
-        depth_backend=str(metadata.get("depth_backend") or metadata.get("depth_source", "")),
+        depth_backend=str(
+            metadata.get("depth_backend") or metadata.get("depth_source", "")
+        ),
         depth_source_internal=str(
             metadata.get("depth_source_internal")
             or metadata.get("depth_source")
@@ -989,7 +1164,9 @@ def _write_chunk_from_rows(
         )
         materialization_source = "legacy_reprocess"
         legacy_reprocess_count = len(rows)
-    track_finalize_done_wall_s = max(_relative_wall_s(float(wall_time_origin_s)), window_closed_wall_s)
+    track_finalize_done_wall_s = max(
+        _relative_wall_s(float(wall_time_origin_s)), window_closed_wall_s
+    )
     track_fields = _object_track_manifest_fields(chunk.track_process_data)
     track_fields.update(_controller_track_manifest_fields(chunk.track_process_data))
     chunk_source_frame_indices = (
@@ -1019,7 +1196,9 @@ def _write_chunk_from_rows(
             "track_finalize_done_wall_s": float(track_finalize_done_wall_s),
             "materialize_start_wall_s": materialize_start_wall_s,
             "materialize_end_wall_s": track_finalize_done_wall_s,
-            "materialize_latency_ms": float((track_finalize_done_wall_s - materialize_start_wall_s) * 1000.0),
+            "materialize_latency_ms": float(
+                (track_finalize_done_wall_s - materialize_start_wall_s) * 1000.0
+            ),
             "backlog_chunks": backlog_count,
             "chunk_materialization_source": materialization_source,
             "prepared_frame_count": int(prepared_count),
@@ -1056,10 +1235,16 @@ def _write_chunk_from_rows(
                 "online_publish_skip_reason": str(skip_reason),
             }
         )
-        publish_wall_s = max(_relative_wall_s(float(wall_time_origin_s)), final_data_written_wall_s)
+        publish_wall_s = max(
+            _relative_wall_s(float(wall_time_origin_s)), final_data_written_wall_s
+        )
         manifest["publish_wall_s"] = float(publish_wall_s)
-        manifest["publish_latency_ms"] = float((publish_wall_s - window_closed_wall_s) * 1000.0)
-        manifest["publish_lag_ms"] = float((publish_wall_s - source_window_end_s) * 1000.0)
+        manifest["publish_latency_ms"] = float(
+            (publish_wall_s - window_closed_wall_s) * 1000.0
+        )
+        manifest["publish_lag_ms"] = float(
+            (publish_wall_s - source_window_end_s) * 1000.0
+        )
         return manifest
     if online_writer is not None:
         online_result = online_writer.commit_final_data_with_track(
@@ -1075,13 +1260,19 @@ def _write_chunk_from_rows(
                 "online_manifest_path": online_result["online_manifest_path"],
                 "online_chunk_path": online_result["online_chunk_path"],
                 "online_chunk_id": online_result["online_chunk_id"],
-                "online_latest_committed_frame": online_result["online_latest_committed_frame"],
+                "online_latest_committed_frame": online_result[
+                    "online_latest_committed_frame"
+                ],
                 "static_data_path": online_result["static_data_path"],
             }
         )
-    publish_wall_s = max(_relative_wall_s(float(wall_time_origin_s)), final_data_written_wall_s)
+    publish_wall_s = max(
+        _relative_wall_s(float(wall_time_origin_s)), final_data_written_wall_s
+    )
     manifest["publish_wall_s"] = float(publish_wall_s)
-    manifest["publish_latency_ms"] = float((publish_wall_s - window_closed_wall_s) * 1000.0)
+    manifest["publish_latency_ms"] = float(
+        (publish_wall_s - window_closed_wall_s) * 1000.0
+    )
     manifest["publish_lag_ms"] = float((publish_wall_s - source_window_end_s) * 1000.0)
     return manifest
 
@@ -1130,7 +1321,9 @@ def write_chunks_from_headless_capture(
     row_start = 0
     wall_time_origin_s = time.monotonic()
     frames_path = capture / "frames.jsonl"
-    rows_to_process, warmup_skipped_rows = _trim_warmup_delayed_rows(list(_iter_jsonl(frames_path)))
+    rows_to_process, warmup_skipped_rows = _trim_warmup_delayed_rows(
+        list(_iter_jsonl(frames_path))
+    )
     online_writer = None
     if bool(write_online_output):
         online_writer = ChunkedFinalDataWriter(
@@ -1144,7 +1337,9 @@ def write_chunks_from_headless_capture(
             ),
             allow_degraded=bool(allow_degraded_online),
         )
-    object_track_selector = strict.StreamingObjectTrackSelector(volume_sample_size=0.005)
+    object_track_selector = strict.StreamingObjectTrackSelector(
+        volume_sample_size=0.005
+    )
     controller_track_selector = strict.StreamingControllerTrackSelector(count=30)
     # Keep selectors and query schema alive across chunks. This preserves stable
     # sample identities rather than reselecting arbitrary object/controller
@@ -1182,10 +1377,12 @@ def write_chunks_from_headless_capture(
             wall_time_origin_s=wall_time_origin_s,
             window_closed_wall_s=window_closed_wall_s,
             prepared_frames=chunk_prepared,
-            backlog_chunks=lambda path=frames_path, size=chunk_size, published=chunk_index: _complete_chunk_backlog(
-                path,
-                chunk_size=size,
-                published_chunk_count=published,
+            backlog_chunks=lambda path=frames_path, size=chunk_size, published=chunk_index: (
+                _complete_chunk_backlog(
+                    path,
+                    chunk_size=size,
+                    published_chunk_count=published,
+                )
             ),
             online_writer=online_writer,
             allow_degraded_online=bool(allow_degraded_online),
@@ -1195,7 +1392,10 @@ def write_chunks_from_headless_capture(
             warmup_skipped_rows=warmup_skipped_rows,
         )
         manifests.append(manifest)
-        if not bool(manifest.get("online_publish_skipped", False)) and on_chunk_written is not None:
+        if (
+            not bool(manifest.get("online_publish_skipped", False))
+            and on_chunk_written is not None
+        ):
             on_chunk_written(manifest)
         if _track_process_invalid(manifest):
             break
@@ -1208,21 +1408,28 @@ def write_chunks_from_headless_capture(
     return manifests
 
 
-def _wait_for_metadata(capture: Path, *, capture_finished: Callable[[], bool], poll_interval_s: float) -> Mapping[str, Any]:
+def _wait_for_metadata(
+    capture: Path, *, capture_finished: Callable[[], bool], poll_interval_s: float
+) -> Mapping[str, Any]:
     metadata_path = capture / "metadata.json"
     while True:
         if metadata_path.is_file():
             try:
                 return _read_json_file_stable(
                     metadata_path,
-                    deadline_s=time.monotonic() + max(0.5, float(poll_interval_s) * 4.0),
+                    deadline_s=time.monotonic()
+                    + max(0.5, float(poll_interval_s) * 4.0),
                     poll_interval_s=float(poll_interval_s),
                 )
             except RuntimeError:
                 if capture_finished():
-                    raise RuntimeError(f"capture finished before stable metadata appeared: {metadata_path}")
+                    raise RuntimeError(
+                        f"capture finished before stable metadata appeared: {metadata_path}"
+                    )
         elif capture_finished():
-            raise RuntimeError(f"capture finished before metadata appeared: {metadata_path}")
+            raise RuntimeError(
+                f"capture finished before metadata appeared: {metadata_path}"
+            )
         time.sleep(max(0.0, float(poll_interval_s)))
 
 
@@ -1282,7 +1489,9 @@ def stream_chunks_from_headless_capture(
             ),
             allow_degraded=bool(allow_degraded_online),
         )
-    object_track_selector = strict.StreamingObjectTrackSelector(volume_sample_size=0.005)
+    object_track_selector = strict.StreamingObjectTrackSelector(
+        volume_sample_size=0.005
+    )
     controller_track_selector = strict.StreamingControllerTrackSelector(count=30)
     # Live streaming uses the same stateful selectors as offline conversion so
     # chunk N+1 continues the topology established by chunk N.
@@ -1339,10 +1548,12 @@ def stream_chunks_from_headless_capture(
                 wall_time_origin_s=wall_time_origin_s,
                 window_closed_wall_s=window_closed_wall_s,
                 prepared_frames=chunk_prepared,
-                backlog_chunks=lambda path=frames_path, size=chunk_size, published=chunk_index: _complete_chunk_backlog(
-                    path,
-                    chunk_size=size,
-                    published_chunk_count=published,
+                backlog_chunks=lambda path=frames_path, size=chunk_size, published=chunk_index: (
+                    _complete_chunk_backlog(
+                        path,
+                        chunk_size=size,
+                        published_chunk_count=published,
+                    )
                 ),
                 online_writer=online_writer,
                 allow_degraded_online=bool(allow_degraded_online),
@@ -1352,7 +1563,10 @@ def stream_chunks_from_headless_capture(
                 warmup_skipped_rows=warmup_start_filter.skipped_rows,
             )
             manifests.append(manifest)
-            if not bool(manifest.get("online_publish_skipped", False)) and on_chunk_written is not None:
+            if (
+                not bool(manifest.get("online_publish_skipped", False))
+                and on_chunk_written is not None
+            ):
                 on_chunk_written(manifest)
             if _track_process_invalid(manifest):
                 break

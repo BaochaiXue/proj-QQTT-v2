@@ -116,6 +116,31 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
             )
             self.assertEqual({"0": "stuffed animal", "1": "hand"}, mask_info)
 
+    def test_shape_prior_points_npz_contains_only_prior_points(self) -> None:
+        from demo_v5_1 import shape_prior_warmup
+
+        surface = np.asarray([[1.0, 2.0, 3.0]], dtype=np.float32)
+        interior = np.asarray([[4.0, 5.0, 6.0], [7.0, 8.0, 9.0]], dtype=np.float32)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = (
+                Path(tmpdir)
+                / "shape_prior"
+                / "points.npz"
+            )
+            shape_prior_warmup.write_shape_prior_points_npz(
+                output_path,
+                surface_points=surface,
+                interior_points=interior,
+            )
+
+            data = np.load(output_path)
+            np.testing.assert_array_equal(surface, data["surface_points"])
+            np.testing.assert_array_equal(interior, data["interior_points"])
+            np.testing.assert_array_equal(
+                np.concatenate([surface, interior], axis=0),
+                data["points"],
+            )
+
     def test_shape_prior_warmup_manager_ready_and_failed_profiles(self) -> None:
         from demo_v5_1 import shape_prior_warmup
 
@@ -170,7 +195,7 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
         self.assertEqual("boom", failed_profile["shape_prior_error"])
 
     def test_shape_prior_sampling_uses_origin_counts(self) -> None:
-        from demo_v5_1 import data_process_chunk_writer
+        from demo_v5_1 import data_process_chunk_payload
         from demo_v5_1 import shape_prior_sample
         from demo_v5_1 import shape_prior_warmup
 
@@ -197,12 +222,12 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
             )
         self.assertEqual(2, error.exception.code)
 
-        metrics = data_process_chunk_writer.DATA_PROCESS_SAM3D_METRICS
+        metrics = data_process_chunk_payload.DATA_PROCESS_SAM3D_METRICS
         self.assertEqual(1024, metrics["shape_prior_target_surface_points"])
         self.assertEqual(10000, metrics["shape_prior_interior_candidate_points"])
         self.assertNotIn("shape_prior_target_interior_points", metrics)
 
-        quality = data_process_chunk_writer._quality_manifest_fields(
+        quality = data_process_chunk_payload._quality_manifest_fields(
             {
                 "object_points": np.zeros((1, 1, 3), dtype=np.float64),
                 "controller_points": np.zeros((1, 1, 3), dtype=np.float64),
@@ -215,21 +240,25 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
         self.assertNotIn("shape_prior_target_counts_met", quality)
 
     def test_shape_prior_has_no_backend_default(self) -> None:
-        from demo_v5_1 import data_process_chunk_writer
+        from demo_v5_1 import data_process_chunk_payload
         from demo_v5_1 import shape_prior_warmup
 
         self.assertFalse(hasattr(shape_prior_warmup, "SHAPE_BACKEND_SAM3D_OBJECTS"))
-        self.assertNotIn("shape_backend", shape_prior_warmup.default_profile(enabled=True))
-        self.assertNotIn("shape_backend", shape_prior_warmup.default_profile(enabled=False))
+        self.assertNotIn(
+            "shape_backend", shape_prior_warmup.default_profile(enabled=True)
+        )
+        self.assertNotIn(
+            "shape_backend", shape_prior_warmup.default_profile(enabled=False)
+        )
         self.assertNotIn(
             "shape_prior_sampling_backend",
-            data_process_chunk_writer.DATA_PROCESS_SAM3D_METRICS,
+            data_process_chunk_payload.DATA_PROCESS_SAM3D_METRICS,
         )
 
         checked_files = (
             ROOT / "demo_v5_1" / "shape_prior_warmup.py",
             ROOT / "demo_v5_1" / "main_data_processing.py",
-            ROOT / "demo_v5_1" / "data_process_chunk_writer.py",
+            ROOT / "demo_v5_1" / "data_process_chunk_payload.py",
         )
         for path in checked_files:
             source = path.read_text(encoding="utf-8")
@@ -291,9 +320,7 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
             ("--shape-prior-worker-mode", "managed"),
             (
                 "--"
-                + "-".join(
-                    ("shape", "prior", "worker", "future" + "phystwin", "root")
-                ),
+                + "-".join(("shape", "prior", "worker", "future" + "phystwin", "root")),
                 "vendor/demo_runtime",
             ),
             ("--shape-prior-worker-warmup-models",),
@@ -318,7 +345,9 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
         parsed = parser.parse_args([])
         self.assertFalse(hasattr(parsed, "realtime_gpu_mode"))
         self.assertFalse(hasattr(parsed, "warmup_gpu_mode"))
-        self.assertFalse(hasattr(parsed, "_".join(("camera", "cuda", "visible", "devices"))))
+        self.assertFalse(
+            hasattr(parsed, "_".join(("camera", "cuda", "visible", "devices")))
+        )
         self.assertFalse(
             hasattr(parsed, "_".join(("shape", "prior", "cuda", "visible", "devices")))
         )

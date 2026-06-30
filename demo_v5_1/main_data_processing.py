@@ -2165,6 +2165,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--shape-prior-profile-json", type=Path, default=None)
     parser.add_argument(
+        "--shape-prior-case-root",
+        type=Path,
+        default=Path("outputs") / "shape_prior_case",
+    )
+    parser.add_argument(
+        "--shape-prior-points-npz",
+        type=Path,
+        default=shape_prior_warmup.POINTS_NPZ,
+    )
+    parser.add_argument(
         "--shape-prior-warmup-cuda-visible-devices",
         default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
     )
@@ -4095,11 +4105,8 @@ class MainDataProcessingDemo:
         enabled = bool(getattr(self.args, "shape_prior_warmup", False))
         client = None
         if enabled:
-            headless_dir = getattr(self.args, "headless_capture_dir", None)
-            if headless_dir is None:
-                raise RuntimeError("shape-prior warmup requires --headless-capture-dir")
             client = shape_prior_warmup.ShapePriorLocalClient(
-                case_root=Path(headless_dir) / "shape_prior_case",
+                case_root=Path(self.args.shape_prior_case_root),
                 cuda_visible_devices=str(
                     getattr(
                         self.args,
@@ -4108,6 +4115,7 @@ class MainDataProcessingDemo:
                     )
                 ),
                 controller_name=str(self.args.shape_prior_controller_name),
+                points_npz=Path(self.args.shape_prior_points_npz),
                 sam3d_root=getattr(self.args, "shape_prior_sam3d_root", None),
                 sam3d_config=getattr(self.args, "shape_prior_config", None),
             )
@@ -4316,6 +4324,12 @@ class MainDataProcessingDemo:
             ),
             "shape_prior_controller_name": str(
                 getattr(self.args, "shape_prior_controller_name", "")
+            ),
+            "shape_prior_case_root": _repo_relative_path_text(
+                getattr(self.args, "shape_prior_case_root", None)
+            ),
+            "shape_prior_points_npz": _repo_relative_path_text(
+                getattr(self.args, "shape_prior_points_npz", None)
             ),
             "shape_prior_skip_route_visualizations": bool(
                 getattr(self.args, "shape_prior_skip_route_visualizations", True)

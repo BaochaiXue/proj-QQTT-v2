@@ -1,0 +1,20 @@
+{
+  "case_name": "demo_v5_1",
+  "chunk_size": 35,
+  "demo_version": "demo_v5_1",
+  "latest_committed_chunk": 0,
+  "latest_committed_frame": 35,
+  "num_frames_total": 35,
+  "online_num_frames_total": 35,
+  "query_schema_hash": "2fabae94b0bc1d76cfa65d4125525cfa08ee5ab1fa0340e051aa8ddd14eda97a",
+  "query_schema_version": "data_process_sam3d_realtime_query_schema_v1",
+  "reference_pipeline": "data_process_sam3d",
+  "runtime_contract": "data_process_sam3d_realtime_final_data_v1",
+  "runtime_product_name": "demo_v5_1_main_data_processing",
+  "source_end_frame": 35,
+  "source_frame_step": 1,
+  "source_num_frames_total": 35,
+  "source_start_frame": 0,
+  "status": "finished",
+  "version": 2
+}

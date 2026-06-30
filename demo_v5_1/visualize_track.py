@@ -244,7 +244,7 @@ def load_fake_input_frame_total(capture_dir: str | Path | None) -> int | None:
 
 
 def normalize_online_dir(path: str | Path) -> Path:
-    """Accept either online_data/<case> or online_data/<case>/chunks."""
+    """Accept either online_data or online_data/chunks."""
     value = Path(path).expanduser()
     if value.name == "chunks":
         return value.parent
@@ -252,12 +252,12 @@ def normalize_online_dir(path: str | Path) -> Path:
 
 
 def infer_case_dir(online_dir: Path, case_dir: str | Path | None) -> Path:
-    """Resolve the aggregate data/<case> directory for an online stream."""
+    """Resolve the aggregate data directory for an online stream."""
     if case_dir is not None:
         return Path(case_dir).expanduser()
-    if online_dir.parent.name == "online_data":
-        return online_dir.parent.parent / "data" / online_dir.name
-    return online_dir.parent / "data" / online_dir.name
+    if online_dir.name != "online_data":
+        raise ValueError(f"online_dir must point to online_data: {online_dir}")
+    return online_dir.parent / "data"
 
 
 def _select_camera_array(value: Any, *, cam_idx: int, shape: tuple[int, int]) -> np.ndarray | None:
@@ -1935,9 +1935,9 @@ def list_available_chunk_paths(online_dir: Path, *, start_chunk: int) -> list[Pa
 
 def _run_root_for_online_dir(online_dir: Path) -> Path | None:
     path = normalize_online_dir(online_dir)
-    if path.parent.name != "online_data":
+    if path.name != "online_data":
         return None
-    return path.parent.parent
+    return path.parent
 
 
 def _camera_to_final_data_fps_from_run_manifest(online_dir: Path) -> float | None:
@@ -1945,16 +1945,13 @@ def _camera_to_final_data_fps_from_run_manifest(online_dir: Path) -> float | Non
     run_root = _run_root_for_online_dir(online_dir)
     if run_root is None or not run_root.is_dir():
         return None
-    candidates = sorted(
-        run_root.glob("*_chunks_manifest.json"),
-        key=lambda path: path.stat().st_mtime if path.exists() else 0.0,
-        reverse=True,
-    )
-    case_name = normalize_online_dir(online_dir).name
+    candidates = [run_root / "run_summary.json"]
     for manifest_path in candidates:
+        if not manifest_path.is_file():
+            continue
         manifest = read_json(manifest_path)
         online_dir_value = str(manifest.get("online_dir", ""))
-        if online_dir_value and case_name not in online_dir_value:
+        if online_dir_value and Path(online_dir_value).name != "online_data":
             continue
         intervals = []
         for value in manifest.get("steady_publish_intervals_s", []) or []:
@@ -2178,8 +2175,18 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the Demo v5.1 chunk viewer CLI parser."""
     parser = argparse.ArgumentParser(description="Play Demo v5 online object/controller points chunk by chunk.")
     parser.add_argument("--layout", choices=LAYOUTS, default=LAYOUT_OUTPUT_ONLY)
-    parser.add_argument("--online-dir", type=Path, required=True, help="Path to online_data/<case> or its chunks directory.")
-    parser.add_argument("--case-dir", type=Path, default=None, help="Path to data/<case>. Inferred from --online-dir when omitted.")
+    parser.add_argument(
+        "--online-dir",
+        type=Path,
+        required=True,
+        help="Path to online_data or its chunks directory.",
+    )
+    parser.add_argument(
+        "--case-dir",
+        type=Path,
+        default=None,
+        help="Path to data. Inferred from --online-dir when omitted.",
+    )
     parser.add_argument("--render-mode", choices=RENDER_MODES, default=RENDER_MODE_RGB_OVERLAY)
     parser.add_argument("--output-video", type=Path, default=None, help="Write existing chunks to MP4 and exit instead of opening a live window.")
     parser.add_argument("--capture-dir", type=Path, default=None, help="Headless capture dir containing input_frames.jsonl and input_rgb/*.png.")

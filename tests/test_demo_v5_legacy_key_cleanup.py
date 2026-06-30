@@ -137,13 +137,15 @@ class DemoV5LegacyKeyCleanupTests(unittest.TestCase):
 
     def test_legacy_final_data_key_is_rejected_instead_of_normalized(self) -> None:
         for package in DEMO_PACKAGES:
-            writer = importlib.import_module(f"{package}.data_process_chunk_writer")
-            payload = _canonical_final_payload(writer)
+            chunk_payload = importlib.import_module(
+                f"{package}.data_process_chunk_payload"
+            )
+            payload = _canonical_final_payload(chunk_payload)
             payload["controller_fps_indices"] = payload.pop("controller_final_indices")
 
             with self.subTest(package=package):
                 with self.assertRaisesRegex(ValueError, "controller_final_indices"):
-                    writer._validate_final_shapes(payload)
+                    chunk_payload._validate_final_shapes(payload)
 
     def test_futurephystwin_wrapper_does_not_export_old_alias_names(self) -> None:
         for package in DEMO_PACKAGES:
