@@ -34,9 +34,9 @@ if REPO_ROOT_STR in sys.path:
     sys.path.remove(REPO_ROOT_STR)
 sys.path.insert(0, REPO_ROOT_STR)
 
-from demo_v5_1.realtime_data_process_track import (
-    stream_chunks_from_headless_capture,
-    write_chunks_from_headless_capture,
+from demo_v5_1.chunk_data_stream import (
+    stream_chunk_data_from_headless_capture,
+    write_chunk_data_from_headless_capture,
 )
 
 
@@ -828,7 +828,7 @@ def build_main_data_processing_command(
     )
     # This is the only v5.1 camera/tracker entrypoint. It writes prepared
     # per-frame NPZ payloads plus optional input RGB timeline data; chunk
-    # materialization happens in realtime_data_process_track.py.
+    # materialization happens in chunk_data_stream.py.
     # Offline parity with data_process_sam3d/data_process_pcd.py:L84-L149,
     # data_process_sam3d/data_process_mask.py:L42-L152, and
     # data_process_sam3d/data_process_track.py:L49-L55. The subprocess emits the
@@ -1067,7 +1067,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Offline conversion path: consume an existing capture directory and
         # write online/static final_data products without launching camera or
         # visualizer subprocesses.
-        manifests = write_chunks_from_headless_capture(
+        manifests = write_chunk_data_from_headless_capture(
             args.source_headless_capture,
             base_path=base_path,
             case_prefix=str(args.case_prefix),
@@ -1177,10 +1177,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         # the camera subprocess is still running, so fake-live and live share the
         # same realtime chunking path.
         # Offline parity with data_process_track.py:L37-L378 and
-        # data_process_sample.py:L250-L352. stream_chunks_from_headless_capture
+        # data_process_sample.py:L250-L352. stream_chunk_data_from_headless_capture
         # materializes those outputs incrementally instead of after the
         # recording has finished.
-        manifests = stream_chunks_from_headless_capture(
+        manifests = stream_chunk_data_from_headless_capture(
             capture_dir,
             base_path=base_path,
             case_prefix=str(args.case_prefix),

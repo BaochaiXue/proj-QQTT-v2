@@ -58,7 +58,7 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
                 mock.patch.object(runner.subprocess, "Popen", fake_popen),
                 mock.patch.object(
                     runner,
-                    "stream_chunks_from_headless_capture",
+                    "stream_chunk_data_from_headless_capture",
                     return_value=[],
                 ),
                 mock.patch.dict(runner.os.environ, {}, clear=True),

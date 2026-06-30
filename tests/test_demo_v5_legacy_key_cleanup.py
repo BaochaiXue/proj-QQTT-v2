@@ -3,12 +3,15 @@ from __future__ import annotations
 import importlib
 import unittest
 from pathlib import Path
-from typing import Any
-
-import numpy as np
 
 
 DEMO_PACKAGES = ("demo_v5_1",)
+REMOVED_PAYLOAD_VALIDATION_HELPERS = (
+    "_validate_track_shapes",
+    "_validate_query_schema_payload",
+    "_validate_query_schema_sample_semantics",
+    "_validate_final_shapes",
+)
 REMOVED_WRAPPER_EXPORTS = (
     "CONTROLLER_ANCHOR_STATIC_KEYS",
     "CONTROLLER_ANCHOR_TIME_KEYS",
@@ -53,29 +56,6 @@ REMOVED_SOURCE_TOKENS = (
     "futurephystwin_case_root",
     "futurephystwin_base_path",
 )
-
-
-def _canonical_final_payload(writer: Any) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "controller_points": np.asarray([[[0.20, 0.0, 1.0]]], dtype=np.float32),
-        "controller_final_indices": np.asarray([0], dtype=np.int64),
-        "controller_selected_query_ids": np.asarray([20], dtype=np.int64),
-        "controller_sample_query_ids": np.asarray([20], dtype=np.int64),
-        "object_colors": np.asarray([[[0.7, 0.2, 0.1]]], dtype=np.float32),
-        "object_motions_valid": np.asarray([[True]], dtype=bool),
-        "object_points": np.asarray([[[0.05, 0.0, 1.0]]], dtype=np.float32),
-        "object_sample_indices": np.asarray([0], dtype=np.int64),
-        "object_selected_query_ids": np.asarray([10], dtype=np.int64),
-        "object_sample_query_ids": np.asarray([10], dtype=np.int64),
-        "object_visibilities": np.asarray([[True]], dtype=bool),
-        "query_schema_version": writer.DATA_PROCESS_QUERY_SCHEMA_VERSION,
-        "query_ids": np.asarray([10, 20], dtype=np.int64),
-        "query_semantic_labels": np.asarray([1, 2], dtype=np.int8),
-        "surface_points": np.empty((0, 3), dtype=np.float32),
-        "interior_points": np.empty((0, 3), dtype=np.float32),
-    }
-    payload["query_schema_hash"] = writer._query_schema_hash(payload)
-    return payload
 
 
 class DemoV5LegacyKeyCleanupTests(unittest.TestCase):
@@ -135,17 +115,15 @@ class DemoV5LegacyKeyCleanupTests(unittest.TestCase):
         self.assertIn("demo_v5_1.shape_prior_align", source)
         self.assertIn("demo_v5_1.shape_prior_sample", source)
 
-    def test_legacy_final_data_key_is_rejected_instead_of_normalized(self) -> None:
+    def test_demo_v51_chunk_data_payload_has_no_validation_helpers(self) -> None:
         for package in DEMO_PACKAGES:
-            chunk_payload = importlib.import_module(
-                f"{package}.data_process_chunk_payload"
+            chunk_data_payload = importlib.import_module(
+                f"{package}.chunk_data_payload"
             )
-            payload = _canonical_final_payload(chunk_payload)
-            payload["controller_fps_indices"] = payload.pop("controller_final_indices")
 
             with self.subTest(package=package):
-                with self.assertRaisesRegex(ValueError, "controller_final_indices"):
-                    chunk_payload._validate_final_shapes(payload)
+                for name in REMOVED_PAYLOAD_VALIDATION_HELPERS:
+                    self.assertFalse(hasattr(chunk_data_payload, name), name)
 
     def test_futurephystwin_wrapper_does_not_export_old_alias_names(self) -> None:
         for package in DEMO_PACKAGES:

@@ -13,7 +13,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from demo_v5_1.data_keys import TIME_KEYS
-from demo_v5_1.data_process_chunk_payload import (
+from demo_v5_1.chunk_data_payload import (
     DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
     DATA_PROCESS_QUERY_SCHEMA_KEYS,
     build_query_schema_payload,
@@ -51,6 +51,7 @@ TRACK_DIAGNOSTIC_KEYS = (
     "controller_neighbor_query_ids",
     "track_process_status",
 )
+WARMUP_CHUNK_FILENAME = "chunk_warmup.pkl"
 
 
 def _infer_frame_count(data: Mapping[str, Any]) -> int:
@@ -170,7 +171,7 @@ def _static_mapping_vectors(data: Mapping[str, Any]) -> dict[str, Any]:
     return vectors
 
 
-def build_online_chunk(
+def build_chunk_data_record(
     data: Mapping[str, Any],
     *,
     case_name: str,
@@ -235,7 +236,50 @@ def _track_diagnostics(track_process: Mapping[str, Any]) -> dict[str, Any]:
     return payload
 
 
-class ChunkedFinalDataWriter:
+def write_warmup_chunk_data_record(
+    *,
+    base_path: str | Path,
+    case_name: str,
+    final_data: Mapping[str, Any],
+    track_process: Mapping[str, Any],
+    source_frame_index: int,
+    source_timestamp_s: float | None = None,
+) -> dict[str, Any]:
+    """Write the one-frame warmup chunk without touching formal chunk state."""
+    online_data = {
+        **dict(final_data),
+        **_track_diagnostics(track_process),
+    }
+    source_timestamps = (
+        None if source_timestamp_s is None else [float(source_timestamp_s)]
+    )
+    chunk = build_chunk_data_record(
+        online_data,
+        case_name=str(case_name),
+        chunk_id=-1,
+        start_frame=0,
+        end_frame=1,
+        source_frame_indices=[int(source_frame_index)],
+        source_timestamps_s=source_timestamps,
+    )
+    chunk.update(
+        {
+            "chunk_role": "warmup",
+            "is_warmup_chunk": True,
+        }
+    )
+    chunks_dir = Path(base_path) / "online_data" / "chunks"
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+    warmup_path = chunks_dir / WARMUP_CHUNK_FILENAME
+    atomic_pickle_dump(chunk, warmup_path)
+    return {
+        "warmup_chunk_path": str(warmup_path),
+        "warmup_chunk_filename": WARMUP_CHUNK_FILENAME,
+        "warmup_source_frame_index": int(source_frame_index),
+    }
+
+
+class ChunkDataWriter:
     """Maintain online chunks and the continuously growing static case.
 
     The writer is append-only from the perspective of online readers: each
@@ -280,7 +324,7 @@ class ChunkedFinalDataWriter:
         self.static_case_dir.mkdir(parents=True, exist_ok=True)
         self._write_manifest(status="recording")
 
-    def commit_final_data_chunk(
+    def commit_chunk_data_record(
         self,
         data: Mapping[str, Any],
         *,
@@ -308,7 +352,7 @@ class ChunkedFinalDataWriter:
         if source_timestamps_s is not None and len(source_timestamps_s) != frame_count:
             raise ValueError("source_timestamps_s length must match chunk frame count")
         chunk_id = int(self.latest_committed_chunk + 1)
-        chunk = build_online_chunk(
+        chunk = build_chunk_data_record(
             data,
             case_name=self.case_name,
             chunk_id=chunk_id,
@@ -333,7 +377,7 @@ class ChunkedFinalDataWriter:
             "online_manifest": manifest,
         }
 
-    def commit_final_data_with_track(
+    def commit_chunk_data(
         self,
         final_data: Mapping[str, Any],
         track_process: Mapping[str, Any],
@@ -347,7 +391,7 @@ class ChunkedFinalDataWriter:
             **dict(final_data),
             **_track_diagnostics(track_process),
         }
-        return self.commit_final_data_chunk(
+        return self.commit_chunk_data_record(
             online_data,
             source_frame_indices=source_frame_indices,
             source_timestamps_s=source_timestamps_s,
@@ -478,8 +522,10 @@ class ChunkedFinalDataWriter:
 __all__ = [
     "TIME_KEYS",
     "STATIC_KEYS",
-    "ChunkedFinalDataWriter",
+    "WARMUP_CHUNK_FILENAME",
+    "ChunkDataWriter",
     "atomic_json_dump",
     "atomic_pickle_dump",
-    "build_online_chunk",
+    "build_chunk_data_record",
+    "write_warmup_chunk_data_record",
 ]

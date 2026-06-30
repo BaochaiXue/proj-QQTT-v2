@@ -122,13 +122,17 @@ surface points, interior points, and metadata.
 
 ## Chunk Gate
 
-`main.py` uses `stream_chunks_from_headless_capture()` to materialize chunks.
+`main.py` uses `stream_chunk_data_from_headless_capture()` to materialize chunks.
 
 When shape prior is enabled:
 
 - `require_shape_prior=True`
 - chunk writer waits for `surface_points` and `interior_points`
 - timeout comes from `shape_prior_chunk_wait_timeout_s`
+- the warmup source frame is written separately to
+  `online_data/chunks/chunk_warmup.pkl`
+- formal realtime chunks still start at `online_data/chunks/chunk_000000.pkl`
+  and do not include the warmup frame
 
 When shape prior is disabled:
 

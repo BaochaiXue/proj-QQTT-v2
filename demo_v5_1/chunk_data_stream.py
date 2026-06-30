@@ -16,11 +16,14 @@ from typing import Any, Callable, Iterator, Mapping, Sequence
 import numpy as np
 from PIL import Image
 
-from demo_v5_1.data_process_chunk_payload import (
-    DataProcessChunk,
-    build_data_process_chunk_payload,
+from demo_v5_1.chunk_data_payload import (
+    ChunkDataWindow,
+    build_chunk_data_payload,
 )
-from demo_v5_1.chunked_final_data_output import ChunkedFinalDataWriter
+from demo_v5_1.chunk_data_output import (
+    ChunkDataWriter,
+    write_warmup_chunk_data_record,
+)
 from qqtt.demo.pcd_postprocess import _detect_radius_outlier_indices
 from qqtt.demo import phystwin_strict_product as strict
 
@@ -171,9 +174,14 @@ def _row_ready_for_realtime_chunk_start(row: Mapping[str, Any]) -> bool:
     return True
 
 
-def _trim_warmup_delayed_rows(
-    rows: Sequence[Mapping[str, Any]],
-) -> tuple[list[dict[str, Any]], int]:
+@dataclass(frozen=True)
+class WarmupTrimResult:
+    rows: list[dict[str, Any]]
+    skipped_count: int
+    warmup_row: dict[str, Any] | None = None
+
+
+def _trim_warmup_delayed_rows(rows: Sequence[Mapping[str, Any]]) -> WarmupTrimResult:
     """Drop leading warmup rows before chunking realtime output.
 
     Demo v5.1 writes ``input_frames.jsonl`` from camera start, but
@@ -187,6 +195,7 @@ def _trim_warmup_delayed_rows(
     """
     trimmed = [dict(row) for row in rows]
     skipped = 0
+    warmup_row: dict[str, Any] | None = None
     while trimmed and not _row_ready_for_realtime_chunk_start(trimmed[0]):
         skipped += 1
         trimmed.pop(0)
@@ -235,12 +244,18 @@ def _trim_warmup_delayed_rows(
         looks_like_stream_jump = source_gap > max(10, expected_gap * 3)
         if not (looks_like_warmup_hold and looks_like_stream_jump):
             break
+        if warmup_row is None:
+            warmup_row = dict(first)
         skipped += 1
         trimmed.pop(0)
         while trimmed and not _row_ready_for_realtime_chunk_start(trimmed[0]):
             skipped += 1
             trimmed.pop(0)
-    return trimmed, int(skipped)
+    return WarmupTrimResult(
+        rows=trimmed,
+        skipped_count=int(skipped),
+        warmup_row=warmup_row,
+    )
 
 
 @dataclass
@@ -248,6 +263,8 @@ class _WarmupStartFilterState:
     pending_rows: list[dict[str, Any]] = field(default_factory=list)
     resolved: bool = False
     skipped_rows: int = 0
+    warmup_row: dict[str, Any] | None = None
+    warmup_chunk_written: bool = False
 
 
 def _filter_warmup_start_rows(
@@ -260,10 +277,12 @@ def _filter_warmup_start_rows(
     if state.resolved:
         return [dict(row) for row in rows]
     state.pending_rows.extend(dict(row) for row in rows)
-    trimmed, skipped = _trim_warmup_delayed_rows(state.pending_rows)
-    if skipped:
-        state.skipped_rows += int(skipped)
-        state.pending_rows = trimmed
+    trim_result = _trim_warmup_delayed_rows(state.pending_rows)
+    if trim_result.skipped_count:
+        state.skipped_rows += int(trim_result.skipped_count)
+        state.pending_rows = trim_result.rows
+    if state.warmup_row is None and trim_result.warmup_row is not None:
+        state.warmup_row = dict(trim_result.warmup_row)
     if len(state.pending_rows) < 2 and not bool(capture_finished):
         return []
     state.resolved = True
@@ -819,7 +838,7 @@ def _track_input_with_session_query_schema(
     return track_input
 
 
-def _chunk_payload_from_rows(
+def _chunk_data_window_from_rows(
     capture_dir: Path,
     metadata: Mapping[str, Any],
     rows: Sequence[Mapping[str, Any]],
@@ -835,11 +854,11 @@ def _chunk_payload_from_rows(
     object_track_selector: strict.StreamingObjectTrackSelector | None = None,
     controller_track_selector: strict.StreamingControllerTrackSelector | None = None,
     session_query_schema: dict[str, np.ndarray] | None = None,
-) -> DataProcessChunk:
+) -> ChunkDataWindow:
     """Materialize a chunk from legacy row artifacts.
 
     This path is kept for older captures that did not write prepared data_process
-    frame NPZs. New realtime runs usually use ``_chunk_payload_from_prepared_frames``
+    frame NPZs. New realtime runs usually use ``_chunk_data_window_from_prepared_frames``
     to avoid rebuilding dense PCD and masks from separate files.
     """
     c2w = _camera_to_world(metadata)
@@ -934,7 +953,7 @@ def _chunk_payload_from_rows(
         # recovery so handle order survives later chunks.
         track_process = controller_track_selector.select(filtered)
 
-    return DataProcessChunk(
+    return ChunkDataWindow(
         track_process_data=track_process,
         surface_points=surface_points,
         interior_points=interior_points,
@@ -965,7 +984,7 @@ def _prepared_frame_from_row(
     return strict.load_prepared_phystwin_frame(capture_dir / str(path_value))
 
 
-def _chunk_payload_from_prepared_frames(
+def _chunk_data_window_from_prepared_frames(
     metadata: Mapping[str, Any],
     frames: Sequence[strict.PreparedPhysTwinFrame],
     *,
@@ -977,7 +996,7 @@ def _chunk_payload_from_prepared_frames(
     object_track_selector: strict.StreamingObjectTrackSelector | None = None,
     controller_track_selector: strict.StreamingControllerTrackSelector | None = None,
     session_query_schema: dict[str, np.ndarray] | None = None,
-) -> DataProcessChunk:
+) -> ChunkDataWindow:
     """Materialize a chunk from prepared per-frame NPZ payloads.
 
     This is the current v5.1 realtime path. The camera process already wrote
@@ -1068,7 +1087,7 @@ def _chunk_payload_from_prepared_frames(
         # realtime controller identities across windows.
         track_process = controller_track_selector.select(filtered)
 
-    return DataProcessChunk(
+    return ChunkDataWindow(
         track_process_data=track_process,
         surface_points=surface_points,
         interior_points=interior_points,
@@ -1107,7 +1126,7 @@ def _write_chunk_from_rows(
     window_closed_wall_s: float,
     prepared_frames: Sequence[strict.PreparedPhysTwinFrame | None] | None = None,
     backlog_chunks: Callable[[], int] | None = None,
-    online_writer: ChunkedFinalDataWriter | None = None,
+    online_writer: ChunkDataWriter | None = None,
     allow_degraded_online: bool = False,
     object_track_selector: strict.StreamingObjectTrackSelector | None = None,
     controller_track_selector: strict.StreamingControllerTrackSelector | None = None,
@@ -1129,7 +1148,7 @@ def _write_chunk_from_rows(
         # reprocessing because the camera process already emitted the
         # data_process_pcd.py, data_process_mask.py, and cotracker-equivalent
         # per-frame products.
-        chunk = _chunk_payload_from_prepared_frames(
+        chunk = _chunk_data_window_from_prepared_frames(
             metadata,
             [frame for frame in prepared if frame is not None],
             surface_points=surface_points,
@@ -1146,7 +1165,7 @@ def _write_chunk_from_rows(
     else:
         # Fallback for historical captures where Demo v5.1 has to reconstruct
         # the strict product from image/depth/mask/trajectory sidecar files.
-        chunk = _chunk_payload_from_rows(
+        chunk = _chunk_data_window_from_rows(
             capture,
             metadata,
             rows,
@@ -1207,7 +1226,7 @@ def _write_chunk_from_rows(
         payload.update(track_fields)
         return payload
 
-    final_data, track_process, manifest = build_data_process_chunk_payload(chunk)
+    final_data, track_process, manifest = build_chunk_data_payload(chunk)
     manifest.update(
         {
             "chunk_name": chunk_name,
@@ -1247,7 +1266,7 @@ def _write_chunk_from_rows(
         )
         return manifest
     if online_writer is not None:
-        online_result = online_writer.commit_final_data_with_track(
+        online_result = online_writer.commit_chunk_data(
             final_data,
             track_process,
             source_frame_indices=chunk_source_frame_indices,
@@ -1277,7 +1296,48 @@ def _write_chunk_from_rows(
     return manifest
 
 
-def write_chunks_from_headless_capture(
+def _write_warmup_chunk_from_row(
+    *,
+    capture: Path,
+    metadata: Mapping[str, Any],
+    row: Mapping[str, Any],
+    base_path: str | Path,
+    case_name: str,
+    fps: int,
+    serial_number: str,
+    surface_points: np.ndarray,
+    interior_points: np.ndarray,
+) -> dict[str, Any]:
+    """Write the one-frame warmup chunk from its prepared frame artifact."""
+    prepared = _prepared_frame_from_row(capture, row)
+    if prepared is None:
+        raise RuntimeError("warmup chunk requires prepared frame data")
+    chunk = _chunk_data_window_from_prepared_frames(
+        metadata,
+        [prepared],
+        surface_points=surface_points,
+        interior_points=interior_points,
+        fps=int(fps),
+        serial_number=serial_number,
+        chunk_index=-1,
+    )
+    final_data, track_process, _manifest = build_chunk_data_payload(chunk)
+    source_frame_indices = (
+        [int(value) for value in chunk.source_frame_indices]
+        if chunk.source_frame_indices is not None
+        else [_row_source_frame_index(row, 0)]
+    )
+    return write_warmup_chunk_data_record(
+        base_path=base_path,
+        case_name=str(case_name),
+        final_data=final_data,
+        track_process=track_process,
+        source_frame_index=int(source_frame_indices[0]),
+        source_timestamp_s=_optional_float(row.get("source_timestamp_s")),
+    )
+
+
+def write_chunk_data_from_headless_capture(
     capture_dir: str | Path,
     *,
     base_path: str | Path,
@@ -1321,14 +1381,16 @@ def write_chunks_from_headless_capture(
     row_start = 0
     wall_time_origin_s = time.monotonic()
     frames_path = capture / "frames.jsonl"
-    rows_to_process, warmup_skipped_rows = _trim_warmup_delayed_rows(
-        list(_iter_jsonl(frames_path))
-    )
+    trim_result = _trim_warmup_delayed_rows(list(_iter_jsonl(frames_path)))
+    rows_to_process = trim_result.rows
+    warmup_skipped_rows = trim_result.skipped_count
+    warmup_row = trim_result.warmup_row
     online_writer = None
+    online_case = str(online_case_name or case_prefix)
     if bool(write_online_output):
-        online_writer = ChunkedFinalDataWriter(
+        online_writer = ChunkDataWriter(
             base_path=base_path,
-            case_name=str(online_case_name or case_prefix),
+            case_name=online_case,
             chunk_size=chunk_size,
             num_frames_total=(
                 min(len(rows_to_process) // chunk_size, int(max_chunks)) * chunk_size
@@ -1336,6 +1398,18 @@ def write_chunks_from_headless_capture(
                 else (len(rows_to_process) // chunk_size) * chunk_size
             ),
             allow_degraded=bool(allow_degraded_online),
+        )
+    if online_writer is not None and warmup_row is not None:
+        _write_warmup_chunk_from_row(
+            capture=capture,
+            metadata=metadata,
+            row=warmup_row,
+            base_path=base_path,
+            case_name=online_case,
+            fps=int(fps),
+            serial_number=serial_number,
+            surface_points=shape_surface,
+            interior_points=shape_interior,
         )
     object_track_selector = strict.StreamingObjectTrackSelector(
         volume_sample_size=0.005
@@ -1433,7 +1507,7 @@ def _wait_for_metadata(
         time.sleep(max(0.0, float(poll_interval_s)))
 
 
-def stream_chunks_from_headless_capture(
+def stream_chunk_data_from_headless_capture(
     capture_dir: str | Path,
     *,
     base_path: str | Path,
@@ -1479,10 +1553,11 @@ def stream_chunks_from_headless_capture(
     wall_time_origin_s = time.monotonic()
     warmup_start_filter = _WarmupStartFilterState()
     online_writer = None
+    online_case = str(online_case_name or case_prefix)
     if bool(write_online_output):
-        online_writer = ChunkedFinalDataWriter(
+        online_writer = ChunkDataWriter(
             base_path=base_path,
-            case_name=str(online_case_name or case_prefix),
+            case_name=online_case,
             chunk_size=chunk_size,
             num_frames_total=(
                 None if max_chunks is None else int(max_chunks) * int(chunk_size)
@@ -1530,6 +1605,23 @@ def stream_chunks_from_headless_capture(
                 before_poll=before_poll,
                 poll_interval_s=float(poll_interval_s),
             )
+            if (
+                online_writer is not None
+                and warmup_start_filter.warmup_row is not None
+                and not warmup_start_filter.warmup_chunk_written
+            ):
+                _write_warmup_chunk_from_row(
+                    capture=capture,
+                    metadata=latest_metadata,
+                    row=warmup_start_filter.warmup_row,
+                    base_path=base_path,
+                    case_name=online_case,
+                    fps=int(fps),
+                    serial_number=serial_number,
+                    surface_points=shape_surface,
+                    interior_points=shape_interior,
+                )
+                warmup_start_filter.warmup_chunk_written = True
             manifest = _write_chunk_from_rows(
                 capture=capture,
                 metadata=latest_metadata,
@@ -1588,4 +1680,7 @@ def stream_chunks_from_headless_capture(
     return manifests
 
 
-__all__ = ["stream_chunks_from_headless_capture", "write_chunks_from_headless_capture"]
+__all__ = [
+    "stream_chunk_data_from_headless_capture",
+    "write_chunk_data_from_headless_capture",
+]

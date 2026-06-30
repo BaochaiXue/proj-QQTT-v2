@@ -55,7 +55,7 @@ QUICK_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_demo_v5_legacy_key_cleanup",
     "tests.test_demo_v5_1_default_config",
     "tests.test_demo_v5_1_shape_prior_simplification",
-    "tests.test_demo_v5_1_online_payload",
+    "tests.test_demo_v5_1_chunk_data",
     "tests.test_single_view_shape_align",
     "tests.test_validation_smoke_manifest",
 )
