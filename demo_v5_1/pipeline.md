@@ -125,6 +125,11 @@ local SAM3.1 image segmenter using the origin RGBA mask semantics.
 4. `shape_prior_align.py`
    - imports `demo_v5_1.shape_prior_match_pairs`
    - aligns the generated mesh to the first object observation
+   - by default runs the origin full alignment flow for every camera count:
+     keypoint ARAP, then ray-casting ARAP registration with the above-table
+     clamp
+   - `--single_view_alignment conservative` is the opt-in that keeps the
+     rigidly posed SAM3D mesh undeformed for one-camera cases
    - writes `shape/matching/final_mesh.glb`
 
 5. `shape_prior_sample.py`

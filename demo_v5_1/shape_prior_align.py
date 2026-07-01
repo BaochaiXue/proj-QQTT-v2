@@ -37,10 +37,17 @@ parser.add_argument(
     required=True,
     default="",
 )
+parser.add_argument(
+    "--single_view_alignment",
+    type=str,
+    choices=("full", "conservative"),
+    default="full",
+)
 args = Namespace(
     base_path="",
     case_name="",
     controller_name="",
+    single_view_alignment="full",
 )
 
 base_path = args.base_path
@@ -269,7 +276,7 @@ def align_single_view_conservative(initial_mesh_world):
     return initial_mesh_world
 
 
-def align_multiview_vendor_compatible(
+def align_full_vendor_compatible(
     initial_mesh_world,
     mesh_matching_points_world,
     matching_points,
@@ -486,22 +493,15 @@ def main(argv=None):
     camera_count = int(np.asarray(data["points"]).shape[0])
     if camera_count != len(processed_masks[0]):
         raise ValueError("pcd camera count does not match processed mask count")
-    # Demo v5.1 single-camera warmup intentionally diverges from the original
-    # PhysTwin shape-prior alignment here. Original PhysTwin relies on multi-view
-    # object observations and can use stronger ARAP/ray/table constraints; the
-    # one-camera warmup has only a thin visible surface.
-    # Consequence: single-view alignment must preserve the SAM3D mesh prior
-    # instead of letting sparse/noisy correspondences hard-deform the full mesh.
-    if camera_count == 1:
+    # Default: every camera count runs the original PhysTwin alignment flow
+    # (keypoint ARAP, then ray-casting ARAP registration with the above-table
+    # clamp). ``--single_view_alignment conservative`` is the opt-in escape
+    # hatch for one-camera cases where sparse single-view correspondences
+    # would hard-deform the SAM3D mesh prior.
+    if camera_count == 1 and args.single_view_alignment == "conservative":
         alignment_mode = "single_view_conservative"
-    elif camera_count >= 3:
-        alignment_mode = "multiview_vendor_compatible"
     else:
-        raise ValueError(
-            "unsupported two-camera shape-prior alignment mode: camera_count == 2 "
-            "is neither the Demo v5.1 warmup case nor the original PhysTwin "
-            "multi-camera case"
-        )
+        alignment_mode = "full_vendor_compatible"
     for i in range(camera_count):
         points = data["points"][i]
         colors = data["colors"][i]
@@ -567,7 +567,7 @@ def main(argv=None):
     if alignment_mode == "single_view_conservative":
         final_mesh_world = align_single_view_conservative(initial_mesh_world)
     else:
-        final_mesh_world = align_multiview_vendor_compatible(
+        final_mesh_world = align_full_vendor_compatible(
             initial_mesh_world,
             mesh_matching_points_world,
             matching_points,

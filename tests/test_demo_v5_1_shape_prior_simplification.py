@@ -108,25 +108,30 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
         self.assertNotIn("from match_pairs import image_pair_matching", source)
         self.assertNotIn("range(3)", source)
 
-    def test_shape_prior_align_documents_single_camera_divergence(self) -> None:
+    def test_shape_prior_align_defaults_to_origin_full_flow(self) -> None:
         source = (ROOT / "demo_v5_1" / "shape_prior_align.py").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn("intentionally diverges from the original", source)
-        self.assertIn("single-camera warmup", source)
-        self.assertIn("Consequence: single-view alignment", source)
-        self.assertIn("preserve the SAM3D mesh prior", source)
+        self.assertIn('"--single_view_alignment"', source)
+        self.assertIn('choices=("full", "conservative")', source)
+        self.assertIn('default="full"', source)
+        self.assertIn("original PhysTwin alignment flow", source)
+        self.assertIn("align_full_vendor_compatible", source)
+        self.assertNotIn("align_multiview_vendor_compatible", source)
 
-    def test_shape_prior_align_declares_camera_count_modes(self) -> None:
+    def test_shape_prior_align_conservative_mode_is_opt_in(self) -> None:
         source = (ROOT / "demo_v5_1" / "shape_prior_align.py").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn("if camera_count == 1:", source)
-        self.assertIn("elif camera_count >= 3:", source)
-        self.assertIn("camera_count == 2", source)
-        self.assertIn("unsupported two-camera shape-prior alignment mode", source)
+        self.assertIn(
+            'if camera_count == 1 and args.single_view_alignment == "conservative":',
+            source,
+        )
+        self.assertIn("align_single_view_conservative", source)
+        self.assertIn("pcd camera count does not match processed mask count", source)
+        self.assertNotIn("unsupported two-camera shape-prior alignment mode", source)
 
     def test_shape_prior_warmup_writes_single_camera_case(self) -> None:
         from demo_v5_1 import shape_prior_warmup
