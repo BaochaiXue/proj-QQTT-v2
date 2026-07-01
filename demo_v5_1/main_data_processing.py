@@ -6789,6 +6789,9 @@ class MainDataProcessingDemo:
                 render_controller_yx = filter_output.controller_yx
                 render_object_xyz = filter_output.object_xyz
                 render_object_colors = filter_output.object_rgb
+                # Keep XYZ/colors/YX aligned; downstream observation masks are
+                # rebuilt from render_object_yx.
+                render_object_yx = filter_output.object_yx
                 using_filtered = True
             elif str(self.args.pcd_filter_mode) == "async":
                 worker = self.filter_worker
@@ -6809,6 +6812,9 @@ class MainDataProcessingDemo:
                             render_controller_yx = latest.controller_yx
                             render_object_xyz = latest.object_xyz
                             render_object_colors = latest.object_rgb
+                            # Keep XYZ/colors/YX aligned; downstream observation
+                            # masks are rebuilt from render_object_yx.
+                            render_object_yx = latest.object_yx
                             using_filtered = True
                     if mask_packet.seq % int(self.args.filter_every_n) == 0:
                         if not worker.is_busy():

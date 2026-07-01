@@ -264,13 +264,39 @@ def write_shape_prior_case(
         pickle.dump([c2w], handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     points_world = _camera_points_world(depth_m, k_color, c2w)
-    valid_object = object_mask & observation_mask & np.isfinite(depth_m) & (depth_m > 0)
+    depth_valid = np.isfinite(depth_m) & (depth_m > 0)
+    valid_object = object_mask & observation_mask & depth_valid
+    valid_controller = controller_mask & depth_valid
+    from demo_v5_1.chunk_data_stream import (  # noqa: PLC0415
+        _apply_radius_outlier_to_mask_frame,
+    )
+
+    # Intentional parity with data_process_origin/data_process_mask.py: original
+    # PhysTwin removes unsupported 3D radius outliers by clearing pixels in
+    # processed_masks.pkl, while pcd/0.npz stays as the dense point grid. The
+    # align stage then filters with points[processed_mask].
+    cleaned_masks = _apply_radius_outlier_to_mask_frame(
+        frame={"object": valid_object, "controller": valid_controller},
+        points_grid=points_world,
+        enabled=True,
+        radius_m=0.01,
+        nb_points=40,
+    )
+    valid_object = _as_mask(
+        cleaned_masks["object"],
+        shape=image_shape,
+        name="processed object mask",
+    )
+    valid_controller = _as_mask(
+        cleaned_masks["controller"],
+        shape=image_shape,
+        name="processed controller mask",
+    )
     object_points = points_world[valid_object]
     object_colors = rgb[valid_object].astype(np.float32) / 255.0
     if object_points.size == 0:
         raise ValueError("shape prior object observation has no valid depth points")
 
-    valid_controller = controller_mask & np.isfinite(depth_m) & (depth_m > 0)
     controller_points = points_world[valid_controller]
     if controller_points.size == 0:
         controller_points = object_points[:1].copy()

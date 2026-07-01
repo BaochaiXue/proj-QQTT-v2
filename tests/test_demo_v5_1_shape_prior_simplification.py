@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from dataclasses import replace
 import io
 import json
 from pathlib import Path
@@ -20,13 +21,15 @@ ROOT = Path(__file__).resolve().parents[1]
 def _frame0_request():
     from demo_v5_1 import shape_prior_warmup
 
-    rgb = np.array(
-        [
-            [[255, 0, 0], [0, 255, 0]],
-            [[0, 0, 255], [255, 255, 255]],
-        ],
-        dtype=np.uint8,
-    )
+    height = 12
+    width = 12
+    rgb = np.zeros((height, width, 3), dtype=np.uint8)
+    rgb[:, :, 0] = 255
+    object_mask = np.zeros((height, width), dtype=bool)
+    object_mask[:6, :7] = True
+    controller_mask = np.zeros((height, width), dtype=bool)
+    controller_mask[6:12, :7] = True
+    depth_m = np.ones((height, width), dtype=np.float32)
     return shape_prior_warmup.ShapePriorFrame0Request(
         seq=7,
         source_timestamp_s=12.5,
@@ -34,12 +37,28 @@ def _frame0_request():
         depth_backend="test",
         depth_source_internal="test",
         rgb_u8=rgb,
-        object_mask=np.array([[True, False], [True, False]], dtype=bool),
+        object_mask=object_mask,
         object_observation_mask=None,
-        controller_mask=np.array([[False, True], [False, False]], dtype=bool),
-        depth_color_m=np.ones((2, 2), dtype=np.float32),
-        k_color=np.eye(3, dtype=np.float32),
+        controller_mask=controller_mask,
+        depth_color_m=depth_m,
+        k_color=np.array(
+            [[10000.0, 0.0, 0.0], [0.0, 10000.0, 0.0], [0.0, 0.0, 1.0]],
+            dtype=np.float32,
+        ),
         camera_to_world_c2w=np.eye(4, dtype=np.float32),
+    )
+
+
+def _frame0_request_with_isolated_object_outlier():
+    frame0 = _frame0_request()
+    object_mask = np.asarray(frame0.object_mask, dtype=bool).copy()
+    depth_m = np.asarray(frame0.depth_color_m, dtype=np.float32).copy()
+    object_mask[-1, -1] = True
+    depth_m[-1, -1] = np.float32(2.0)
+    return replace(
+        frame0,
+        object_mask=object_mask,
+        depth_color_m=depth_m,
     )
 
 
@@ -89,6 +108,26 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
         self.assertNotIn("from match_pairs import image_pair_matching", source)
         self.assertNotIn("range(3)", source)
 
+    def test_shape_prior_align_documents_single_camera_divergence(self) -> None:
+        source = (ROOT / "demo_v5_1" / "shape_prior_align.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("intentionally diverges from the original", source)
+        self.assertIn("single-camera warmup", source)
+        self.assertIn("Consequence: single-view alignment", source)
+        self.assertIn("preserve the SAM3D mesh prior", source)
+
+    def test_shape_prior_align_declares_camera_count_modes(self) -> None:
+        source = (ROOT / "demo_v5_1" / "shape_prior_align.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("if camera_count == 1:", source)
+        self.assertIn("elif camera_count >= 3:", source)
+        self.assertIn("camera_count == 2", source)
+        self.assertIn("unsupported two-camera shape-prior alignment mode", source)
+
     def test_shape_prior_warmup_writes_single_camera_case(self) -> None:
         from demo_v5_1 import shape_prior_warmup
 
@@ -108,8 +147,8 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
             self.assertTrue((case / "mask" / "0" / "0" / "0.png").is_file())
             self.assertTrue((case / "mask" / "processed_masks.pkl").is_file())
             pcd = np.load(case / "pcd" / "0.npz")
-            self.assertEqual((1, 2, 2, 3), pcd["points"].shape)
-            self.assertEqual((1, 2, 2), pcd["masks"].shape)
+            self.assertEqual((1, 12, 12, 3), pcd["points"].shape)
+            self.assertEqual((1, 12, 12), pcd["masks"].shape)
 
             with (case / "mask" / "processed_masks.pkl").open("rb") as handle:
                 processed_masks = pickle.load(handle)
@@ -122,6 +161,48 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
                 (case / "metadata.json").read_text(encoding="utf-8")
             )
             self.assertEqual("negative", metadata["table_z_above_direction"])
+
+    def test_shape_prior_warmup_radius_cleans_processed_masks_not_dense_pcd(
+        self,
+    ) -> None:
+        from demo_v5_1 import shape_prior_warmup
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            paths = shape_prior_warmup.write_shape_prior_case(
+                _frame0_request_with_isolated_object_outlier(),
+                case_root=Path(tmpdir),
+                case_name="case",
+                object_name="stuffed animal",
+                controller_name="hand",
+            )
+            case = Path(paths["case"])
+
+            pcd = np.load(case / "pcd" / "0.npz")
+            self.assertEqual((1, 12, 12, 3), pcd["points"].shape)
+            with (case / "mask" / "processed_masks.pkl").open("rb") as handle:
+                processed_masks = pickle.load(handle)
+            processed_object = processed_masks[0][0]["object"]
+            self.assertTrue(np.all(processed_object[:6, :7]))
+            self.assertFalse(processed_object[-1, -1])
+
+    def test_shape_prior_warmup_documents_origin_radius_mask_parity(self) -> None:
+        source = (ROOT / "demo_v5_1" / "shape_prior_warmup.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("data_process_origin/data_process_mask.py", source)
+        self.assertIn("_apply_radius_outlier_to_mask_frame", source)
+        self.assertIn("radius_m=0.01", source)
+        self.assertIn("nb_points=40", source)
+        self.assertIn("processed_masks.pkl", source)
+
+    def test_main_data_processing_keeps_filtered_object_yx_aligned(self) -> None:
+        source = (ROOT / "demo_v5_1" / "main_data_processing.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("render_object_yx = filter_output.object_yx", source)
+        self.assertIn("render_object_yx = latest.object_yx", source)
 
     def test_sam31_image_segmentation_matches_origin_rgba_semantics(self) -> None:
         from demo_v5_1 import sam31_image_segmentation

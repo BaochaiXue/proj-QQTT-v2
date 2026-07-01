@@ -265,6 +265,39 @@ def deform_ARAP_ray_registration(
     return final_mesh_world
 
 
+def align_single_view_conservative(initial_mesh_world):
+    return initial_mesh_world
+
+
+def align_multiview_vendor_compatible(
+    initial_mesh_world,
+    mesh_matching_points_world,
+    matching_points,
+    obs_points,
+    mesh,
+    trimesh_indices,
+    c2ws,
+    w2cs,
+):
+    # ARAP based on the keypoints
+    deform_kp_mesh_world, mesh_points_indices = deform_ARAP(
+        initial_mesh_world, mesh_matching_points_world, matching_points
+    )
+
+    # Do the ARAP based on both the ray-casting matching and the keypoints
+    # Identify the vertex which blocks or blocked by the observation, then match them with the observation points on the ray
+    return deform_ARAP_ray_registration(
+        deform_kp_mesh_world,
+        obs_points,
+        mesh,
+        trimesh_indices,
+        c2ws,
+        w2cs,
+        mesh_points_indices,
+        matching_points,
+    )
+
+
 def line_point_distance(p, points):
     # Compute the distance between points and the line between p and [0, 0, 0]
     p = p / np.linalg.norm(p)
@@ -453,6 +486,22 @@ def main(argv=None):
     camera_count = int(np.asarray(data["points"]).shape[0])
     if camera_count != len(processed_masks[0]):
         raise ValueError("pcd camera count does not match processed mask count")
+    # Demo v5.1 single-camera warmup intentionally diverges from the original
+    # PhysTwin shape-prior alignment here. Original PhysTwin relies on multi-view
+    # object observations and can use stronger ARAP/ray/table constraints; the
+    # one-camera warmup has only a thin visible surface.
+    # Consequence: single-view alignment must preserve the SAM3D mesh prior
+    # instead of letting sparse/noisy correspondences hard-deform the full mesh.
+    if camera_count == 1:
+        alignment_mode = "single_view_conservative"
+    elif camera_count >= 3:
+        alignment_mode = "multiview_vendor_compatible"
+    else:
+        raise ValueError(
+            "unsupported two-camera shape-prior alignment mode: camera_count == 2 "
+            "is neither the Demo v5.1 warmup case nor the original PhysTwin "
+            "multi-camera case"
+        )
     for i in range(camera_count):
         points = data["points"][i]
         colors = data["colors"][i]
@@ -515,23 +564,19 @@ def main(argv=None):
     trimesh_indices = np.asarray(trimesh_indices, dtype=np.int32)
     initial_mesh_world.transform(mesh2world)
 
-    # ARAP based on the keypoints
-    deform_kp_mesh_world, mesh_points_indices = deform_ARAP(
-        initial_mesh_world, mesh_matching_points_world, matching_points
-    )
-
-    # Do the ARAP based on both the ray-casting matching and the keypoints
-    # Identify the vertex which blocks or blocked by the observation, then match them with the observation points on the ray
-    final_mesh_world = deform_ARAP_ray_registration(
-        deform_kp_mesh_world,
-        obs_points,
-        mesh,
-        trimesh_indices,
-        c2ws,
-        w2cs,
-        mesh_points_indices,
-        matching_points,
-    )
+    if alignment_mode == "single_view_conservative":
+        final_mesh_world = align_single_view_conservative(initial_mesh_world)
+    else:
+        final_mesh_world = align_multiview_vendor_compatible(
+            initial_mesh_world,
+            mesh_matching_points_world,
+            matching_points,
+            obs_points,
+            mesh,
+            trimesh_indices,
+            c2ws,
+            w2cs,
+        )
 
     if VIS:
         final_mesh_world.compute_vertex_normals()
