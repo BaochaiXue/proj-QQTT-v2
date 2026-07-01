@@ -20,10 +20,7 @@ from demo_v5_1.chunk_data_payload import (
     ChunkDataWindow,
     build_chunk_data_payload,
 )
-from demo_v5_1.chunk_data_output import (
-    ChunkDataWriter,
-    write_warmup_chunk_data_record,
-)
+from demo_v5_1.chunk_data_output import ChunkDataWriter
 from qqtt.demo.pcd_postprocess import _detect_radius_outlier_indices
 from qqtt.demo import phystwin_strict_product as strict
 
@@ -182,16 +179,16 @@ class WarmupTrimResult:
 
 
 def _trim_warmup_delayed_rows(rows: Sequence[Mapping[str, Any]]) -> WarmupTrimResult:
-    """Drop leading warmup rows before chunking realtime output.
+    """Drop invalid startup rows while preserving warmup frame 0 for chunking.
 
     Demo v5.1 writes ``input_frames.jsonl`` from camera start, but
     ``frames.jsonl`` is the data_process output stream. With shape-prior warmup,
     the first strict pair can be source frame 0 processed many seconds late; the
     next row then jumps to the realtime source frame after warmup. That delayed
-    row is useful for shape-prior diagnostics but must not define chunk_000000.
+    row is the online frame 0 and must remain in ``chunk_000000``.
     Live RealSense can also emit one strict pair before color-aligned PCD is
-    ready; that row has masks but zero controller/object points and must not
-    anchor controller FPS.
+    ready; that invalid row has masks but zero controller/object points and must
+    not anchor controller FPS.
     """
     trimmed = [dict(row) for row in rows]
     skipped = 0
@@ -244,13 +241,8 @@ def _trim_warmup_delayed_rows(rows: Sequence[Mapping[str, Any]]) -> WarmupTrimRe
         looks_like_stream_jump = source_gap > max(10, expected_gap * 3)
         if not (looks_like_warmup_hold and looks_like_stream_jump):
             break
-        if warmup_row is None:
-            warmup_row = dict(first)
-        skipped += 1
-        trimmed.pop(0)
-        while trimmed and not _row_ready_for_realtime_chunk_start(trimmed[0]):
-            skipped += 1
-            trimmed.pop(0)
+        warmup_row = dict(first)
+        break
     return WarmupTrimResult(
         rows=trimmed,
         skipped_count=int(skipped),
@@ -263,8 +255,6 @@ class _WarmupStartFilterState:
     pending_rows: list[dict[str, Any]] = field(default_factory=list)
     resolved: bool = False
     skipped_rows: int = 0
-    warmup_row: dict[str, Any] | None = None
-    warmup_chunk_written: bool = False
 
 
 def _filter_warmup_start_rows(
@@ -281,8 +271,6 @@ def _filter_warmup_start_rows(
     if trim_result.skipped_count:
         state.skipped_rows += int(trim_result.skipped_count)
         state.pending_rows = trim_result.rows
-    if state.warmup_row is None and trim_result.warmup_row is not None:
-        state.warmup_row = dict(trim_result.warmup_row)
     if len(state.pending_rows) < 2 and not bool(capture_finished):
         return []
     state.resolved = True
@@ -1296,47 +1284,6 @@ def _write_chunk_from_rows(
     return manifest
 
 
-def _write_warmup_chunk_from_row(
-    *,
-    capture: Path,
-    metadata: Mapping[str, Any],
-    row: Mapping[str, Any],
-    base_path: str | Path,
-    case_name: str,
-    fps: int,
-    serial_number: str,
-    surface_points: np.ndarray,
-    interior_points: np.ndarray,
-) -> dict[str, Any]:
-    """Write the one-frame warmup chunk from its prepared frame artifact."""
-    prepared = _prepared_frame_from_row(capture, row)
-    if prepared is None:
-        raise RuntimeError("warmup chunk requires prepared frame data")
-    chunk = _chunk_data_window_from_prepared_frames(
-        metadata,
-        [prepared],
-        surface_points=surface_points,
-        interior_points=interior_points,
-        fps=int(fps),
-        serial_number=serial_number,
-        chunk_index=-1,
-    )
-    final_data, track_process, _manifest = build_chunk_data_payload(chunk)
-    source_frame_indices = (
-        [int(value) for value in chunk.source_frame_indices]
-        if chunk.source_frame_indices is not None
-        else [_row_source_frame_index(row, 0)]
-    )
-    return write_warmup_chunk_data_record(
-        base_path=base_path,
-        case_name=str(case_name),
-        final_data=final_data,
-        track_process=track_process,
-        source_frame_index=int(source_frame_indices[0]),
-        source_timestamp_s=_optional_float(row.get("source_timestamp_s")),
-    )
-
-
 def write_chunk_data_from_headless_capture(
     capture_dir: str | Path,
     *,
@@ -1375,7 +1322,7 @@ def write_chunk_data_from_headless_capture(
 
     manifests: list[dict[str, Any]] = []
     chunk_size = int(chunk_frame_count)
-    chunk_index = 1
+    chunk_index = 0
     row_buffer: list[dict[str, Any]] = []
     prepared_buffer: list[strict.PreparedPhysTwinFrame | None] = []
     row_start = 0
@@ -1384,7 +1331,6 @@ def write_chunk_data_from_headless_capture(
     trim_result = _trim_warmup_delayed_rows(list(_iter_jsonl(frames_path)))
     rows_to_process = trim_result.rows
     warmup_skipped_rows = trim_result.skipped_count
-    warmup_row = trim_result.warmup_row
     online_writer = None
     online_case = str(online_case_name or case_prefix)
     if bool(write_online_output):
@@ -1398,18 +1344,6 @@ def write_chunk_data_from_headless_capture(
                 else (len(rows_to_process) // chunk_size) * chunk_size
             ),
             allow_degraded=bool(allow_degraded_online),
-        )
-    if online_writer is not None and warmup_row is not None:
-        _write_warmup_chunk_from_row(
-            capture=capture,
-            metadata=metadata,
-            row=warmup_row,
-            base_path=base_path,
-            case_name=online_case,
-            fps=int(fps),
-            serial_number=serial_number,
-            surface_points=shape_surface,
-            interior_points=shape_interior,
         )
     object_track_selector = strict.StreamingObjectTrackSelector(
         volume_sample_size=0.005
@@ -1451,8 +1385,10 @@ def write_chunk_data_from_headless_capture(
             wall_time_origin_s=wall_time_origin_s,
             window_closed_wall_s=window_closed_wall_s,
             prepared_frames=chunk_prepared,
-            backlog_chunks=lambda path=frames_path, size=chunk_size, published=chunk_index: (
-                _complete_chunk_backlog(
+            backlog_chunks=(
+                lambda path=frames_path,
+                size=chunk_size,
+                published=chunk_index + 1: _complete_chunk_backlog(
                     path,
                     chunk_size=size,
                     published_chunk_count=published,
@@ -1548,7 +1484,7 @@ def stream_chunk_data_from_headless_capture(
     row_start = 0
     row_buffer: list[dict[str, Any]] = []
     prepared_buffer: list[strict.PreparedPhysTwinFrame | None] = []
-    chunk_index = 1
+    chunk_index = 0
     chunk_size = int(chunk_frame_count)
     wall_time_origin_s = time.monotonic()
     warmup_start_filter = _WarmupStartFilterState()
@@ -1605,23 +1541,6 @@ def stream_chunk_data_from_headless_capture(
                 before_poll=before_poll,
                 poll_interval_s=float(poll_interval_s),
             )
-            if (
-                online_writer is not None
-                and warmup_start_filter.warmup_row is not None
-                and not warmup_start_filter.warmup_chunk_written
-            ):
-                _write_warmup_chunk_from_row(
-                    capture=capture,
-                    metadata=latest_metadata,
-                    row=warmup_start_filter.warmup_row,
-                    base_path=base_path,
-                    case_name=online_case,
-                    fps=int(fps),
-                    serial_number=serial_number,
-                    surface_points=shape_surface,
-                    interior_points=shape_interior,
-                )
-                warmup_start_filter.warmup_chunk_written = True
             manifest = _write_chunk_from_rows(
                 capture=capture,
                 metadata=latest_metadata,
@@ -1640,8 +1559,10 @@ def stream_chunk_data_from_headless_capture(
                 wall_time_origin_s=wall_time_origin_s,
                 window_closed_wall_s=window_closed_wall_s,
                 prepared_frames=chunk_prepared,
-                backlog_chunks=lambda path=frames_path, size=chunk_size, published=chunk_index: (
-                    _complete_chunk_backlog(
+                backlog_chunks=(
+                    lambda path=frames_path,
+                    size=chunk_size,
+                    published=chunk_index + 1: _complete_chunk_backlog(
                         path,
                         chunk_size=size,
                         published_chunk_count=published,

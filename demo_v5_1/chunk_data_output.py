@@ -51,7 +51,6 @@ TRACK_DIAGNOSTIC_KEYS = (
     "controller_neighbor_query_ids",
     "track_process_status",
 )
-WARMUP_CHUNK_FILENAME = "chunk_warmup.pkl"
 
 
 def _infer_frame_count(data: Mapping[str, Any]) -> int:
@@ -234,49 +233,6 @@ def _track_diagnostics(track_process: Mapping[str, Any]) -> dict[str, Any]:
             else np.ascontiguousarray(np.asarray(value))
         )
     return payload
-
-
-def write_warmup_chunk_data_record(
-    *,
-    base_path: str | Path,
-    case_name: str,
-    final_data: Mapping[str, Any],
-    track_process: Mapping[str, Any],
-    source_frame_index: int,
-    source_timestamp_s: float | None = None,
-) -> dict[str, Any]:
-    """Write the one-frame warmup chunk without touching formal chunk state."""
-    online_data = {
-        **dict(final_data),
-        **_track_diagnostics(track_process),
-    }
-    source_timestamps = (
-        None if source_timestamp_s is None else [float(source_timestamp_s)]
-    )
-    chunk = build_chunk_data_record(
-        online_data,
-        case_name=str(case_name),
-        chunk_id=-1,
-        start_frame=0,
-        end_frame=1,
-        source_frame_indices=[int(source_frame_index)],
-        source_timestamps_s=source_timestamps,
-    )
-    chunk.update(
-        {
-            "chunk_role": "warmup",
-            "is_warmup_chunk": True,
-        }
-    )
-    chunks_dir = Path(base_path) / "online_data" / "chunks"
-    chunks_dir.mkdir(parents=True, exist_ok=True)
-    warmup_path = chunks_dir / WARMUP_CHUNK_FILENAME
-    atomic_pickle_dump(chunk, warmup_path)
-    return {
-        "warmup_chunk_path": str(warmup_path),
-        "warmup_chunk_filename": WARMUP_CHUNK_FILENAME,
-        "warmup_source_frame_index": int(source_frame_index),
-    }
 
 
 class ChunkDataWriter:
@@ -522,10 +478,8 @@ class ChunkDataWriter:
 __all__ = [
     "TIME_KEYS",
     "STATIC_KEYS",
-    "WARMUP_CHUNK_FILENAME",
     "ChunkDataWriter",
     "atomic_json_dump",
     "atomic_pickle_dump",
     "build_chunk_data_record",
-    "write_warmup_chunk_data_record",
 ]

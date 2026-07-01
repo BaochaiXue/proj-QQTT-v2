@@ -129,10 +129,10 @@ When shape prior is enabled:
 - `require_shape_prior=True`
 - chunk writer waits for `surface_points` and `interior_points`
 - timeout comes from `shape_prior_chunk_wait_timeout_s`
-- the warmup source frame is written separately to
-  `online_data/chunks/chunk_warmup.pkl`
-- formal realtime chunks still start at `online_data/chunks/chunk_000000.pkl`
-  and do not include the warmup frame
+- the warmup source frame is frame 0 of
+  `online_data/chunks/chunk_000000.pkl`
+- post-warmup realtime processing starts at frame 1 and continues in the same
+  online chunk timeline
 
 When shape prior is disabled:
 
