@@ -27,6 +27,7 @@ DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES = "1"
 CASE_NAME = "shape_prior_frame0"
 DEFAULT_SURFACE_POINT_COUNT = 1024
 DEFAULT_VOLUME_SAMPLE_SIZE_M = 0.005
+TABLE_Z_ABOVE_DIRECTION = "negative"
 POINTS_NPZ = Path("outputs") / "shape_prior" / "points.npz"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +48,6 @@ class ShapePriorFrame0Request:
     k_color: np.ndarray
     camera_to_world_c2w: np.ndarray
     table_z_m: float | None = None
-    table_z_above_direction: str | None = None
 
 
 @dataclass(frozen=True)
@@ -106,10 +106,10 @@ def _as_depth(value: np.ndarray, *, shape: tuple[int, int]) -> np.ndarray:
     return np.ascontiguousarray(depth)
 
 
-def _require_controller_name(value: str) -> str:
+def _require_name(value: str, *, field_name: str) -> str:
     name = str(value).strip()
     if not name:
-        raise ValueError("shape prior controller_name must be non-empty")
+        raise ValueError(f"shape prior {field_name} must be non-empty")
     return name
 
 
@@ -131,13 +131,6 @@ def _camera_points_world(
     )
     points_world = points_h @ np.asarray(c2w, dtype=np.float32).reshape(4, 4).T
     return np.ascontiguousarray(points_world[:, :, :3], dtype=np.float32)
-
-
-def _write_rgba_input(rgb_u8: np.ndarray, object_mask: np.ndarray, path: Path) -> None:
-    alpha = np.where(object_mask, 255, 0).astype(np.uint8)
-    rgba = np.dstack([rgb_u8, alpha])
-    path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(rgba).save(path)
 
 
 def _write_mask(mask: np.ndarray, path: Path) -> None:
@@ -165,6 +158,11 @@ def _run_stage(command: list[str], *, env: dict[str, str]) -> float:
     start_s = time.perf_counter()
     subprocess.run(command, cwd=REPO_ROOT, env=env, check=True)
     return (time.perf_counter() - start_s) * 1000.0
+
+
+def _require_stage_file(path: Path, *, stage_name: str) -> None:
+    if not path.is_file():
+        raise FileNotFoundError(f"{stage_name} did not write {path}")
 
 
 def _case_dir(case_root: Path, case_name: str) -> Path:
@@ -205,9 +203,11 @@ def write_shape_prior_case(
     *,
     case_root: Path,
     case_name: str,
+    object_name: str,
     controller_name: str,
 ) -> dict[str, Path]:
-    controller_name = _require_controller_name(controller_name)
+    object_name = _require_name(object_name, field_name="object_name")
+    controller_name = _require_name(controller_name, field_name="controller_name")
     rgb = _as_rgb_u8(frame0.rgb_u8)
     image_shape = tuple(rgb.shape[:2])
     object_mask = _as_mask(frame0.object_mask, shape=image_shape, name="object_mask")
@@ -232,18 +232,18 @@ def write_shape_prior_case(
 
     case = _case_dir(case_root, case_name)
     color_path = case / "color" / "0" / "0.png"
-    rgba_path = case / "shape" / "sam3d_input_rgba.png"
+    shape_dir = case / "shape"
     object_mask_path = case / "mask" / "0" / "0" / "0.png"
     controller_mask_path = case / "mask" / "0" / "1" / "0.png"
     pcd_path = case / "pcd" / "0.npz"
 
+    shape_dir.mkdir(parents=True, exist_ok=True)
     color_path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(rgb).save(color_path)
-    _write_rgba_input(rgb, object_mask, rgba_path)
     _write_mask(object_mask, object_mask_path)
     _write_mask(controller_mask, controller_mask_path)
     _write_json(
-        {"0": "stuffed animal", "1": str(controller_name)},
+        {"0": object_name, "1": controller_name},
         case / "mask" / "mask_info_0.json",
     )
     _write_json(
@@ -256,7 +256,7 @@ def write_shape_prior_case(
             "depth_backend": str(frame0.depth_backend),
             "depth_source_internal": str(frame0.depth_source_internal),
             "table_z_m": frame0.table_z_m,
-            "table_z_above_direction": frame0.table_z_above_direction,
+            "table_z_above_direction": TABLE_Z_ABOVE_DIRECTION,
         },
         case / "metadata.json",
     )
@@ -280,10 +280,14 @@ def write_shape_prior_case(
         pcd_path,
         points=np.ascontiguousarray(points_world[None], dtype=np.float32),
         colors=np.ascontiguousarray((rgb[None].astype(np.float32) / 255.0)),
+        masks=np.ascontiguousarray(
+            (np.isfinite(depth_m) & (depth_m > 0))[None],
+            dtype=bool,
+        ),
     )
     with (case / "mask" / "processed_masks.pkl").open("wb") as handle:
         pickle.dump(
-            [[{"object": object_mask, "controller": controller_mask}]],
+            [[{"object": valid_object, "controller": valid_controller}]],
             handle,
             protocol=pickle.HIGHEST_PROTOCOL,
         )
@@ -301,7 +305,9 @@ def write_shape_prior_case(
         )
     return {
         "case": case,
-        "rgba": rgba_path,
+        "color": color_path,
+        "object_mask": object_mask_path,
+        "shape": shape_dir,
         "pcd": pcd_path,
         "track_process": case / "track_process_data.pkl",
     }
@@ -312,37 +318,83 @@ class ShapePriorLocalClient:
         self,
         *,
         case_root: str | Path,
+        object_name: str,
         controller_name: str,
         cuda_visible_devices: str = DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
         case_name: str = CASE_NAME,
         points_npz: str | Path = POINTS_NPZ,
         sam3d_root: str | Path | None = None,
         sam3d_config: str | Path | None = None,
+        sam31_device: str = "cuda",
+        reuse_sam31_model: bool = True,
     ) -> None:
         self.case_root = Path(case_root)
         self.cuda_visible_devices = str(cuda_visible_devices)
-        self.controller_name = _require_controller_name(controller_name)
+        self.object_name = _require_name(object_name, field_name="object_name")
+        self.controller_name = _require_name(
+            controller_name,
+            field_name="controller_name",
+        )
         self.case_name = str(case_name)
         self.points_npz = Path(points_npz)
         self.sam3d_root = None if sam3d_root is None else Path(sam3d_root)
         self.sam3d_config = None if sam3d_config is None else Path(sam3d_config)
+        self.sam31_device = str(sam31_device)
+        self.reuse_sam31_model = bool(reuse_sam31_model)
 
     def request_shape_prior(self, frame0: ShapePriorFrame0Request) -> ShapePriorResult:
         paths = write_shape_prior_case(
             frame0,
             case_root=self.case_root,
             case_name=self.case_name,
+            object_name=self.object_name,
             controller_name=self.controller_name,
         )
         env = _shape_prior_env(self.cuda_visible_devices)
         timings: dict[str, float] = {}
+
+        high_resolution_path = paths["shape"] / "high_resolution.png"
+        masked_image_path = paths["shape"] / "masked_image.png"
+
+        timings["shape_prior_upscale_ms"] = _run_stage(
+            [
+                sys.executable,
+                "-m",
+                "demo_v5_1.utils.image_upscale",
+                "--img_path",
+                str(paths["color"]),
+                "--mask_path",
+                str(paths["object_mask"]),
+                "--output_path",
+                str(high_resolution_path),
+                "--category",
+                self.object_name,
+            ],
+            env=env,
+        )
+        _require_stage_file(high_resolution_path, stage_name="shape-prior upscale")
+
+        from demo_v5_1 import sam31_image_segmentation  # noqa: PLC0415
+
+        segment_start_s = time.perf_counter()
+        sam31_image_segmentation.segment_image_to_origin_rgba(
+            img_path=high_resolution_path,
+            text_prompt=self.object_name,
+            output_path=masked_image_path,
+            device=self.sam31_device,
+            reuse_model=self.reuse_sam31_model,
+        )
+        timings["shape_prior_segment_image_ms"] = (
+            time.perf_counter() - segment_start_s
+        ) * 1000.0
+        _require_stage_file(masked_image_path, stage_name="shape-prior segment")
 
         generate_command = [
             sys.executable,
             "-m",
             "demo_v5_1.shape_prior_generate",
             "--img_path",
-            str(paths["rgba"]),
+            str(masked_image_path),
             "--output_dir",
             str(paths["case"] / "shape"),
             "--skip-visualization",
@@ -407,7 +459,10 @@ class ShapePriorLocalClient:
             "shape_prior_case_dir": str(paths["case"]),
             "shape_prior_points_npz": str(self.points_npz),
             "shape_prior_warmup_cuda_visible_devices": self.cuda_visible_devices,
+            "shape_prior_object_name": self.object_name,
             "shape_prior_controller_name": self.controller_name,
+            "shape_prior_sam31_device": self.sam31_device,
+            "shape_prior_sam31_reuse_model": self.reuse_sam31_model,
             "shape_prior_surface_point_count": int(surface.shape[0]),
             "shape_prior_interior_point_count": int(interior.shape[0]),
             "shape_prior_point_count": int(points.shape[0]),

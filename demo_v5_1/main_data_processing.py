@@ -246,13 +246,8 @@ COORDINATE_FRAME = "camera_color_frame"
 TABLE_Z_M = 0.0
 DEFAULT_TABLE_Z_DIAGNOSTIC_THRESHOLDS_M = (0.005, 0.010, 0.020, 0.030)
 DEFAULT_TABLE_Z_FILTER_THRESHOLD_M = 0.0
-TABLE_Z_ABOVE_DIRECTION_POSITIVE = "positive"
-TABLE_Z_ABOVE_DIRECTION_NEGATIVE = "negative"
-TABLE_Z_ABOVE_DIRECTIONS = (
-    TABLE_Z_ABOVE_DIRECTION_POSITIVE,
-    TABLE_Z_ABOVE_DIRECTION_NEGATIVE,
-)
-DEFAULT_TABLE_Z_ABOVE_DIRECTION = TABLE_Z_ABOVE_DIRECTION_NEGATIVE
+# Origin/data_process table frame: z < 0 is above the table, z > 0 is invalid.
+TABLE_Z_ABOVE_DIRECTION = "negative"
 TABLE_Z_FILTER_CLASS_OBJECT = "object"
 TABLE_Z_FILTER_CLASS_CONTROLLER = "controller"
 TABLE_Z_FILTER_CLASS_BOTH = "both"
@@ -2392,7 +2387,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--enable-table-z-filter",
         action="store_true",
-        help="Enable table-world Z filter. Removes target PCD points whose signed table clearance is <= threshold after PT filtering.",
+        help=(
+            "Enable table-world Z filter. Removes target PCD points whose "
+            "signed table clearance is <= threshold after PT filtering."
+        ),
     )
     parser.add_argument(
         "--disable-table-z-filter",
@@ -2404,12 +2402,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_TABLE_Z_FILTER_THRESHOLD_M,
         help="World-Z clearance threshold above table_z for --enable-table-z-filter.",
-    )
-    parser.add_argument(
-        "--table-z-above-direction",
-        choices=TABLE_Z_ABOVE_DIRECTIONS,
-        default=DEFAULT_TABLE_Z_ABOVE_DIRECTION,
-        help="Which table-world Z direction points away from the tabletop into the workspace.",
     )
     parser.add_argument(
         "--table-z-filter-classes",
@@ -2611,14 +2603,25 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--point-size must be positive")
     if float(args.table_z_filter_threshold_m) < 0:
         raise ValueError("--table-z-filter-threshold-m must be >= 0")
-    if int(getattr(args, "shape_prior_timeout_ms", shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS)) <= 0:
+    if (
+        int(
+            getattr(
+                args,
+                "shape_prior_timeout_ms",
+                shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
+            )
+        )
+        <= 0
+    ):
         raise ValueError("--shape-prior-timeout-ms must be positive")
-    if bool(getattr(args, "enable_table_z_filter", False)) and bool(getattr(args, "disable_table_z_filter", False)):
+    if bool(getattr(args, "enable_table_z_filter", False)) and bool(
+        getattr(args, "disable_table_z_filter", False)
+    ):
         raise ValueError("--enable-table-z-filter conflicts with --disable-table-z-filter")
-    if str(args.table_z_above_direction) not in TABLE_Z_ABOVE_DIRECTIONS:
-        raise ValueError(f"--table-z-above-direction must be one of {', '.join(TABLE_Z_ABOVE_DIRECTIONS)}")
     if str(args.table_z_filter_classes) not in TABLE_Z_FILTER_CLASSES:
-        raise ValueError(f"--table-z-filter-classes must be one of {', '.join(TABLE_Z_FILTER_CLASSES)}")
+        raise ValueError(
+            f"--table-z-filter-classes must be one of {', '.join(TABLE_Z_FILTER_CLASSES)}"
+        )
     if args.pcd_filter_mode not in PCD_FILTER_MODES:
         raise ValueError(f"--pcd-filter-mode must be one of {', '.join(PCD_FILTER_MODES)}")
     preset_filter = pcd_filter_preset_to_filter(getattr(args, "pcd_filter_preset", None))
@@ -3350,27 +3353,23 @@ def table_z_clearance_m(
     points_xyz_m: np.ndarray,
     *,
     table_z_m: float = TABLE_Z_M,
-    above_direction: str = DEFAULT_TABLE_Z_ABOVE_DIRECTION,
 ) -> np.ndarray:
     points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
-    direction = str(above_direction)
-    if direction == TABLE_Z_ABOVE_DIRECTION_POSITIVE:
-        return np.ascontiguousarray(points[:, 2] - np.float32(table_z_m), dtype=np.float32)
-    if direction == TABLE_Z_ABOVE_DIRECTION_NEGATIVE:
-        return np.ascontiguousarray(np.float32(table_z_m) - points[:, 2], dtype=np.float32)
-    raise ValueError(f"table_z_above_direction must be one of {', '.join(TABLE_Z_ABOVE_DIRECTIONS)}")
+    return np.ascontiguousarray(
+        np.float32(table_z_m) - points[:, 2],
+        dtype=np.float32,
+    )
 
 
 def _world_z_class_stats(
     points_xyz_m: np.ndarray,
     *,
     table_z_m: float,
-    above_direction: str,
     thresholds_m: tuple[float, ...],
 ) -> dict[str, Any]:
     points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
     finite = np.isfinite(points).all(axis=1) if len(points) else np.zeros((0,), dtype=bool)
-    clearance = table_z_clearance_m(points, table_z_m=table_z_m, above_direction=above_direction)
+    clearance = table_z_clearance_m(points, table_z_m=table_z_m)
     threshold_rows: list[dict[str, float | int]] = []
     for threshold_m in thresholds_m:
         candidate = finite & (clearance <= np.float32(float(threshold_m)))
@@ -3397,24 +3396,18 @@ def build_world_z_diagnostics(
     hand_a_xyz_m: np.ndarray | None = None,
     hand_b_xyz_m: np.ndarray | None = None,
     table_z_m: float = TABLE_Z_M,
-    above_direction: str = DEFAULT_TABLE_Z_ABOVE_DIRECTION,
     thresholds_m: tuple[float, ...] = DEFAULT_TABLE_Z_DIAGNOSTIC_THRESHOLDS_M,
 ) -> dict[str, Any]:
     thresholds = tuple(float(value) for value in thresholds_m)
-    direction = str(above_direction)
-    if direction not in TABLE_Z_ABOVE_DIRECTIONS:
-        raise ValueError(f"table_z_above_direction must be one of {', '.join(TABLE_Z_ABOVE_DIRECTIONS)}")
     classes: dict[str, Any] = {
         "object": _world_z_class_stats(
             object_xyz_m,
             table_z_m=float(table_z_m),
-            above_direction=direction,
             thresholds_m=thresholds,
         ),
         "controller": _world_z_class_stats(
             controller_xyz_m,
             table_z_m=float(table_z_m),
-            above_direction=direction,
             thresholds_m=thresholds,
         ),
     }
@@ -3422,19 +3415,17 @@ def build_world_z_diagnostics(
         classes["hand_a"] = _world_z_class_stats(
             hand_a_xyz_m,
             table_z_m=float(table_z_m),
-            above_direction=direction,
             thresholds_m=thresholds,
         )
     if hand_b_xyz_m is not None:
         classes["hand_b"] = _world_z_class_stats(
             hand_b_xyz_m,
             table_z_m=float(table_z_m),
-            above_direction=direction,
             thresholds_m=thresholds,
         )
     return {
         "table_z_m": float(table_z_m),
-        "table_z_above_direction": direction,
+        "table_z_above_direction": TABLE_Z_ABOVE_DIRECTION,
         "thresholds_m": [float(value) for value in thresholds],
         "classes": classes,
     }
@@ -3447,28 +3438,24 @@ def apply_table_z_filter(
     enabled: bool,
     threshold_m: float,
     table_z_m: float = TABLE_Z_M,
-    above_direction: str = DEFAULT_TABLE_Z_ABOVE_DIRECTION,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
     colors = np.asarray(colors_rgb_u8, dtype=np.uint8).reshape(-1, 3)
     if len(points) != len(colors):
         raise ValueError("points and colors must have the same first dimension")
-    direction = str(above_direction)
-    if direction not in TABLE_Z_ABOVE_DIRECTIONS:
-        raise ValueError(f"table_z_above_direction must be one of {', '.join(TABLE_Z_ABOVE_DIRECTIONS)}")
     if not bool(enabled) or len(points) == 0:
         return np.ascontiguousarray(points, dtype=np.float32), np.ascontiguousarray(colors, dtype=np.uint8), {
             "enabled": bool(enabled),
             "threshold_m": float(threshold_m),
             "table_z_m": float(table_z_m),
-            "table_z_above_direction": direction,
+            "table_z_above_direction": TABLE_Z_ABOVE_DIRECTION,
             "input_points": int(len(points)),
             "removed_points": 0,
             "output_points": int(len(points)),
             "removed_ratio": 0.0,
         }
     finite = np.isfinite(points).all(axis=1)
-    clearance = table_z_clearance_m(points, table_z_m=table_z_m, above_direction=direction)
+    clearance = table_z_clearance_m(points, table_z_m=table_z_m)
     remove = finite & (clearance <= np.float32(float(threshold_m)))
     keep = ~remove
     removed = int(np.count_nonzero(remove))
@@ -3479,7 +3466,7 @@ def apply_table_z_filter(
             "enabled": True,
             "threshold_m": float(threshold_m),
             "table_z_m": float(table_z_m),
-            "table_z_above_direction": direction,
+            "table_z_above_direction": TABLE_Z_ABOVE_DIRECTION,
             "input_points": int(len(points)),
             "removed_points": removed,
             "output_points": int(np.count_nonzero(keep)),
@@ -3496,16 +3483,12 @@ def apply_table_z_filter_with_yx(
     enabled: bool,
     threshold_m: float,
     table_z_m: float = TABLE_Z_M,
-    above_direction: str = DEFAULT_TABLE_Z_ABOVE_DIRECTION,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
     points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
     colors = np.asarray(colors_rgb_u8, dtype=np.uint8).reshape(-1, 3)
     yx_arr = np.asarray(yx, dtype=np.int64).reshape(-1, 2)
     if len(points) != len(colors) or len(points) != len(yx_arr):
         raise ValueError("points, colors, and yx must have the same first dimension")
-    direction = str(above_direction)
-    if direction not in TABLE_Z_ABOVE_DIRECTIONS:
-        raise ValueError(f"table_z_above_direction must be one of {', '.join(TABLE_Z_ABOVE_DIRECTIONS)}")
     if not bool(enabled) or len(points) == 0:
         return (
             np.ascontiguousarray(points, dtype=np.float32),
@@ -3515,7 +3498,7 @@ def apply_table_z_filter_with_yx(
                 "enabled": bool(enabled),
                 "threshold_m": float(threshold_m),
                 "table_z_m": float(table_z_m),
-                "table_z_above_direction": direction,
+                "table_z_above_direction": TABLE_Z_ABOVE_DIRECTION,
                 "input_points": int(len(points)),
                 "removed_points": 0,
                 "output_points": int(len(points)),
@@ -3523,7 +3506,7 @@ def apply_table_z_filter_with_yx(
             },
         )
     finite = np.isfinite(points).all(axis=1)
-    clearance = table_z_clearance_m(points, table_z_m=table_z_m, above_direction=direction)
+    clearance = table_z_clearance_m(points, table_z_m=table_z_m)
     remove = finite & (clearance <= np.float32(float(threshold_m)))
     keep = ~remove
     removed = int(np.count_nonzero(remove))
@@ -3535,7 +3518,7 @@ def apply_table_z_filter_with_yx(
             "enabled": True,
             "threshold_m": float(threshold_m),
             "table_z_m": float(table_z_m),
-            "table_z_above_direction": direction,
+            "table_z_above_direction": TABLE_Z_ABOVE_DIRECTION,
             "input_points": int(len(points)),
             "removed_points": removed,
             "output_points": int(np.count_nonzero(keep)),
@@ -4114,10 +4097,13 @@ class MainDataProcessingDemo:
                         shape_prior_warmup.DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
                     )
                 ),
+                object_name=str(self.args.object_prompt),
                 controller_name=str(self.args.shape_prior_controller_name),
                 points_npz=Path(self.args.shape_prior_points_npz),
                 sam3d_root=getattr(self.args, "shape_prior_sam3d_root", None),
                 sam3d_config=getattr(self.args, "shape_prior_config", None),
+                sam31_device=str(self.args.device),
+                reuse_sam31_model=True,
             )
         return shape_prior_warmup.ShapePriorWarmupManager(
             enabled=enabled,
@@ -4313,7 +4299,11 @@ class MainDataProcessingDemo:
                 )
             ),
             "shape_prior_timeout_ms": int(
-                getattr(self.args, "shape_prior_timeout_ms", shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS)
+                getattr(
+                    self.args,
+                    "shape_prior_timeout_ms",
+                    shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
+                )
             ),
             "shape_prior_warmup_cuda_visible_devices": str(
                 getattr(
@@ -4394,7 +4384,7 @@ class MainDataProcessingDemo:
             "table_calibration_path": _repo_relative_path_text(self.table_calibration_path),
             "table_world_frame_kind": TABLE_WORLD_FRAME_KIND if self._table_world_enabled() else None,
             "table_z_m": TABLE_Z_M if self._table_world_enabled() else None,
-            "table_z_above_direction": str(self.args.table_z_above_direction),
+            "table_z_above_direction": TABLE_Z_ABOVE_DIRECTION,
             "camera_to_world_c2w": (
                 None
                 if self.table_c2w is None
@@ -5056,7 +5046,7 @@ class MainDataProcessingDemo:
             "table_calibration_path": _repo_relative_path_text(self.table_calibration_path),
             "table_world_frame_kind": TABLE_WORLD_FRAME_KIND if self._table_world_enabled() else None,
             "table_z_m": TABLE_Z_M if self._table_world_enabled() else None,
-            "table_z_above_direction": str(self.args.table_z_above_direction),
+            "table_z_above_direction": TABLE_Z_ABOVE_DIRECTION,
             "camera_to_world_c2w": (
                 None
                 if self.table_c2w is None
@@ -5455,14 +5445,18 @@ class MainDataProcessingDemo:
         if bool(self.args.enable_table_z_filter):
             classes = str(self.args.table_z_filter_classes)
             if classes in {TABLE_Z_FILTER_CLASS_OBJECT, TABLE_Z_FILTER_CLASS_BOTH}:
-                _object_xyz, _object_colors, object_yx, _object_table_z_stats = apply_table_z_filter_with_yx(
+                (
+                    _object_xyz,
+                    _object_colors,
+                    object_yx,
+                    _object_table_z_stats,
+                ) = apply_table_z_filter_with_yx(
                     object_xyz_world,
                     filter_output.object_rgb,
                     object_yx,
                     enabled=True,
                     threshold_m=float(self.args.table_z_filter_threshold_m),
                     table_z_m=TABLE_Z_M,
-                    above_direction=str(self.args.table_z_above_direction),
                 )
             if classes in {TABLE_Z_FILTER_CLASS_CONTROLLER, TABLE_Z_FILTER_CLASS_BOTH}:
                 (
@@ -5477,7 +5471,6 @@ class MainDataProcessingDemo:
                     enabled=True,
                     threshold_m=float(self.args.table_z_filter_threshold_m),
                     table_z_m=TABLE_Z_M,
-                    above_direction=str(self.args.table_z_above_direction),
                 )
         shape = tuple(mask_packet.object_mask.shape[:2])
         object_residual = _mask_from_yx(shape, object_yx)
@@ -5801,7 +5794,6 @@ class MainDataProcessingDemo:
             k_color=k_color,
             camera_to_world_c2w=self.table_c2w,
             table_z_m=TABLE_Z_M,
-            table_z_above_direction=str(self.args.table_z_above_direction),
         )
 
     def _shape_prior_observation_mask_from_pcd_result(self, result: PcdBuildResult) -> np.ndarray:
@@ -6868,13 +6860,12 @@ class MainDataProcessingDemo:
             hand_a_xyz_m=hand_a_xyz,
             hand_b_xyz_m=hand_b_xyz,
             table_z_m=TABLE_Z_M,
-            above_direction=str(self.args.table_z_above_direction),
             thresholds_m=DEFAULT_TABLE_Z_DIAGNOSTIC_THRESHOLDS_M,
         )
         table_z_filter_stats: dict[str, Any] = {
             "enabled": bool(self.args.enable_table_z_filter),
             "threshold_m": float(self.args.table_z_filter_threshold_m),
-            "table_z_above_direction": str(self.args.table_z_above_direction),
+            "table_z_above_direction": TABLE_Z_ABOVE_DIRECTION,
             "classes": str(self.args.table_z_filter_classes),
             "object": None,
             "controller": None,
@@ -6894,7 +6885,6 @@ class MainDataProcessingDemo:
                     enabled=True,
                     threshold_m=float(self.args.table_z_filter_threshold_m),
                     table_z_m=TABLE_Z_M,
-                    above_direction=str(self.args.table_z_above_direction),
                 )
                 table_z_filter_stats["object"] = object_table_z_stats
             if classes in {TABLE_Z_FILTER_CLASS_CONTROLLER, TABLE_Z_FILTER_CLASS_BOTH}:
@@ -6910,7 +6900,6 @@ class MainDataProcessingDemo:
                     enabled=True,
                     threshold_m=float(self.args.table_z_filter_threshold_m),
                     table_z_m=TABLE_Z_M,
-                    above_direction=str(self.args.table_z_above_direction),
                 )
                 table_z_filter_stats["controller"] = controller_table_z_stats
         world_z_diagnostics["runtime_table_z_filter"] = table_z_filter_stats

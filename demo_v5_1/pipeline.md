@@ -37,14 +37,16 @@ flowchart TD
     F --> G["first valid depth/PCD"]
     G --> H["ShapePriorWarmupManager.maybe_submit(frame0)"]
     H --> I["write one-camera shape-prior case"]
-    I --> J["shape_prior_generate.py on GPU 1"]
-    J --> K["shape_prior_align.py on GPU 1"]
-    K --> L["shape_prior_sample.py on GPU 1"]
-    L --> M["shape_prior/points.npz"]
-    G --> N["PCD/tracker realtime loop"]
-    M --> O["chunk materialization waits for surface/interior points"]
-    N --> O
-    O --> P["optional visualizer on GPU 1"]
+    I --> J["image_upscale.py on GPU 1"]
+    J --> K["main-process sam31_image_segmentation.py"]
+    K --> L["shape_prior_generate.py on GPU 1"]
+    L --> M["shape_prior_align.py on GPU 1"]
+    M --> N["shape_prior_sample.py on GPU 1"]
+    N --> O["shape_prior/points.npz"]
+    G --> P["PCD/tracker realtime loop"]
+    O --> Q["chunk materialization waits for surface/interior points"]
+    P --> Q
+    Q --> R["optional visualizer on GPU 1"]
 ```
 
 ## Shape-Prior Boundary
@@ -53,6 +55,9 @@ flowchart TD
 
 - receives `ShapePriorFrame0Request`
 - writes a single-camera case under the headless capture directory
+- launches `utils/image_upscale.py`
+- runs `sam31_image_segmentation.py` in the main process with the cached SAM3.1
+  image model
 - launches `shape_prior_generate.py`
 - launches `shape_prior_align.py`
 - launches `shape_prior_sample.py`
@@ -83,11 +88,12 @@ SAM3D work runs asynchronously so the camera loop continues.
 
 ## Shape-Prior Case Layout
 
-The warmup writer creates the minimal single-camera case expected by the three
-shape-prior scripts:
+The warmup writer creates the minimal single-camera case expected by the
+shape-prior stages:
 
 - `color/0/0.png`
-- `shape/sam3d_input_rgba.png`
+- `shape/high_resolution.png`
+- `shape/masked_image.png`
 - `mask/mask_info_0.json`
 - `mask/0/0/0.png`
 - `mask/processed_masks.pkl`
@@ -96,22 +102,32 @@ shape-prior scripts:
 - `metadata.json`
 - `track_process_data.pkl`
 
-`shape/sam3d_input_rgba.png` is already high-resolution RGB with object mask in
-alpha. There is no x4 upscaler step in the warmup owner.
+`shape/high_resolution.png` is produced by the same x4 upscaler used by the
+origin data process. `shape/masked_image.png` is then produced by Demo v5.1's
+local SAM3.1 image segmenter using the origin RGBA mask semantics.
 
-## Three Stages
+## Shape-Prior Stages
 
-1. `shape_prior_generate.py`
-   - reads `shape/sam3d_input_rgba.png`
+1. `utils/image_upscale.py`
+   - reads `color/0/0.png` and the frame-0 object mask
+   - writes `shape/high_resolution.png`
+
+2. main-process `sam31_image_segmentation.py`
+   - reads `shape/high_resolution.png`
+   - uses SAM3.1 to segment the object prompt
+   - writes `shape/masked_image.png`
+
+3. `shape_prior_generate.py`
+   - reads `shape/masked_image.png`
    - runs SAM3D
    - writes `shape/object.glb`
 
-2. `shape_prior_align.py`
+4. `shape_prior_align.py`
    - imports `demo_v5_1.shape_prior_match_pairs`
    - aligns the generated mesh to the first object observation
    - writes `shape/matching/final_mesh.glb`
 
-3. `shape_prior_sample.py`
+5. `shape_prior_sample.py`
    - samples surface and interior points from the aligned mesh
    - keeps origin sampling semantics: `--num_surface_points=1024`,
      `volume_mesh(..., 10000)`, `--volume_sample_size=0.005`
@@ -141,6 +157,6 @@ When shape prior is disabled:
 
 ## Coordinate Rule
 
-Runtime masks remain in original camera RGB-D resolution. SAM3D input uses the
-same high-resolution object mask as alpha in the temporary RGBA image. That mask
-is not written back into runtime chunk masks.
+Runtime masks remain in original camera RGB-D resolution. The high-resolution
+SAM3.1 mask is used only as alpha in `shape/masked_image.png` for SAM3D input.
+That mask is not written back into runtime chunk masks.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import contextlib
 import io
 import json
@@ -7,6 +8,7 @@ from pathlib import Path
 import pickle
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 from PIL import Image
@@ -49,6 +51,7 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
             ROOT / "demo_v5_1" / "shape_prior_align.py",
             ROOT / "demo_v5_1" / "shape_prior_match_pairs.py",
             ROOT / "demo_v5_1" / "shape_prior_sample.py",
+            ROOT / "demo_v5_1" / "sam31_image_segmentation.py",
             ROOT / "demo_v5_1" / "main_warmup.py",
         )
         for path in expected_files:
@@ -72,6 +75,7 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
             with self.subTest(path=path.name):
                 self.assertNotIn("qqtt.demo.shape_prior", source)
                 self.assertNotIn("services.shape_prior_remote", source)
+                self.assertNotIn("scripts.harness.support.sam31_mask_helper", source)
 
     def test_shape_prior_align_uses_v51_match_pairs(self) -> None:
         source = (ROOT / "demo_v5_1" / "shape_prior_align.py").read_text(
@@ -93,20 +97,19 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
                 _frame0_request(),
                 case_root=Path(tmpdir),
                 case_name="case",
+                object_name="stuffed animal",
                 controller_name="hand",
             )
             case = Path(paths["case"])
 
             self.assertTrue((case / "color" / "0" / "0.png").is_file())
-            self.assertTrue((case / "shape" / "sam3d_input_rgba.png").is_file())
+            self.assertTrue((case / "shape").is_dir())
+            self.assertFalse((case / "shape" / "sam3d_input_rgba.png").exists())
             self.assertTrue((case / "mask" / "0" / "0" / "0.png").is_file())
             self.assertTrue((case / "mask" / "processed_masks.pkl").is_file())
             pcd = np.load(case / "pcd" / "0.npz")
             self.assertEqual((1, 2, 2, 3), pcd["points"].shape)
-
-            rgba = np.asarray(Image.open(case / "shape" / "sam3d_input_rgba.png"))
-            self.assertEqual(255, int(rgba[0, 0, 3]))
-            self.assertEqual(0, int(rgba[0, 1, 3]))
+            self.assertEqual((1, 2, 2), pcd["masks"].shape)
 
             with (case / "mask" / "processed_masks.pkl").open("rb") as handle:
                 processed_masks = pickle.load(handle)
@@ -115,6 +118,149 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
                 (case / "mask" / "mask_info_0.json").read_text(encoding="utf-8")
             )
             self.assertEqual({"0": "stuffed animal", "1": "hand"}, mask_info)
+            metadata = json.loads(
+                (case / "metadata.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual("negative", metadata["table_z_above_direction"])
+
+    def test_sam31_image_segmentation_matches_origin_rgba_semantics(self) -> None:
+        from demo_v5_1 import sam31_image_segmentation
+
+        rgb = np.array(
+            [
+                [[10, 20, 30], [40, 50, 60]],
+                [[70, 80, 90], [100, 110, 120]],
+            ],
+            dtype=np.uint8,
+        )
+        mask = np.array([[True, False], [False, True]], dtype=bool)
+
+        def fake_run_image_segmentation(**_kwargs):
+            return {
+                "masks_by_label": {"stuffed animal": [mask]},
+                "parsed_prompts": ["stuffed animal"],
+            }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            input_path = tmp / "high_resolution.png"
+            output_path = tmp / "masked_image.png"
+            Image.fromarray(rgb).save(input_path)
+
+            with mock.patch.object(
+                sam31_image_segmentation,
+                "run_image_segmentation",
+                side_effect=fake_run_image_segmentation,
+            ):
+                sam31_image_segmentation.segment_image_to_origin_rgba(
+                    img_path=input_path,
+                    text_prompt="stuffed animal",
+                    output_path=output_path,
+                )
+
+            rgba = np.asarray(Image.open(output_path).convert("RGBA"))
+            np.testing.assert_array_equal(rgb[0, 0], rgba[0, 0, :3])
+            np.testing.assert_array_equal([0, 0, 0], rgba[0, 1, :3])
+            self.assertEqual(255, int(rgba[0, 0, 3]))
+            self.assertEqual(0, int(rgba[0, 1, 3]))
+            self.assertEqual(255, int(rgba[1, 1, 3]))
+
+    def test_shape_prior_client_uses_origin_input_command_chain(self) -> None:
+        from demo_v5_1 import sam31_image_segmentation
+        from demo_v5_1 import shape_prior_warmup
+
+        commands: list[list[str]] = []
+        segment_calls: list[dict[str, object]] = []
+
+        def arg_value(command: list[str], flag: str) -> str:
+            return command[command.index(flag) + 1]
+
+        def fake_run_stage(command: list[str], *, env: dict[str, str]) -> float:
+            del env
+            commands.append(command)
+            module = command[command.index("-m") + 1]
+            if module == "demo_v5_1.utils.image_upscale":
+                Image.fromarray(np.zeros((2, 2, 3), dtype=np.uint8)).save(
+                    arg_value(command, "--output_path")
+                )
+            elif module == "demo_v5_1.shape_prior_sample":
+                case = Path(arg_value(command, "--base_path")) / arg_value(
+                    command,
+                    "--case_name",
+                )
+                with (case / "final_data.pkl").open("wb") as handle:
+                    pickle.dump(
+                        {
+                            "surface_points": np.zeros((1, 3), dtype=np.float32),
+                            "interior_points": np.ones((1, 3), dtype=np.float32),
+                        },
+                        handle,
+                        protocol=pickle.HIGHEST_PROTOCOL,
+                    )
+            return float(len(commands))
+
+        def fake_segment_image_to_origin_rgba(**kwargs):
+            segment_calls.append(dict(kwargs))
+            Image.fromarray(np.zeros((2, 2, 4), dtype=np.uint8)).save(
+                kwargs["output_path"]
+            )
+            return Path(kwargs["output_path"])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client = shape_prior_warmup.ShapePriorLocalClient(
+                case_root=Path(tmpdir),
+                object_name="stuffed animal",
+                controller_name="hand",
+                points_npz=Path(tmpdir) / "points.npz",
+                sam31_device="cuda",
+            )
+            with (
+                mock.patch.object(
+                    shape_prior_warmup,
+                    "_run_stage",
+                    side_effect=fake_run_stage,
+                ),
+                mock.patch.object(
+                    sam31_image_segmentation,
+                    "segment_image_to_origin_rgba",
+                    side_effect=fake_segment_image_to_origin_rgba,
+                ),
+            ):
+                result = client.request_shape_prior(_frame0_request())
+
+            self.assertTrue(result.ready)
+            modules = [command[command.index("-m") + 1] for command in commands]
+            self.assertEqual(
+                [
+                    "demo_v5_1.utils.image_upscale",
+                    "demo_v5_1.shape_prior_generate",
+                    "demo_v5_1.shape_prior_align",
+                    "demo_v5_1.shape_prior_sample",
+                ],
+                modules,
+            )
+            self.assertEqual(1, len(segment_calls))
+            self.assertEqual(
+                Path(tmpdir) / "shape_prior_frame0" / "shape" / "high_resolution.png",
+                Path(str(segment_calls[0]["img_path"])),
+            )
+            self.assertEqual("stuffed animal", segment_calls[0]["text_prompt"])
+            self.assertEqual("cuda", segment_calls[0]["device"])
+            self.assertTrue(segment_calls[0]["reuse_model"])
+
+            generate_command = commands[1]
+            self.assertEqual(
+                str(Path(tmpdir) / "shape_prior_frame0" / "shape" / "masked_image.png"),
+                arg_value(generate_command, "--img_path"),
+            )
+            self.assertFalse(
+                (Path(tmpdir) / "shape_prior_frame0" / "shape" / "sam3d_input_rgba.png")
+                .exists()
+            )
+            self.assertNotIn(
+                "sam3d_input_rgba",
+                "\n".join(" ".join(command) for command in commands),
+            )
 
     def test_shape_prior_points_npz_contains_only_prior_points(self) -> None:
         from demo_v5_1 import shape_prior_warmup
@@ -262,6 +408,99 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
                 self.assertNotIn("shape_backend", source)
                 self.assertNotIn("SHAPE_BACKEND", source)
 
+    def test_table_z_above_direction_is_fixed_to_origin_convention(self) -> None:
+        from demo_v5_1 import main_data_processing
+
+        main_source = (ROOT / "demo_v5_1" / "main_data_processing.py").read_text(
+            encoding="utf-8"
+        )
+        warmup_source = (ROOT / "demo_v5_1" / "shape_prior_warmup.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("--table-z-above-direction", main_source)
+        self.assertIn('TABLE_Z_ABOVE_DIRECTION = "negative"', main_source)
+        self.assertIn('TABLE_Z_ABOVE_DIRECTION = "negative"', warmup_source)
+
+        parser = main_data_processing.build_parser()
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit) as error,
+        ):
+            parser.parse_args(["--table-z-above-direction", "positive"])
+        self.assertEqual(2, error.exception.code)
+        self.assertFalse(hasattr(parser.parse_args([]), "table_z_above_direction"))
+
+    def test_sam31_runtime_release_uses_named_module_api(self) -> None:
+        main_warmup_source = (ROOT / "demo_v5_1" / "main_warmup.py").read_text(
+            encoding="utf-8"
+        )
+        sam31_source = (
+            ROOT / "demo_v5_1" / "sam31_image_segmentation.py"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("sys.modules.get", main_warmup_source)
+        self.assertNotIn("helper =", main_warmup_source)
+        self.assertNotIn("getattr(helper", main_warmup_source)
+        self.assertIn(
+            "release_sam31_image_segmentation_runtime",
+            main_warmup_source,
+        )
+        self.assertIn(
+            "def release_sam31_image_segmentation_runtime",
+            sam31_source,
+        )
+
+    def test_shape_prior_keeps_sam31_first_frame_runtime_cached(self) -> None:
+        from demo_v5_1 import main_warmup
+        from demo_v5_1 import sam31_image_segmentation
+
+        mask = np.array([[True, False], [False, True]], dtype=bool)
+        args = argparse.Namespace(
+            track_mode="controller-object",
+            object_prompt="stuffed animal",
+            controller_prompt="hand",
+            controller_instance_mode="single",
+            shape_prior_warmup=True,
+            device="cuda",
+        )
+
+        def fake_run_image_segmentation(**kwargs):
+            return {
+                "masks_by_label": {
+                    "stuffed animal": [mask],
+                    "hand": [~mask],
+                },
+                "timing_ms": {},
+            }
+
+        with (
+            mock.patch.object(
+                sam31_image_segmentation,
+                "run_image_segmentation",
+                side_effect=fake_run_image_segmentation,
+            ) as run_mock,
+            mock.patch.object(
+                main_warmup,
+                "trim_sam31_cuda_allocator",
+                return_value=1.0,
+            ) as trim_mock,
+            mock.patch.object(
+                main_warmup,
+                "release_sam31_runtime_resources",
+                return_value=1.0,
+            ) as release_mock,
+        ):
+            bundle = main_warmup.run_sam31_first_frame_mask_bundle(
+                np.zeros((2, 2, 3), dtype=np.uint8),
+                args,
+            )
+
+        self.assertTrue(np.array_equal(mask, bundle.object_mask))
+        self.assertTrue(run_mock.call_args.kwargs["reuse_model"])
+        trim_mock.assert_called_once_with("cuda")
+        release_mock.assert_not_called()
+
     def test_shape_prior_status_names_are_short(self) -> None:
         from demo_v5_1 import shape_prior_warmup
 
@@ -292,6 +531,7 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "controller_name"):
             shape_prior_warmup.ShapePriorLocalClient(
                 case_root=ROOT,
+                object_name="stuffed animal",
                 controller_name="",
             )
 

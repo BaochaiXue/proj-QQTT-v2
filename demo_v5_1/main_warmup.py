@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import gc
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -223,31 +222,16 @@ def split_controller_hand_instances(
 
 
 def release_sam31_runtime_resources(device: str = DEFAULT_SAM31_DEVICE) -> float:
+    from demo_v5_1 import sam31_image_segmentation
+
     started_s = time.perf_counter()
-    helper = sys.modules.get("scripts.harness.support.sam31_mask_helper")
-    clear_cache = (
-        getattr(helper, "clear_sam31_image_processor_cache", None)
-        if helper is not None
-        else None
-    )
-    if clear_cache is not None:
-        clear_cache()
-    autocast_context = (
-        getattr(helper, "_CUDA_AUTOCAST_CONTEXT", None) if helper is not None else None
-    )
-    if autocast_context is not None:
-        try:
-            autocast_context.__exit__(None, None, None)
-        except Exception as exc:
-            print(
-                f"[WARN] SAM3.1 autocast cleanup failed: {type(exc).__name__}: {exc}",
-                flush=True,
-            )
-        if helper is not None:
-            setattr(helper, "_CUDA_AUTOCAST_CONTEXT", None)
-            contexts = getattr(helper, "_CUDA_AUTOCAST_CONTEXTS_BY_THREAD", None)
-            if isinstance(contexts, dict):
-                contexts.clear()
+    try:
+        sam31_image_segmentation.release_sam31_image_segmentation_runtime()
+    except Exception as exc:
+        print(
+            f"[WARN] SAM3.1 runtime cleanup failed: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
 
     gc.collect()
     try:
@@ -287,7 +271,7 @@ def run_sam31_first_frame_mask_bundle(
     color_bgr: np.ndarray,
     args: argparse.Namespace,
 ) -> InitialMaskBundle:
-    from scripts.harness.support.sam31_mask_helper import (
+    from demo_v5_1.sam31_image_segmentation import (
         parse_text_prompts,
         run_image_segmentation,
     )
@@ -301,8 +285,13 @@ def run_sam31_first_frame_mask_bundle(
         empty = np.zeros(tuple(color_bgr.shape[:2]), dtype=bool)
         return InitialMaskBundle(controller_mask=empty, object_mask=empty)
     text_prompt = ",".join(prompt_labels)
+    reuse_sam31_runtime = bool(
+        getattr(args, "sam31_cache_init_model", False)
+        or getattr(args, "shape_prior_warmup", False)
+    )
     keep_runtime_until_all_cameras_init = bool(
         getattr(args, "sam31_keep_runtime_until_all_cameras_init", False)
+        or getattr(args, "shape_prior_warmup", False)
     )
     try:
         result = run_image_segmentation(
@@ -312,7 +301,7 @@ def run_sam31_first_frame_mask_bundle(
             compile_model=False,
             max_num_objects=16,
             device=str(args.device),
-            reuse_model=bool(getattr(args, "sam31_cache_init_model", False)),
+            reuse_model=reuse_sam31_runtime,
         )
         setattr(args, "_sam31_last_timing_ms", result.get("timing_ms", {}))
     finally:
