@@ -74,10 +74,12 @@ class ShapePriorResult:
 
     @property
     def ready(self) -> bool:
+        """Return the ready."""
         return str(self.status) == STATUS_READY
 
 
 def default_profile(*, enabled: bool) -> dict[str, Any]:
+    """Return the default profile."""
     status = STATUS_PENDING if enabled else STATUS_DISABLED
     return {
         "shape_prior_enabled": bool(enabled),
@@ -95,6 +97,7 @@ def default_profile(*, enabled: bool) -> dict[str, Any]:
 
 
 def _as_mask(value: np.ndarray, *, shape: tuple[int, int], name: str) -> np.ndarray:
+    """Return the as mask."""
     mask = np.asarray(value, dtype=bool)
     if mask.shape != shape:
         raise ValueError(f"{name} shape {mask.shape} does not match RGB shape {shape}")
@@ -102,6 +105,7 @@ def _as_mask(value: np.ndarray, *, shape: tuple[int, int], name: str) -> np.ndar
 
 
 def _require_name(value: str, *, field_name: str) -> str:
+    """Return validated name."""
     name = str(value).strip()
     if not name:
         raise ValueError(f"shape prior {field_name} must be non-empty")
@@ -135,11 +139,13 @@ def _camera_points_world(
 
 
 def _write_mask(mask: np.ndarray, path: Path) -> None:
+    """Write a boolean mask image to disk."""
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(np.where(mask, 255, 0).astype(np.uint8)).save(path)
 
 
 def _write_json(payload: dict[str, Any], path: Path) -> None:
+    """Write JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -155,11 +161,13 @@ def _run_stage(command: list[str], *, env: dict[str, str]) -> float:
 
 
 def _require_stage_file(path: Path, *, stage_name: str) -> None:
+    """Return validated stage file."""
     if not path.is_file():
         raise FileNotFoundError(f"{stage_name} did not write {path}")
 
 
 def _points_array(value: np.ndarray, *, name: str) -> np.ndarray:
+    """Return the points array."""
     points = np.asarray(value, dtype=np.float32)
     if points.size == 0:
         return np.empty((0, 3), dtype=np.float32)
@@ -174,6 +182,7 @@ def write_shape_prior_points_npz(
     surface_points: np.ndarray,
     interior_points: np.ndarray,
 ) -> Path:
+    """Write shape prior points NPZ."""
     output_path = Path(path)
     surface = _points_array(surface_points, name="surface_points")
     interior = _points_array(interior_points, name="interior_points")
@@ -373,6 +382,7 @@ class ShapePriorLocalClient:
         sam31_device: str = "cuda",
         reuse_sam31_model: bool = True,
     ) -> None:
+        """Initialize ShapePriorLocalClient."""
         self.case_root = Path(case_root)
         self.cuda_visible_devices = str(cuda_visible_devices)
         self.object_name = _require_name(object_name, field_name="object_name")
@@ -388,6 +398,7 @@ class ShapePriorLocalClient:
         self.reuse_sam31_model = bool(reuse_sam31_model)
 
     def request_shape_prior(self, frame0: ShapePriorFrame0Request) -> ShapePriorResult:
+        """Request shape prior."""
         paths = write_shape_prior_case(
             frame0,
             case_root=self.case_root,
@@ -545,6 +556,7 @@ class ShapePriorWarmupManager:
     """
 
     def __init__(self, *, enabled: bool, client: ShapePriorLocalClient | None) -> None:
+        """Initialize ShapePriorWarmupManager."""
         self.enabled = bool(enabled)
         self.client = client
         self._lock = threading.Lock()
@@ -553,6 +565,7 @@ class ShapePriorWarmupManager:
         self._profile = default_profile(enabled=self.enabled)
 
     def maybe_submit(self, frame0: ShapePriorFrame0Request) -> bool:
+        """Maybe start or update submit."""
         if not self.enabled:
             return False
         if self.client is None:
@@ -577,6 +590,7 @@ class ShapePriorWarmupManager:
             return True
 
     def _run(self, frame0: ShapePriorFrame0Request) -> None:
+        """Run ShapePriorWarmupManager."""
         start_s = time.perf_counter()
         try:
             assert self.client is not None
@@ -607,12 +621,14 @@ class ShapePriorWarmupManager:
             )
 
     def wait(self, timeout_s: float | None = None) -> ShapePriorResult | None:
+        """Wait for ShapePriorWarmupManager."""
         thread = self._thread
         if thread is not None:
             thread.join(timeout=None if timeout_s is None else float(timeout_s))
         return self.ready_result()
 
     def ready_result(self) -> ShapePriorResult | None:
+        """Return the ready result."""
         with self._lock:
             result = self._result
         if result is not None and result.ready:
@@ -620,6 +636,7 @@ class ShapePriorWarmupManager:
         return None
 
     def profile(self) -> dict[str, Any]:
+        """Return the profile."""
         with self._lock:
             return dict(self._profile)
 

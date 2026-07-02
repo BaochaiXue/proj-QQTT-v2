@@ -71,6 +71,7 @@ class PreparedPhysTwinFrame:
 def normalize_tracking_product_backend(value: str | None) -> str:
     # Accept hyphen/underscore and shorthand spellings from CLI flags and
     # config files; everything maps onto the two canonical backend names.
+    """Normalize tracking product backend."""
     normalized = str(value or DEFAULT_TRACKING_PRODUCT_BACKEND).strip().lower().replace("_", "-")
     aliases = {
         "overlay": TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY,
@@ -89,6 +90,7 @@ def normalize_tracking_product_backend(value: str | None) -> str:
 
 
 def tracking_product_backend_is_strict(value: str | None) -> bool:
+    """Return the tracking product backend is strict."""
     return normalize_tracking_product_backend(value) == TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT
 
 
@@ -102,6 +104,7 @@ def normalize_processed_mask_frame(frame: Mapping[str, Any]) -> dict[str, np.nda
     # keeps object and controller masks independent — origin never subtracts
     # the controller mask from the object mask, so overlap pixels stay valid
     # for both classes.
+    """Normalize processed mask frame."""
     if "object" in frame and frame["object"] is not None:
         obj = np.asarray(frame["object"], dtype=bool)
     else:
@@ -130,6 +133,7 @@ def normalize_processed_mask_frame(frame: Mapping[str, Any]) -> dict[str, np.nda
 
 
 def write_processed_masks(output_dir: str | Path, frames: Sequence[Mapping[str, Any]]) -> Path:
+    """Write processed masks."""
     root = Path(output_dir)
     mask_dir = root / "mask"
     mask_dir.mkdir(parents=True, exist_ok=True)
@@ -183,6 +187,7 @@ def dense_world_pcd_grid(
     # Demo v5.1 offline parity: data_process_sam3d/data_process_pcd.py:L84-L149
     # lifts RGB-D pixels through intrinsics and camera_to_world into a
     # world-space PCD grid.
+    """Build dense world PCD grid."""
     depth = np.asarray(depth_m, dtype=np.float32)
     if depth.ndim != 2:
         raise ValueError(f"depth_m must be HxW; got {depth.shape}")
@@ -224,6 +229,7 @@ def apply_depth_validity_to_mask_frame(
 ) -> dict[str, np.ndarray]:
     # Demo v5.1 offline parity: data_process_sam3d/data_process_mask.py:L56-L80
     # intersects semantic masks with valid depth support.
+    """Apply depth validity to mask frame."""
     depth = np.asarray(depth_m, dtype=np.float32)
     valid = np.isfinite(depth) & (depth > 0.0)
     normalized = normalize_processed_mask_frame(frame)
@@ -246,6 +252,7 @@ def apply_radius_outlier_to_mask_frame(
 ) -> dict[str, np.ndarray]:
     # Demo v5.1 offline parity: data_process_sam3d/data_process_mask.py:L81-L92
     # and L107-L136 remove isolated 3D mask points before processed mask output.
+    """Apply radius outlier to mask frame."""
     normalized = normalize_processed_mask_frame(frame)
     if not bool(enabled):
         return normalized
@@ -311,6 +318,7 @@ def prepare_phystwin_frame(
     source_frame_index: int | None = None,
     source_step: int | None = None,
 ) -> PreparedPhysTwinFrame:
+    """Prepare phystwin frame."""
     rgb = np.ascontiguousarray(np.asarray(rgb_frame, dtype=np.uint8))
     depth = np.asarray(depth_m, dtype=np.float32)
     points, colors = dense_world_pcd_grid(
@@ -353,6 +361,7 @@ def prepare_phystwin_frame(
 
 
 def write_prepared_phystwin_frame(path: str | Path, frame: PreparedPhysTwinFrame) -> Path:
+    """Write prepared phystwin frame."""
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
     tmp = output.with_name(f"{output.name}.tmp")
@@ -398,6 +407,7 @@ def _none_if_negative(value: int) -> int | None:
 
 
 def load_prepared_phystwin_frame(path: str | Path) -> PreparedPhysTwinFrame:
+    """Load prepared phystwin frame."""
     payload = np.load(Path(path), allow_pickle=False)
     mask_frame: dict[str, np.ndarray] = {}
     for key in payload["mask_keys"]:
@@ -426,6 +436,7 @@ def load_prepared_phystwin_frame(path: str | Path) -> PreparedPhysTwinFrame:
 
 
 def _load_rgb(path: Path) -> np.ndarray:
+    """Load RGB."""
     from PIL import Image
 
     return np.asarray(Image.open(path).convert("RGB"), dtype=np.uint8)
@@ -455,6 +466,7 @@ def _write_tracking_npz(
     # The identical npz lands in both tracking/ and cotracker/: PhysTwin
     # loaders read cotracker/0.npz by path convention even though the tracks
     # come from tapnextpp (manifest sets not_actual_cotracker=True).
+    """Write tracking NPZ."""
     tracking_dir = output_dir / "tracking"
     compat_dir = output_dir / PHYSTWIN_COMPATIBILITY_PATH_NAME
     tracking_dir.mkdir(parents=True, exist_ok=True)
@@ -478,6 +490,7 @@ def _finalize_prepared_only_headless_capture(
     # Prepared-only captures already hold one npz per frame; finalize just
     # validates the rows and writes a manifest. The pickle/mp4 products are
     # materialized later from the prepared frames, hence the None paths below.
+    """Finalize prepared only headless capture."""
     prepared_paths = [row.get("prepared_phystwin_frame_path") for row in rows]
     missing = [idx for idx, value in enumerate(prepared_paths) if value is None]
     if missing:
@@ -524,6 +537,7 @@ def _write_pcd_frames(
     capture_dir: Path,
     metadata: Mapping[str, Any],
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Write PCD frames."""
     pcd_dir = output_dir / "pcd"
     pcd_dir.mkdir(parents=True, exist_ok=True)
     # Captures without table calibration carry no camera_to_world_c2w; identity
@@ -562,6 +576,7 @@ def _write_pcd_frames(
 
 
 def _open_video_writer(path: Path, *, size: tuple[int, int], fps: float = 30.0):
+    """Open video writer."""
     import cv2
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -583,6 +598,7 @@ def _render_tracking_2d_video(
     query_is_controller: np.ndarray,
     size: tuple[int, int] = (848, 480),
 ) -> None:
+    """Render tracking 2d video."""
     import cv2
 
     writer = _open_video_writer(path, size=size)
@@ -688,6 +704,7 @@ def _render_world_track_video(
     title: str,
     size: tuple[int, int] = (640, 480),
 ) -> None:
+    """Render world track video."""
     import cv2
 
     writer = _open_video_writer(path, size=size)
@@ -723,6 +740,7 @@ def _render_world_track_video(
 
 
 def _render_empty_video(path: Path, *, frame_count: int, label: str, size: tuple[int, int] = (640, 360)) -> None:
+    """Render empty video."""
     import cv2
 
     writer = _open_video_writer(path, size=size)
@@ -746,6 +764,7 @@ def finalize_headless_capture(
     *,
     output_dir: str | Path | None = None,
 ) -> dict[str, Any]:
+    """Finalize headless capture."""
     capture = Path(capture_dir)
     out = Path(output_dir) if output_dir is not None else capture / "phystwin_like"
     out.mkdir(parents=True, exist_ok=True)

@@ -10,10 +10,12 @@ T = TypeVar("T")
 
 
 def elapsed_ms(start_s: float, end_s: float | None = None) -> float:
+    """Compute elapsed ms."""
     return float(((time.perf_counter() if end_s is None else end_s) - start_s) * 1000.0)
 
 
 def packet_seq(packet: object) -> int:
+    """Return the packet seq."""
     try:
         return int(getattr(packet, "seq"))
     except AttributeError as exc:
@@ -29,6 +31,7 @@ class LatestSlot(Generic[T]):
     """
 
     def __init__(self) -> None:
+        """Initialize LatestSlot."""
         self._lock = threading.Lock()
         self._packet: T | None = None
         self._last_taken_seq_total = -1
@@ -51,6 +54,7 @@ class LatestSlot(Generic[T]):
             return self._dropped
 
     def get_latest_after(self, last_seq: int) -> T | None:
+        """Return the get latest after."""
         with self._lock:
             if self._packet is None:
                 return None
@@ -62,12 +66,14 @@ class LatestSlot(Generic[T]):
             return self._packet
 
     def latest_seq(self) -> int:
+        """Return the latest seq."""
         with self._lock:
             if self._packet is None:
                 return -1
             return packet_seq(self._packet)
 
     def reset_dropped_count(self) -> None:
+        """Reset the interval dropped-frame counter."""
         with self._lock:
             self._dropped = 0
             if self._packet is not None:
@@ -75,11 +81,13 @@ class LatestSlot(Generic[T]):
 
     @property
     def dropped_count(self) -> int:
+        """Return the dropped count."""
         with self._lock:
             return self._dropped
 
     @property
     def total_dropped_count(self) -> int:
+        """Return the total dropped count."""
         with self._lock:
             return self._dropped_total
 
@@ -88,10 +96,12 @@ class CoalescedPostGate:
     """Allow at most one queued GUI post callback at a time."""
 
     def __init__(self) -> None:
+        """Initialize CoalescedPostGate."""
         self._lock = threading.Lock()
         self._pending = False
 
     def try_mark_pending(self) -> bool:
+        """Return the try mark pending."""
         with self._lock:
             if self._pending:
                 return False
@@ -99,10 +109,12 @@ class CoalescedPostGate:
             return True
 
     def mark_done(self) -> None:
+        """Return the mark done."""
         with self._lock:
             self._pending = False
 
     @property
     def pending(self) -> bool:
+        """Return the pending."""
         with self._lock:
             return self._pending

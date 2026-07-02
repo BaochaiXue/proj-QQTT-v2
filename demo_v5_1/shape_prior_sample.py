@@ -17,6 +17,7 @@ DEFAULT_VOLUME_SAMPLE_SIZE_M = 0.005
 
 
 def build_parser() -> ArgumentParser:
+    """Build the command-line argument parser."""
     parser = ArgumentParser()
     parser.add_argument("--base_path", type=Path, required=True)
     parser.add_argument("--case_name", type=str, required=True)
@@ -146,6 +147,7 @@ def process_shape_prior_case(
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Run the command-line entry point."""
     args = build_parser().parse_args(argv)
     final_data = process_shape_prior_case(
         args.base_path,

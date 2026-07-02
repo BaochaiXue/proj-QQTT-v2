@@ -27,6 +27,7 @@ DEFAULT_SEED = 42
 
 
 def build_parser():
+    """Build the command-line argument parser."""
     parser = ArgumentParser(
         description="Generate shape prior via SAM3D with the original API."
     )
@@ -54,6 +55,7 @@ def build_parser():
 
 
 def resolve_sam3d_root(value=None):
+    """Resolve SAM3D root."""
     candidates = [Path(value).expanduser()] if value else []
     candidates.extend(DEFAULT_SAM3D_ROOT_CANDIDATES)
     for candidate in candidates:
@@ -71,6 +73,7 @@ def resolve_sam3d_root(value=None):
 
 
 def default_config_for_root(root):
+    """Return the default config for root."""
     for candidate in (
         root / "checkpoints" / "hf" / "pipeline.yaml",
         root / "checkpoints" / "hf" / "checkpoints" / "pipeline.yaml",
@@ -81,6 +84,7 @@ def default_config_for_root(root):
 
 
 def load_inference_class(root):
+    """Load inference class."""
     for path in (root, root / "notebook"):
         path_str = str(path)
         if path_str not in sys.path:
@@ -91,6 +95,7 @@ def load_inference_class(root):
 
 
 def rgba_to_sam3d_inputs(image):
+    """Return the RGBA to SAM3D inputs."""
     final_im = image.convert("RGBA")
     rgba = np.asarray(final_im, dtype=np.uint8)
     alpha = rgba[:, :, 3]
@@ -102,12 +107,14 @@ def rgba_to_sam3d_inputs(image):
 
 
 def _first(value):
+    """Return the first."""
     if isinstance(value, (list, tuple)):
         return value[0] if value else None
     return value
 
 
 def export_mesh(mesh_obj, path):
+    """Return the export mesh."""
     if mesh_obj is None:
         raise ValueError("SAM3D output did not include a mesh/glb object.")
     if hasattr(mesh_obj, "success") and getattr(mesh_obj, "success") is False:
@@ -131,6 +138,7 @@ def export_mesh(mesh_obj, path):
 
 
 def run_sam3d_shape_prior(args):
+    """Run SAM3D shape prior."""
     sam3d_root = resolve_sam3d_root(args.sam3d_root)
     config = Path(args.config).expanduser() if args.config else None
     config = config or default_config_for_root(sam3d_root)
@@ -180,6 +188,7 @@ def run_sam3d_shape_prior(args):
 
 
 def main(argv=None):
+    """Run the command-line entry point."""
     args = build_parser().parse_args(argv)
     run_sam3d_shape_prior(args)
 

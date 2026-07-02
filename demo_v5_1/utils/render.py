@@ -30,6 +30,7 @@ WSLG_OPEN3D_ENV_DEFAULTS = {
 
 
 def running_under_wsl() -> bool:
+    """Return the running under wsl."""
     if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
         return True
     try:
@@ -39,6 +40,7 @@ def running_under_wsl() -> bool:
 
 
 def apply_wslg_open3d_env_defaults() -> dict[str, str]:
+    """Apply wslg open3d env defaults."""
     if os.environ.get("QQTT_DISABLE_WSLG_OPEN3D_DEFAULTS") == "1":
         return {}
     if not running_under_wsl():
@@ -60,6 +62,7 @@ def apply_wslg_open3d_env_defaults() -> dict[str, str]:
 
 
 def load_open3d_modules():
+    """Load open3d modules."""
     apply_wslg_open3d_env_defaults()
     try:
         import open3d as o3d  # type: ignore
@@ -71,6 +74,7 @@ def load_open3d_modules():
 
 class RenderStats:
     def __init__(self, window_s: float = 1.0) -> None:
+        """Initialize RenderStats."""
         if window_s <= 0:
             raise ValueError("window_s must be positive")
         self.window_s = float(window_s)
@@ -78,6 +82,7 @@ class RenderStats:
         self.latest_latency_ms = 0.0
 
     def record_render(self, *, render_time_s: float, latency_ms: float) -> None:
+        """Record render."""
         self.latest_latency_ms = float(latency_ms)
         self._samples.append((float(render_time_s), float(latency_ms)))
         cutoff = float(render_time_s) - self.window_s
@@ -86,6 +91,7 @@ class RenderStats:
 
     @property
     def render_fps(self) -> float:
+        """Return the recent render FPS."""
         if len(self._samples) < 2:
             return 0.0
         elapsed = self._samples[-1][0] - self._samples[0][0]
@@ -95,6 +101,7 @@ class RenderStats:
 
     @property
     def mean_latency_ms(self) -> float:
+        """Return the mean render latency in milliseconds."""
         if not self._samples:
             return 0.0
         return float(sum(latency for _, latency in self._samples) / len(self._samples))
@@ -118,9 +125,11 @@ class _Float32Buffer:
     """Reusable Nx3 float32 buffer for in-place point/color updates."""
 
     def __init__(self) -> None:
+        """Initialize _Float32Buffer."""
         self.array: np.ndarray | None = None
 
     def ensure(self, n_points: int) -> np.ndarray:
+        """Return the ensure."""
         if self.array is None or self.array.shape != (n_points, 3):
             self.array = np.empty((n_points, 3), dtype=np.float32)
         return self.array
@@ -141,6 +150,7 @@ class Open3DSceneTensorLayer:
         device: Any,
         min_capacity: int = 0,
     ) -> None:
+        """Initialize Open3DSceneTensorLayer."""
         if int(min_capacity) < 0:
             raise ValueError("min_capacity must be >= 0")
         self.name = str(name)
@@ -159,6 +169,7 @@ class Open3DSceneTensorLayer:
         self._refs: dict[str, np.ndarray | None] = {"points": None, "colors": None}
 
     def update(self, points_xyz_m: np.ndarray, colors_rgb_u8: np.ndarray) -> RenderLayerUpdate:
+        """Update Open3DSceneTensorLayer."""
         format_start_s = time.perf_counter()
         if points_xyz_m.ndim != 2 or points_xyz_m.shape[1] != 3:
             raise ValueError("points_xyz_m must be an Nx3 array")

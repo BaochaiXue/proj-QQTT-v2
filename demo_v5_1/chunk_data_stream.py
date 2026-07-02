@@ -61,6 +61,7 @@ def _read_jsonl_from_offset(
 
 
 def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
+    """Return the iter JSONL."""
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
@@ -71,6 +72,7 @@ def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
 def _relative_wall_s(origin_s: float) -> float:
     # All *_wall_s manifest timings are seconds since one shared monotonic
     # origin so latencies stay comparable across chunks within a run.
+    """Convert an absolute monotonic timestamp into run-relative seconds."""
     return float(time.monotonic() - float(origin_s))
 
 
@@ -88,6 +90,7 @@ def _complete_chunk_backlog(
 
 
 def _optional_int(value: Any) -> int | None:
+    """Return the optional int."""
     if value is None:
         return None
     try:
@@ -97,6 +100,7 @@ def _optional_int(value: Any) -> int | None:
 
 
 def _optional_float(value: Any) -> float | None:
+    """Return the optional float."""
     if value is None:
         return None
     try:
@@ -136,6 +140,7 @@ def _rows_source_timestamps(rows: Sequence[Mapping[str, Any]]) -> list[float] | 
 # Warmup-delayed startup rows
 # ---------------------------------------------------------------------------
 def _row_ready_for_realtime_chunk_start(row: Mapping[str, Any]) -> bool:
+    """Return the row ready for realtime chunk start."""
     controller_points = _optional_int(row.get("controller_point_count"))
     if controller_points is not None and int(controller_points) < 30:
         return False
@@ -262,6 +267,7 @@ def _apply_depth_validity_to_mask_frame(
 ) -> dict[str, np.ndarray]:
     # The offline path intersects semantic object/controller masks with valid
     # depth support before track classification.
+    """Apply depth validity to mask frame."""
     depth = np.asarray(depth_m, dtype=np.float32)
     valid = np.isfinite(depth) & (depth > 0.0)
     normalized = strict.normalize_processed_mask_frame(frame)
@@ -356,6 +362,7 @@ def _intrinsics_matrix(metadata: Mapping[str, Any]) -> np.ndarray:
 
 
 def _camera_to_world(metadata: Mapping[str, Any]) -> np.ndarray:
+    """Return the camera to world."""
     value = metadata.get("camera_to_world_c2w")
     if value is None:
         return np.eye(4, dtype=np.float32)
@@ -486,6 +493,7 @@ def _read_json_file_stable(
     deadline_s: float,
     poll_interval_s: float,
 ) -> Mapping[str, Any]:
+    """Read JSON file stable."""
     last_error: Exception | None = None
     while True:
         try:
@@ -579,6 +587,7 @@ def _shape_points_for_chunk(
 def _controller_track_manifest_fields(
     track_process_data: Mapping[str, Any],
 ) -> dict[str, Any]:
+    """Return the controller track manifest fields."""
     track_process_data = dict(track_process_data)
     if "controller_track_query_indices" not in track_process_data:
         controller_points = np.asarray(
@@ -634,6 +643,7 @@ def _controller_track_manifest_fields(
 def _object_track_manifest_fields(
     track_process_data: Mapping[str, Any],
 ) -> dict[str, Any]:
+    """Return the object track manifest fields."""
     track_process_data = dict(track_process_data)
     if "object_track_query_indices" not in track_process_data:
         object_points = np.asarray(
@@ -875,6 +885,7 @@ def _prepared_frame_from_row(
     capture_dir: Path,
     row: Mapping[str, Any],
 ) -> strict.PreparedPhysTwinFrame | None:
+    """Return the prepared frame from row."""
     path_value = row.get(
         "prepared_data_process_frame_path", row.get("prepared_phystwin_frame_path")
     )
@@ -1289,6 +1300,7 @@ def write_chunk_data_from_headless_capture(
 def _wait_for_metadata(
     capture: Path, *, capture_finished: Callable[[], bool], poll_interval_s: float
 ) -> Mapping[str, Any]:
+    """Wait for for metadata."""
     metadata_path = capture / "metadata.json"
     while True:
         if metadata_path.is_file():

@@ -31,6 +31,7 @@ def _align_ir_to_color_numba(
     # Splat every valid IR depth pixel into the color frame, keeping the nearest
     # depth per color pixel (z-buffer): initialize to +inf, take min, then map
     # untouched pixels to invalid_value.
+    """Return the align IR to color numba."""
     for i in range(out_flat.shape[0]):
         out_flat[i] = np.inf
 
@@ -104,6 +105,7 @@ class FfsIrToColorAligner:
         ir_shape: tuple[int, int],
         color_shape: tuple[int, int],
     ) -> None:
+        """Initialize FfsIrToColorAligner."""
         ir_height, ir_width = (int(ir_shape[0]), int(ir_shape[1]))
         color_height, color_width = (int(color_shape[0]), int(color_shape[1]))
         if ir_height <= 0 or ir_width <= 0 or color_height <= 0 or color_width <= 0:
@@ -137,6 +139,7 @@ class FfsIrToColorAligner:
         self.output = self.nearest.reshape(color_height, color_width)
 
     def align(self, depth_ir_m: np.ndarray, *, invalid_value: float = 0.0) -> np.ndarray:
+        """Return the align."""
         depth = np.asarray(depth_ir_m, dtype=np.float32)
         if depth.shape != self.ir_shape:
             raise ValueError("depth_ir_m shape does not match aligner ir_shape")
@@ -163,6 +166,7 @@ class FfsIrToColorAligner:
 
 
 def validate_ffs_paths(*, ffs_repo: Path, model_dir: Path) -> None:
+    """Validate FFS paths."""
     if not ffs_repo.exists():
         raise ValueError(f"--ffs-repo does not exist: {ffs_repo}")
     if not ffs_repo.is_dir():

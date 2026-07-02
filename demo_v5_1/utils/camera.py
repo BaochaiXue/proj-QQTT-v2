@@ -20,6 +20,7 @@ class CameraIntrinsics:
 
 
 def parse_profile(profile: str) -> tuple[int, int]:
+    """Parse profile."""
     if profile not in SUPPORTED_PROFILES:
         raise ValueError(f"unsupported profile {profile!r}; expected one of {', '.join(SUPPORTED_PROFILES)}")
     width_text, height_text = profile.split("x", 1)
@@ -27,6 +28,7 @@ def parse_profile(profile: str) -> tuple[int, int]:
 
 
 def camera_intrinsics_from_rs(intrinsics: object) -> CameraIntrinsics:
+    """Return the camera intrinsics from rs."""
     return CameraIntrinsics(
         fx=float(getattr(intrinsics, "fx")),
         fy=float(getattr(intrinsics, "fy")),
@@ -36,6 +38,7 @@ def camera_intrinsics_from_rs(intrinsics: object) -> CameraIntrinsics:
 
 
 def camera_intrinsics_to_matrix(intrinsics: CameraIntrinsics) -> np.ndarray:
+    """Return the camera intrinsics to matrix."""
     return np.array(
         [
             [float(intrinsics.fx), 0.0, float(intrinsics.cx)],
@@ -47,12 +50,14 @@ def camera_intrinsics_to_matrix(intrinsics: CameraIntrinsics) -> np.ndarray:
 
 
 def rs_intrinsics_to_matrix(intrinsics: object) -> np.ndarray:
+    """Return the rs intrinsics to matrix."""
     return camera_intrinsics_to_matrix(camera_intrinsics_from_rs(intrinsics))
 
 
 def rs_extrinsics_to_matrix(extrinsics: object) -> np.ndarray:
     # librealsense stores rotation column-major; return row-major [R|t]
     # for standard to_point = R @ from_point + t consumers.
+    """Return the rs extrinsics to matrix."""
     rotation = list(map(float, getattr(extrinsics, "rotation")))
     translation = list(map(float, getattr(extrinsics, "translation")))
     return np.array(
@@ -73,6 +78,7 @@ def rs_translation_norm(extrinsics: object) -> float:
 
 
 def load_realsense_module():
+    """Load realsense module."""
     try:
         import pyrealsense2 as rs  # type: ignore
     except ImportError as exc:
@@ -88,6 +94,7 @@ def _device_info(device: object, info_key: object) -> str:
 
 
 def list_d400_serials(rs: object) -> list[str]:
+    """Return the list d400 serials."""
     context = rs.context()
     serials: list[str] = []
     for device in context.query_devices():
@@ -99,6 +106,7 @@ def list_d400_serials(rs: object) -> list[str]:
 
 
 def resolve_serial(rs: object, requested_serial: str | None) -> str:
+    """Resolve serial."""
     serials = list_d400_serials(rs)
     if requested_serial:
         if serials and requested_serial not in serials:
@@ -111,6 +119,7 @@ def resolve_serial(rs: object, requested_serial: str | None) -> str:
 
 
 def apply_emitter(profile: object, emitter: str, rs: object) -> None:
+    """Apply emitter."""
     if emitter == "auto":
         return
     depth_sensor = profile.get_device().first_depth_sensor()

@@ -378,6 +378,7 @@ class TrackingRuntime:
         recovery_neighbor_count: int = RECOVERY_NEIGHBOR_COUNT,
         volume_sample_size: float = DEFAULT_VOLUME_SAMPLE_SIZE_M,
     ) -> None:
+        """Initialize TrackingRuntime."""
         if int(controller_count) <= 0:
             raise ValueError("controller_count must be positive")
         if int(neighbor_table_size) <= 0:
@@ -410,6 +411,7 @@ class TrackingRuntime:
 
     @property
     def initialized(self) -> bool:
+        """Return the initialized."""
         return self._anchor_indices is not None
 
     def _freeze_identity(
@@ -420,6 +422,7 @@ class TrackingRuntime:
         surface_points: np.ndarray | None,
         interior_points: np.ndarray | None,
     ) -> None:
+        """Return the freeze identity."""
         ctrl_points = np.asarray(window["controller_points"], dtype=np.float32)
         ctrl_vis = np.asarray(window["controller_visibilities"], dtype=bool)
         candidates = np.flatnonzero(np.asarray(controller_global_mask, dtype=bool))
@@ -497,6 +500,7 @@ class TrackingRuntime:
         )
 
     def _check_frozen_identity(self, window: Mapping[str, np.ndarray]) -> None:
+        """Check frozen identity."""
         if self._query_ids is None or self._query_semantic_labels is None:
             raise RuntimeError("tracking runtime identity is not frozen yet")
         if not np.array_equal(self._query_ids, np.asarray(window["query_ids"], dtype=np.int64)):
@@ -522,6 +526,7 @@ class TrackingRuntime:
         return tiers
 
     def _recovery_tier(self, valid_count: int) -> int | None:
+        """Return the recovery tier."""
         for tier in self._recovery_tiers():
             if int(valid_count) >= tier:
                 return tier
@@ -567,6 +572,7 @@ class TrackingRuntime:
         usable_frame: np.ndarray,
         ctrl_points_frame: np.ndarray,
     ) -> np.ndarray:
+        """Return the recover anchor."""
         assert self._anchor_indices is not None
         assert self._anchor_first_points is not None
         assert self._controller_first_points is not None

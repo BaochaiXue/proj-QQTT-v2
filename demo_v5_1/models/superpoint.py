@@ -49,6 +49,7 @@ def simple_nms(scores, nms_radius: int):
     assert(nms_radius >= 0)
 
     def max_pool(x):
+        """Run max pooling used by non-maximum suppression."""
         return torch.nn.functional.max_pool2d(
             x, kernel_size=nms_radius*2+1, stride=1, padding=nms_radius)
 
@@ -71,6 +72,7 @@ def remove_borders(keypoints, scores, border: int, height: int, width: int):
 
 
 def top_k_keypoints(keypoints, scores, k: int):
+    """Select top k keypoints."""
     if k >= len(keypoints):
         return keypoints, scores
     scores, indices = torch.topk(scores, k, dim=0)
@@ -109,6 +111,7 @@ class SuperPoint(nn.Module):
     }
 
     def __init__(self, config):
+        """Initialize SuperPoint."""
         super().__init__()
         self.config = {**self.default_config, **config}
 

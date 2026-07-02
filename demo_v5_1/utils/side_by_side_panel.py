@@ -49,6 +49,7 @@ class SideBySidePanelHud:
 
     @property
     def rgb_ahead_frames(self) -> int:
+        """Return the RGB ahead frames."""
         return compute_rgb_ahead_frames(rgb_seq=self.rgb_seq, paired_seq=self.paired_seq)
 
 
@@ -61,10 +62,12 @@ class SideBySidePanelInputs:
 
 
 def compute_rgb_ahead_frames(*, rgb_seq: int, paired_seq: int) -> int:
+    """Compute RGB ahead frames."""
     return max(0, int(rgb_seq) - int(paired_seq))
 
 
 def format_side_by_side_fps_line(hud: SideBySidePanelHud) -> str:
+    """Format side by side FPS line."""
     return (
         "FPS cap/seg/depth/pcd/tracker/render: "
         f"{float(hud.capture_fps):.1f}/"
@@ -77,6 +80,7 @@ def format_side_by_side_fps_line(hud: SideBySidePanelHud) -> str:
 
 
 def _as_bgr_u8(image: np.ndarray) -> np.ndarray:
+    """Coerce the input into BGR u8."""
     arr = np.asarray(image)
     if arr.ndim != 3 or arr.shape[2] != 3:
         raise ValueError(f"panel image must be HxWx3, got {arr.shape}")
@@ -86,6 +90,7 @@ def _as_bgr_u8(image: np.ndarray) -> np.ndarray:
 
 
 def _resize_to_cell(image: np.ndarray, cell_size: tuple[int, int]) -> np.ndarray:
+    """Resize an image to the panel cell size."""
     width, height = int(cell_size[0]), int(cell_size[1])
     if width <= 0 or height <= 0:
         raise ValueError("cell_size must contain positive width and height")
@@ -139,6 +144,7 @@ def render_side_by_side_panel(
     cell_size: tuple[int, int] | None = None,
 ) -> np.ndarray:
     # Default cell size follows the live RGB frame so the camera image is never rescaled.
+    """Render side by side panel."""
     left_source = _as_bgr_u8(inputs.rgb_image_bgr)
     if cell_size is None:
         cell_size = (int(left_source.shape[1]), int(left_source.shape[0]))
@@ -283,6 +289,7 @@ def _reshape_rgb(name: str, rgb_u8: np.ndarray) -> np.ndarray:
 
 
 def _require_same_length(first_name: str, first: np.ndarray, second_name: str, second: np.ndarray) -> None:
+    """Return validated same length."""
     if len(first) != len(second):
         raise ValueError(f"{first_name} length {len(first)} must match {second_name} length {len(second)}")
 
@@ -301,6 +308,7 @@ def _draw_projected_points(
     camera_to_world_c2w: Any | None,
 ) -> int:
     # Validate points as Nx3 float32 (empty inputs normalize to shape (0, 3)).
+    """Draw projected points."""
     points = np.asarray(points_xyz, dtype=np.float32)
     if points.size == 0:
         points = np.empty((0, 3), dtype=np.float32)
@@ -359,6 +367,7 @@ def render_projected_pcd_panel(
     shape_prior_xyz_m: np.ndarray | None = None,
     shape_prior_rgb_u8: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, int]]:
+    """Render projected PCD panel."""
     if int(width) <= 0 or int(height) <= 0:
         raise ValueError("width and height must be positive")
 
@@ -417,6 +426,7 @@ def render_tracking_overlay_panel(
     query_controller_instance_id: np.ndarray,
     marker_radius: int,
 ) -> tuple[np.ndarray, dict[str, int]]:
+    """Render tracking overlay panel."""
     image = _as_bgr_u8(image_bgr).copy()
     tracks = np.asarray(tracks_yx, dtype=np.float32)
     if tracks.size == 0:

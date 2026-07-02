@@ -36,6 +36,7 @@ import numpy as np
 
 
 def _resolve_repo_root() -> Path:
+    """Resolve repo root."""
     candidates: list[Path] = []
     candidates.extend([Path(__file__).resolve().parents[1], Path.cwd()])
     env_root = os.environ.get("QQTT_REPO_ROOT")
@@ -60,6 +61,7 @@ sys.path.insert(0, REPO_ROOT_STR)
 
 
 def _repo_relative_path_text(path: str | Path | None) -> str | None:
+    """Return the repo relative path text."""
     if path is None:
         return None
     original = Path(path)
@@ -305,6 +307,7 @@ DEFAULT_LOSSLESS_INPUT_FPS = 5.0
 # Shared dataclasses & packet types flowing between pipeline stages
 # ---------------------------------------------------------------------------
 def open3d_panel_viewport_layer_plan() -> dict[str, dict[str, Any]]:
+    """Return the open3d panel viewport layer plan."""
     return {
         "middle": {
             "kind": "filtered_pcd",
@@ -411,6 +414,7 @@ class FatalWorkerError:
     message: str
 
     def log_message(self) -> str:
+        """Format the worker failure for logs and HUD output."""
         return f"{self.stage} failed: {self.exc_type}: {self.message}"
 
 
@@ -426,6 +430,7 @@ class RecordedRgbdFrameRef:
 
 class _NoopPipeline:
     def stop(self) -> None:
+        """Stop _NoopPipeline."""
         return
 
 
@@ -438,6 +443,7 @@ class RecordedRgbdFrameSource:
         camera_index: int = 0,
         depth_source: str = "realsense",
     ) -> None:
+        """Initialize RecordedRgbdFrameSource."""
         self.case_path = _resolve_path(case_path)
         self.camera_index = int(camera_index)
         self.depth_source = str(depth_source)
@@ -499,13 +505,16 @@ class RecordedRgbdFrameSource:
 
     @property
     def frame_count(self) -> int:
+        """Return the frame count."""
         return len(self.frames)
 
     @property
     def steps(self) -> list[int]:
+        """Return the steps."""
         return [frame.step for frame in self.frames]
 
     def make_runtime(self) -> RealtimeCameraRuntime:
+        """Create a replay runtime wrapper around recorded RGB-D frames."""
         return RealtimeCameraRuntime(
             pipeline=_NoopPipeline(),
             align=None,
@@ -527,6 +536,7 @@ class RecordedRgbdFrameSource:
         receive_perf_s: float | None = None,
         frame_copy_ms: float | None = None,
     ) -> FramePacket:
+        """Read packet."""
         packet_seq = int(seq)
         source_index = packet_seq if frame_index is None else int(frame_index)
         if source_index < 0 or source_index >= len(self.frames):
@@ -587,6 +597,7 @@ class RecordedRgbdFrameSource:
         wait_ms: float = 0.0,
         receive_perf_s: float | None = None,
     ) -> FramePacket:
+        """Read preview packet."""
         packet_seq = int(seq)
         source_index = packet_seq if frame_index is None else int(frame_index)
         if source_index < 0 or source_index >= len(self.frames):
@@ -622,6 +633,7 @@ class RecordedRgbdFrameSource:
         )
 
     def _camera_matrix(self, metadata: dict[str, Any], key: str, *, fallback_key: str | None = None) -> np.ndarray:
+        """Return the camera matrix."""
         values = metadata.get(key)
         if values is None and fallback_key is not None:
             values = metadata.get(fallback_key)
@@ -635,6 +647,7 @@ class RecordedRgbdFrameSource:
         return np.ascontiguousarray(matrix, dtype=np.float32)
 
     def _camera_transform(self, metadata: dict[str, Any], key: str) -> np.ndarray:
+        """Return the camera transform."""
         values = metadata.get(key)
         if not isinstance(values, list) or self.camera_index >= len(values) or values[self.camera_index] is None:
             raise ValueError(f"recording metadata missing {key} for camera {self.camera_index}")
@@ -644,6 +657,7 @@ class RecordedRgbdFrameSource:
         return np.ascontiguousarray(matrix, dtype=np.float32)
 
     def _camera_baseline(self, metadata: dict[str, Any]) -> float:
+        """Return the camera baseline."""
         values = metadata.get("ir_baseline_m")
         if isinstance(values, list) and self.camera_index < len(values) and values[self.camera_index] is not None:
             value = float(values[self.camera_index])
@@ -657,6 +671,7 @@ class RecordedRgbdFrameSource:
         return baseline
 
     def _camera_float(self, metadata: dict[str, Any], key: str) -> float:
+        """Return the camera float."""
         values = metadata.get(key)
         if not isinstance(values, list) or self.camera_index >= len(values) or values[self.camera_index] is None:
             raise ValueError(f"recording metadata missing {key} for camera {self.camera_index}")
@@ -666,12 +681,14 @@ class RecordedRgbdFrameSource:
         return value
 
     def _camera_string(self, metadata: dict[str, Any], key: str, *, default: str) -> str:
+        """Return the camera string."""
         values = metadata.get(key)
         if isinstance(values, list) and self.camera_index < len(values) and values[self.camera_index] is not None:
             return str(values[self.camera_index])
         return default
 
     def _resolve_dimensions(self, metadata: dict[str, Any]) -> tuple[int, int]:
+        """Resolve dimensions."""
         wh = metadata.get("WH")
         if not isinstance(wh, list) or len(wh) != 2:
             raise ValueError("recording metadata missing WH")
@@ -682,6 +699,7 @@ class RecordedRgbdFrameSource:
         return width, height
 
     def _resolve_recording_fps(self, metadata: dict[str, Any]) -> float:
+        """Resolve the recording FPS from case metadata."""
         try:
             fps = float(metadata.get("fps", 0.0))
         except (TypeError, ValueError):
@@ -689,9 +707,11 @@ class RecordedRgbdFrameSource:
         return fps if fps > 0.0 else 30.0
 
     def _resolve_replay_fps(self, replay_fps: float) -> float:
+        """Resolve the effective replay FPS for fake-live playback."""
         return float(replay_fps) if float(replay_fps) > 0.0 else float(self.recording_fps)
 
     def _build_recording_elapsed_s(self, frames: list[RecordedRgbdFrameRef]) -> np.ndarray:
+        """Build recording elapsed s."""
         timestamps = np.asarray([float(frame.timestamp_s) for frame in frames], dtype=np.float64)
         if len(timestamps) and np.isfinite(timestamps).all() and np.all(np.diff(timestamps) >= 0.0):
             return np.ascontiguousarray(timestamps - timestamps[0], dtype=np.float64)
@@ -699,6 +719,7 @@ class RecordedRgbdFrameSource:
         return np.ascontiguousarray(frame_indices / float(self.recording_fps), dtype=np.float64)
 
     def source_index_for_recording_elapsed_s(self, elapsed_s: float) -> int:
+        """Return the source frame index nearest a recording elapsed time."""
         if len(self.frames) <= 1:
             return 0
         elapsed = max(0.0, float(elapsed_s))
@@ -706,6 +727,7 @@ class RecordedRgbdFrameSource:
         return max(0, min(index, len(self.frames) - 1))
 
     def _build_frame_refs(self, camera_recording: dict[str, Any]) -> list[RecordedRgbdFrameRef]:
+        """Build frame refs."""
         refs: list[RecordedRgbdFrameRef] = []
         color_dir = self.case_path / "color" / str(self.camera_index)
         depth_dir = self.case_path / "depth" / str(self.camera_index)
@@ -742,6 +764,7 @@ class RecordedRgbdFrameSource:
         return refs
 
     def _load_color_bgr(self, path: Path) -> np.ndarray:
+        """Load color BGR."""
         try:
             from PIL import Image
 
@@ -752,6 +775,7 @@ class RecordedRgbdFrameSource:
         return np.ascontiguousarray(rgb[:, :, ::-1], dtype=np.uint8)
 
     def _load_depth_u16(self, path: Path) -> np.ndarray:
+        """Load depth u16."""
         try:
             depth = np.load(path)
         except Exception as exc:
@@ -764,6 +788,7 @@ class RecordedRgbdFrameSource:
         return np.ascontiguousarray(depth_u16)
 
     def _load_gray_u8(self, path: Path) -> np.ndarray:
+        """Load gray u8."""
         try:
             from PIL import Image
 
@@ -826,18 +851,22 @@ class MaskedPcdPacket:
 
     @property
     def controller_point_count(self) -> int:
+        """Return the controller point count."""
         return int(self.controller_xyz_m.shape[0])
 
     @property
     def object_point_count(self) -> int:
+        """Return the object point count."""
         return int(self.object_xyz_m.shape[0])
 
     @property
     def point_count(self) -> int:
+        """Return the point count."""
         return self.controller_point_count + self.object_point_count
 
     @property
     def shape_prior_point_count(self) -> int:
+        """Return the shape prior point count."""
         return int(np.asarray(self.shape_prior_points_m, dtype=np.float32).reshape(-1, 3).shape[0])
 
 
@@ -852,6 +881,7 @@ class MarkerResidualAudit:
 
 
 def _fit_bool_array(values: np.ndarray, length: int, *, fill: bool = False) -> np.ndarray:
+    """Fit a boolean vector to the requested length."""
     output = np.full((max(0, int(length)),), bool(fill), dtype=bool)
     arr = np.asarray(values, dtype=bool).reshape(-1)
     count = min(len(arr), len(output))
@@ -867,6 +897,7 @@ def _remaining_query_class_counts(
     query_is_controller: np.ndarray,
     query_controller_instance_id: np.ndarray,
 ) -> tuple[int, int, int, int]:
+    """Return the remaining query class counts."""
     alive = np.asarray(alive_mask, dtype=bool).reshape(-1)
     count = int(alive.shape[0])
     is_object = _fit_bool_array(query_is_object, count)
@@ -935,6 +966,7 @@ class TrackerMarkerPacket:
     coordinate_frame: str = COORDINATE_FRAME
 
     def __post_init__(self) -> None:
+        """Validate and normalize the dataclass state after initialization."""
         alive = np.asarray(self.query_alive_mask, dtype=bool).reshape(-1)
         query_count = max(0, int(self.query_count))
         if alive.size == 0 and query_count > 0:
@@ -978,10 +1010,12 @@ class TrackerMarkerPacket:
 
     @property
     def marker_count(self) -> int:
+        """Return the marker count."""
         return int(self.marker_xyz_m.shape[0])
 
 
 def _full_tracker_arrays_for_prepared_frame(packet: TrackerMarkerPacket) -> tuple[np.ndarray, np.ndarray]:
+    """Return the full tracker arrays for prepared frame."""
     query_count = int(np.asarray(packet.query_points_yx, dtype=np.float32).reshape(-1, 2).shape[0])
     all_tracks = np.asarray(packet.all_tracks_yx, dtype=np.float32).reshape(-1, 2)
     all_visibility = np.asarray(packet.all_tracker_visibility, dtype=bool).reshape(-1)
@@ -1019,6 +1053,7 @@ class PairedRenderPacket:
     mask_packet: MaskPacket | None = None
 
     def __post_init__(self) -> None:
+        """Validate and normalize the dataclass state after initialization."""
         pcd_seq = int(self.pcd_packet.seq)
         tracker_seq = int(self.tracker_packet.seq)
         mask_seq = None if self.mask_packet is None else int(self.mask_packet.seq)
@@ -1100,6 +1135,7 @@ class RemoteFfsQualityPacket:
 # ---------------------------------------------------------------------------
 class HeadlessCaptureWriter:
     def __init__(self, output_dir: str | Path, *, metadata: dict[str, Any]) -> None:
+        """Initialize HeadlessCaptureWriter."""
         self.output_dir = _resolve_path(output_dir)
         self.prepared_only = bool(metadata.get("headless_prepared_only", False))
         self.write_input_rgb_timeline = bool(metadata.get("write_input_rgb_timeline", False))
@@ -1152,17 +1188,20 @@ class HeadlessCaptureWriter:
         self._write_metadata_payload(payload)
 
     def _relative(self, path: Path) -> str:
+        """Return the relative."""
         try:
             return str(path.relative_to(self.output_dir))
         except ValueError:
             return str(path)
 
     def _write_metadata_payload(self, payload: dict[str, Any]) -> None:
+        """Write metadata payload."""
         tmp_path = self.metadata_path.with_name(f"{self.metadata_path.name}.tmp")
         tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         tmp_path.replace(self.metadata_path)
 
     def update_metadata(self, values: dict[str, Any]) -> None:
+        """Update metadata."""
         with self._lock:
             payload = dict(self._metadata_payload)
             payload.update(values)
@@ -1170,6 +1209,7 @@ class HeadlessCaptureWriter:
             self._write_metadata_payload(payload)
 
     def write_shape_prior_result(self, result: shape_prior_warmup.ShapePriorResult) -> None:
+        """Write shape prior result."""
         self.shape_prior_dir.mkdir(parents=True, exist_ok=True)
         path = self.shape_prior_dir / "points.npz"
         np.savez_compressed(
@@ -1202,6 +1242,7 @@ class HeadlessCaptureWriter:
         self.update_metadata(values)
 
     def write_input_frame(self, packet: FramePacket) -> None:
+        """Write input frame."""
         seq_name = f"{int(packet.seq):06d}"
         rgb_path = self.input_rgb_dir / f"{seq_name}.png"
         row = {
@@ -1239,6 +1280,7 @@ class HeadlessCaptureWriter:
         world_z_diagnostics: dict[str, Any] | None = None,
         startup_hold_s: float = 0.0,
     ) -> None:
+        """Write RGB-D, PCD, masks, tracking, and prepared PhysTwin artifacts."""
         filter_info = packet.filter_telemetry
         if not (filter_info.enabled and filter_info.mode == "sync" and filter_info.render_using_filtered):
             raise RuntimeError("headless capture refuses to save non-filtered PCD output")
@@ -1414,6 +1456,7 @@ class HeadlessCaptureWriter:
             self._saved_pcd_count += 1
 
     def write_tracker(self, packet: TrackerMarkerPacket) -> None:
+        """Write tracker."""
         if self.prepared_only:
             return
         seq_name = f"{int(packet.seq):06d}"
@@ -1465,6 +1508,7 @@ class HeadlessCaptureWriter:
 
     @property
     def saved_pcd_count(self) -> int:
+        """Return the saved PCD count."""
         with self._lock:
             return int(self._saved_pcd_count)
 
@@ -1474,11 +1518,13 @@ class HeadlessCaptureWriter:
 # ---------------------------------------------------------------------------
 class StageStats:
     def __init__(self, window_s: float = 1.0) -> None:
+        """Initialize StageStats."""
         self.window_s = float(window_s)
         self._lock = threading.Lock()
         self._times: deque[float] = deque()
 
     def record(self, now_s: float | None = None) -> None:
+        """Record StageStats."""
         now = time.perf_counter() if now_s is None else float(now_s)
         with self._lock:
             self._times.append(now)
@@ -1488,6 +1534,7 @@ class StageStats:
 
     @property
     def fps(self) -> float:
+        """Return the FPS."""
         with self._lock:
             if len(self._times) < 2:
                 return 0.0
@@ -1518,6 +1565,7 @@ class OrderedPacketQueue(Generic[PacketT]):
     """Bounded FIFO packet queue that rejects gaps and silent overwrites."""
 
     def __init__(self, *, name: str, max_backlog_frames: int) -> None:
+        """Initialize OrderedPacketQueue."""
         self.name = str(name)
         self.max_backlog_frames = max(1, int(max_backlog_frames))
         self._condition = threading.Condition()
@@ -1528,6 +1576,7 @@ class OrderedPacketQueue(Generic[PacketT]):
         self._max_size_seen = 0
 
     def put(self, packet: PacketT) -> int:
+        """Return the put."""
         seq = int(_packet_seq(packet))
         with self._condition:
             if self._closed:
@@ -1551,6 +1600,7 @@ class OrderedPacketQueue(Generic[PacketT]):
             return len(self._items)
 
     def wait_for_capacity(self, *, stop_event: threading.Event, timeout_s: float = 0.05) -> bool:
+        """Wait for for capacity."""
         with self._condition:
             while not stop_event.is_set():
                 if self._closed:
@@ -1561,6 +1611,7 @@ class OrderedPacketQueue(Generic[PacketT]):
             return False
 
     def put_wait(self, packet: PacketT, *, stop_event: threading.Event, timeout_s: float = 0.05) -> int:
+        """Return the put wait."""
         seq = int(_packet_seq(packet))
         with self._condition:
             if self._closed:
@@ -1583,6 +1634,7 @@ class OrderedPacketQueue(Generic[PacketT]):
             return len(self._items)
 
     def get(self, *, stop_event: threading.Event, timeout_s: float = 0.05) -> PacketT | None:
+        """Return the get."""
         with self._condition:
             while not self._items:
                 if self._closed or stop_event.is_set():
@@ -1600,6 +1652,7 @@ class OrderedPacketQueue(Generic[PacketT]):
             return packet
 
     def get_nowait(self) -> PacketT | None:
+        """Return the get nowait."""
         with self._condition:
             if not self._items:
                 return None
@@ -1615,11 +1668,13 @@ class OrderedPacketQueue(Generic[PacketT]):
             return packet
 
     def close(self) -> None:
+        """Close OrderedPacketQueue."""
         with self._condition:
             self._closed = True
             self._condition.notify_all()
 
     def reset(self) -> None:
+        """Reset OrderedPacketQueue."""
         with self._condition:
             self._items.clear()
             self._last_put_seq = -1
@@ -1630,6 +1685,7 @@ class OrderedPacketQueue(Generic[PacketT]):
 
     @property
     def stats(self) -> OrderedQueueStats:
+        """Return the stats."""
         with self._condition:
             return OrderedQueueStats(
                 name=self.name,
@@ -1641,14 +1697,17 @@ class OrderedPacketQueue(Generic[PacketT]):
             )
 
     def latest_seq(self) -> int:
+        """Return the latest seq."""
         with self._condition:
             return int(self._last_put_seq)
 
     def pending_count(self) -> int:
+        """Return the pending count."""
         with self._condition:
             return len(self._items)
 
     def is_closed_and_empty(self) -> bool:
+        """Return whether closed and empty."""
         with self._condition:
             return bool(self._closed and not self._items)
 
@@ -1661,6 +1720,7 @@ class PairedBuildResult:
 
     @property
     def render_packet(self) -> PairedRenderPacket:
+        """Return the paired packet used by the renderer."""
         return PairedRenderPacket(
             seq=int(self.seq),
             pcd_packet=self.pcd_result.packet,
@@ -1681,6 +1741,7 @@ class PairerStats:
 
 class SameSeqPairer:
     def __init__(self, *, max_backlog_frames: int) -> None:
+        """Initialize SameSeqPairer."""
         self.max_backlog_frames = max(1, int(max_backlog_frames))
         self._lock = threading.Lock()
         self._condition = threading.Condition(self._lock)
@@ -1692,6 +1753,7 @@ class SameSeqPairer:
         self._tracker_closed = False
 
     def reset(self) -> None:
+        """Reset SameSeqPairer."""
         with self._condition:
             self._pending_pcd.clear()
             self._pending_tracker.clear()
@@ -1708,6 +1770,7 @@ class SameSeqPairer:
         stop_event: threading.Event,
         timeout_s: float = 0.05,
     ) -> bool:
+        """Wait for for side capacity."""
         side_name = str(side)
         if side_name not in {"pcd", "tracker"}:
             raise ValueError("side must be 'pcd' or 'tracker'")
@@ -1727,6 +1790,7 @@ class SameSeqPairer:
             return False
 
     def add_pcd_result(self, result: PcdBuildResult) -> list[PairedBuildResult]:
+        """Add PCD result."""
         seq = int(result.packet.seq)
         with self._condition:
             if self._pcd_closed:
@@ -1744,6 +1808,7 @@ class SameSeqPairer:
             return pairs
 
     def add_tracker_packet(self, packet: TrackerMarkerPacket) -> list[PairedBuildResult]:
+        """Add tracker packet."""
         seq = int(packet.seq)
         with self._condition:
             if self._tracker_closed:
@@ -1761,6 +1826,7 @@ class SameSeqPairer:
             return pairs
 
     def close_pcd(self) -> list[PairedBuildResult]:
+        """Close PCD."""
         with self._condition:
             self._pcd_closed = True
             pairs = self._flush_ready_locked()
@@ -1769,6 +1835,7 @@ class SameSeqPairer:
             return pairs
 
     def close_tracker(self) -> list[PairedBuildResult]:
+        """Close tracker."""
         with self._condition:
             self._tracker_closed = True
             pairs = self._flush_ready_locked()
@@ -1778,6 +1845,7 @@ class SameSeqPairer:
 
     @property
     def done(self) -> bool:
+        """Return the done."""
         with self._condition:
             return (
                 self._pcd_closed
@@ -1788,6 +1856,7 @@ class SameSeqPairer:
 
     @property
     def stats(self) -> PairerStats:
+        """Return the stats."""
         with self._condition:
             return PairerStats(
                 expected_seq=int(self._expected_seq),
@@ -1799,6 +1868,7 @@ class SameSeqPairer:
             )
 
     def _flush_ready_locked(self) -> list[PairedBuildResult]:
+        """Return the flush ready locked."""
         pairs: list[PairedBuildResult] = []
         while self._expected_seq in self._pending_pcd and self._expected_seq in self._pending_tracker:
             seq = int(self._expected_seq)
@@ -1810,6 +1880,7 @@ class SameSeqPairer:
         return pairs
 
     def _check_backlog_locked(self) -> None:
+        """Check backlog locked."""
         if len(self._pending_pcd) > self.max_backlog_frames or len(self._pending_tracker) > self.max_backlog_frames:
             raise LosslessPipelineError(
                 "lossless 5 FPS backlog exceeded "
@@ -1819,6 +1890,7 @@ class SameSeqPairer:
             )
 
     def _check_closed_locked(self) -> None:
+        """Check closed locked."""
         if not (self._pcd_closed and self._tracker_closed):
             return
         if self._pending_pcd or self._pending_tracker:
@@ -1834,11 +1906,13 @@ class SameSeqPairer:
 # CLI: argument parsing, demo presets, derived-mode accessors, validation
 # ---------------------------------------------------------------------------
 def _resolve_path(value: str | Path) -> Path:
+    """Resolve a filesystem path to an absolute expanded path."""
     path = Path(value).expanduser()
     return path.resolve() if path.is_absolute() else (REPO_ROOT / path).resolve()
 
 
 def _parse_rgb_triplet(value: str) -> tuple[int, int, int]:
+    """Parse RGB triplet."""
     items = [item.strip() for item in str(value).split(",") if item.strip()]
     if len(items) != 3:
         raise argparse.ArgumentTypeError("expected R,G,B")
@@ -1852,10 +1926,12 @@ def _parse_rgb_triplet(value: str) -> tuple[int, int, int]:
 
 
 def _is_replay_input_source(input_source: str) -> bool:
+    """Return whether replay input source."""
     return str(input_source) in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_RECORDING}
 
 
 def depth_backend_label(args: argparse.Namespace) -> str:
+    """Return the depth backend label."""
     label = getattr(args, "depth_backend_label", None)
     if label is not None and str(label):
         return str(label)
@@ -1863,6 +1939,7 @@ def depth_backend_label(args: argparse.Namespace) -> str:
 
 
 def runtime_metadata_identity(args: argparse.Namespace) -> dict[str, str]:
+    """Return the runtime metadata identity."""
     payload: dict[str, str] = {}
     product_name = getattr(args, "runtime_product_name", None)
     if product_name is not None and str(product_name).strip():
@@ -1877,6 +1954,7 @@ def runtime_metadata_identity(args: argparse.Namespace) -> dict[str, str]:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the command-line argument parser."""
     parser = argparse.ArgumentParser(
         description=(
             "Single-D455 realtime HF EdgeTAM masked point-cloud demo. Captures live "
@@ -2470,6 +2548,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def apply_demo_preset(args: argparse.Namespace) -> argparse.Namespace:
+    """Apply demo preset."""
     if args.demo_preset == "local-ffs-professor":
         if int(args.pcd_max_points) == 60000:
             args.pcd_max_points = LOCAL_FFS_PROFESSOR_MAX_POINTS
@@ -2496,10 +2575,12 @@ def apply_demo_preset(args: argparse.Namespace) -> argparse.Namespace:
 
 
 def pcd_filter_enabled(args: argparse.Namespace) -> bool:
+    """Return whether PCD filter is enabled."""
     return bool(args.enable_pcd_filter) and str(args.pcd_filter_mode) != "none"
 
 
 def pcd_filter_preset_to_filter(preset: str | None) -> str | None:
+    """Return the PCD filter preset to filter."""
     if preset is None:
         return None
     normalized = str(preset).strip().lower()
@@ -2515,6 +2596,7 @@ def pcd_filter_preset_to_filter(preset: str | None) -> str | None:
 
 
 def tracker_query_source(args: argparse.Namespace) -> str:
+    """Return the tracker query source."""
     if tracking_product_backend_is_strict(getattr(args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND)):
         return TRACKER_QUERY_SOURCE_UNION_MASK
     return (
@@ -2525,6 +2607,7 @@ def tracker_query_source(args: argparse.Namespace) -> str:
 
 
 def tracker_marker_gate(args: argparse.Namespace) -> str:
+    """Return the tracker marker gate."""
     return (
         TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z
         if tracker_query_source(args) == TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL
@@ -2533,10 +2616,12 @@ def tracker_marker_gate(args: argparse.Namespace) -> str:
 
 
 def tracker_retire_filtered_markers(args: argparse.Namespace) -> bool:
+    """Return the tracker retire filtered markers."""
     return bool(getattr(args, "tracker_retire_filtered_markers", False))
 
 
 def tracker_marker_retirement_policy(args: argparse.Namespace) -> str:
+    """Return the tracker marker retirement policy."""
     if (
         tracker_retire_filtered_markers(args)
         and tracker_marker_gate(args) == TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z
@@ -2546,10 +2631,12 @@ def tracker_marker_retirement_policy(args: argparse.Namespace) -> str:
 
 
 def headless_capture_enabled(args: argparse.Namespace) -> bool:
+    """Return whether headless capture is enabled."""
     return args.headless_capture_dir is not None
 
 
 def headless_capture_saved_pcd_source(args: argparse.Namespace) -> str:
+    """Return the headless capture saved PCD source."""
     object_filter = str(getattr(args, "object_filter", DEFAULT_OBJECT_FILTER)).replace("-", "_")
     controller_filter = str(getattr(args, "controller_filter", DEFAULT_CONTROLLER_FILTER)).replace("-", "_")
     if object_filter == controller_filter:
@@ -2558,6 +2645,7 @@ def headless_capture_saved_pcd_source(args: argparse.Namespace) -> str:
 
 
 def validate_args(args: argparse.Namespace) -> None:
+    """Validate args."""
     parse_profile(args.profile)
     if args.input_source not in INPUT_SOURCES:
         raise ValueError(f"--input-source must be one of {', '.join(INPUT_SOURCES)}")
@@ -2819,6 +2907,7 @@ def validate_args(args: argparse.Namespace) -> None:
 # RealSense capture startup
 # ---------------------------------------------------------------------------
 def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime:
+    """Start realsense pipeline."""
     rs = load_realsense_module()
     width, height = parse_profile(args.profile)
     serial = resolve_serial(rs, args.serial)
@@ -2919,6 +3008,7 @@ def _masked_sample_indices(
     max_points: int,
     rng: np.random.Generator | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Return the masked sample indices."""
     if depth_m.ndim != 2 or mask.ndim != 2:
         raise ValueError("depth_m and mask must be 2D arrays")
     if depth_m.shape != mask.shape:
@@ -2942,6 +3032,7 @@ def _masked_sample_indices(
 
 
 def erode_binary_mask(mask: np.ndarray, *, erode_pixels: int) -> np.ndarray:
+    """Erode a binary mask by the requested pixel radius."""
     pixels = int(erode_pixels)
     if pixels < 0:
         raise ValueError("erode_pixels must be >= 0")
@@ -2982,6 +3073,7 @@ def backproject_masked_rgbd(
     class_rgb: tuple[int, int, int],
     rng: np.random.Generator | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Back-project masked rgbd."""
     if color_bgr.ndim != 3 or color_bgr.shape[2] != 3:
         raise ValueError("color_bgr must be an HxWx3 array")
     if depth_m.shape != color_bgr.shape[:2]:
@@ -3028,6 +3120,7 @@ def backproject_masked_rgbd_profiled(
     rng: np.random.Generator | None = None,
     return_yx: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, float]] | tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, float]]:
+    """Back-project masked rgbd profiled."""
     if color_bgr.ndim != 3 or color_bgr.shape[2] != 3:
         raise ValueError("color_bgr must be an HxWx3 array")
     if depth_m.shape != color_bgr.shape[:2] or depth_m.shape != mask.shape:
@@ -3106,6 +3199,7 @@ def backproject_masked(
     max_points: int,
     rng: np.random.Generator | None = None,
 ) -> np.ndarray:
+    """Back-project masked."""
     if depth_m.shape != ray_x.shape or depth_m.shape != ray_y.shape:
         raise ValueError("depth and projection grids must have matching shapes")
     rows, cols = _masked_sample_indices(
@@ -3126,6 +3220,7 @@ def backproject_masked(
 
 
 def make_solid_colors(point_count: int, rgb: tuple[int, int, int]) -> np.ndarray:
+    """Create solid colors."""
     if point_count <= 0:
         return np.empty((0, 3), dtype=np.uint8)
     color = np.asarray(rgb, dtype=np.uint8).reshape(1, 3)
@@ -3136,16 +3231,19 @@ def make_solid_colors(point_count: int, rgb: tuple[int, int, int]) -> np.ndarray
 # Segmentation (EdgeTAM) helpers & model timing
 # ---------------------------------------------------------------------------
 def controller_tracking_enabled(args_or_track_mode: argparse.Namespace | str) -> bool:
+    """Return whether controller tracking is enabled."""
     track_mode = args_or_track_mode if isinstance(args_or_track_mode, str) else args_or_track_mode.track_mode
     return str(track_mode) in {TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_CONTROLLER_ONLY}
 
 
 def object_tracking_enabled(args_or_track_mode: argparse.Namespace | str) -> bool:
+    """Return whether object tracking is enabled."""
     track_mode = args_or_track_mode if isinstance(args_or_track_mode, str) else args_or_track_mode.track_mode
     return str(track_mode) in {TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_OBJECT_ONLY}
 
 
 def object_id_labels(track_mode: str = DEFAULT_TRACK_MODE) -> dict[int, str]:
+    """Return the object id labels."""
     if track_mode == TRACK_MODE_NONE:
         return {}
     if track_mode == TRACK_MODE_OBJECT_ONLY:
@@ -3161,15 +3259,18 @@ def object_id_labels(track_mode: str = DEFAULT_TRACK_MODE) -> dict[int, str]:
 
 
 def active_object_id_labels(args: argparse.Namespace) -> dict[int, str]:
+    """Return the active object id labels."""
     return object_id_labels(str(args.track_mode))
 
 
 def active_object_ids(args: argparse.Namespace) -> list[int]:
+    """Return the active object ids."""
     return list(active_object_id_labels(args).keys())
 
 
 def extract_object_masks_from_hf_output(output: Any, post_masks: Any) -> dict[int, np.ndarray]:
     # HF EdgeTAM may hand back object ids as a torch tensor, ndarray, scalar, or list.
+    """Extract object masks from HF output."""
     ids_value = getattr(output, "object_ids")
     if hasattr(ids_value, "detach"):
         ids_value = ids_value.detach().cpu().tolist()
@@ -3195,6 +3296,7 @@ def extract_object_masks_from_hf_output(output: Any, post_masks: Any) -> dict[in
 
 
 def _load_hf_streaming_runtime() -> Any:
+    """Load HF streaming runtime."""
     from scripts.harness.experiments.edgetam import run_hf_edgetam_streaming_realcase as hf_stream
 
     hf_stream._load_runtime_dependencies()
@@ -3202,6 +3304,7 @@ def _load_hf_streaming_runtime() -> Any:
 
 
 def _sync_if_needed(torch_module: Any, device: str) -> None:
+    """Synchronize if needed."""
     if str(device).startswith("cuda") and torch_module.cuda.is_available():
         torch_module.cuda.synchronize()
 
@@ -3213,6 +3316,7 @@ def _time_runtime_ms(
     *,
     sync_enabled: bool = False,
 ) -> tuple[Any, float, float, float]:
+    """Measure runtime ms."""
     pre_sync_ms = 0.0
     post_sync_ms = 0.0
     if sync_enabled:
@@ -3240,6 +3344,7 @@ def _time_model_forward(
     profile_cuda_events: bool,
     fn: Callable[[], Any],
 ) -> tuple[Any, float, float, float, float]:
+    """Measure model forward."""
     pre_sync_ms = 0.0
     post_sync_ms = 0.0
     if profile_sync:
@@ -3272,10 +3377,12 @@ def _time_model_forward(
 
 
 def tracker_enabled(args: argparse.Namespace) -> bool:
+    """Return whether tracker is enabled."""
     return normalize_tracker_backend(str(getattr(args, "tracker_backend", TRACKER_BACKEND_NONE))) != TRACKER_BACKEND_NONE
 
 
 def object_pcd_mask_erode_pixels(args: argparse.Namespace) -> int:
+    """Return the object PCD mask erode pixels."""
     value = getattr(args, "object_pcd_mask_erode_pixels", None)
     if value is None:
         value = getattr(args, "pcd_mask_erode_pixels", DEFAULT_PCD_MASK_ERODE_PIXELS)
@@ -3283,6 +3390,7 @@ def object_pcd_mask_erode_pixels(args: argparse.Namespace) -> int:
 
 
 def controller_pcd_mask_erode_pixels(args: argparse.Namespace) -> int:
+    """Return the controller PCD mask erode pixels."""
     value = getattr(args, "controller_pcd_mask_erode_pixels", None)
     if value is None:
         value = getattr(args, "pcd_mask_erode_pixels", DEFAULT_PCD_MASK_ERODE_PIXELS)
@@ -3293,6 +3401,7 @@ def controller_pcd_mask_erode_pixels(args: argparse.Namespace) -> int:
 # World-Z diagnostics & table-Z filtering
 # ---------------------------------------------------------------------------
 def _camera_intrinsics_matrix(intrinsics: CameraIntrinsics) -> np.ndarray:
+    """Return the camera intrinsics matrix."""
     return np.array(
         [
             [float(intrinsics.fx), 0.0, float(intrinsics.cx)],
@@ -3304,6 +3413,7 @@ def _camera_intrinsics_matrix(intrinsics: CameraIntrinsics) -> np.ndarray:
 
 
 def _transform_points_c2w(points_xyz_m: np.ndarray, c2w: np.ndarray | None) -> np.ndarray:
+    """Transform points C2W."""
     points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
     if c2w is None or points.size == 0:
         return np.ascontiguousarray(points, dtype=np.float32)
@@ -3319,6 +3429,7 @@ def _transform_points_c2w(points_xyz_m: np.ndarray, c2w: np.ndarray | None) -> n
 
 
 def _z_quantiles(points_xyz_m: np.ndarray) -> dict[str, float | None]:
+    """Return the z quantiles."""
     keys = ("min", "p01", "p05", "p10", "p50", "p90", "p95", "p99", "max")
     points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
     z = points[:, 2]
@@ -3338,6 +3449,7 @@ def table_z_clearance_m(
     *,
     table_z_m: float = TABLE_Z_M,
 ) -> np.ndarray:
+    """Return the table z clearance m."""
     points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
     return np.ascontiguousarray(
         np.float32(table_z_m) - points[:, 2],
@@ -3351,6 +3463,7 @@ def _world_z_class_stats(
     table_z_m: float,
     thresholds_m: tuple[float, ...],
 ) -> dict[str, Any]:
+    """Return the world z class stats."""
     points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
     finite = np.isfinite(points).all(axis=1) if len(points) else np.zeros((0,), dtype=bool)
     clearance = table_z_clearance_m(points, table_z_m=table_z_m)
@@ -3382,6 +3495,7 @@ def build_world_z_diagnostics(
     table_z_m: float = TABLE_Z_M,
     thresholds_m: tuple[float, ...] = DEFAULT_TABLE_Z_DIAGNOSTIC_THRESHOLDS_M,
 ) -> dict[str, Any]:
+    """Build world z diagnostics."""
     thresholds = tuple(float(value) for value in thresholds_m)
     classes: dict[str, Any] = {
         "object": _world_z_class_stats(
@@ -3423,6 +3537,7 @@ def apply_table_z_filter(
     threshold_m: float,
     table_z_m: float = TABLE_Z_M,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    """Apply table z filter."""
     points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
     colors = np.asarray(colors_rgb_u8, dtype=np.uint8).reshape(-1, 3)
     if len(points) != len(colors):
@@ -3468,6 +3583,7 @@ def apply_table_z_filter_with_yx(
     threshold_m: float,
     table_z_m: float = TABLE_Z_M,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
+    """Apply table z filter with YX."""
     points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
     colors = np.asarray(colors_rgb_u8, dtype=np.uint8).reshape(-1, 3)
     yx_arr = np.asarray(yx, dtype=np.int64).reshape(-1, 2)
@@ -3515,6 +3631,7 @@ def apply_table_z_filter_with_yx(
 # Tracker query classification, visibility & marker gating
 # ---------------------------------------------------------------------------
 def _tracker_union_mask(mask_packet: MaskPacket) -> np.ndarray:
+    """Return the tracker union mask."""
     controller = np.asarray(mask_packet.controller_mask, dtype=bool)
     obj = np.asarray(mask_packet.object_mask, dtype=bool)
     if controller.shape != obj.shape:
@@ -3523,12 +3640,14 @@ def _tracker_union_mask(mask_packet: MaskPacket) -> np.ndarray:
 
 
 def _mask_packet_hand_a_mask(mask_packet: MaskPacket) -> np.ndarray:
+    """Return the mask packet hand a mask."""
     if mask_packet.hand_a_mask is None:
         return np.asarray(mask_packet.controller_mask, dtype=bool)
     return np.asarray(mask_packet.hand_a_mask, dtype=bool)
 
 
 def _mask_packet_hand_b_mask(mask_packet: MaskPacket) -> np.ndarray:
+    """Return the mask packet hand b mask."""
     if mask_packet.hand_b_mask is None:
         return np.zeros_like(np.asarray(mask_packet.controller_mask, dtype=bool), dtype=bool)
     return np.asarray(mask_packet.hand_b_mask, dtype=bool)
@@ -3540,6 +3659,7 @@ def _classify_query_points_yx(
     object_mask: np.ndarray,
     controller_mask: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Classify query points YX."""
     points = np.asarray(query_points_yx, dtype=np.float32).reshape(-1, 2)
     if len(points) == 0:
         empty = np.empty((0,), dtype=bool)
@@ -3560,6 +3680,7 @@ def _classify_query_targets_yx(
     hand_b_mask: np.ndarray,
     controller_mask: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Classify query targets YX."""
     points = np.asarray(query_points_yx, dtype=np.float32).reshape(-1, 2)
     if len(points) == 0:
         empty_bool = np.empty((0,), dtype=bool)
@@ -3587,6 +3708,7 @@ def _classify_query_targets_yx(
 
 
 def _mask_from_yx(shape: tuple[int, int], yx: np.ndarray) -> np.ndarray:
+    """Return the mask from YX."""
     mask = np.zeros(tuple(shape), dtype=bool)
     coords = np.asarray(yx, dtype=np.int64).reshape(-1, 2)
     if len(coords) == 0:
@@ -3600,6 +3722,7 @@ def _mask_from_yx(shape: tuple[int, int], yx: np.ndarray) -> np.ndarray:
 
 
 def _select_points_by_yx_mask(points_xyz_m: np.ndarray, yx: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Select 3D points whose YX pixel locations fall inside a mask."""
     points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
     coords = np.asarray(yx, dtype=np.int64).reshape(-1, 2)
     if len(points) == 0 or len(coords) == 0:
@@ -3625,6 +3748,7 @@ def _tracker_display_visibility(
     query_is_controller: np.ndarray,
     display_scope: str,
 ) -> np.ndarray:
+    """Return the tracker display visibility."""
     vis = np.asarray(visibility, dtype=np.float32).reshape(-1)
     scope = str(display_scope)
     if scope == TRACKER_DISPLAY_SCOPE_UNION:
@@ -3647,6 +3771,7 @@ def _tracker_per_target_visibility(
     mask_packet: MaskPacket,
     query_target_id: np.ndarray,
 ) -> np.ndarray:
+    """Return the tracker per target visibility."""
     tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
     vis = np.asarray(visibility, dtype=np.float32).reshape(-1)
     target_id = np.asarray(query_target_id, dtype=np.int64).reshape(-1)
@@ -3691,6 +3816,7 @@ def _tracker_lift_valid_mask(
     depth_min_m: float,
     depth_max_m: float,
 ) -> np.ndarray:
+    """Return the tracker lift valid mask."""
     tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
     vis = np.asarray(visibility, dtype=np.float32).reshape(-1) > 0.0
     if vis.shape[0] != tracks.shape[0]:
@@ -3733,6 +3859,7 @@ def _query_current_residual_visibility(
     object_residual_mask: np.ndarray,
     controller_residual_mask: np.ndarray,
 ) -> np.ndarray:
+    """Return the query current residual visibility."""
     tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
     is_object = np.asarray(query_is_object, dtype=bool).reshape(-1)
     is_controller = np.asarray(query_is_controller, dtype=bool).reshape(-1)
@@ -3774,6 +3901,7 @@ def _audit_marker_residual_subset(
     controller_residual_mask: np.ndarray,
     gate: str = TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z,
 ) -> MarkerResidualAudit:
+    """Audit marker residual subset."""
     tracks = np.asarray(marker_tracks_yx, dtype=np.float32).reshape(-1, 2)
     object_mask = np.asarray(object_residual_mask, dtype=bool)
     controller_mask = np.asarray(controller_residual_mask, dtype=bool)
@@ -3817,6 +3945,7 @@ def _audit_marker_residual_subset(
 
 
 def _select_visible_spread_indices(tracks_yx: np.ndarray, visibility: np.ndarray, *, max_points: int) -> np.ndarray:
+    """Select visible spread indices."""
     tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
     visible = np.flatnonzero(np.asarray(visibility, dtype=np.float32).reshape(-1) > 0.0)
     if len(visible) > 0:
@@ -3846,6 +3975,7 @@ def cap_render_points(
     *,
     max_points: int,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Limit render points."""
     if int(max_points) < 0:
         raise ValueError("max_points must be >= 0")
     point_count = int(points_xyz_m.shape[0])
@@ -3923,6 +4053,7 @@ def cap_render_points(
 
 
 def _latest_tracker_arrays(result: Any) -> tuple[np.ndarray, np.ndarray]:
+    """Return the latest tracker arrays."""
     tracks = np.asarray(result.tracks_yx, dtype=np.float32)
     visibility = np.asarray(result.visibility, dtype=np.float32)
     if tracks.ndim == 4:
@@ -3948,6 +4079,7 @@ def _latest_tracker_arrays(result: Any) -> tuple[np.ndarray, np.ndarray]:
 # ---------------------------------------------------------------------------
 class MainDataProcessingDemo:
     def __init__(self, args: argparse.Namespace) -> None:
+        """Initialize MainDataProcessingDemo."""
         self.args = args
         self.width, self.height = parse_profile(args.profile)
         self.lossless_max_backlog_frames = max(
@@ -4065,23 +4197,28 @@ class MainDataProcessingDemo:
 
     @property
     def intrinsics(self) -> CameraIntrinsics:
+        """Return the intrinsics."""
         if self.runtime is None:
             raise RuntimeError("camera runtime is not initialized")
         return self.runtime.intrinsics
 
     @property
     def serial(self) -> str:
+        """Return the serial."""
         if self.runtime is None:
             return "<not-started>"
         return self.runtime.serial
 
     def _table_world_enabled(self) -> bool:
+        """Return whether table world is enabled."""
         return self.table_c2w is not None
 
     def _pcd_coordinate_frame(self) -> str:
+        """Return the PCD coordinate frame."""
         return TABLE_WORLD_FRAME_KIND if self._table_world_enabled() else COORDINATE_FRAME
 
     def _create_shape_prior_manager(self) -> shape_prior_warmup.ShapePriorWarmupManager:
+        """Create the shape-prior warmup manager for the runtime."""
         enabled = bool(getattr(self.args, "shape_prior_warmup", False))
         client = None
         if enabled:
@@ -4108,12 +4245,14 @@ class MainDataProcessingDemo:
         )
 
     def _shape_prior_profile(self) -> dict[str, Any]:
+        """Return the shape prior profile."""
         manager = getattr(self, "shape_prior_manager", None)
         if manager is None:
             return shape_prior_warmup.default_profile(enabled=False)
         return manager.profile()
 
     def _shape_prior_profile_payload(self) -> dict[str, Any]:
+        """Return the shape prior profile payload."""
         profile = self._shape_prior_profile()
         payload = dict(profile)
         if payload.get("input_source") is None:
@@ -4125,6 +4264,7 @@ class MainDataProcessingDemo:
         return payload
 
     def _write_shape_prior_profile_json(self, profile: dict[str, Any] | None = None) -> None:
+        """Write shape prior profile JSON."""
         path = getattr(self.args, "shape_prior_profile_json", None)
         if path is None:
             return
@@ -4134,16 +4274,19 @@ class MainDataProcessingDemo:
         output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     def _frame_hud_line(self) -> str:
+        """Return the frame hud line."""
         if self._table_world_enabled():
             return f"frame: {TABLE_WORLD_FRAME_KIND}  meters  table_z={TABLE_Z_M:.3f}"
         return f"frame: {COORDINATE_FRAME}  meters  x right / y down / z forward"
 
     def _camera_view_extrinsic(self) -> np.ndarray:
+        """Return the camera view extrinsic."""
         if self.table_c2w is None:
             return np.eye(4, dtype=np.float64)
         return np.linalg.inv(np.asarray(self.table_c2w, dtype=np.float64))
 
     def _initialize_table_calibration(self) -> None:
+        """Initialize table calibration."""
         if self.args.table_calibrate is None:
             return
         if self.runtime is None:
@@ -4162,12 +4305,15 @@ class MainDataProcessingDemo:
         )
 
     def _lossless_enabled(self) -> bool:
+        """Return whether lossless is enabled."""
         return bool(tracker_enabled(self.args) and self.args.pcd_mode == "masked")
 
     def _lossless_input_fps(self) -> float:
+        """Return the lossless input FPS."""
         return float(getattr(self.args, "lossless_input_fps", DEFAULT_LOSSLESS_INPUT_FPS))
 
     def _reset_lossless_state(self) -> None:
+        """Reset lossless state."""
         self.lossless_frame_queue.reset()
         self.lossless_pcd_mask_queue.reset()
         self.lossless_tracker_mask_queue.reset()
@@ -4189,6 +4335,7 @@ class MainDataProcessingDemo:
         self._lossless_pairs_emitted = 0
 
     def _close_lossless_queues(self) -> None:
+        """Close lossless queues."""
         self.lossless_frame_queue.close()
         self.lossless_pcd_mask_queue.close()
         self.lossless_tracker_mask_queue.close()
@@ -4197,6 +4344,7 @@ class MainDataProcessingDemo:
         self._lossless_pipeline_active = False
 
     def _lossless_queue_debug_text(self) -> str:
+        """Return the lossless queue debug text."""
         frame = self.lossless_frame_queue.stats
         pcd = self.lossless_pcd_mask_queue.stats
         tracker = self.lossless_tracker_mask_queue.stats
@@ -4214,6 +4362,7 @@ class MainDataProcessingDemo:
         )
 
     def _wait_for_lossless_replay_startup_pair(self, on_wait_tick: Callable[[], None] | None = None) -> bool:
+        """Wait for for lossless replay startup pair."""
         if not (
             self._lossless_enabled()
             and self.args.track_mode != "none"
@@ -4228,6 +4377,7 @@ class MainDataProcessingDemo:
         return False
 
     def _build_headless_capture_metadata(self) -> dict[str, Any]:
+        """Build headless capture metadata."""
         if self.runtime is None:
             raise RuntimeError("camera runtime is not initialized")
         shape_profile = self._shape_prior_profile_payload()
@@ -4402,10 +4552,12 @@ class MainDataProcessingDemo:
         }
 
     def _fatal_error_snapshot(self) -> FatalWorkerError | None:
+        """Return the fatal error snapshot."""
         with self._fatal_error_lock:
             return self._fatal_error
 
     def _record_fatal_worker_error(self, stage: str, exc: BaseException) -> FatalWorkerError:
+        """Record fatal worker error."""
         fatal = FatalWorkerError(stage=str(stage), exc_type=type(exc).__name__, message=str(exc))
         should_notify = False
         with self._fatal_error_lock:
@@ -4421,6 +4573,7 @@ class MainDataProcessingDemo:
         return fatal
 
     def _format_fatal_hud(self, fatal: FatalWorkerError) -> str:
+        """Format fatal hud."""
         return (
             f"{FATAL_HUD_PREFIX}\n"
             f"{fatal.stage} failed\n"
@@ -4430,9 +4583,11 @@ class MainDataProcessingDemo:
         )
 
     def _format_warmup_hud(self) -> str:
+        """Format warmup hud."""
         return f"{WARMUP_HUD_TEXT}\n{self._stage_fps_hud_line()}"
 
     def _stage_fps_hud_line(self) -> str:
+        """Return the stage FPS hud line."""
         return (
             f"capture/seg/depth/pcd/tracker/render FPS: {self.capture_stats.fps:.1f} / "
             f"{self.seg_stats.fps:.1f} / {self.depth_stats.fps:.1f} / {self.pcd_stats.fps:.1f} / "
@@ -4443,6 +4598,7 @@ class MainDataProcessingDemo:
     # Lifecycle: run / stop, worker startup, headless loop
     # ------------------------------------------------------------------
     def run(self) -> int:
+        """Run MainDataProcessingDemo."""
         main_warmup.prepare_runtime_services_and_source(
             self,
             pcd_filter_enabled=pcd_filter_enabled,
@@ -4471,6 +4627,7 @@ class MainDataProcessingDemo:
         return 2 if self._fatal_error_snapshot() is not None else 0
 
     def _finalize_headless_tracking_product(self) -> None:
+        """Finalize headless tracking product."""
         if not tracking_product_backend_is_strict(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND)):
             return
         if self._fatal_error_snapshot() is not None:
@@ -4500,6 +4657,7 @@ class MainDataProcessingDemo:
         )
 
     def stop(self) -> None:
+        """Stop MainDataProcessingDemo."""
         self.stop_event.set()
         self._close_lossless_queues()
         for thread in list(self._threads):
@@ -4529,6 +4687,7 @@ class MainDataProcessingDemo:
             self._local_ffs_depth_cache.clear()
 
     def _create_ffs_runner(self) -> object:
+        """Create the configured FFS runner."""
         try:
             from data_process.depth_backends import FastFoundationStereoTensorRTRunner
 
@@ -4549,6 +4708,7 @@ class MainDataProcessingDemo:
         t_ir_left_to_color: np.ndarray,
         k_color: np.ndarray,
     ) -> FfsIrToColorAligner:
+        """Return the get IR to color aligner."""
         k_ir = np.asarray(k_ir_left, dtype=np.float32).reshape(3, 3)
         transform = np.asarray(t_ir_left_to_color, dtype=np.float32).reshape(4, 4)
         k_col = np.asarray(k_color, dtype=np.float32).reshape(3, 3)
@@ -4571,6 +4731,7 @@ class MainDataProcessingDemo:
         return self.ir_to_color_aligner
 
     def _start_threads(self) -> None:
+        """Start threads."""
         if self._lossless_enabled():
             self._reset_lossless_state()
         workers: list[tuple[str, Callable[[], None]]] = [("capture", self._capture_worker)]
@@ -4593,7 +4754,9 @@ class MainDataProcessingDemo:
             workers.append(("debug", self._headless_debug_worker))
 
         def worker_runner(worker_name: str, worker_target: Callable[[], None]) -> Callable[[], None]:
+            """Return the worker runner."""
             def run_worker() -> None:
+                """Run worker."""
                 try:
                     worker_target()
                 except Exception as exc:
@@ -4608,6 +4771,7 @@ class MainDataProcessingDemo:
             self._threads.append(thread)
 
     def _run_headless(self) -> None:
+        """Run headless."""
         self._start_threads()
         started_s: float | None = None
         try:
@@ -4639,6 +4803,7 @@ class MainDataProcessingDemo:
     # Capture workers (live RealSense / fake-live recording replay)
     # ------------------------------------------------------------------
     def _publish_input_preview_packet(self, packet: FramePacket, *, record_s: float | None = None) -> None:
+        """Publish input preview packet."""
         self.input_preview_slot.put(packet)
         should_write_timeline = _is_replay_input_source(str(self.args.input_source)) or bool(
             getattr(self.args, "write_input_rgb_timeline", False)
@@ -4655,6 +4820,7 @@ class MainDataProcessingDemo:
         record_s: float | None = None,
         write_input_timeline: bool = True,
     ) -> None:
+        """Publish capture packet."""
         if bool(write_input_timeline):
             self._publish_input_preview_packet(packet, record_s=record_s)
         self.capture_slot.put(packet)
@@ -4667,6 +4833,7 @@ class MainDataProcessingDemo:
             self._request_render_update()
 
     def _capture_recording_worker(self) -> None:
+        """Return the capture recording worker."""
         assert self.recording_source is not None
         source = self.recording_source
         fake_live_clock = str(self.args.input_source) == INPUT_SOURCE_FAKE_LIVE
@@ -4686,6 +4853,7 @@ class MainDataProcessingDemo:
         last_preview_source_index = -1
 
         def preview_from_packet(packet: FramePacket, *, seq: int) -> FramePacket:
+            """Return the preview from packet."""
             return replace(
                 packet,
                 seq=int(seq),
@@ -4703,6 +4871,7 @@ class MainDataProcessingDemo:
             source_index: int,
             wait_ms: float = 0.0,
         ) -> FramePacket:
+            """Read preview packet."""
             reader = getattr(source, "read_preview_packet", None)
             if callable(reader):
                 return reader(seq=int(seq), frame_index=int(source_index), wait_ms=float(wait_ms))
@@ -4710,6 +4879,7 @@ class MainDataProcessingDemo:
             return preview_from_packet(packet, seq=int(seq))
 
         def publish_preview_packet(packet: FramePacket) -> None:
+            """Publish preview packet."""
             nonlocal preview_seq, last_preview_source_index
             self._publish_input_preview_packet(packet, record_s=packet.receive_perf_s)
             preview_seq += 1
@@ -4717,6 +4887,7 @@ class MainDataProcessingDemo:
                 last_preview_source_index = max(last_preview_source_index, int(packet.source_frame_index))
 
         def publish_preview_source_index(*, source_index: int, wait_ms: float = 0.0) -> None:
+            """Publish preview source index."""
             nonlocal preview_seq, last_preview_source_index
             if int(source_index) <= int(last_preview_source_index):
                 return
@@ -4724,6 +4895,7 @@ class MainDataProcessingDemo:
             publish_preview_packet(packet)
 
         def publish_due_fake_live_previews() -> bool:
+            """Publish due fake live previews."""
             nonlocal preview_tick
             if not fake_live_clock:
                 return True
@@ -4863,6 +5035,7 @@ class MainDataProcessingDemo:
         self._request_render_update()
 
     def _capture_worker(self) -> None:
+        """Return the capture worker."""
         assert self.runtime is not None
         if _is_replay_input_source(str(self.args.input_source)):
             self._capture_recording_worker()
@@ -4976,6 +5149,7 @@ class MainDataProcessingDemo:
     # Segmentation worker: EdgeTAM model init + streaming mask loop
     # ------------------------------------------------------------------
     def _init_hf_model(self) -> tuple[Any, Any, Any, Any, Any]:
+        """Return the init HF model."""
         hf_stream = _load_hf_streaming_runtime()
         torch_module = hf_stream.torch
         if str(self.args.device).startswith("cuda") and not torch_module.cuda.is_available():
@@ -5169,6 +5343,7 @@ class MainDataProcessingDemo:
         return hf_stream, torch_module, dtype, model, processor
 
     def _seg_worker(self) -> None:
+        """Return the seg worker."""
         try:
             warmup = main_warmup.prepare_segmentation_warmup(
                 self,
@@ -5248,6 +5423,7 @@ class MainDataProcessingDemo:
     # Tracker: query seeding, alive masks, marker packets, worker loop
     # ------------------------------------------------------------------
     def _build_tracker_adapter(self) -> Any:
+        """Build tracker adapter."""
         config = PointTrackerAdapterConfig(
             backend=str(self.args.tracker_backend),
             device=str(self.args.tracker_device),
@@ -5265,6 +5441,7 @@ class MainDataProcessingDemo:
         return adapter
 
     def _ensure_tracker_queries(self, mask_packet: MaskPacket, adapter: Any) -> np.ndarray | None:
+        """Return the ensure tracker queries."""
         if self._tracker_query_points_yx is not None:
             return self._tracker_query_points_yx
         query_source = tracker_query_source(self.args)
@@ -5335,6 +5512,7 @@ class MainDataProcessingDemo:
         return self._tracker_query_points_yx
 
     def _tracker_depth_for_lift(self, mask_packet: MaskPacket) -> tuple[np.ndarray, float]:
+        """Return the tracker depth for lift."""
         if mask_packet.depth_u16 is not None:
             return mask_packet.depth_u16, float(mask_packet.depth_scale_m_per_unit)
         if mask_packet.depth_source in {"ffs", "ffs_remote"}:
@@ -5345,6 +5523,7 @@ class MainDataProcessingDemo:
         raise RuntimeError("tracker lift requires RGB-D depth")
 
     def _tracker_lift_mask(self, mask_packet: MaskPacket) -> np.ndarray | None:
+        """Return the tracker lift mask."""
         scope = str(self.args.tracker_display_scope)
         if scope == TRACKER_DISPLAY_SCOPE_CONTROLLER:
             mask = np.asarray(mask_packet.controller_mask, dtype=bool)
@@ -5360,6 +5539,7 @@ class MainDataProcessingDemo:
         return np.ascontiguousarray(mask)
 
     def _tracker_pcd_filter_residual_masks(self, mask_packet: MaskPacket) -> tuple[np.ndarray, np.ndarray]:
+        """Return the tracker PCD filter residual masks."""
         if not pcd_filter_enabled(self.args):
             raise RuntimeError("pcd_filter_residual query source requires enabled sync PCD filtering")
         if str(self.args.pcd_filter_mode) != "sync":
@@ -5483,6 +5663,7 @@ class MainDataProcessingDemo:
         return object_residual, controller_residual
 
     def _ensure_tracker_query_alive_mask(self, query_count: int) -> np.ndarray:
+        """Return the ensure tracker query alive mask."""
         count = max(0, int(query_count))
         if self._tracker_query_alive_mask is None or len(self._tracker_query_alive_mask) != count:
             self._tracker_query_alive_mask = np.ones((count,), dtype=bool)
@@ -5496,6 +5677,7 @@ class MainDataProcessingDemo:
         query_count: int,
         residual_visibility: np.ndarray | None,
     ) -> np.ndarray:
+        """Return the current tracker query alive mask."""
         alive = self._ensure_tracker_query_alive_mask(query_count)
         if self._tracker_query_initial_seq is None:
             self._tracker_query_initial_seq = int(current_seq)
@@ -5513,6 +5695,7 @@ class MainDataProcessingDemo:
         return np.ascontiguousarray(alive.copy(), dtype=bool)
 
     def _build_tracker_marker_packet(self, mask_packet: MaskPacket, adapter: Any) -> TrackerMarkerPacket | None:
+        """Build tracker marker packet."""
         query_points = self._ensure_tracker_queries(mask_packet, adapter)
         if query_points is None:
             if self.args.debug:
@@ -5738,6 +5921,7 @@ class MainDataProcessingDemo:
         return packet
 
     def _tracker_worker(self) -> None:
+        """Return the tracker worker."""
         try:
             adapter = self._build_tracker_adapter()
             print(
@@ -5773,6 +5957,7 @@ class MainDataProcessingDemo:
         self,
         result: PcdBuildResult,
     ) -> shape_prior_warmup.ShapePriorFrame0Request | None:
+        """Return the shape prior frame0 request from PCD result."""
         if not bool(getattr(self.args, "shape_prior_warmup", False)):
             return None
         if self.table_c2w is None:
@@ -5805,6 +5990,7 @@ class MainDataProcessingDemo:
         )
 
     def _shape_prior_observation_mask_from_pcd_result(self, result: PcdBuildResult) -> np.ndarray:
+        """Return the shape prior observation mask from PCD result."""
         raw = np.asarray(result.mask_packet.object_mask, dtype=bool)
         candidate = result.object_observation_mask
         if candidate is None:
@@ -5825,6 +6011,7 @@ class MainDataProcessingDemo:
         return np.ascontiguousarray(mask, dtype=bool)
 
     def _packet_with_shape_prior_state(self, packet: MaskedPcdPacket) -> MaskedPcdPacket:
+        """Return the packet with shape prior state."""
         profile = self._shape_prior_profile()
         result = self.shape_prior_manager.ready_result()
         if result is not None and result.ready:
@@ -5851,6 +6038,7 @@ class MainDataProcessingDemo:
         *,
         from_strict_pair: bool = False,
     ) -> bool:
+        """Maybe start or update start shape prior from PCD result."""
         frame0_request = self._shape_prior_frame0_request_from_pcd_result(result)
         if frame0_request is None:
             return False
@@ -5860,6 +6048,7 @@ class MainDataProcessingDemo:
         return bool(submitted)
 
     def _maybe_write_shape_prior_headless_result(self) -> None:
+        """Maybe start or update write shape prior headless result."""
         profile = self._shape_prior_profile_payload()
         result = self.shape_prior_manager.ready_result()
         if self.headless_capture_writer is not None and result is not None and result.ready and not self._shape_prior_written:
@@ -5872,6 +6061,7 @@ class MainDataProcessingDemo:
         self._write_shape_prior_profile_json(profile)
 
     def _run_deferred_shape_prior_after_teardown(self) -> None:
+        """Run deferred shape prior after teardown."""
         return
 
     # ------------------------------------------------------------------
@@ -5882,6 +6072,7 @@ class MainDataProcessingDemo:
         pcd_result: PcdBuildResult,
         tracker_packet: TrackerMarkerPacket,
     ) -> PairedRenderPacket:
+        """Publish strict render pair."""
         self._maybe_start_shape_prior_from_pcd_result(pcd_result, from_strict_pair=True)
         pcd_result = replace(
             pcd_result,
@@ -5909,10 +6100,12 @@ class MainDataProcessingDemo:
         return pair
 
     def _publish_pairer_outputs(self, pairs: list[PairedBuildResult]) -> None:
+        """Publish pairer outputs."""
         for pair in pairs:
             self.lossless_pair_output_queue.put(pair)
 
     def _publish_ordered_lossless_pair(self, pair: PairedBuildResult) -> PairedRenderPacket | None:
+        """Publish ordered lossless pair."""
         seq = int(pair.seq)
         with self._lossless_publish_condition:
             while seq != self._lossless_next_publish_seq:
@@ -5933,6 +6126,7 @@ class MainDataProcessingDemo:
         return published
 
     def _maybe_finish_lossless_processing(self) -> None:
+        """Maybe start or update finish lossless processing."""
         if not self._lossless_enabled():
             return
         if self.same_seq_pairer.done and not self._lossless_processing_done.is_set():
@@ -5940,6 +6134,7 @@ class MainDataProcessingDemo:
             self._request_render_update()
 
     def _finish_lossless_output(self) -> None:
+        """Finish lossless output."""
         if not self._lossless_enabled():
             return
         if not self._lossless_processing_done.is_set():
@@ -5948,6 +6143,7 @@ class MainDataProcessingDemo:
             self._request_render_update()
 
     def _lossless_pair_output_worker(self) -> None:
+        """Return the lossless pair output worker."""
         try:
             while not self.stop_event.is_set():
                 pair = self.lossless_pair_output_queue.get(stop_event=self.stop_event)
@@ -5960,6 +6156,7 @@ class MainDataProcessingDemo:
                 self._record_fatal_worker_error("lossless pair output worker", exc)
 
     def _lossless_pcd_worker(self) -> None:
+        """Return the lossless PCD worker."""
         rng = np.random.default_rng()
         try:
             while not self.stop_event.is_set():
@@ -5987,6 +6184,7 @@ class MainDataProcessingDemo:
                 self._record_fatal_worker_error("lossless PCD worker", exc)
 
     def _lossless_tracker_worker(self) -> None:
+        """Return the lossless tracker worker."""
         try:
             adapter = self._build_tracker_adapter()
             print(
@@ -6019,6 +6217,7 @@ class MainDataProcessingDemo:
                 self._record_fatal_worker_error("lossless TAPNext++ tracker worker", exc)
 
     def _strict_paired_worker(self) -> None:
+        """Return the strict paired worker."""
         try:
             adapter = self._build_tracker_adapter()
             print(
@@ -6060,6 +6259,7 @@ class MainDataProcessingDemo:
     # Segmentation frame execution (EdgeTAM forward per frame)
     # ------------------------------------------------------------------
     def _wait_for_first_frame(self) -> FramePacket | None:
+        """Wait for for first frame."""
         if self._lossless_enabled():
             return self.lossless_frame_queue.get(stop_event=self.stop_event)
         while not self.stop_event.is_set():
@@ -6070,6 +6270,7 @@ class MainDataProcessingDemo:
         return None
 
     def _publish_mask_packet(self, packet: MaskPacket) -> None:
+        """Publish mask packet."""
         self.mask_slot.put(packet)
         if self._lossless_enabled():
             if not self.lossless_pcd_mask_queue.wait_for_capacity(stop_event=self.stop_event):
@@ -6081,12 +6282,14 @@ class MainDataProcessingDemo:
             self._lossless_segmented_frames += 1
 
     def _autocast_context(self, torch_module: Any) -> Any:
+        """Return the autocast context."""
         if not str(self.args.device).startswith("cuda") or self.args.dtype == "float32":
             return nullcontext()
         dtype = torch_module.bfloat16 if self.args.dtype == "bfloat16" else torch_module.float16
         return torch_module.autocast("cuda", dtype=dtype)
 
     def _prune_edgetam_live_session(self, session: Any, *, current_frame_idx: int) -> None:
+        """Prune edgetam live session."""
         keep_frames = int(self.args.edgetam_live_session_keep_frames)
         if keep_frames <= 0:
             return
@@ -6131,6 +6334,7 @@ class MainDataProcessingDemo:
         initial_masks: InitialMaskBundle,
         add_prompt: bool,
     ) -> MaskPacket:
+        """Run segmentation frame."""
         image = main_warmup.bgr_to_pil_rgb(frame.color_bgr)
         inputs, preprocess_ms, preprocess_pre_sync_ms, preprocess_post_sync_ms = _time_runtime_ms(
             torch_module,
@@ -6259,6 +6463,7 @@ class MainDataProcessingDemo:
         controller_colors: np.ndarray,
         controller_yx: np.ndarray | None = None,
     ) -> FilterInput:
+        """Create filter input."""
         object_cap = 0 if int(self.args.object_filter_cap) == 0 else int(self.object_filter_budget.cap)
         controller_cap = 0 if int(self.args.controller_filter_cap) == 0 else int(self.controller_filter_budget.cap)
         return FilterInput(
@@ -6295,6 +6500,7 @@ class MainDataProcessingDemo:
         min_raw_retain_ratio: float,
         rng: np.random.Generator,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
+        """Apply single PCD filter."""
         raw_points = np.asarray(points, dtype=np.float32).reshape(-1, 3)
         raw_colors = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
         raw_yx = (
@@ -6306,6 +6512,7 @@ class MainDataProcessingDemo:
             raise ValueError("yx must have the same first dimension as points when provided")
 
         def select_yx(source_yx: np.ndarray, indices: np.ndarray) -> np.ndarray:
+            """Select YX."""
             if len(source_yx) == 0:
                 return np.empty((0, 2), dtype=np.int64)
             return np.ascontiguousarray(source_yx[np.asarray(indices, dtype=np.int64)], dtype=np.int64).reshape(-1, 2)
@@ -6470,6 +6677,7 @@ class MainDataProcessingDemo:
         }
 
     def _filter_pcd_input(self, item: FilterInput) -> FilterOutput:
+        """Return the filter PCD input."""
         started_s = time.perf_counter()
         object_points, object_colors, object_yx, object_stats = self._apply_single_pcd_filter(
             points=item.object_xyz,
@@ -6520,6 +6728,7 @@ class MainDataProcessingDemo:
         )
 
     def _filter_worker_stats(self) -> dict[str, Any]:
+        """Return the filter worker stats."""
         worker = self.filter_worker
         if worker is None:
             return {
@@ -6537,6 +6746,7 @@ class MainDataProcessingDemo:
         }
 
     def _filter_output_is_fresh(self, *, packet_seq: int, output: FilterOutput) -> bool:
+        """Return the filter output is fresh."""
         age_frames = max(0, int(packet_seq) - int(output.seq))
         return age_frames <= int(self.args.filter_max_age_frames)
 
@@ -6551,6 +6761,7 @@ class MainDataProcessingDemo:
         controller_raw_points: int,
         controller_cap_points: int,
     ) -> PcdFilterTelemetry:
+        """Return the filter telemetry from output."""
         worker_stats = self._filter_worker_stats()
         if output is None:
             return PcdFilterTelemetry(
@@ -6615,6 +6826,7 @@ class MainDataProcessingDemo:
         result: PcdBuildResult,
         tracker_packet: TrackerMarkerPacket | None = None,
     ) -> None:
+        """Write headless PCD result."""
         if self.headless_capture_writer is None or result.depth_m is None:
             return
         if result.controller_pcd_mask is None or result.object_pcd_mask is None:
@@ -6649,6 +6861,7 @@ class MainDataProcessingDemo:
         rng: np.random.Generator,
         require_filter_seq: bool = False,
     ) -> PcdBuildResult:
+        """Build a masked point-cloud packet from a mask/depth pair."""
         start_s = time.perf_counter()
         assert self.ray_x is not None and self.ray_y is not None
         ray_x = self.ray_x
@@ -6985,6 +7198,7 @@ class MainDataProcessingDemo:
         )
 
     def _pcd_worker(self) -> None:
+        """Return the PCD worker."""
         last_seq = -1
         rng = np.random.default_rng()
         while not self.stop_event.is_set():
@@ -7011,6 +7225,7 @@ class MainDataProcessingDemo:
     # Depth backends: profiling, local FFS, remote FFS, remote sparse quality
     # ------------------------------------------------------------------
     def _depth_profile_worker(self) -> None:
+        """Return the depth profile worker."""
         last_seq = -1
         while not self.stop_event.is_set():
             frame = self.capture_slot.get_latest_after(last_seq)
@@ -7057,12 +7272,14 @@ class MainDataProcessingDemo:
         self,
         packet: MaskPacket | FramePacket,
     ) -> tuple[np.ndarray, float, float, float, float, float, float]:
+        """Compute external FFS depth color m."""
         if packet.depth_source == "ffs_remote":
             return self._compute_remote_ffs_depth_color_m(packet)
         depth_color_m, ffs_ms, ffs_align_ms = self._compute_ffs_depth_color_m(packet)
         return depth_color_m, ffs_ms, ffs_align_ms, 0.0, 0.0, 0.0, 0.0
 
     def _get_cached_local_ffs_depth(self, seq: int) -> tuple[np.ndarray, float, float] | None:
+        """Return the get cached local FFS depth."""
         cached = self._local_ffs_depth_cache.get(int(seq))
         if cached is None:
             return None
@@ -7070,12 +7287,14 @@ class MainDataProcessingDemo:
         return cached
 
     def _put_cached_local_ffs_depth(self, seq: int, value: tuple[np.ndarray, float, float]) -> None:
+        """Return the put cached local FFS depth."""
         self._local_ffs_depth_cache[int(seq)] = value
         self._local_ffs_depth_cache.move_to_end(int(seq))
         while len(self._local_ffs_depth_cache) > DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES:
             self._local_ffs_depth_cache.popitem(last=False)
 
     def _compute_ffs_depth_color_m(self, packet: MaskPacket | FramePacket) -> tuple[np.ndarray, float, float]:
+        """Compute FFS depth color m."""
         runner = self.ffs_runner
         if runner is None:
             raise RuntimeError("FFS runner is not initialized")
@@ -7126,6 +7345,7 @@ class MainDataProcessingDemo:
         self,
         packet: MaskPacket | FramePacket,
     ) -> tuple[np.ndarray, float, float, float, float, float, float]:
+        """Compute remote FFS depth color m."""
         if self.args.ffs_remote_return in SPARSE_RETURN_TYPES:
             raise RuntimeError("sparse ffs_remote returns must be consumed by the sparse PCD path")
         result = self._request_remote_ffs_result(packet, mask_u8=None)
@@ -7146,6 +7366,7 @@ class MainDataProcessingDemo:
         *,
         mask_u8: np.ndarray | None,
     ) -> Any:
+        """Request remote FFS result."""
         client = self.ffs_remote_client
         if client is None:
             raise RuntimeError("remote FFS client is not initialized")
@@ -7173,6 +7394,7 @@ class MainDataProcessingDemo:
         return result
 
     def _warn_if_remote_engine_contract_missing(self, result: Any) -> None:
+        """Return the warn if remote engine contract missing."""
         if self._warned_remote_engine_contract:
             return
         metadata = getattr(result, "metadata", None) or {}
@@ -7208,6 +7430,7 @@ class MainDataProcessingDemo:
         ray_y: np.ndarray,
         rng: np.random.Generator,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, float]]:
+        """Return the split sparse remote PCD."""
         timing: dict[str, float] = {
             "pcd_mask_intersection_ms": 0.0,
             "pcd_select_ms": 0.0,
@@ -7270,6 +7493,7 @@ class MainDataProcessingDemo:
             raise RuntimeError(f"unsupported sparse return type: {return_type}")
 
         def build_for_label(label: int, class_rgb: tuple[int, int, int]) -> tuple[np.ndarray, np.ndarray]:
+            """Build for label."""
             label_indices = np.nonzero(labels == int(label))[0]
             cap_start_s = time.perf_counter()
             max_points = int(self.args.pcd_max_points)
@@ -7297,6 +7521,7 @@ class MainDataProcessingDemo:
         rng: np.random.Generator,
         require_filter_seq: bool = False,
     ) -> MaskedPcdPacket:
+        """Compute remote sparse PCD packet."""
         assert self.ray_x is not None and self.ray_y is not None
         mask_u8 = self._remote_quality_mask_u8(mask_packet)
         result = self._request_remote_ffs_result(mask_packet, mask_u8=mask_u8)
@@ -7412,6 +7637,7 @@ class MainDataProcessingDemo:
         )
 
     def _remote_quality_mask_u8(self, packet: MaskPacket) -> np.ndarray:
+        """Convert a boolean quality mask to uint8 image form."""
         mask = np.zeros(tuple(packet.object_mask.shape), dtype=np.uint8)
         if controller_tracking_enabled(self.args):
             mask[np.asarray(packet.controller_mask, dtype=bool)] = CONTROLLER_ID
@@ -7420,6 +7646,7 @@ class MainDataProcessingDemo:
         return np.ascontiguousarray(mask)
 
     def _request_remote_quality(self, packet: MaskPacket | FramePacket, *, mask_u8: np.ndarray | None) -> RemoteFfsQualityPacket:
+        """Request remote quality."""
         client = self.remote_quality_client
         if client is None:
             raise RuntimeError("remote FFS quality client is not initialized")
@@ -7468,6 +7695,7 @@ class MainDataProcessingDemo:
         )
 
     def _remote_ffs_quality_worker(self) -> None:
+        """Return the remote FFS quality worker."""
         last_seq = -1
         next_request_s = 0.0
         sparse = str(self.args.remote_ffs_quality_return) in SPARSE_RETURN_TYPES
@@ -7522,6 +7750,7 @@ class MainDataProcessingDemo:
         pair: PairedRenderPacket,
         display_time_s: float,
     ) -> SideBySidePanelHud:
+        """Build panel hud."""
         pcd_packet = pair.pcd_packet
         tracker_packet = pair.tracker_packet
         pipeline_done_s = max(float(pcd_packet.process_done_perf_s), float(tracker_packet.process_done_perf_s))
@@ -7559,12 +7788,14 @@ class MainDataProcessingDemo:
         )
 
     def _latest_panel_rgb_frame_after(self, last_seq: int) -> FramePacket | None:
+        """Return the latest panel RGB frame after."""
         preview_frame = self.input_preview_slot.get_latest_after(last_seq)
         if preview_frame is not None:
             return preview_frame
         return self.capture_slot.get_latest_after(last_seq)
 
     def _format_panel_hud_label(self, hud: SideBySidePanelHud) -> str:
+        """Format panel hud label."""
         input_time = "none" if hud.input_time_s is None else f"{float(hud.input_time_s):.2f}s"
         return (
             f"rgb={int(hud.rgb_seq)} paired={int(hud.paired_seq)} ahead={hud.rgb_ahead_frames}f\n"
@@ -7580,6 +7811,7 @@ class MainDataProcessingDemo:
         )
 
     def _render_runtime_panel_frame(self, *, rgb_frame: FramePacket, pair: PairedRenderPacket) -> np.ndarray:
+        """Render runtime panel frame."""
         if pair.mask_packet is None:
             raise RuntimeError("runtime panel requires paired mask_packet")
 
@@ -7644,6 +7876,7 @@ class MainDataProcessingDemo:
         )
 
     def _run_panel_viewer(self) -> None:
+        """Run panel viewer."""
         import cv2
 
         o3d, gui, rendering = load_open3d_modules()
@@ -7672,6 +7905,7 @@ class MainDataProcessingDemo:
         window.add_child(hud_panel)
 
         def on_layout(layout_context: object) -> None:
+            """Return the on layout."""
             rect = window.content_rect
             column_width = max(1, int(rect.width // 3))
             right_width = max(1, int(rect.width - column_width * 2))
@@ -7706,6 +7940,7 @@ class MainDataProcessingDemo:
             *,
             min_capacity: int = 0,
         ) -> Open3DSceneTensorLayer:
+            """Create geometry layer."""
             return Open3DSceneTensorLayer(
                 name=name,
                 o3d_module=o3d,
@@ -7724,6 +7959,7 @@ class MainDataProcessingDemo:
             *,
             max_points: int = 0,
         ) -> tuple[float, float]:
+            """Update layer."""
             cap_start_s = time.perf_counter()
             display_points, display_colors = cap_render_points(
                 points_xyz_m,
@@ -7795,6 +8031,7 @@ class MainDataProcessingDemo:
         fatal_exit_posted = {"value": False}
 
         def reset_scene_camera(scene_widget: object) -> None:
+            """Reset scene camera."""
             if str(self.args.view_mode) == "camera":
                 intrinsic_matrix = np.array(
                     [
@@ -7815,6 +8052,7 @@ class MainDataProcessingDemo:
                 scene_widget.setup_camera(60.0, bounds, [0.0, 0.0, 0.8])
 
         def update_rgb_image(frame: FramePacket) -> tuple[float, float]:
+            """Update RGB image."""
             convert_start_s = time.perf_counter()
             rgb_u8 = np.ascontiguousarray(frame.color_bgr[:, :, ::-1], dtype=np.uint8)
             o3d_image = o3d.geometry.Image(rgb_u8)
@@ -7824,6 +8062,7 @@ class MainDataProcessingDemo:
             return convert_ms, _elapsed_ms(update_start_s, time.perf_counter())
 
         def update_tracker_layers(marker_packet: TrackerMarkerPacket) -> tuple[float, float]:
+            """Update tracker layers."""
             point_count = int(marker_packet.marker_xyz_m.shape[0])
             label_count = min(
                 point_count,
@@ -7863,6 +8102,7 @@ class MainDataProcessingDemo:
             return object_convert_ms + controller_convert_ms, object_update_ms + controller_update_ms
 
         def maybe_write_panel_video(rgb_frame: FramePacket, pair: PairedRenderPacket) -> None:
+            """Maybe start or update write panel video."""
             nonlocal writer
             if self.args.panel_video_output is None:
                 return
@@ -7882,6 +8122,7 @@ class MainDataProcessingDemo:
             writer.write(panel)
 
         def update_pair_views(pair: PairedRenderPacket, rgb_frame: FramePacket) -> bool:
+            """Update pair views."""
             packet = pair.pcd_packet
             marker_packet = pair.tracker_packet
             middle_controller_convert_ms, middle_controller_update_ms = update_layer(
@@ -7952,6 +8193,7 @@ class MainDataProcessingDemo:
             return True
 
         def render_latest() -> bool:
+            """Render latest."""
             nonlocal last_pair_seq, last_rgb_seq, latest_rgb, latest_pair
             rendered = False
             rgb_frame = self._latest_panel_rgb_frame_after(last_rgb_seq)
@@ -7985,6 +8227,7 @@ class MainDataProcessingDemo:
             return rendered
 
         def render_latest_on_main_thread() -> None:
+            """Render latest on main thread."""
             try:
                 fatal = self._fatal_error_snapshot()
                 if fatal is not None:
@@ -8044,6 +8287,7 @@ class MainDataProcessingDemo:
                     request_render_update()
 
         def request_render_update() -> None:
+            """Request render update."""
             if not render_post_gate.try_mark_pending():
                 return
             try:
@@ -8054,6 +8298,7 @@ class MainDataProcessingDemo:
         fast_exit_after_open3d = os.environ.get("QQTT_WSLG_OPEN3D_FAST_EXIT") == "1"
 
         def stop_and_quit_open3d() -> None:
+            """Stop and quit open3d."""
             self.stop_event.set()
             self._request_render_update = lambda: None
             if fast_exit_after_open3d:
@@ -8065,6 +8310,7 @@ class MainDataProcessingDemo:
                 pass
 
         def on_close() -> bool:
+            """Return the on close."""
             stop_and_quit_open3d()
             return True
 
@@ -8094,6 +8340,7 @@ class MainDataProcessingDemo:
     # Rendering: Open3D point-cloud viewer
     # ------------------------------------------------------------------
     def _run_open3d_viewer(self) -> None:
+        """Run open3d viewer."""
         o3d, gui, rendering = load_open3d_modules()
         o3c = o3d.core
         device = o3c.Device("CPU:0")
@@ -8111,6 +8358,7 @@ class MainDataProcessingDemo:
         window.add_child(hud_panel)
 
         def on_layout(layout_context: object) -> None:
+            """Return the on layout."""
             rect = window.content_rect
             scene_widget.frame = rect
             em = window.theme.font_size
@@ -8134,6 +8382,7 @@ class MainDataProcessingDemo:
         tracker_controller_material.point_size = float(self.args.tracker_marker_point_size)
 
         def make_geometry_layer(name: str, material: object, *, min_capacity: int = 0) -> Open3DSceneTensorLayer:
+            """Create geometry layer."""
             return Open3DSceneTensorLayer(
                 name=name,
                 o3d_module=o3d,
@@ -8152,6 +8401,7 @@ class MainDataProcessingDemo:
             *,
             max_points: int = 0,
         ) -> tuple[float, float]:
+            """Update layer."""
             cap_start_s = time.perf_counter()
             display_points, display_colors = cap_render_points(
                 points_xyz_m,
@@ -8204,6 +8454,7 @@ class MainDataProcessingDemo:
             hud_label.text = self._format_strict_sync_waiting_hud()
 
         def reset_camera() -> None:
+            """Reset camera."""
             if str(self.args.view_mode) == "camera":
                 intrinsic_matrix = np.array(
                     [
@@ -8224,6 +8475,7 @@ class MainDataProcessingDemo:
                 scene_widget.setup_camera(60.0, bounds, [0.0, 0.0, 0.8])
 
         def hide_tracker_layers_once() -> tuple[float, float]:
+            """Hide tracker layers once."""
             if tracker_layers_hidden["value"]:
                 return 0.0, 0.0
             tracker_layers_hidden["value"] = True
@@ -8240,6 +8492,7 @@ class MainDataProcessingDemo:
             return object_convert_ms + controller_convert_ms, object_update_ms + controller_update_ms
 
         def update_tracker_layers(marker_packet: TrackerMarkerPacket) -> tuple[float, float]:
+            """Update tracker layers."""
             tracker_layers_hidden["value"] = False
             point_count = int(marker_packet.marker_xyz_m.shape[0])
             label_count = min(
@@ -8280,6 +8533,7 @@ class MainDataProcessingDemo:
             return object_convert_ms + controller_convert_ms, object_update_ms + controller_update_ms
 
         def render_latest() -> bool:
+            """Render latest."""
             if strict_sync_enabled:
                 if self._lossless_enabled() and self._lossless_pipeline_active:
                     pair = self.lossless_paired_render_queue.get_nowait()
@@ -8397,6 +8651,7 @@ class MainDataProcessingDemo:
             return True
 
         def render_latest_on_main_thread() -> None:
+            """Render latest on main thread."""
             try:
                 fatal = self._fatal_error_snapshot()
                 if fatal is not None:
@@ -8469,6 +8724,7 @@ class MainDataProcessingDemo:
                     request_render_update()
 
         def request_render_update() -> None:
+            """Request render update."""
             if not render_post_gate.try_mark_pending():
                 return
             try:
@@ -8479,6 +8735,7 @@ class MainDataProcessingDemo:
         fast_exit_after_open3d = os.environ.get("QQTT_WSLG_OPEN3D_FAST_EXIT") == "1"
 
         def stop_and_quit_open3d() -> None:
+            """Stop and quit open3d."""
             self.stop_event.set()
             self._request_render_update = lambda: None
             if fast_exit_after_open3d:
@@ -8490,6 +8747,7 @@ class MainDataProcessingDemo:
                 pass
 
         def on_close() -> bool:
+            """Return the on close."""
             stop_and_quit_open3d()
             return True
 
@@ -8524,6 +8782,7 @@ class MainDataProcessingDemo:
         strict_sync: bool = False,
         waiting_for_pair: bool = False,
     ) -> str:
+        """Format hud."""
         status = "late" if timing.receive_to_render_ms > self.args.latency_target_ms else "ok"
         max_points = "uncapped" if self.args.pcd_max_points == 0 else str(self.args.pcd_max_points)
         render_cap = (
@@ -8638,6 +8897,7 @@ class MainDataProcessingDemo:
         )
 
     def _format_strict_sync_waiting_hud(self) -> str:
+        """Format strict sync waiting hud."""
         return (
             f"{self._stage_fps_hud_line()}\n"
             "strict_sync=1  waiting_for_pair=1  paired_seq=none\n"
@@ -8664,6 +8924,7 @@ class MainDataProcessingDemo:
         strict_sync: bool = False,
         waiting_for_pair: bool = False,
     ) -> None:
+        """Return the emit debug line."""
         filter_info = filter_telemetry or PcdFilterTelemetry()
         if bool(strict_sync):
             paired_seq = str(int(seq)) if tracker_packet is not None else "none"
@@ -8785,6 +9046,7 @@ class MainDataProcessingDemo:
         )
 
     def _headless_debug_worker(self) -> None:
+        """Return the headless debug worker."""
         last_logged_seq = -1
         last_logged_pair_seq = -1
         last_logged_waiting_seq = -1
@@ -8913,6 +9175,7 @@ class MainDataProcessingDemo:
         strict_sync: bool = False,
         waiting_for_pair: bool = False,
     ) -> None:
+        """Maybe start or update log debug."""
         if not self.args.debug or now_s - self._last_debug_log_s < DEBUG_LOG_INTERVAL_S:
             return
         self._last_debug_log_s = now_s
@@ -8934,6 +9197,7 @@ class MainDataProcessingDemo:
 # Entry point
 # ---------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
+    """Run the command-line entry point."""
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

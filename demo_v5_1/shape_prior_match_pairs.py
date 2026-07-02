@@ -80,6 +80,7 @@ def image_pair_matching(
     viz_best=True,
 ):
 
+    """Return the image pair matching."""
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print('Running inference on device "{}"'.format(device))
     config = {

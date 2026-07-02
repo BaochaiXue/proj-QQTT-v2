@@ -57,6 +57,7 @@ output_dir = f"{base_path}/{case_name}/shape/matching"
 
 
 def existDir(dir_path):
+    """Return the exist dir."""
     if not os.path.exists(dir_path):
         os.makedirs(dir_path)
 
@@ -65,6 +66,7 @@ def pose_selection_render_superglue(
     raw_img, fov, mesh_path, mesh, crop_img, output_dir
 ):
     # Calculate suitable rendering radius
+    """Return the pose selection render superglue."""
     bounding_box = mesh.bounds
     max_dimension = np.linalg.norm(bounding_box[1] - bounding_box[0])
     radius = 2 * (max_dimension / 2) / np.tan(fov / 2)
@@ -95,6 +97,7 @@ def pose_selection_render_superglue(
 
 def registration_pnp(mesh_matching_points, raw_matching_points, intrinsic):
     # Solve the PNP and verify the reprojection error
+    """Return the registration pnp."""
     success, rvec, tvec = cv2.solvePnP(
         np.float32(mesh_matching_points),
         np.float32(raw_matching_points),
@@ -127,7 +130,9 @@ def registration_pnp(mesh_matching_points, raw_matching_points, intrinsic):
 
 def registration_scale(mesh_matching_points_cam, matching_points_cam):
     # After PNP, optimize the scale in the camera coordinate
+    """Return the registration scale."""
     def objective(scale, mesh_points, pcd_points):
+        """Return the objective."""
         transformed_points = scale * mesh_points
         loss = np.sum(np.sum((transformed_points - pcd_points) ** 2, axis=1))
         return loss
@@ -146,6 +151,7 @@ def registration_scale(mesh_matching_points_cam, matching_points_cam):
 
 def deform_ARAP(initial_mesh_world, mesh_matching_points_world, matching_points):
     # Do the ARAP deformation based on the matching keypoints
+    """Return the deform a r a p."""
     mesh_vertices = np.asarray(initial_mesh_world.vertices)
     kdtree = KDTree(mesh_vertices)
     _, mesh_points_indices = kdtree.query(mesh_matching_points_world)
@@ -162,6 +168,7 @@ def get_matching_ray_registration(
     mesh_world, obs_points_world, mesh, trimesh_indices, c2w, w2c
 ):
     # Get the matching indices and targets based on the viewpoint
+    """Return the get matching ray registration."""
     obs_points_cam = np.dot(
         w2c,
         np.hstack((obs_points_world, np.ones((obs_points_world.shape[0], 1)))).T,
@@ -234,6 +241,7 @@ def deform_ARAP_ray_registration(
     mesh_points_indices,
     matching_points,
 ):
+    """Return the deform a r a p ray registration."""
     final_indices = []
     final_targets = []
     for index, target in zip(mesh_points_indices, matching_points):
@@ -283,6 +291,7 @@ def align_full_vendor_compatible(
     w2cs,
 ):
     # ARAP based on the keypoints
+    """Return the align full vendor compatible."""
     deform_kp_mesh_world, mesh_points_indices = deform_ARAP(
         initial_mesh_world, mesh_matching_points_world, matching_points
     )
@@ -303,6 +312,7 @@ def align_full_vendor_compatible(
 
 def line_point_distance(p, points):
     # Compute the distance between points and the line between p and [0, 0, 0]
+    """Return the line point distance."""
     p = p / np.linalg.norm(p)
     points_to_origin = points
     cross_product = np.linalg.norm(np.cross(points_to_origin, p), axis=1)
@@ -310,6 +320,7 @@ def line_point_distance(p, points):
 
 
 def main(argv=None):
+    """Run the command-line entry point."""
     global args, base_path, case_name, CONTROLLER_NAME, output_dir
 
     args = parser.parse_args(argv)

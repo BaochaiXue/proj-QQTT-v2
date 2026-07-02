@@ -13,6 +13,7 @@ from demo_v5_1.utils.camera import CameraIntrinsics
 
 
 def build_pixel_grid(*, width: int, height: int, stride: int) -> tuple[np.ndarray, np.ndarray]:
+    """Build pixel grid."""
     if width <= 0 or height <= 0:
         raise ValueError("width and height must be positive")
     if stride < 1:
@@ -29,6 +30,7 @@ def build_projection_grid(
     stride: int,
     intrinsics: CameraIntrinsics,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Build projection grid."""
     if intrinsics.fx <= 0 or intrinsics.fy <= 0:
         raise ValueError("intrinsics fx/fy must be positive")
     grid_x, grid_y = build_pixel_grid(width=width, height=height, stride=stride)
@@ -43,6 +45,7 @@ def build_projection_grid_from_matrix(
     height: int,
     K: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Build projection grid from matrix."""
     k = np.asarray(K, dtype=np.float32).reshape(3, 3)
     fx = np.float32(k[0, 0])
     fy = np.float32(k[1, 1])

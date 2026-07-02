@@ -233,6 +233,7 @@ class ChunkDataWriter:
         source_start_frame: int = 0,
         source_frame_step: int = 1,
     ) -> None:
+        """Initialize ChunkDataWriter."""
         if int(chunk_size) <= 0:
             raise ValueError("chunk_size must be positive")
         if int(source_frame_step) <= 0:

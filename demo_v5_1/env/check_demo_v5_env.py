@@ -123,10 +123,12 @@ SHAPE_PRIOR_ASSET_PATHS = (
 
 
 def _version(module: object) -> str:
+    """Return the version."""
     return str(getattr(module, "__version__", "import-ok"))
 
 
 def _check_imports(modules: Iterable[str]) -> list[str]:
+    """Check imports."""
     errors: list[str] = []
     for name in modules:
         try:
@@ -139,6 +141,7 @@ def _check_imports(modules: Iterable[str]) -> list[str]:
 
 
 def _check_paths(paths: Iterable[str]) -> list[str]:
+    """Check paths."""
     errors: list[str] = []
     for relative in paths:
         path = REPO_ROOT / relative
@@ -150,6 +153,7 @@ def _check_paths(paths: Iterable[str]) -> list[str]:
 
 
 def _check_main_source_imports() -> list[str]:
+    """Check main source imports."""
     root = REPO_ROOT / "vendor" / "demo_runtime" / "tapnet"
     root_s = str(root)
     if root_s not in sys.path:
@@ -183,6 +187,7 @@ def _check_main_source_imports() -> list[str]:
 
 
 def _check_shape_prior_source_import() -> list[str]:
+    """Check shape prior source import."""
     root = REPO_ROOT / "vendor" / "demo_runtime" / "sam-3d-objects"
     for path in (root, root / "notebook"):
         path_s = str(path)
@@ -197,6 +202,7 @@ def _check_shape_prior_source_import() -> list[str]:
 
 
 def _check_cuda(required: bool) -> list[str]:
+    """Check CUDA."""
     try:
         import torch
     except Exception as exc:
@@ -210,10 +216,12 @@ def _check_cuda(required: bool) -> list[str]:
 
 
 def _is_executable(path: Path) -> bool:
+    """Return whether executable."""
     return path.is_file() and os.access(path, os.X_OK)
 
 
 def _check_nvcc_version(path: Path) -> list[str]:
+    """Check nvcc version."""
     try:
         result = subprocess.run(
             [str(path), "--version"],
@@ -238,6 +246,7 @@ def _check_nvcc_version(path: Path) -> list[str]:
 
 
 def _check_nvcc_toolchain() -> list[str]:
+    """Check nvcc toolchain."""
     errors: list[str] = []
     candidates: list[Path] = []
 
@@ -277,6 +286,7 @@ def _check_nvcc_toolchain() -> list[str]:
 
 
 def _check_gsplat_runtime_smoke() -> list[str]:
+    """Check gsplat runtime smoke."""
     try:
         import torch
         from gsplat import rasterization

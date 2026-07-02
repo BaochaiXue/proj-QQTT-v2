@@ -12,6 +12,7 @@ import numpy as np
 
 
 def _empty_indices() -> np.ndarray:
+    """Return the empty indices."""
     return np.empty((0,), dtype=np.int64)
 
 
@@ -140,6 +141,7 @@ class AsyncPcdFilterWorker:
     """
 
     def __init__(self, filter_fn: Callable[[FilterInput], FilterOutput], *, stats_window_s: float = 1.0) -> None:
+        """Initialize AsyncPcdFilterWorker."""
         self.filter_fn = filter_fn
         self.stats_window_s = float(stats_window_s)
         self._lock = threading.Lock()
@@ -157,6 +159,7 @@ class AsyncPcdFilterWorker:
         self._output_times: deque[float] = deque()
 
     def start(self) -> None:
+        """Start AsyncPcdFilterWorker."""
         with self._lock:
             if self._started:
                 return
@@ -164,6 +167,7 @@ class AsyncPcdFilterWorker:
         self._thread.start()
 
     def stop(self) -> None:
+        """Stop AsyncPcdFilterWorker."""
         with self._condition:
             self._stop = True
             self._condition.notify_all()
@@ -185,30 +189,36 @@ class AsyncPcdFilterWorker:
             return accepted_idle
 
     def latest_output(self) -> FilterOutput | None:
+        """Return the latest output."""
         with self._lock:
             return self._latest
 
     def is_busy(self) -> bool:
+        """Return whether busy."""
         with self._lock:
             return self._busy
 
     @property
     def drop_count(self) -> int:
+        """Return the drop count."""
         with self._lock:
             return int(self._pending_replace_count)
 
     @property
     def submit_fps(self) -> float:
+        """Return the submit FPS."""
         with self._lock:
             return self._fps_locked(self._submit_times)
 
     @property
     def output_fps(self) -> float:
+        """Return the output FPS."""
         with self._lock:
             return self._fps_locked(self._output_times)
 
     @property
     def stats(self) -> dict[str, Any]:
+        """Return the stats."""
         with self._lock:
             return {
                 "busy": bool(self._busy),
@@ -220,6 +230,7 @@ class AsyncPcdFilterWorker:
             }
 
     def _run(self) -> None:
+        """Run AsyncPcdFilterWorker."""
         while True:
             with self._condition:
                 while not self._stop and self._pending is None:
@@ -245,12 +256,14 @@ class AsyncPcdFilterWorker:
 
     def _prune_locked(self, values: deque[float], now_s: float) -> None:
         # Keep at least one sample so _fps_locked can still span the window edge.
+        """Prune locked."""
         cutoff = now_s - self.stats_window_s
         while len(values) > 1 and values[0] < cutoff:
             values.popleft()
 
     @staticmethod
     def _fps_locked(values: deque[float]) -> float:
+        """Return the FPS locked."""
         if len(values) < 2:
             return 0.0
         elapsed = values[-1] - values[0]
@@ -270,12 +283,14 @@ class FilterBudgetController:
         max_cap: int = 20_000,
         init_cap: int = 20_000,
     ) -> None:
+        """Initialize FilterBudgetController."""
         self.target_ms = float(target_ms)
         self.min_cap = int(min_cap)
         self.max_cap = int(max_cap)
         self.cap = int(np.clip(int(init_cap), self.min_cap, self.max_cap))
 
     def update(self, measured_ms: float) -> int:
+        """Update FilterBudgetController."""
         if measured_ms <= 0 or self.target_ms <= 0:
             return self.cap
         # Damped proportional step (30% weight on the measurement) to avoid

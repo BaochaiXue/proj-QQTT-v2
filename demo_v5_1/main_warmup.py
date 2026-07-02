@@ -57,6 +57,7 @@ def load_binary_mask(
 ) -> np.ndarray:
     # Relative CLI mask paths are anchored at the repo root so saved-masks init
     # behaves the same regardless of the launch directory.
+    """Load a binary mask image as a boolean array."""
     mask_path = Path(path).expanduser()
     if not mask_path.is_absolute():
         mask_path = Path(repo_root) / mask_path
@@ -86,6 +87,7 @@ def load_binary_mask(
 
 
 def object_tracking_enabled(args_or_track_mode: argparse.Namespace | str) -> bool:
+    """Return whether object tracking is enabled."""
     track_mode = (
         args_or_track_mode
         if isinstance(args_or_track_mode, str)
@@ -95,6 +97,7 @@ def object_tracking_enabled(args_or_track_mode: argparse.Namespace | str) -> boo
 
 
 def controller_tracking_enabled(args_or_track_mode: argparse.Namespace | str) -> bool:
+    """Return whether controller tracking is enabled."""
     track_mode = (
         args_or_track_mode
         if isinstance(args_or_track_mode, str)
@@ -112,6 +115,7 @@ def controller_tracking_enabled(args_or_track_mode: argparse.Namespace | str) ->
 
 
 def bgr_to_pil_rgb(color_bgr: np.ndarray) -> Any:
+    """Return the BGR to pil RGB."""
     from PIL import Image
 
     return Image.fromarray(np.ascontiguousarray(color_bgr[:, :, ::-1]))
@@ -120,6 +124,7 @@ def bgr_to_pil_rgb(color_bgr: np.ndarray) -> Any:
 def _union_masks(masks: list[np.ndarray], *, label: str) -> np.ndarray:
     # SAM3.1 returns one mask per detected instance; downstream tracking wants a
     # single foreground mask per label, so OR all instances together.
+    """Return the union masks."""
     if not masks:
         raise RuntimeError(f"SAM3.1 did not produce a mask for label {label!r}")
     output = np.zeros_like(masks[0], dtype=bool)
@@ -131,11 +136,13 @@ def _union_masks(masks: list[np.ndarray], *, label: str) -> np.ndarray:
 
 
 def _mask_area(mask: np.ndarray) -> int:
+    """Return the mask area."""
     return int(np.count_nonzero(np.asarray(mask, dtype=bool)))
 
 
 def _mask_centroid_x(mask: np.ndarray) -> float:
     # Sort key for left-to-right hand ordering; empty masks sort last (+inf).
+    """Return the mask centroid x."""
     coords = np.argwhere(np.asarray(mask, dtype=bool))
     if coords.size == 0:
         return float("inf")
@@ -146,6 +153,7 @@ def _connected_components_by_area(mask: np.ndarray) -> list[np.ndarray]:
     # Returns 8-connected components sorted largest-first. cv2 is the fast
     # path; any failure (including cv2 being unavailable) falls back to the
     # pure-Python flood fill below with the same connectivity and ordering.
+    """Return the connected components by area."""
     mask_bool = np.asarray(mask, dtype=bool)
     if not np.any(mask_bool):
         return []
@@ -204,6 +212,7 @@ def split_controller_hand_instances(
     *,
     label: str,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Return the split controller hand instances."""
     masks = [
         np.ascontiguousarray(mask, dtype=bool)
         for mask in controller_masks
@@ -239,6 +248,7 @@ def split_controller_hand_instances(
 
 
 def release_sam31_runtime_resources(device: str = DEFAULT_SAM31_DEVICE) -> float:
+    """Return the release sam31 runtime resources."""
     from demo_v5_1 import sam31_image_segmentation
 
     started_s = time.perf_counter()
@@ -268,6 +278,7 @@ def release_sam31_runtime_resources(device: str = DEFAULT_SAM31_DEVICE) -> float
 
 
 def trim_sam31_cuda_allocator(device: str = DEFAULT_SAM31_DEVICE) -> float:
+    """Return the trim sam31 CUDA allocator."""
     started_s = time.perf_counter()
     gc.collect()
     try:
@@ -293,6 +304,7 @@ def run_sam31_first_frame_mask_bundle(
     color_bgr: np.ndarray,
     args: argparse.Namespace,
 ) -> InitialMaskBundle:
+    """Run sam31 first frame mask bundle."""
     from demo_v5_1.sam31_image_segmentation import (
         parse_text_prompts,
         run_image_segmentation,
@@ -391,6 +403,7 @@ def run_sam31_first_frame_masks(
     color_bgr: np.ndarray,
     args: argparse.Namespace,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Run sam31 first frame masks."""
     bundle = run_sam31_first_frame_mask_bundle(color_bgr, args)
     return bundle.controller_mask, bundle.object_mask
 
@@ -401,6 +414,7 @@ def resolve_initial_mask_bundle(
     *,
     repo_root: Path,
 ) -> InitialMaskBundle:
+    """Resolve initial mask bundle."""
     expected_shape = tuple(frame.color_bgr.shape[:2])
     if args.init_mode == INIT_MODE_SAVED_MASKS:
         object_mask = (
@@ -462,6 +476,7 @@ def resolve_initial_masks(
     *,
     repo_root: Path,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Resolve initial masks."""
     bundle = resolve_initial_mask_bundle(frame, args, repo_root=repo_root)
     return bundle.controller_mask, bundle.object_mask
 
@@ -483,6 +498,7 @@ def prepare_runtime_services_and_source(
     fake_live_input_source: str,
     fake_live_frame_selection_policy: str,
 ) -> None:
+    """Prepare runtime services and source."""
     args = demo.args
     apply_wslg_open3d_env_defaults()
     if args.depth_source == "ffs":
@@ -550,6 +566,7 @@ def prepare_runtime_projection_and_capture(
     headless_capture_enabled: Callable[[argparse.Namespace], bool],
     headless_capture_writer_cls: type,
 ) -> None:
+    """Prepare runtime projection and capture."""
     demo._initialize_table_calibration()
     demo.ray_x, demo.ray_y = build_projection_grid(
         width=demo.width,
@@ -571,6 +588,7 @@ def prepare_runtime_projection_and_capture(
 def prepare_segmentation_warmup(
     demo: Any, *, repo_root: Path
 ) -> SegmentationWarmupState:
+    """Prepare segmentation warmup."""
     hf_stream, torch_module, dtype, model, processor = demo._init_hf_model()
     first_frame = demo._wait_for_first_frame()
     # first_frame is None when capture shut down before frame 0; the seg worker

@@ -16,6 +16,7 @@ from scipy.spatial import cKDTree
 
 
 def select_point(points, raw_matching_points, object_mask):
+    """Select point."""
     mask_coords = np.column_stack(np.where(object_mask > 0))
     mask_coords = mask_coords[:, ::-1]
     tree = cKDTree(mask_coords)
@@ -29,6 +30,7 @@ def select_point(points, raw_matching_points, object_mask):
 
 
 def plot_mesh_with_points(mesh, points, filename):
+    """Plot mesh with points."""
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
     ax.plot_trisurf(
@@ -51,6 +53,7 @@ def plot_mesh_with_points(mesh, points, filename):
 
 
 def plot_image_with_points(image, points, save_dir, points2=None):
+    """Plot image with points."""
     plt.imshow(image)
     plt.scatter(points[:, 0], points[:, 1], color="red", s=5)
     if points2 is not None:
@@ -157,6 +160,7 @@ def sample_camera_poses(radius, num_samples, num_up_samples=4, device="cpu"):
 
 
 def render_image(mesh, camera_poses, width=640, height=480, fov=1, device="cpu"):
+    """Render image."""
     camera_poses = torch.tensor(camera_poses, device=device)
     if len(camera_poses.shape) == 2:
         camera_poses = camera_poses[None, :]
@@ -226,6 +230,7 @@ def render_multi_images(
     device="cpu",
 ):
     # Sample camera poses
+    """Render multi images."""
     camera_poses = sample_camera_poses(radius, num_samples, num_ups, device)
 
     # Calculate intrinsics

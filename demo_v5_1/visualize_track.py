@@ -67,6 +67,7 @@ class InputReceiveTimeline:
     """
 
     def __init__(self, timeline_path: str | Path | None) -> None:
+        """Initialize InputReceiveTimeline."""
         self.timeline_path = None if timeline_path is None else Path(timeline_path).expanduser()
         self.receive_times: dict[int, float] = {}
         self._offset = 0
@@ -109,6 +110,7 @@ class InputReceiveTimeline:
         return receive_s
 
     def _ingest_line(self, raw_line: bytes) -> None:
+        """Ingest one JSONL timeline row."""
         text = raw_line.decode("utf-8", errors="replace").strip()
         if not text:
             return
@@ -203,6 +205,7 @@ class CameraToFinalDataFpsMeter:
 
 
 def _require_cv2() -> Any:
+    """Return validated cv2."""
     import cv2
 
     return cv2
@@ -275,6 +278,7 @@ def infer_case_dir(online_dir: Path, case_dir: str | Path | None) -> Path:
 
 def _select_camera_array(value: Any, *, cam_idx: int, shape: tuple[int, int]) -> np.ndarray | None:
     # Calibration arrays may be stored per camera (N, *shape) or flat (*shape).
+    """Select camera array."""
     if value is None:
         return None
     arr = np.asarray(value, dtype=np.float64)
@@ -309,6 +313,7 @@ def _first_case_image_size(case_path: Path, *, cam_idx: int) -> tuple[int, int] 
 
 
 def _intrinsic_matrix_from_metadata(value: Any, *, cam_idx: int) -> np.ndarray | None:
+    """Return the intrinsic matrix from metadata."""
     if isinstance(value, Mapping):
         try:
             fx = float(value["fx"])
@@ -336,6 +341,7 @@ def _camera_to_world_from_metadata(
 ) -> np.ndarray | None:
     # Fake-live captures publish the single-camera pose in metadata instead of
     # writing an aligned-case calibrate.pkl; use it for offline video export.
+    """Return the camera to world from metadata."""
     for key in ("camera_to_world_c2w", "camera_to_world"):
         matrix = _select_camera_array(metadata.get(key), cam_idx=cam_idx, shape=(4, 4))
         if matrix is not None:
@@ -448,11 +454,13 @@ def project_world_points_to_pixels(
 
 
 def _blank_image(image_size: tuple[int, int]) -> np.ndarray:
+    """Return the blank image."""
     width, height = int(image_size[0]), int(image_size[1])
     return np.zeros((height, width, 3), dtype=np.uint8)
 
 
 def _panel_image(image: np.ndarray | None, *, image_size: tuple[int, int]) -> np.ndarray:
+    """Return the panel image."""
     cv2 = _require_cv2()
     width, height = int(image_size[0]), int(image_size[1])
     if image is None:
@@ -467,6 +475,7 @@ def _panel_image(image: np.ndarray | None, *, image_size: tuple[int, int]) -> np
 
 
 def _draw_panel_label(image: np.ndarray, text: str, *, right: bool = False) -> None:
+    """Draw panel label."""
     if image.shape[0] < 40 or image.shape[1] < 160:
         return
     cv2 = _require_cv2()
@@ -484,6 +493,7 @@ def _draw_panel_label(image: np.ndarray, text: str, *, right: bool = False) -> N
 
 
 def _draw_camera_to_final_data_fps_overlay(image: np.ndarray, fps: float | None) -> None:
+    """Draw camera to final data FPS overlay."""
     if image.shape[0] < 40 or image.shape[1] < 280:
         return
     cv2 = _require_cv2()
@@ -508,6 +518,7 @@ def _draw_fake_rgb_frame_counter_overlay(
     *,
     fake_input_frame_total: int | None,
 ) -> None:
+    """Draw fake RGB frame counter overlay."""
     if image.shape[0] < 70 or image.shape[1] < 180:
         return
     # The counter only applies to fake-live replays, where the recording's
@@ -529,6 +540,7 @@ def _draw_fake_rgb_frame_counter_overlay(
 
 
 def _draw_center_label(image: np.ndarray, text: str) -> None:
+    """Draw center label."""
     if image.shape[0] < 60 or image.shape[1] < 160:
         return
     cv2 = _require_cv2()
@@ -545,6 +557,7 @@ def _draw_center_label(image: np.ndarray, text: str) -> None:
 
 
 def _input_rgb_path_from_row(row: Mapping[str, Any], *, capture_dir: Path) -> Path | None:
+    """Return the input RGB path from row."""
     value = row.get("input_rgb_path")
     if value is not None and str(value).strip():
         path = Path(str(value))
@@ -564,6 +577,7 @@ def _input_rgb_path_from_row(row: Mapping[str, Any], *, capture_dir: Path) -> Pa
 
 
 def _input_rgb_frame_from_row(row: Mapping[str, Any], *, capture_dir: Path) -> InputRgbFrame | None:
+    """Return the input RGB frame from row."""
     cv2 = _require_cv2()
     path = _input_rgb_path_from_row(row, capture_dir=capture_dir)
     if path is None or not path.is_file():
@@ -595,6 +609,7 @@ def _input_rgb_frame_from_row(row: Mapping[str, Any], *, capture_dir: Path) -> I
 
 
 def _read_jsonl_rows(path: Path) -> list[dict[str, Any]]:
+    """Read JSONL rows."""
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
@@ -734,6 +749,7 @@ def read_background(
 
 
 def _chunk_frame_count(chunk: Mapping[str, Any]) -> int:
+    """Return the chunk frame count."""
     for key in ("object_points", "controller_points"):
         value = chunk.get(key)
         if value is not None:
@@ -742,6 +758,7 @@ def _chunk_frame_count(chunk: Mapping[str, Any]) -> int:
 
 
 def _source_frame_for_chunk_frame(chunk: Mapping[str, Any], local_frame: int) -> int:
+    """Return the source frame for chunk frame."""
     source_indices = chunk.get("source_frame_indices")
     if source_indices is not None:
         try:
@@ -792,6 +809,7 @@ def _input_display_latency_for_output_index(
     receive_times: Mapping[int, float],
     now_s: float,
 ) -> float | None:
+    """Return the input display latency for output index."""
     if not output_frames:
         return None
     idx = min(max(int(output_index), 0), len(output_frames) - 1)
@@ -811,6 +829,7 @@ def _source_time_for_chunk_frame(
     fps: float,
     allow_frame_index_fallback: bool = False,
 ) -> float | None:
+    """Return the source time for chunk frame."""
     source_timestamps = chunk.get("source_timestamps_s")
     if source_timestamps is not None:
         try:
@@ -882,6 +901,7 @@ def _sam3d_rainbow_colors_bgr(chunk: Mapping[str, Any], point_indices: np.ndarra
     # Colors are keyed to each point's Y height in the chunk's FIRST frame so
     # a point keeps one stable color for the whole chunk. Falls back to a
     # piecewise-linear rainbow when matplotlib is unavailable.
+    """Return the SAM3D rainbow colors BGR."""
     indices = np.asarray(point_indices, dtype=np.int64).reshape(-1)
     if indices.size == 0:
         return np.empty((0, 3), dtype=np.uint8)
@@ -928,6 +948,7 @@ def _sam3d_rainbow_colors_bgr(chunk: Mapping[str, Any], point_indices: np.ndarra
 def _sam3d_rainbow_colors_rgb_float(object_points: np.ndarray, point_count: int) -> np.ndarray:
     # Open3D variant of _sam3d_rainbow_colors_bgr: same first-frame Y-height
     # keying, but returns float RGB in [0, 1] for point-cloud colors.
+    """Return the SAM3D rainbow colors RGB float."""
     count = max(0, int(point_count))
     if count == 0:
         return np.empty((0, 3), dtype=np.float64)
@@ -1010,6 +1031,7 @@ def _draw_sam3d_markers(
     *,
     radius: int,
 ) -> None:
+    """Draw SAM3D markers."""
     if pixels.size == 0:
         return
     cv2 = _require_cv2()
@@ -1028,6 +1050,7 @@ def _draw_sam3d_markers(
 
 
 def _draw_status(image: np.ndarray, text: str) -> None:
+    """Draw status text on an output image."""
     cv2 = _require_cv2()
     origin = (12, 28)
     cv2.putText(image, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 0), 3, cv2.LINE_AA)
@@ -1130,12 +1153,14 @@ class RgbOverlayRenderer:
     """Render object/controller tracks as overlays on RGB background frames."""
 
     def __init__(self, *, camera: CameraModel, args: argparse.Namespace, fps: float) -> None:
+        """Initialize RgbOverlayRenderer."""
         self._camera = camera
         self._args = args
         self._fps = float(fps)
         self._background_frame_paths = self._load_background_frame_paths(args)
 
     def _load_background_frame_paths(self, args: argparse.Namespace) -> dict[int, Path]:
+        """Load background frame paths."""
         capture_dir = _resolve_capture_dir(args)
         input_timeline = _resolve_input_rgb_timeline(args, capture_dir=capture_dir)
         if capture_dir is None or input_timeline is None:
@@ -1178,6 +1203,7 @@ class Sam3DFinalDataRenderer:
         window_name: str = "final_data output",
         window_position: tuple[int, int] | None = None,
     ) -> None:
+        """Initialize Sam3DFinalDataRenderer."""
         self._image_size = (int(image_size[0]), int(image_size[1]))
         self._show_invisible_object_points = bool(show_invisible_object_points)
         self._visible = bool(visible)
@@ -1193,6 +1219,7 @@ class Sam3DFinalDataRenderer:
         self._initialized = False
 
     def _require_open3d(self) -> Any:
+        """Return validated open3d."""
         if self._o3d is None:
             import open3d as o3d
 
@@ -1200,6 +1227,7 @@ class Sam3DFinalDataRenderer:
         return self._o3d
 
     def _ensure_window(self) -> None:
+        """Return the ensure window."""
         if self._vis is not None:
             return
         o3d = self._require_open3d()
@@ -1220,6 +1248,7 @@ class Sam3DFinalDataRenderer:
         self._object_pcd = o3d.geometry.PointCloud()
 
     def _object_visibility(self, chunk: Mapping[str, Any], local_frame: int, point_count: int) -> np.ndarray:
+        """Return the object visibility."""
         if self._show_invisible_object_points:
             return np.ones((point_count,), dtype=bool)
         value = chunk.get("object_visibilities")
@@ -1231,6 +1260,7 @@ class Sam3DFinalDataRenderer:
         return np.ones((point_count,), dtype=bool)
 
     def _update_object_colors(self, object_points: np.ndarray) -> np.ndarray:
+        """Update object colors."""
         point_count = int(object_points.shape[1])
         if self._object_colors is None or self._object_color_count != point_count:
             self._object_colors = _sam3d_rainbow_colors_rgb_float(object_points, point_count)
@@ -1240,6 +1270,7 @@ class Sam3DFinalDataRenderer:
     def _reset_controller_meshes(self, controller_points: np.ndarray) -> None:
         # Controller spheres are cached and translated in place per frame;
         # rebuild them only when the controller point count changes.
+        """Reset controller meshes."""
         assert self._vis is not None
         o3d = self._require_open3d()
         for mesh in self._controller_meshes:
@@ -1254,6 +1285,7 @@ class Sam3DFinalDataRenderer:
             self._vis.add_geometry(sphere, reset_bounding_box=False)
 
     def _set_initial_view(self) -> None:
+        """Set initial view."""
         assert self._vis is not None
         view_control = self._vis.get_view_control()
         view_control.set_front([1, 0, -2])
@@ -1345,6 +1377,7 @@ class Sam3DGuiFinalDataRenderer:
         object_point_size: float = 5.0,
         controller_point_size: float = 18.0,
     ) -> None:
+        """Initialize Sam3DGuiFinalDataRenderer."""
         self._image_size = (int(image_size[0]), int(image_size[1]))
         self._show_invisible_object_points = bool(show_invisible_object_points)
         self._window_name = str(window_name)
@@ -1367,6 +1400,7 @@ class Sam3DGuiFinalDataRenderer:
         self._closed = False
 
     def _require_open3d_gui(self) -> tuple[Any, Any, Any]:
+        """Return validated open3d gui."""
         if self._o3d is None or self._gui is None or self._rendering is None:
             import open3d as o3d
             from open3d.visualization import gui, rendering
@@ -1377,6 +1411,7 @@ class Sam3DGuiFinalDataRenderer:
         return self._o3d, self._gui, self._rendering
 
     def _ensure_window(self) -> None:
+        """Return the ensure window."""
         if self._window is not None:
             return
         _o3d, gui, rendering = self._require_open3d_gui()
@@ -1420,6 +1455,7 @@ class Sam3DGuiFinalDataRenderer:
         self._controller_material.point_size = max(1.0, self._controller_point_size)
 
     def _layout(self, _layout_context: Any) -> None:
+        """Return the layout."""
         if self._window is None or self._scene_widget is None:
             return
         gui = self._gui
@@ -1437,10 +1473,12 @@ class Sam3DGuiFinalDataRenderer:
             self._latency_label.frame = gui.Rect(x, y + title_height, overlay_width, latency_height)
 
     def _on_close(self) -> bool:
+        """Return the on close."""
         self._closed = True
         return True
 
     def _object_visibility(self, chunk: Mapping[str, Any], local_frame: int, point_count: int) -> np.ndarray:
+        """Return the object visibility."""
         if self._show_invisible_object_points:
             return np.ones((point_count,), dtype=bool)
         value = chunk.get("object_visibilities")
@@ -1452,6 +1490,7 @@ class Sam3DGuiFinalDataRenderer:
         return np.ones((point_count,), dtype=bool)
 
     def _update_object_colors(self, object_points: np.ndarray) -> np.ndarray:
+        """Update object colors."""
         point_count = int(object_points.shape[1])
         if self._object_colors is None or self._object_color_count != point_count:
             self._object_colors = _sam3d_rainbow_colors_rgb_float(object_points, point_count)
@@ -1459,12 +1498,14 @@ class Sam3DGuiFinalDataRenderer:
         return self._object_colors
 
     def _set_latency_label(self, latency_s: float | None) -> None:
+        """Set latency label."""
         if self._latency_label is None:
             return
         self._latency_label.text = format_input_display_latency(latency_s)
         self._latency_label.visible = self._show_latency_overlay
 
     def _remove_geometry_if_present(self, name: str) -> None:
+        """Return the remove geometry if present."""
         assert self._scene_widget is not None
         scene = self._scene_widget.scene
         try:
@@ -1474,6 +1515,7 @@ class Sam3DGuiFinalDataRenderer:
             scene.remove_geometry(name)
 
     def _initialize_camera(self, points: np.ndarray) -> None:
+        """Initialize camera."""
         if self._camera_initialized or points.size == 0:
             return
         assert self._scene_widget is not None
@@ -1584,6 +1626,7 @@ def build_frame_renderer(args: argparse.Namespace, *, camera: CameraModel, fps: 
 
 
 def _window_is_open(window_name: str) -> bool:
+    """Return the window is open."""
     cv2 = _require_cv2()
     try:
         return cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) >= 1
@@ -1592,6 +1635,7 @@ def _window_is_open(window_name: str) -> bool:
 
 
 def _key_requests_quit(key: int) -> bool:
+    """Return the key requests quit."""
     return key in (27, ord("q"), ord("Q"))
 
 
@@ -1800,6 +1844,7 @@ def run_side_by_side(args: argparse.Namespace) -> int:
     trackbar_guard = {"updating": False}
 
     def on_trackbar(value: int) -> None:
+        """Return the on trackbar."""
         nonlocal follow_latest
         if trackbar_guard["updating"]:
             return
@@ -1936,6 +1981,7 @@ def resolve_playback_fps(args: argparse.Namespace, camera: CameraModel) -> float
 
 def _chunk_sort_key(path: Path) -> tuple[int, str]:
     # Chunk files are named chunk_<id>.pkl; sort numerically by id.
+    """Return the chunk sort key."""
     stem = path.stem
     try:
         return (int(stem.rsplit("_", 1)[1]), path.name)
@@ -1952,6 +1998,7 @@ def list_available_chunk_paths(online_dir: Path, *, start_chunk: int) -> list[Pa
 
 
 def _run_root_for_online_dir(online_dir: Path) -> Path | None:
+    """Return the run root that owns an online data directory."""
     path = normalize_online_dir(online_dir)
     if path.name != "online_data":
         return None
@@ -2064,6 +2111,7 @@ def _render_output_timeline_frame(
     renderer: Any,
     case_dir: Path,
 ) -> np.ndarray | None:
+    """Render output timeline frame."""
     if not output_frames:
         return None
     idx = min(max(int(output_index), 0), len(output_frames) - 1)
@@ -2072,6 +2120,7 @@ def _render_output_timeline_frame(
 
 
 def _resolve_capture_dir(args: argparse.Namespace) -> Path | None:
+    """Resolve the capture directory for RGB timeline lookup."""
     value = getattr(args, "capture_dir", None)
     if value is None:
         return None
@@ -2082,6 +2131,7 @@ def _resolve_capture_dir(args: argparse.Namespace) -> Path | None:
 
 
 def _resolve_input_rgb_timeline(args: argparse.Namespace, *, capture_dir: Path | None) -> Path | None:
+    """Resolve input RGB timeline."""
     value = getattr(args, "input_rgb_timeline", None)
     if value is not None and str(value).strip():
         return Path(value).expanduser()

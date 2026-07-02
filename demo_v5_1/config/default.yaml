@@ -77,7 +77,7 @@ shape_prior:
 # Optional online point-cloud visualizer.
 visualizer:
   # Visualizer launch mode; window opens an interactive viewer.
-  visualizer_mode: "window"
+  visualizer_mode: "disabled"
   # Conda environment used by the visualizer process.
   visualizer_conda_env: "demo_2_max"
   # Camera index displayed by the visualizer.

@@ -33,6 +33,7 @@ _IMAGE_PROCESSOR_CACHE: dict[
 
 def parse_text_prompts(text_prompt: str) -> list[str]:
     # Lowercase, collapse whitespace, and de-duplicate while keeping order.
+    """Parse text prompts."""
     prompts: list[str] = []
     for chunk in PROMPT_SPLIT_PATTERN.split(text_prompt):
         normalized = " ".join(chunk.strip().lower().split())
@@ -44,6 +45,7 @@ def parse_text_prompts(text_prompt: str) -> list[str]:
 def resolve_sam31_bpe_path(checkpoint_path: str | Path | None = None) -> str | None:
     # Search order: env override, next to the checkpoint, then the sam3 package
     # assets. Returning None lets the model builder use its bundled default.
+    """Resolve the SAM 3.1 BPE vocabulary path."""
     candidates: list[Path] = []
     bpe_override = os.getenv(QQTT_SAM31_BPE_PATH_ENV)
     if bpe_override:
@@ -70,6 +72,7 @@ def resolve_sam31_bpe_path(checkpoint_path: str | Path | None = None) -> str | N
 
 
 def resolve_sam31_checkpoint_path(checkpoint_path: str | Path | None = None) -> str:
+    """Resolve the SAM 3.1 checkpoint path."""
     if checkpoint_path is not None:
         resolved = Path(checkpoint_path).expanduser().resolve()
         if not resolved.is_file():
@@ -143,6 +146,7 @@ def _inference_autocast(torch_module: Any) -> Any:
 
 
 def clear_sam31_image_processor_cache() -> None:
+    """Return the clear sam31 image processor cache."""
     _IMAGE_PROCESSOR_CACHE.clear()
 
 
@@ -165,6 +169,7 @@ def _build_sam31_image_processor(
 ) -> tuple[Any, Any, str, str | None, dict[str, float | bool]]:
     # Each stage is timed separately; the dict lands in the "timing_ms" payload
     # of run_image_segmentation so callers can attribute warmup cost.
+    """Build sam31 image processor."""
     total_start_s = time.perf_counter()
 
     import_start_s = time.perf_counter()
@@ -241,6 +246,7 @@ def _as_numpy_array(value: Any) -> np.ndarray:
     # Duck-typed tensor-to-numpy conversion; works whether the processor hands
     # back torch tensors or plain arrays. bfloat16 has no numpy equivalent, so
     # it is upcast to float32 first.
+    """Coerce the input into numpy array."""
     if hasattr(value, "detach"):
         value = value.detach()
     if hasattr(value, "cpu"):
@@ -262,6 +268,7 @@ def _select_image_output_indices(
 ) -> list[int]:
     # Normalize (H, W) / (N, 1, H, W) mask layouts to (N, H, W); the same
     # normalization is repeated in _collect_image_prompt_masks.
+    """Select image output indices."""
     masks = _as_numpy_array(state.get("masks", []))
     if masks.size == 0:
         return []
@@ -291,6 +298,7 @@ def _collect_image_prompt_masks(
     *,
     selected_indices: set[int],
 ) -> list[np.ndarray]:
+    """Return the collect image prompt masks."""
     masks = _as_numpy_array(state.get("masks", []))
     if masks.size == 0:
         return []
@@ -411,6 +419,7 @@ def segment_image_to_origin_rgba(
     device: str = "cuda",
     reuse_model: bool = False,
 ) -> Path:
+    """Segment image to origin RGBA."""
     prompt_labels = parse_text_prompts(text_prompt)
     if len(prompt_labels) != 1:
         raise ValueError("--TEXT_PROMPT must resolve to exactly one prompt")
@@ -469,6 +478,7 @@ def segment_image_to_origin_rgba(
 
 
 def build_parser() -> ArgumentParser:
+    """Build the command-line argument parser."""
     parser = ArgumentParser()
     parser.add_argument("--img_path", type=str, required=True)
     parser.add_argument("--output_path", type=str, required=True)
@@ -477,6 +487,7 @@ def build_parser() -> ArgumentParser:
 
 
 def main() -> None:
+    """Run the command-line entry point."""
     args = build_parser().parse_args()
     segment_image_to_origin_rgba(
         img_path=args.img_path,

@@ -33,6 +33,7 @@ def _hsv_to_rgb_u8(hue: np.ndarray) -> np.ndarray:
 
 
 def query_rainbow_colors_rgb_u8(query_count: int) -> np.ndarray:
+    """Generate stable uint8 RGB rainbow colors for query ids."""
     count = int(query_count)
     if count <= 0:
         return np.empty((0, 3), dtype=np.uint8)
@@ -42,6 +43,7 @@ def query_rainbow_colors_rgb_u8(query_count: int) -> np.ndarray:
 
 
 def query_rainbow_colors_from_points_yx_rgb_u8(query_points_yx: np.ndarray) -> np.ndarray:
+    """Generate query colors sorted by first-frame YX point order."""
     points = np.asarray(query_points_yx, dtype=np.float32).reshape(-1, 2)
     if len(points) == 0:
         return np.empty((0, 3), dtype=np.uint8)
@@ -59,6 +61,7 @@ def query_rainbow_colors_from_points_yx_rgb_u8(query_points_yx: np.ndarray) -> n
 
 
 def query_rainbow_colors_for_indices(query_indices: np.ndarray, *, query_count: int | None = None) -> np.ndarray:
+    """Return the query rainbow colors for indices."""
     indices = np.asarray(query_indices, dtype=np.int64).reshape(-1)
     if len(indices) == 0:
         return np.empty((0, 3), dtype=np.uint8)

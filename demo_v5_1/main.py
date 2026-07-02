@@ -566,6 +566,7 @@ def resolve_write_input_rgb_timeline(args: argparse.Namespace) -> bool:
 
 
 def _python_command_prefix(conda_env: str | None) -> list[str]:
+    """Return the python command prefix."""
     env_name = "" if conda_env is None else str(conda_env).strip()
     if env_name:
         active_env = os.environ.get("CONDA_DEFAULT_ENV", "").strip()
@@ -947,6 +948,7 @@ def build_main_data_processing_command(
 
 
 def _default_capture_dir(args: argparse.Namespace, base_path: Path) -> Path:
+    """Return the default capture dir."""
     if args.camera_capture_dir is not None:
         return Path(args.camera_capture_dir)
     return base_path / CAPTURE_DIR_NAME
