@@ -154,6 +154,10 @@ When shape prior is enabled:
   `online_data/chunks/chunk_000000.pkl`
 - post-warmup realtime processing starts at frame 1 and continues in the same
   online chunk timeline
+- operator convention: the controller/hand and the object stay still until
+  warmup finishes; the multi-second warmup gap between frame 0 and frame 1 is
+  published as one uniform `1/fps` step and is only correct under that
+  convention
 
 When shape prior is disabled:
 
