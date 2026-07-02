@@ -32,8 +32,7 @@ repo-wide default.
 - `data_process/depth_backends/`: shared FFS geometry + runner used by production alignment and harness scripts
 - `data_process/visualization/`: aligned-case comparison visualization package
 - `data_process/visualization/experiments/`: experiment-only visualization workflows; formal recording/alignment code must not import this package
-- `scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py`: branch-default single-camera realtime point-cloud demo entrypoint
-- `qqtt/demo/realtime_single_camera_pointcloud.py`: shared single-camera realtime point-cloud demo implementation
+- `demo_v5_1/`: single-camera realtime demo runtime (entrypoints, chunking, shape prior, `utils/` helpers)
 - `demo_v3/`: one-camera RealSense masked PCD demo
 - `demo_v3_1/`: one-camera RealSense masked PCD demo
 - `demo_v3_2/`: one-camera FFS masked PCD demo
@@ -41,7 +40,6 @@ repo-wide default.
 - `demo_v4/`: isolated realtime FuturePhysTwin chunk preprocessing demo that
   converts Demo 3.2-style single-camera headless/realtime artifacts into
   FuturePhysTwin-consumable per-window chunk cases
-- `qqtt/demo/single_demo_v3_runtime.py`: shared single Demo 3.x launcher
 - `services/ffs_remote/`: single-camera remote FFS request/response services for demo/profiling use
 - `qqtt/env/camera/`: shared RealSense camera runtime
 - `qqtt/env/camera/preflight.py`: record-time probe/preflight decision table

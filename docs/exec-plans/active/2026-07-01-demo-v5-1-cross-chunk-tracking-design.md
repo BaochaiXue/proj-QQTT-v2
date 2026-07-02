@@ -23,7 +23,7 @@ Create `demo_v5_1/design_spec.md` with a careful explanation of:
   `data_process_sam3d` tracking and final-data semantics.
 
 Inputs:
-Current `demo_v5_1` implementation, `qqtt/demo/phystwin_strict_product.py`,
+Current `demo_v5_1` implementation, `demo_v5_1/phystwin_strict_product.py`,
 `data_process/record_data_align.py`, `data_process_origin/`, and
 `realtime_phystwin` online reader expectations.
 

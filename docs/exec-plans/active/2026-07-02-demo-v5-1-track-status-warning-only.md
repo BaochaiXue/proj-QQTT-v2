@@ -16,7 +16,7 @@ continuation, stop reason, or process exit code.
 
 Inputs:
 Demo v5.1 `track_process_status` emitted by
-`qqtt/demo/phystwin_strict_product.py` and propagated through chunk payloads.
+`demo_v5_1/phystwin_strict_product.py` and propagated through chunk payloads.
 
 Outputs:
 Continuous online chunks and static aggregate data for every materialized

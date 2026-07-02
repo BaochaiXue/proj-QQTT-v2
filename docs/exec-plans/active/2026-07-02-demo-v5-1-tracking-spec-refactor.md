@@ -64,7 +64,7 @@ State changes:
   diagnostic keys replaced by `controller_proxied` (+ static recovery
   neighbor table ids); quality manifest fields become direct/proxied
   counts; metrics dict updated.
-- `qqtt/demo/phystwin_strict_product.py`: streaming selector classes and
+- `demo_v5_1/phystwin_strict_product.py`: streaming selector classes and
   confidence helpers deleted once unreferenced.
 
 Invalid cases:
@@ -90,7 +90,7 @@ Unknowns:
 - [ ] Rewire `chunk_data_stream.py` window builders and runtime creation.
 - [ ] Replace confidence diagnostics in `chunk_data_payload.py`.
 - [ ] Delete unreferenced selector/confidence code in
-      `qqtt/demo/phystwin_strict_product.py`.
+      `demo_v5_1/phystwin_strict_product.py`.
 - [ ] Add `tests/test_demo_v5_1_tracking.py`; update chunk-data tests.
 - [ ] Run focused tests + smoke validation.
 - [ ] Adversarial review of the diff, then commit/push.

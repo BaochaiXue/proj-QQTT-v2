@@ -28,7 +28,7 @@ push target for that work is `git push origin single-camera`.
 
 - Public harness scripts are thin entrypoints. Reusable calibration, geometry,
   point-cloud, render, depth, and demo runtime logic belongs under
-  `data_process/` or `qqtt/demo/`.
+  `data_process/` or `demo_v5_1/`.
 - Every public Python file under `scripts/harness/` must have a `HarnessEntry`
   in `_catalog.py`.
 - One-off or research-style workflows live under `scripts/harness/experiments/`.
