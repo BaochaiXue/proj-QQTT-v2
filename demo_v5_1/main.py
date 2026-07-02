@@ -193,14 +193,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override chunk length in frames. Defaults to round(replay_fps * chunk_seconds).",
     )
     parser.add_argument(
-        "--allow-degraded-online",
-        action="store_true",
-        help=(
-            "Append degraded track-process chunks to online_data. Invalid chunks "
-            "are always diagnostic-only."
-        ),
-    )
-    parser.add_argument(
         "--base-path", type=Path, default=DEFAULT_DATA_PROCESS_BASE_PATH
     )
     parser.add_argument("--case-prefix", default=DEFAULT_CASE_PREFIX)
@@ -711,7 +703,6 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "chunk_seconds": float(args.chunk_seconds),
         "chunk_poll_interval_s": float(args.chunk_poll_interval_s),
         "chunk_frame_count": chunk_frame_count,
-        "allow_degraded_online": bool(args.allow_degraded_online),
         "base_path": str(args.base_path),
         "case_prefix": str(args.case_prefix),
         "output_format": "online-primary-static-case",
@@ -1079,7 +1070,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             mask_radius_outlier_filter=bool(args.mask_radius_outlier_filter),
             mask_radius_outlier_radius_m=float(args.mask_radius_outlier_radius_m),
             mask_radius_outlier_nb_points=int(args.mask_radius_outlier_nb_points),
-            allow_degraded_online=bool(args.allow_degraded_online),
         )
         summary = {
             "demo_version": "demo_v5_1",
@@ -1094,7 +1084,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             "shape_prior_points_npz": str(resolve_shape_prior_points_npz(args)),
             "startup_output_cleanup": startup_output_cleanup,
             "chunk_frame_count": int(chunk_frame_count),
-            "allow_degraded_online": bool(args.allow_degraded_online),
             "max_chunks": args.max_chunks,
             "chunk_count": int(len(manifests)),
             "chunks": manifests,
@@ -1106,9 +1095,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             encoding="utf-8",
         )
         print(json.dumps(summary, indent=2, sort_keys=True))
-        return (
-            1 if str(summary.get("track_process_status", "normal")) == "invalid" else 0
-        )
+        return 0
 
     capture_dir = _default_capture_dir(args, base_path)
     capture_dir.mkdir(parents=True, exist_ok=True)
@@ -1197,7 +1184,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             mask_radius_outlier_radius_m=float(args.mask_radius_outlier_radius_m),
             mask_radius_outlier_nb_points=int(args.mask_radius_outlier_nb_points),
             on_chunk_written=on_chunk_written,
-            allow_degraded_online=bool(args.allow_degraded_online),
         )
     finally:
         main_data_processing_return_code = _stop_process(main_data_processing)
@@ -1205,12 +1191,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             visualizer_return_code = visualizer_process.poll()
             visualizer_left_running = visualizer_return_code is None
     runtime_summary = _runtime_chunk_summary(manifests)
-    track_process_invalid = (
-        str(runtime_summary.get("track_process_status", "normal")) == "invalid"
-    )
-    if track_process_invalid:
-        stop_reason = "track_process_invalid"
-    elif args.max_chunks is not None and len(manifests) >= int(args.max_chunks):
+    if args.max_chunks is not None and len(manifests) >= int(args.max_chunks):
         stop_reason = "max_chunks_reached"
     elif main_data_processing_return_code == 0:
         stop_reason = "main_data_processing_completed"
@@ -1263,7 +1244,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "startup_output_cleanup": startup_output_cleanup,
         "chunk_frame_count": int(chunk_frame_count),
         "chunk_poll_interval_s": float(args.chunk_poll_interval_s),
-        "allow_degraded_online": bool(args.allow_degraded_online),
         "max_chunks": args.max_chunks,
         "chunk_count": int(len(manifests)),
         "chunks": manifests,
@@ -1298,8 +1278,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         encoding="utf-8",
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
-    if track_process_invalid:
-        return 1
     if main_data_processing_return_code not in (0, None) and not manifests:
         return int(main_data_processing_return_code)
     if args.max_chunks is not None and len(manifests) < int(args.max_chunks):

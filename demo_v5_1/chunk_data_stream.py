@@ -189,14 +189,6 @@ def _trim_warmup_delayed_rows(rows: Sequence[Mapping[str, Any]]) -> WarmupTrimRe
     Live RealSense can also emit one strict pair before color-aligned PCD is
     ready; that invalid row has masks but zero controller/object points and must
     not anchor controller FPS.
-
-    Operator convention: the kept warmup row and the first realtime row are
-    published as one uniform ``1/fps`` step even though tens of wall-clock
-    seconds of shape-prior warmup separate their source frames. This is only
-    sound because the operator keeps the controller/hand and the object still
-    until warmup finishes; under that convention frame 0 and frame 1 observe
-    the same static scene and no false inter-frame motion is created. Motion
-    during warmup is out of contract and would surface as a frame-0 teleport.
     """
     trimmed = [dict(row) for row in rows]
     skipped = 0
@@ -719,23 +711,6 @@ def _controller_track_manifest_fields(
     return payload
 
 
-def _track_process_invalid(manifest: Mapping[str, Any]) -> bool:
-    return str(manifest.get("track_process_status", "normal")) == "invalid"
-
-
-def _track_process_online_publish_skip_reason(
-    manifest: Mapping[str, Any],
-    *,
-    allow_degraded_online: bool = False,
-) -> str | None:
-    status = str(manifest.get("track_process_status", "normal"))
-    if status == "invalid":
-        return "track_process_invalid"
-    if status == "degraded" and not bool(allow_degraded_online):
-        return "track_process_degraded"
-    return None
-
-
 def _object_track_manifest_fields(
     track_process_data: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -1123,7 +1098,6 @@ def _write_chunk_from_rows(
     prepared_frames: Sequence[strict.PreparedPhysTwinFrame | None] | None = None,
     backlog_chunks: Callable[[], int] | None = None,
     online_writer: ChunkDataWriter | None = None,
-    allow_degraded_online: bool = False,
     object_track_selector: strict.StreamingObjectTrackSelector | None = None,
     controller_track_selector: strict.StreamingControllerTrackSelector | None = None,
     session_query_schema: dict[str, np.ndarray] | None = None,
@@ -1239,28 +1213,6 @@ def _write_chunk_from_rows(
         timing_floor_s,
     )
     manifest["final_data_written_wall_s"] = float(final_data_written_wall_s)
-    skip_reason = _track_process_online_publish_skip_reason(
-        manifest,
-        allow_degraded_online=bool(allow_degraded_online),
-    )
-    if skip_reason is not None:
-        manifest.update(
-            {
-                "online_publish_skipped": True,
-                "online_publish_skip_reason": str(skip_reason),
-            }
-        )
-        publish_wall_s = max(
-            _relative_wall_s(float(wall_time_origin_s)), final_data_written_wall_s
-        )
-        manifest["publish_wall_s"] = float(publish_wall_s)
-        manifest["publish_latency_ms"] = float(
-            (publish_wall_s - window_closed_wall_s) * 1000.0
-        )
-        manifest["publish_lag_ms"] = float(
-            (publish_wall_s - source_window_end_s) * 1000.0
-        )
-        return manifest
     if online_writer is not None:
         online_result = online_writer.commit_chunk_data(
             final_data,
@@ -1308,7 +1260,6 @@ def write_chunk_data_from_headless_capture(
     on_chunk_written: Callable[[dict[str, Any]], None] | None = None,
     write_online_output: bool = True,
     online_case_name: str | None = None,
-    allow_degraded_online: bool = False,
 ) -> list[dict[str, Any]]:
     """Convert a completed headless capture into online final_data chunks."""
     capture = Path(capture_dir)
@@ -1351,7 +1302,6 @@ def write_chunk_data_from_headless_capture(
                 if max_chunks is not None
                 else (len(rows_to_process) // chunk_size) * chunk_size
             ),
-            allow_degraded=bool(allow_degraded_online),
         )
     object_track_selector = strict.StreamingObjectTrackSelector(
         volume_sample_size=0.005
@@ -1403,20 +1353,14 @@ def write_chunk_data_from_headless_capture(
                 )
             ),
             online_writer=online_writer,
-            allow_degraded_online=bool(allow_degraded_online),
             object_track_selector=object_track_selector,
             controller_track_selector=controller_track_selector,
             session_query_schema=session_query_schema,
             warmup_skipped_rows=warmup_skipped_rows,
         )
         manifests.append(manifest)
-        if (
-            not bool(manifest.get("online_publish_skipped", False))
-            and on_chunk_written is not None
-        ):
+        if on_chunk_written is not None:
             on_chunk_written(manifest)
-        if _track_process_invalid(manifest):
-            break
         chunk_index += 1
         row_start = row_idx + 1
         row_buffer = []
@@ -1472,7 +1416,6 @@ def stream_chunk_data_from_headless_capture(
     on_chunk_written: Callable[[dict[str, Any]], None] | None = None,
     write_online_output: bool = True,
     online_case_name: str | None = None,
-    allow_degraded_online: bool = False,
 ) -> list[dict[str, Any]]:
     """Tail a live headless capture and publish chunks as windows close."""
     capture = Path(capture_dir)
@@ -1506,7 +1449,6 @@ def stream_chunk_data_from_headless_capture(
             num_frames_total=(
                 None if max_chunks is None else int(max_chunks) * int(chunk_size)
             ),
-            allow_degraded=bool(allow_degraded_online),
         )
     object_track_selector = strict.StreamingObjectTrackSelector(
         volume_sample_size=0.005
@@ -1577,28 +1519,20 @@ def stream_chunk_data_from_headless_capture(
                     )
                 ),
                 online_writer=online_writer,
-                allow_degraded_online=bool(allow_degraded_online),
                 object_track_selector=object_track_selector,
                 controller_track_selector=controller_track_selector,
                 session_query_schema=session_query_schema,
                 warmup_skipped_rows=warmup_start_filter.skipped_rows,
             )
             manifests.append(manifest)
-            if (
-                not bool(manifest.get("online_publish_skipped", False))
-                and on_chunk_written is not None
-            ):
+            if on_chunk_written is not None:
                 on_chunk_written(manifest)
-            if _track_process_invalid(manifest):
-                break
             chunk_index += 1
             row_start = next_row_idx
             row_buffer = []
             prepared_buffer = []
             if max_chunks is not None and len(manifests) >= int(max_chunks):
                 break
-        if manifests and _track_process_invalid(manifests[-1]):
-            break
         if max_chunks is not None and len(manifests) >= int(max_chunks):
             break
         if capture_finished() and not saw_new_rows:

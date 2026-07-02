@@ -252,7 +252,6 @@ class ChunkDataWriter:
         num_frames_total: int | None = None,
         source_start_frame: int = 0,
         source_frame_step: int = 1,
-        allow_degraded: bool = False,
     ) -> None:
         if int(chunk_size) <= 0:
             raise ValueError("chunk_size must be positive")
@@ -266,7 +265,6 @@ class ChunkDataWriter:
         )
         self.source_start_frame = int(source_start_frame)
         self.source_frame_step = int(source_frame_step)
-        self.allow_degraded = bool(allow_degraded)
         self.online_dir = self.base_path / "online_data"
         self.chunks_dir = self.online_dir / "chunks"
         self.static_case_dir = self.base_path / "data"

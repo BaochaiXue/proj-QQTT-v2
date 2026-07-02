@@ -4,6 +4,7 @@ import pickle
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -14,6 +15,7 @@ def _minimal_chunk_data_window(
     frame_count: int = 1,
     chunk_index: int = 0,
     source_frame_indices: list[int] | None = None,
+    track_process_status: str | None = None,
 ):
     object_points = np.asarray(
         [
@@ -46,6 +48,10 @@ def _minimal_chunk_data_window(
         "object_track_query_indices": np.asarray([10], dtype=np.int64),
         "controller_track_query_indices": np.asarray([20], dtype=np.int64),
     }
+    if track_process_status is not None:
+        track_process_data["track_process_status"] = np.asarray(
+            str(track_process_status)
+        )
     return chunk_data_payload.ChunkDataWindow(
         track_process_data=track_process_data,
         fps=5,
@@ -127,6 +133,253 @@ class DemoV51ChunkDataTest(unittest.TestCase):
             self.assertEqual([], sorted(root.glob("demo_v5_1_chunk_*")))
             self.assertFalse((root / "online_data" / "demo_v5_1").exists())
             self.assertFalse((root / "data" / "demo_v5_1").exists())
+
+    def test_track_process_status_is_metadata_only_for_writer(self) -> None:
+        from demo_v5_1 import chunk_data_output
+        from demo_v5_1 import chunk_data_payload
+
+        final_data, track_process, _ = chunk_data_payload.build_chunk_data_payload(
+            _minimal_chunk_data_window(chunk_data_payload)
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = chunk_data_output.ChunkDataWriter(
+                base_path=tmpdir,
+                case_name="demo_v5_1",
+                chunk_size=1,
+                num_frames_total=2,
+            )
+            first_track = dict(track_process)
+            first_track["track_process_status"] = "degraded"
+            first = output.commit_chunk_data(
+                final_data,
+                first_track,
+                source_frame_indices=[0],
+                status="recording",
+            )
+            second_track = dict(track_process)
+            second_track["track_process_status"] = "invalid"
+            second = output.commit_chunk_data(
+                final_data,
+                second_track,
+                source_frame_indices=[1],
+                status="recording",
+            )
+            output.finish()
+
+            root = Path(tmpdir)
+            with Path(first["online_chunk_path"]).open("rb") as handle:
+                first_chunk = pickle.load(handle)
+            with Path(second["online_chunk_path"]).open("rb") as handle:
+                second_chunk = pickle.load(handle)
+            with (root / "data" / "final_data.pkl").open("rb") as handle:
+                static_data = pickle.load(handle)
+
+            self.assertEqual("degraded", first_chunk["track_process_status"])
+            self.assertEqual("invalid", second_chunk["track_process_status"])
+            self.assertEqual(0, first_chunk["start_frame"])
+            self.assertEqual(1, first_chunk["end_frame"])
+            self.assertEqual(1, second_chunk["start_frame"])
+            self.assertEqual(2, second_chunk["end_frame"])
+            self.assertEqual([0], first_chunk["source_frame_indices"])
+            self.assertEqual([1], second_chunk["source_frame_indices"])
+            self.assertEqual(
+                2,
+                int(np.asarray(static_data["object_points"]).shape[0]),
+            )
+            self.assertEqual("invalid", static_data["track_process_status"])
+
+    def test_headless_conversion_publishes_all_track_statuses(self) -> None:
+        from demo_v5_1 import chunk_data_payload
+        from demo_v5_1 import chunk_data_stream
+
+        statuses = iter(("normal", "invalid", "degraded"))
+        callbacks: list[dict[str, object]] = []
+
+        def fake_window(*args: object, **kwargs: object):
+            return _minimal_chunk_data_window(
+                chunk_data_payload,
+                chunk_index=len(callbacks),
+                source_frame_indices=[len(callbacks)],
+                track_process_status=next(statuses),
+            )
+
+        rows = [
+            {"seq": idx, "source_frame_index": idx, "source_timestamp_s": idx * 0.2}
+            for idx in range(3)
+        ]
+        metadata = {
+            "serial_numbers": ["test-camera"],
+            "depth_backend": "test-depth",
+        }
+        shape_points = np.asarray([[0.0, 0.0, 0.0]], dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                mock.patch.object(
+                    chunk_data_stream,
+                    "_read_json_file_stable",
+                    return_value=metadata,
+                ),
+                mock.patch.object(
+                    chunk_data_stream,
+                    "_shape_points_from_capture",
+                    return_value=(shape_points, shape_points),
+                ),
+                mock.patch.object(
+                    chunk_data_stream,
+                    "_iter_jsonl",
+                    return_value=iter(rows),
+                ),
+                mock.patch.object(
+                    chunk_data_stream,
+                    "_prepared_frame_from_row",
+                    return_value=None,
+                ),
+                mock.patch.object(
+                    chunk_data_stream,
+                    "_chunk_data_window_from_rows",
+                    side_effect=fake_window,
+                ),
+            ):
+                manifests = chunk_data_stream.write_chunk_data_from_headless_capture(
+                    Path(tmpdir) / "capture",
+                    base_path=tmpdir,
+                    case_prefix="demo_v5_1",
+                    chunk_frame_count=1,
+                    fps=5,
+                    max_chunks=3,
+                    on_chunk_written=lambda manifest: callbacks.append(
+                        dict(manifest)
+                    ),
+                )
+
+            root = Path(tmpdir)
+            self.assertEqual(3, len(manifests))
+            self.assertEqual(3, len(callbacks))
+            self.assertEqual(
+                ["normal", "invalid", "degraded"],
+                [manifest["track_process_status"] for manifest in manifests],
+            )
+            self.assertEqual(
+                [False, False, False],
+                [manifest["online_publish_skipped"] for manifest in manifests],
+            )
+            self.assertFalse(any("online_publish_skip_reason" in item for item in manifests))
+            self.assertEqual(
+                [0, 1, 2],
+                [manifest["online_chunk_id"] for manifest in manifests],
+            )
+            for idx in range(3):
+                self.assertTrue(
+                    (root / "online_data" / "chunks" / f"chunk_{idx:06d}.pkl").is_file()
+                )
+            with (root / "data" / "final_data.pkl").open("rb") as handle:
+                static_data = pickle.load(handle)
+            self.assertEqual(3, int(np.asarray(static_data["object_points"]).shape[0]))
+
+    def test_live_stream_publishes_all_track_statuses(self) -> None:
+        from demo_v5_1 import chunk_data_payload
+        from demo_v5_1 import chunk_data_stream
+
+        statuses = iter(("normal", "invalid", "degraded"))
+        callbacks: list[dict[str, object]] = []
+
+        def fake_window(*args: object, **kwargs: object):
+            return _minimal_chunk_data_window(
+                chunk_data_payload,
+                chunk_index=len(callbacks),
+                source_frame_indices=[len(callbacks)],
+                track_process_status=next(statuses),
+            )
+
+        rows = [
+            {"seq": idx, "source_frame_index": idx, "source_timestamp_s": idx * 0.2}
+            for idx in range(3)
+        ]
+        read_calls = 0
+
+        def fake_read_jsonl_from_offset(*args: object, **kwargs: object):
+            nonlocal read_calls
+            read_calls += 1
+            if read_calls == 1:
+                return rows, 123
+            return [], 123
+
+        metadata = {
+            "serial_numbers": ["test-camera"],
+            "depth_backend": "test-depth",
+        }
+        shape_points = np.asarray([[0.0, 0.0, 0.0]], dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                mock.patch.object(
+                    chunk_data_stream,
+                    "_wait_for_metadata",
+                    return_value=metadata,
+                ),
+                mock.patch.object(
+                    chunk_data_stream,
+                    "_read_jsonl_from_offset",
+                    side_effect=fake_read_jsonl_from_offset,
+                ),
+                mock.patch.object(
+                    chunk_data_stream,
+                    "_filter_warmup_start_rows",
+                    side_effect=lambda state, new_rows, capture_finished: new_rows,
+                ),
+                mock.patch.object(
+                    chunk_data_stream,
+                    "_shape_points_for_chunk",
+                    return_value=(metadata, shape_points, shape_points),
+                ),
+                mock.patch.object(
+                    chunk_data_stream,
+                    "_prepared_frame_from_row",
+                    return_value=None,
+                ),
+                mock.patch.object(
+                    chunk_data_stream,
+                    "_chunk_data_window_from_rows",
+                    side_effect=fake_window,
+                ),
+            ):
+                manifests = chunk_data_stream.stream_chunk_data_from_headless_capture(
+                    Path(tmpdir) / "capture",
+                    base_path=tmpdir,
+                    case_prefix="demo_v5_1",
+                    chunk_frame_count=1,
+                    fps=5,
+                    max_chunks=3,
+                    capture_finished=lambda: True,
+                    on_chunk_written=lambda manifest: callbacks.append(
+                        dict(manifest)
+                    ),
+                )
+
+            root = Path(tmpdir)
+            self.assertEqual(3, len(manifests))
+            self.assertEqual(3, len(callbacks))
+            self.assertEqual(
+                ["normal", "invalid", "degraded"],
+                [manifest["track_process_status"] for manifest in manifests],
+            )
+            self.assertEqual(
+                [False, False, False],
+                [manifest["online_publish_skipped"] for manifest in manifests],
+            )
+            self.assertFalse(any("online_publish_skip_reason" in item for item in manifests))
+            self.assertEqual(
+                [0, 1, 2],
+                [manifest["online_chunk_id"] for manifest in manifests],
+            )
+            for idx in range(3):
+                self.assertTrue(
+                    (root / "online_data" / "chunks" / f"chunk_{idx:06d}.pkl").is_file()
+                )
+            with (root / "data" / "final_data.pkl").open("rb") as handle:
+                static_data = pickle.load(handle)
+            self.assertEqual(3, int(np.asarray(static_data["object_points"]).shape[0]))
 
     def test_warmup_trim_returns_delayed_source_frame_zero(self) -> None:
         from demo_v5_1 import chunk_data_stream

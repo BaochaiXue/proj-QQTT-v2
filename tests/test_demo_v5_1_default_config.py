@@ -112,6 +112,7 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
             "--realtime-gpu-mode",
             "--warmup-gpu-mode",
             "--main-realtime-data-process-cuda-visible-devices",
+            "--allow-degraded-online",
             "--" + "-".join(("camera", "cuda", "visible", "devices")),
             "--" + "-".join(("shape", "prior", "cuda", "visible", "devices")),
             "--" + "-".join(("point", "viewer", "mode")),
@@ -133,6 +134,7 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
         self.assertFalse(hasattr(parsed, "gpu_mode"))
         self.assertFalse(hasattr(parsed, "realtime_gpu_mode"))
         self.assertFalse(hasattr(parsed, "warmup_gpu_mode"))
+        self.assertFalse(hasattr(parsed, "allow_degraded_online"))
         self.assertFalse(
             hasattr(parsed, "_".join(("camera", "cuda", "visible", "devices")))
         )
@@ -147,6 +149,63 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
             runner.DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
             parsed.shape_prior_warmup_cuda_visible_devices,
         )
+        self.assertNotIn("allow_degraded_online", runner._contract(parsed))
+
+    def test_track_process_status_does_not_change_main_exit(self) -> None:
+        from demo_v5_1 import main as runner
+
+        class CompletedProcess:
+            returncode = 0
+            pid = None
+
+            def poll(self) -> int:
+                return 0
+
+        invalid_manifest = {
+            "chunk_name": "demo_v5_1_online_chunk_0000",
+            "track_process_status": "invalid",
+            "online_publish_skipped": False,
+            "publish_wall_s": 1.0,
+            "backlog_chunks": 0,
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                mock.patch.object(
+                    runner.subprocess,
+                    "Popen",
+                    return_value=CompletedProcess(),
+                ),
+                mock.patch.object(
+                    runner,
+                    "stream_chunk_data_from_headless_capture",
+                    return_value=[invalid_manifest],
+                ),
+                mock.patch.dict(runner.os.environ, {}, clear=True),
+            ):
+                exit_code = runner.main(
+                    [
+                        "--base-path",
+                        tmpdir,
+                        "--case-prefix",
+                        "status_warning_only",
+                        "--max-chunks",
+                        "1",
+                        "--no-shape-prior-warmup",
+                        "--visualizer-mode",
+                        "disabled",
+                    ]
+                )
+
+            summary_path = Path(tmpdir) / "run_summary.json"
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual("invalid", summary["track_process_status"])
+        self.assertEqual(1, summary["track_process_status_counts"]["invalid"])
+        self.assertEqual(0, summary["online_publish_skipped_chunk_count"])
+        self.assertEqual("max_chunks_reached", summary["main_data_processing_stop_reason"])
 
     def test_legacy_camera_runtime_names_are_not_accepted(self) -> None:
         from demo_v5_1 import main as runner
