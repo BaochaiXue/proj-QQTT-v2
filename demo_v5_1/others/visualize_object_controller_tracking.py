@@ -35,6 +35,10 @@ DEFAULT_FPS = 5.0
 DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 900
 DEFAULT_CONTROLLER_RADIUS_M = 0.01
+OVERLAY_ALPHA = 0.58
+VISIBILITY_INVALID_COLOR = (1.0, 0.0, 0.0)
+MOTION_INVALID_COLOR = (0.66, 0.32, 0.10)
+OVERLAY_POINT_SIZE = 6.0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -273,6 +277,112 @@ def _sphere_mesh(
     return mesh
 
 
+def _constant_colors(point_count: int, color: tuple[float, float, float]) -> np.ndarray:
+    """Return one RGB color repeated for each point."""
+    if int(point_count) <= 0:
+        return np.empty((0, 3), dtype=np.float64)
+    rgb = np.asarray(color, dtype=np.float64).reshape(1, 3)
+    return np.repeat(rgb, int(point_count), axis=0)
+
+
+def _point_cloud(
+    points: np.ndarray,
+    colors: np.ndarray | tuple[float, float, float],
+) -> o3d.geometry.PointCloud:
+    """Return an Open3D point cloud."""
+    points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    if isinstance(colors, tuple):
+        color_array = _constant_colors(int(points.shape[0]), colors)
+    else:
+        color_array = np.asarray(colors, dtype=np.float64).reshape(-1, 3)
+    if color_array.shape != points.shape:
+        raise ValueError(
+            f"point cloud colors must have shape {points.shape}, got "
+            f"{color_array.shape}"
+        )
+    cloud = o3d.geometry.PointCloud()
+    cloud.points = o3d.utility.Vector3dVector(points)
+    cloud.colors = o3d.utility.Vector3dVector(color_array)
+    return cloud
+
+
+def _capture_rgb(
+    visualizer: o3d.visualization.Visualizer,
+    *,
+    width: int,
+    height: int,
+) -> np.ndarray:
+    """Capture one RGB frame from an Open3D visualizer."""
+    visualizer.poll_events()
+    visualizer.update_renderer()
+    frame = np.asarray(visualizer.capture_screen_float_buffer(do_render=True))
+    frame_u8 = np.clip(frame * 255.0, 0.0, 255.0).astype(np.uint8)
+    if frame_u8.shape[:2] != (int(height), int(width)):
+        frame_u8 = cv2.resize(
+            frame_u8,
+            (int(width), int(height)),
+            interpolation=cv2.INTER_AREA,
+        )
+    return frame_u8
+
+
+def _blend_overlay(
+    base_rgb: np.ndarray,
+    overlay_rgb: np.ndarray,
+    *,
+    alpha: float,
+) -> np.ndarray:
+    """Blend non-black overlay pixels over a base RGB frame."""
+    if base_rgb.shape != overlay_rgb.shape:
+        raise ValueError(
+            f"overlay shape {overlay_rgb.shape} does not match base "
+            f"shape {base_rgb.shape}"
+        )
+    overlay_mask = np.any(overlay_rgb > 8, axis=2)
+    if not bool(np.any(overlay_mask)):
+        return base_rgb
+    blended = base_rgb.astype(np.float32)
+    overlay = overlay_rgb.astype(np.float32)
+    blended[overlay_mask] = (
+        (1.0 - float(alpha)) * blended[overlay_mask]
+        + float(alpha) * overlay[overlay_mask]
+    )
+    return np.clip(blended, 0.0, 255.0).astype(np.uint8)
+
+
+def _draw_frame_label(
+    frame_bgr: np.ndarray,
+    *,
+    frame_idx: int,
+    frame_count: int,
+    source_frame: int,
+) -> None:
+    """Draw the output frame label in the upper-left corner."""
+    label = f"frame {int(frame_idx)}/{int(frame_count) - 1} | source {int(source_frame)}"
+    origin = (24, 38)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(
+        frame_bgr,
+        label,
+        origin,
+        font,
+        0.82,
+        (0, 0, 0),
+        5,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        frame_bgr,
+        label,
+        origin,
+        font,
+        0.82,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+
+
 def _object_mask_for_frame(
     tracking: dict[str, Any],
     frame_idx: int,
@@ -306,10 +416,19 @@ def render_tracking_video(
         raise ValueError("controller_radius_m must be positive")
 
     object_points = np.asarray(tracking["object_points"], dtype=np.float64)
+    object_visibilities = np.asarray(tracking["object_visibilities"], dtype=bool)
+    object_motions_valid = np.asarray(tracking["object_motions_valid"], dtype=bool)
     controller_points = np.asarray(tracking["controller_points"], dtype=np.float64)
     frame_count = int(object_points.shape[0])
     if int(controller_points.shape[0]) != frame_count:
         raise ValueError("object/controller frame count mismatch")
+    if object_visibilities.shape != object_points.shape[:2]:
+        raise ValueError("object_visibilities shape mismatch")
+    if object_motions_valid.shape != object_points.shape[:2]:
+        raise ValueError("object_motions_valid shape mismatch")
+    source_frame_indices = [int(value) for value in tracking["source_frame_indices"]]
+    if len(source_frame_indices) != frame_count:
+        raise ValueError("source_frame_indices length mismatch")
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -318,6 +437,7 @@ def render_tracking_video(
 
     rainbow_colors = _rainbow_colors_from_first_frame_y(object_points)
     visualizer = o3d.visualization.Visualizer()
+    overlay_visualizer = o3d.visualization.Visualizer()
     window_created = visualizer.create_window(
         window_name="Demo v5.1 object/controller tracking",
         width=int(width),
@@ -326,17 +446,27 @@ def render_tracking_video(
     )
     if not window_created:
         raise RuntimeError("Open3D failed to create a headless visualization window")
+    overlay_window_created = overlay_visualizer.create_window(
+        window_name="Demo v5.1 object/controller tracking overlays",
+        width=int(width),
+        height=int(height),
+        visible=False,
+    )
+    if not overlay_window_created:
+        visualizer.destroy_window()
+        raise RuntimeError("Open3D failed to create a headless overlay window")
 
     writer: cv2.VideoWriter | None = None
     try:
-        object_cloud = o3d.geometry.PointCloud()
         first_mask = _object_mask_for_frame(
             tracking,
             0,
             object_filter=str(object_filter),
         )
-        object_cloud.points = o3d.utility.Vector3dVector(object_points[0, first_mask])
-        object_cloud.colors = o3d.utility.Vector3dVector(rainbow_colors[first_mask])
+        object_cloud = _point_cloud(
+            object_points[0, first_mask],
+            rainbow_colors[first_mask],
+        )
         visualizer.add_geometry(object_cloud)
 
         controller_meshes: list[o3d.geometry.TriangleMesh] = []
@@ -355,10 +485,37 @@ def render_tracking_video(
         options.background_color = np.asarray([0.0, 0.0, 0.0])
         options.point_size = 3.0
 
+        visibility_invalid = ~object_visibilities[0]
+        motion_invalid = object_visibilities[0] & ~object_motions_valid[0]
+        overlay_anchor_points = np.concatenate(
+            [object_points[0, first_mask], controller_points[0]],
+            axis=0,
+        )
+        overlay_anchor_cloud = _point_cloud(
+            overlay_anchor_points,
+            (0.0, 0.0, 0.0),
+        )
+        visibility_invalid_cloud = _point_cloud(
+            object_points[0, visibility_invalid],
+            VISIBILITY_INVALID_COLOR,
+        )
+        motion_invalid_cloud = _point_cloud(
+            object_points[0, motion_invalid],
+            MOTION_INVALID_COLOR,
+        )
+        overlay_visualizer.add_geometry(overlay_anchor_cloud)
+        overlay_visualizer.add_geometry(visibility_invalid_cloud)
+        overlay_visualizer.add_geometry(motion_invalid_cloud)
+        overlay_options = overlay_visualizer.get_render_option()
+        overlay_options.background_color = np.asarray([0.0, 0.0, 0.0])
+        overlay_options.point_size = float(OVERLAY_POINT_SIZE)
+
         view_control = visualizer.get_view_control()
-        view_control.set_front([1.0, 0.0, -2.0])
-        view_control.set_up([0.0, 0.0, -1.0])
-        view_control.set_zoom(1.0)
+        overlay_view_control = overlay_visualizer.get_view_control()
+        for current_view_control in (view_control, overlay_view_control):
+            current_view_control.set_front([1.0, 0.0, -2.0])
+            current_view_control.set_up([0.0, 0.0, -1.0])
+            current_view_control.set_zoom(1.0)
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(
@@ -382,6 +539,32 @@ def render_tracking_video(
             object_cloud.colors = o3d.utility.Vector3dVector(rainbow_colors[mask])
             visualizer.update_geometry(object_cloud)
 
+            visibility_invalid = ~object_visibilities[frame_idx]
+            motion_invalid = (
+                object_visibilities[frame_idx]
+                & ~object_motions_valid[frame_idx]
+            )
+            visibility_invalid_cloud.points = o3d.utility.Vector3dVector(
+                object_points[frame_idx, visibility_invalid]
+            )
+            visibility_invalid_cloud.colors = o3d.utility.Vector3dVector(
+                _constant_colors(
+                    int(np.count_nonzero(visibility_invalid)),
+                    VISIBILITY_INVALID_COLOR,
+                )
+            )
+            overlay_visualizer.update_geometry(visibility_invalid_cloud)
+            motion_invalid_cloud.points = o3d.utility.Vector3dVector(
+                object_points[frame_idx, motion_invalid]
+            )
+            motion_invalid_cloud.colors = o3d.utility.Vector3dVector(
+                _constant_colors(
+                    int(np.count_nonzero(motion_invalid)),
+                    MOTION_INVALID_COLOR,
+                )
+            )
+            overlay_visualizer.update_geometry(motion_invalid_cloud)
+
             for point_idx, point in enumerate(controller_points[frame_idx]):
                 current = np.asarray(point, dtype=np.float64)
                 controller_meshes[point_idx].translate(
@@ -390,25 +573,36 @@ def render_tracking_video(
                 visualizer.update_geometry(controller_meshes[point_idx])
                 previous_centers[point_idx] = current.copy()
 
-            visualizer.poll_events()
-            visualizer.update_renderer()
-            frame = np.asarray(
-                visualizer.capture_screen_float_buffer(do_render=True)
+            base_rgb = _capture_rgb(
+                visualizer,
+                width=int(width),
+                height=int(height),
             )
-            frame_u8 = np.clip(frame * 255.0, 0.0, 255.0).astype(np.uint8)
-            if frame_u8.shape[:2] != (int(height), int(width)):
-                frame_u8 = cv2.resize(
-                    frame_u8,
-                    (int(width), int(height)),
-                    interpolation=cv2.INTER_AREA,
-                )
-            writer.write(cv2.cvtColor(frame_u8, cv2.COLOR_RGB2BGR))
+            overlay_rgb = _capture_rgb(
+                overlay_visualizer,
+                width=int(width),
+                height=int(height),
+            )
+            blended_rgb = _blend_overlay(
+                base_rgb,
+                overlay_rgb,
+                alpha=float(OVERLAY_ALPHA),
+            )
+            frame_bgr = cv2.cvtColor(blended_rgb, cv2.COLOR_RGB2BGR)
+            _draw_frame_label(
+                frame_bgr,
+                frame_idx=frame_idx,
+                frame_count=frame_count,
+                source_frame=source_frame_indices[frame_idx],
+            )
+            writer.write(frame_bgr)
             if (frame_idx + 1) % 100 == 0 or frame_idx + 1 == frame_count:
                 print(f"rendered {frame_idx + 1}/{frame_count}", flush=True)
     finally:
         if writer is not None:
             writer.release()
         visualizer.destroy_window()
+        overlay_visualizer.destroy_window()
 
 
 def build_summary(
