@@ -13,10 +13,10 @@ PYTORCH3D_REF="${DEMO_V5_PYTORCH3D_REF:-v0.7.9}"
 
 usage() {
     cat <<'EOF'
-Install or update Demo v5 conda environments.
+Install or update Demo v5.1 conda environments.
 
 Usage:
-  bash demo_v5/env/install_demo_v5_env.sh [update|create|check]
+  bash demo_v5_1/env/install_demo_v5_env.sh [update|create|check]
 
 Environment variables:
   DEMO_V5_MAIN_ENV         default: demo_2_max
@@ -133,9 +133,9 @@ install_shape_prior_compiled_extras() {
 
 run_checks() {
     conda run -n "${MAIN_ENV}" --no-capture-output \
-        python "${REPO_ROOT}/demo_v5/env/check_demo_v5_env.py" --role main --require-cuda
+        python "${REPO_ROOT}/demo_v5_1/env/check_demo_v5_env.py" --role main --require-cuda
     conda run -n "${SHAPE_ENV}" --no-capture-output \
-        python "${REPO_ROOT}/demo_v5/env/check_demo_v5_env.py" --role shape-prior --require-cuda
+        python "${REPO_ROOT}/demo_v5_1/env/check_demo_v5_env.py" --role shape-prior --require-cuda
 }
 
 main() {

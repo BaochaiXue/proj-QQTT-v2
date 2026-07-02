@@ -23,6 +23,7 @@ from demo_v5_1.chunk_data_payload import (
 from demo_v5_1.chunk_data_output import ChunkDataWriter
 from demo_v5_1.utils.pcd_postprocess import detect_radius_outlier_indices
 from demo_v5_1 import phystwin_strict_product as strict
+from demo_v5_1 import tracking
 
 
 # frames.jsonl is append-only and owned by the camera subprocess. The helpers in
@@ -663,47 +664,20 @@ def _controller_track_manifest_fields(
             int(value) for value in active_indices.tolist()
         ],
         "controller_track_direct_count": int(np.count_nonzero(statuses == "direct")),
-        "controller_track_recovered_count": int(
-            np.count_nonzero(statuses == "recovered")
-        ),
-        "controller_track_revived_count": int(
-            np.count_nonzero((statuses == "revived") | (statuses == "recovered"))
-        ),
-        "controller_track_fallback_count": int(
-            np.count_nonzero(statuses == "fallback")
-        ),
-        "controller_track_missing_count": int(np.count_nonzero(statuses == "missing")),
+        "controller_track_proxied_count": int(np.count_nonzero(statuses == "proxied")),
         "controller_track_status": [str(value) for value in statuses.tolist()],
     }
-    if "controller_track_confidence" in track_process_data:
-        confidence = np.asarray(
-            track_process_data["controller_track_confidence"], dtype=np.float32
-        )
-        payload["controller_track_mean_confidence"] = (
-            float(np.mean(confidence)) if confidence.size else 1.0
-        )
-        payload["controller_track_low_confidence_ratio"] = (
-            float(np.count_nonzero(confidence < 0.25) / confidence.size)
-            if confidence.size
-            else 0.0
-        )
-    if "controller_track_mode" in track_process_data:
-        modes = np.asarray(track_process_data["controller_track_mode"], dtype=str)
-        bundle_recovered = np.char.find(modes.astype(str), "bundle_recovered") >= 0
-        unrecoverable = np.char.find(modes.astype(str), "unrecoverable") >= 0
+    if "controller_proxied" in track_process_data:
+        proxied = np.asarray(track_process_data["controller_proxied"], dtype=bool)
         payload["controller_track_direct_frame_count"] = int(
-            np.count_nonzero(modes == "direct_valid")
+            proxied.size - np.count_nonzero(proxied)
         )
-        payload["controller_track_neighbor_recovered_frame_count"] = int(
-            np.count_nonzero(bundle_recovered)
+        payload["controller_track_proxied_frame_count"] = int(
+            np.count_nonzero(proxied)
         )
-        payload["controller_track_unrecoverable_frame_count"] = int(
-            np.count_nonzero(unrecoverable)
+        payload["controller_track_proxied_ratio"] = (
+            float(np.count_nonzero(proxied) / proxied.size) if proxied.size else 0.0
         )
-        payload["controller_track_mode_summary"] = {
-            str(mode): int(np.count_nonzero(modes == mode))
-            for mode in sorted(set(str(value) for value in modes.reshape(-1).tolist()))
-        }
     if "track_process_status" in track_process_data:
         payload["track_process_status"] = str(
             np.asarray(track_process_data["track_process_status"]).item()
@@ -759,12 +733,12 @@ def _track_input_with_session_query_schema(
     *,
     tracks_yx: np.ndarray,
     visibility: np.ndarray,
-    processed_masks: Sequence[Sequence[Mapping[str, Any]]],
+    mask_frames: Sequence[Mapping[str, Any]],
     pcd_points: np.ndarray,
     pcd_colors: np.ndarray,
     session_query_schema: dict[str, np.ndarray] | None,
 ) -> dict[str, np.ndarray]:
-    """Build strict track input while preserving session-wide query identity.
+    """Build window observations while preserving session-wide query identity.
 
     The first chunk fixes the query id/semantic-label arrays. Later chunks must
     reuse the same arrays so online output can be concatenated without changing
@@ -779,10 +753,10 @@ def _track_input_with_session_query_schema(
     if session_query_schema is not None and "query_ids" in session_query_schema:
         query_ids = session_query_schema["query_ids"]
         query_semantic_labels = session_query_schema["query_semantic_labels"]
-    track_input = strict.build_track_process_input(
+    track_input = tracking.build_window_observations(
         tracks_yx=tracks_yx,
         visibility=visibility,
-        processed_masks=processed_masks,
+        mask_frames=mask_frames,
         pcd_points=pcd_points,
         pcd_colors=pcd_colors,
         query_ids=query_ids,
@@ -822,8 +796,7 @@ def _chunk_data_window_from_rows(
     mask_radius_outlier_filter: bool,
     mask_radius_outlier_radius_m: float,
     mask_radius_outlier_nb_points: int,
-    object_track_selector: strict.StreamingObjectTrackSelector | None = None,
-    controller_track_selector: strict.StreamingControllerTrackSelector | None = None,
+    tracking_runtime: tracking.TrackingRuntime | None = None,
     session_query_schema: dict[str, np.ndarray] | None = None,
 ) -> ChunkDataWindow:
     """Materialize a chunk from legacy row artifacts.
@@ -835,7 +808,7 @@ def _chunk_data_window_from_rows(
     c2w = _camera_to_world(metadata)
     intrinsics = _intrinsics_matrix(metadata)
 
-    processed_masks: list[list[dict[str, np.ndarray]]] = []
+    mask_frames: list[dict[str, np.ndarray]] = []
     pcd_points: list[np.ndarray] = []
     pcd_colors: list[np.ndarray] = []
     tracks: list[np.ndarray] = []
@@ -862,16 +835,14 @@ def _chunk_data_window_from_rows(
         # raw semantic masks plus PCD validity become processed masks. The
         # realtime fallback keeps that product in memory.
         depth_valid_mask_frame = _apply_depth_validity_to_mask_frame(mask_frame, depth)
-        processed_masks.append(
-            [
-                _apply_radius_outlier_to_mask_frame(
-                    depth_valid_mask_frame,
-                    points,
-                    enabled=bool(mask_radius_outlier_filter),
-                    radius_m=float(mask_radius_outlier_radius_m),
-                    nb_points=int(mask_radius_outlier_nb_points),
-                )
-            ]
+        mask_frames.append(
+            _apply_radius_outlier_to_mask_frame(
+                depth_valid_mask_frame,
+                points,
+                enabled=bool(mask_radius_outlier_filter),
+                radius_m=float(mask_radius_outlier_radius_m),
+                nb_points=int(mask_radius_outlier_nb_points),
+            )
         )
 
         trajectory = np.load(
@@ -896,33 +867,19 @@ def _chunk_data_window_from_rows(
     track_input = _track_input_with_session_query_schema(
         tracks_yx=tracks_yx,
         visibility=tracker_visibility,
-        processed_masks=processed_masks,
+        mask_frames=mask_frames,
         pcd_points=pcd_points_arr,
         pcd_colors=pcd_colors_arr,
         session_query_schema=session_query_schema,
     )
-    # Offline parity with data_process_sam3d/data_process_track.py:L138-L322.
-    # Both paths filter object/controller tracks by neighbor motion consistency.
-    filtered = strict.apply_phystwin_motion_filters(track_input)
-    if object_track_selector is not None:
-        # Offline parity with data_process_sam3d/data_process_sample.py:L250-L352.
-        # That stage deduplicates and samples object points for final_data. The
-        # realtime selector keeps the same sampled query ids stable across
-        # chunks.
-        filtered = object_track_selector.select(
-            filtered,
-            surface_points=surface_points,
-            interior_points=interior_points,
-        )
-    if controller_track_selector is None:
-        # Offline parity with data_process_sam3d/data_process_track.py:L325-L378.
-        # That stage farthest-point-samples the final 30 controller handles.
-        track_process = strict.select_final_controller_points(filtered, count=30)
-    else:
-        # Offline parity with data_process_sam3d/data_process_track.py:L338-L356.
-        # Demo v5.1 keeps the same controller FPS target and adds realtime
-        # recovery so handle order survives later chunks.
-        track_process = controller_track_selector.select(filtered)
+    # design_spec.md state machine: origin motion consistency, frozen chunk-0
+    # identity, per-frame temporary_invalid, and rigid-registration recovery.
+    runtime = tracking_runtime if tracking_runtime is not None else tracking.TrackingRuntime()
+    track_process = runtime.process_window(
+        track_input,
+        surface_points=surface_points,
+        interior_points=interior_points,
+    )
 
     return ChunkDataWindow(
         track_process_data=track_process,
@@ -964,8 +921,7 @@ def _chunk_data_window_from_prepared_frames(
     fps: int,
     serial_number: str,
     chunk_index: int,
-    object_track_selector: strict.StreamingObjectTrackSelector | None = None,
-    controller_track_selector: strict.StreamingControllerTrackSelector | None = None,
+    tracking_runtime: tracking.TrackingRuntime | None = None,
     session_query_schema: dict[str, np.ndarray] | None = None,
 ) -> ChunkDataWindow:
     """Materialize a chunk from prepared per-frame NPZ payloads.
@@ -973,7 +929,7 @@ def _chunk_data_window_from_prepared_frames(
     This is the current v5.1 realtime path. The camera process already wrote
     RGB, masks, dense world PCD, tracks, visibility, and query points for the
     same source frame, so this function only enforces shared queries and runs
-    strict object/controller selection.
+    the design_spec.md tracking state machine.
     """
     if not frames:
         raise ValueError("prepared data_process chunk requires at least one frame")
@@ -983,7 +939,7 @@ def _chunk_data_window_from_prepared_frames(
         -1, 2
     )
 
-    processed_masks: list[list[dict[str, np.ndarray]]] = []
+    mask_frames: list[dict[str, np.ndarray]] = []
     tracks: list[np.ndarray] = []
     visibility: list[np.ndarray] = []
     pcd_points: list[np.ndarray] = []
@@ -998,8 +954,8 @@ def _chunk_data_window_from_prepared_frames(
             raise ValueError(
                 "prepared data_process frames in one chunk must share query_points_yx"
             )
-        processed_masks.append(
-            [strict.normalize_processed_mask_frame(frame.processed_mask_frame)]
+        mask_frames.append(
+            strict.normalize_processed_mask_frame(frame.processed_mask_frame)
         )
         tracks.append(
             np.ascontiguousarray(frame.tracks_yx, dtype=np.float32).reshape(-1, 2)
@@ -1029,34 +985,19 @@ def _chunk_data_window_from_prepared_frames(
     track_input = _track_input_with_session_query_schema(
         tracks_yx=tracks_yx,
         visibility=tracker_visibility,
-        processed_masks=processed_masks,
+        mask_frames=mask_frames,
         pcd_points=pcd_points_arr,
         pcd_colors=pcd_colors_arr,
         session_query_schema=session_query_schema,
     )
-    # Offline parity with data_process_sam3d/data_process_track.py:L138-L322.
-    # Both paths apply neighbor-motion filtering before final
-    # controller/object sampling.
-    filtered = strict.apply_phystwin_motion_filters(track_input)
-    if object_track_selector is not None:
-        # Offline parity with data_process_sam3d/data_process_sample.py:L281-L300.
-        # Both paths volume-sample object points; realtime also preserves the
-        # chosen sample ids.
-        filtered = object_track_selector.select(
-            filtered,
-            surface_points=surface_points,
-            interior_points=interior_points,
-        )
-    if controller_track_selector is None:
-        # Offline parity with data_process_sam3d/data_process_track.py:L338-L356.
-        # Both paths select 30 final controller points by farthest point
-        # sampling.
-        track_process = strict.select_final_controller_points(filtered, count=30)
-    else:
-        # Offline parity with data_process_sam3d/data_process_track.py:L338-L356.
-        # Demo v5.1 keeps the same 30-handle target while preserving stable
-        # realtime controller identities across windows.
-        track_process = controller_track_selector.select(filtered)
+    # design_spec.md state machine: origin motion consistency, frozen chunk-0
+    # identity, per-frame temporary_invalid, and rigid-registration recovery.
+    runtime = tracking_runtime if tracking_runtime is not None else tracking.TrackingRuntime()
+    track_process = runtime.process_window(
+        track_input,
+        surface_points=surface_points,
+        interior_points=interior_points,
+    )
 
     return ChunkDataWindow(
         track_process_data=track_process,
@@ -1098,8 +1039,7 @@ def _write_chunk_from_rows(
     prepared_frames: Sequence[strict.PreparedPhysTwinFrame | None] | None = None,
     backlog_chunks: Callable[[], int] | None = None,
     online_writer: ChunkDataWriter | None = None,
-    object_track_selector: strict.StreamingObjectTrackSelector | None = None,
-    controller_track_selector: strict.StreamingControllerTrackSelector | None = None,
+    tracking_runtime: tracking.TrackingRuntime | None = None,
     session_query_schema: dict[str, np.ndarray] | None = None,
     warmup_skipped_rows: int = 0,
 ) -> dict[str, Any]:
@@ -1126,8 +1066,7 @@ def _write_chunk_from_rows(
             fps=int(fps),
             serial_number=serial_number,
             chunk_index=chunk_index,
-            object_track_selector=object_track_selector,
-            controller_track_selector=controller_track_selector,
+            tracking_runtime=tracking_runtime,
             session_query_schema=session_query_schema,
         )
         materialization_source = "prepared_data_process_frame"
@@ -1147,8 +1086,7 @@ def _write_chunk_from_rows(
             mask_radius_outlier_filter=bool(mask_radius_outlier_filter),
             mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
             mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
-            object_track_selector=object_track_selector,
-            controller_track_selector=controller_track_selector,
+            tracking_runtime=tracking_runtime,
             session_query_schema=session_query_schema,
         )
         materialization_source = "legacy_reprocess"
@@ -1303,17 +1241,14 @@ def write_chunk_data_from_headless_capture(
                 else (len(rows_to_process) // chunk_size) * chunk_size
             ),
         )
-    object_track_selector = strict.StreamingObjectTrackSelector(
-        volume_sample_size=0.005
-    )
-    controller_track_selector = strict.StreamingControllerTrackSelector(count=30)
-    # Keep selectors and query schema alive across chunks. This preserves stable
-    # sample identities rather than reselecting arbitrary object/controller
-    # points independently for every window.
+    # Keep the tracking runtime and query schema alive across chunks. Chunk 0
+    # freezes identity (design_spec.md): object columns, controller anchors,
+    # and the neighbor table persist for the whole stream, so later windows
+    # never reselect object/controller points.
     # Offline parity with data_process_sam3d/data_process_sample.py:L281-L300
     # and data_process_sam3d/data_process_track.py:L338-L356. Offline sampling
-    # happens once per case; Demo v5.1 treats the live stream as one case, so
-    # selectors persist.
+    # happens once per case; Demo v5.1 treats the live stream as one case.
+    tracking_runtime = tracking.TrackingRuntime()
     session_query_schema: dict[str, np.ndarray] = {}
     for row_idx, row in enumerate(rows_to_process):
         if max_chunks is not None and len(manifests) >= int(max_chunks):
@@ -1325,39 +1260,45 @@ def write_chunk_data_from_headless_capture(
         window_closed_wall_s = _relative_wall_s(float(wall_time_origin_s))
         chunk_rows = row_buffer
         chunk_prepared = prepared_buffer
-        manifest = _write_chunk_from_rows(
-            capture=capture,
-            metadata=metadata,
-            rows=chunk_rows,
-            case_prefix=case_prefix,
-            chunk_index=chunk_index,
-            row_start=row_start,
-            row_end=row_idx + 1,
-            fps=int(fps),
-            serial_number=serial_number,
-            surface_points=shape_surface,
-            interior_points=shape_interior,
-            mask_radius_outlier_filter=bool(mask_radius_outlier_filter),
-            mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
-            mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
-            wall_time_origin_s=wall_time_origin_s,
-            window_closed_wall_s=window_closed_wall_s,
-            prepared_frames=chunk_prepared,
-            backlog_chunks=(
-                lambda path=frames_path,
-                size=chunk_size,
-                published=chunk_index + 1: _complete_chunk_backlog(
-                    path,
-                    chunk_size=size,
-                    published_chunk_count=published,
-                )
-            ),
-            online_writer=online_writer,
-            object_track_selector=object_track_selector,
-            controller_track_selector=controller_track_selector,
-            session_query_schema=session_query_schema,
-            warmup_skipped_rows=warmup_skipped_rows,
-        )
+        try:
+            manifest = _write_chunk_from_rows(
+                capture=capture,
+                metadata=metadata,
+                rows=chunk_rows,
+                case_prefix=case_prefix,
+                chunk_index=chunk_index,
+                row_start=row_start,
+                row_end=row_idx + 1,
+                fps=int(fps),
+                serial_number=serial_number,
+                surface_points=shape_surface,
+                interior_points=shape_interior,
+                mask_radius_outlier_filter=bool(mask_radius_outlier_filter),
+                mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
+                mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
+                wall_time_origin_s=wall_time_origin_s,
+                window_closed_wall_s=window_closed_wall_s,
+                prepared_frames=chunk_prepared,
+                backlog_chunks=(
+                    lambda path=frames_path,
+                    size=chunk_size,
+                    published=chunk_index + 1: _complete_chunk_backlog(
+                        path,
+                        chunk_size=size,
+                        published_chunk_count=published,
+                    )
+                ),
+                online_writer=online_writer,
+                tracking_runtime=tracking_runtime,
+                session_query_schema=session_query_schema,
+                warmup_skipped_rows=warmup_skipped_rows,
+            )
+        except Exception:
+            # design_spec.md failures (controller selection / recovery) abort
+            # the stream; leave a terminal manifest instead of "recording".
+            if online_writer is not None:
+                online_writer.finish(status="failed")
+            raise
         manifests.append(manifest)
         if on_chunk_written is not None:
             on_chunk_written(manifest)
@@ -1450,12 +1391,9 @@ def stream_chunk_data_from_headless_capture(
                 None if max_chunks is None else int(max_chunks) * int(chunk_size)
             ),
         )
-    object_track_selector = strict.StreamingObjectTrackSelector(
-        volume_sample_size=0.005
-    )
-    controller_track_selector = strict.StreamingControllerTrackSelector(count=30)
-    # Live streaming uses the same stateful selectors as offline conversion so
-    # chunk N+1 continues the topology established by chunk N.
+    # Live streaming uses the same stateful tracking runtime as offline
+    # conversion so chunk N+1 continues the identity frozen by chunk 0.
+    tracking_runtime = tracking.TrackingRuntime()
     session_query_schema: dict[str, np.ndarray] = {}
 
     while True:
@@ -1491,39 +1429,46 @@ def stream_chunk_data_from_headless_capture(
                 before_poll=before_poll,
                 poll_interval_s=float(poll_interval_s),
             )
-            manifest = _write_chunk_from_rows(
-                capture=capture,
-                metadata=latest_metadata,
-                rows=row_buffer,
-                case_prefix=case_prefix,
-                chunk_index=chunk_index,
-                row_start=row_start,
-                row_end=next_row_idx,
-                fps=int(fps),
-                serial_number=serial_number,
-                surface_points=shape_surface,
-                interior_points=shape_interior,
-                mask_radius_outlier_filter=bool(mask_radius_outlier_filter),
-                mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
-                mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
-                wall_time_origin_s=wall_time_origin_s,
-                window_closed_wall_s=window_closed_wall_s,
-                prepared_frames=chunk_prepared,
-                backlog_chunks=(
-                    lambda path=frames_path,
-                    size=chunk_size,
-                    published=chunk_index + 1: _complete_chunk_backlog(
-                        path,
-                        chunk_size=size,
-                        published_chunk_count=published,
-                    )
-                ),
-                online_writer=online_writer,
-                object_track_selector=object_track_selector,
-                controller_track_selector=controller_track_selector,
-                session_query_schema=session_query_schema,
-                warmup_skipped_rows=warmup_start_filter.skipped_rows,
-            )
+            try:
+                manifest = _write_chunk_from_rows(
+                    capture=capture,
+                    metadata=latest_metadata,
+                    rows=row_buffer,
+                    case_prefix=case_prefix,
+                    chunk_index=chunk_index,
+                    row_start=row_start,
+                    row_end=next_row_idx,
+                    fps=int(fps),
+                    serial_number=serial_number,
+                    surface_points=shape_surface,
+                    interior_points=shape_interior,
+                    mask_radius_outlier_filter=bool(mask_radius_outlier_filter),
+                    mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
+                    mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
+                    wall_time_origin_s=wall_time_origin_s,
+                    window_closed_wall_s=window_closed_wall_s,
+                    prepared_frames=chunk_prepared,
+                    backlog_chunks=(
+                        lambda path=frames_path,
+                        size=chunk_size,
+                        published=chunk_index + 1: _complete_chunk_backlog(
+                            path,
+                            chunk_size=size,
+                            published_chunk_count=published,
+                        )
+                    ),
+                    online_writer=online_writer,
+                    tracking_runtime=tracking_runtime,
+                    session_query_schema=session_query_schema,
+                    warmup_skipped_rows=warmup_start_filter.skipped_rows,
+                )
+            except Exception:
+                # design_spec.md failures (controller selection / recovery)
+                # abort the stream; leave a terminal manifest instead of
+                # "recording".
+                if online_writer is not None:
+                    online_writer.finish(status="failed")
+                raise
             manifests.append(manifest)
             if on_chunk_written is not None:
                 on_chunk_written(manifest)

@@ -85,17 +85,21 @@ Unknowns:
 
 ## Plan
 
-- [ ] Implement `demo_v5_1/ffs.py`, `demo_v5_1/segment.py`,
+- [x] Implement `demo_v5_1/ffs.py`, `demo_v5_1/segment.py`,
       `demo_v5_1/tracking.py`.
-- [ ] Rewire `chunk_data_stream.py` window builders and runtime creation.
-- [ ] Replace confidence diagnostics in `chunk_data_payload.py`.
-- [ ] Delete unreferenced selector/confidence code in
-      `demo_v5_1/phystwin_strict_product.py`.
-- [ ] Add `tests/test_demo_v5_1_tracking.py`; update chunk-data tests.
-- [ ] Run focused tests + smoke validation.
+- [x] Rewire `chunk_data_stream.py` window builders and runtime creation.
+- [x] Replace confidence diagnostics in `chunk_data_payload.py`.
+- [x] Delete unreferenced selector/confidence code in
+      `demo_v5_1/phystwin_strict_product.py` (streaming selectors, bundle
+      recovery, confidence ladder, motion filter, FPS/volume-sample helpers;
+      `finalize_headless_capture` rewired to the tracking runtime).
+- [x] Add `tests/test_demo_v5_1_tracking.py` (13 tests); existing chunk-data
+      tests pass unmodified.
+- [x] Run focused tests + smoke validation.
 - [ ] Adversarial review of the diff, then commit/push.
 
 ## Validation
 
-- `python -m pytest tests/test_demo_v5_1_tracking.py tests/test_demo_v5_1_chunk_data.py -q`
-- `python scripts/harness/validation/run.py --profile smoke`
+- Passed: `python -m pytest tests/test_demo_v5_1_tracking.py -q` (13 tests).
+- Passed: `python -m pytest tests/ -q` (65 tests, 132 subtests).
+- Passed: `python scripts/harness/validation/run.py --profile smoke`.

@@ -24,34 +24,14 @@ OPTIONAL_TIME_KEYS = (
     "asap_interior_points",
     # Flag or mask indicating object data recovered instead of observed.
     "object_recovered",
-    # Confidence scores associated with recovered object data.
-    "object_recovery_confidence",
     # Flag or mask indicating controller data was directly observed.
     "controller_observed",
     # Flag or mask indicating controller data recovered instead of observed.
     "controller_recovered",
-    # Confidence scores associated with recovered controller data.
-    "controller_recovery_confidence",
-    # Source query id used for each emitted controller point.
-    "controller_source_query_ids",
-    # String mode label describing how each controller point was tracked.
-    "controller_track_mode",
-    # Numeric confidence for each emitted controller track.
-    "controller_track_confidence",
-    # String reason attached to controller filtering or recovery decisions.
-    "controller_filter_reason",
-    # Neighbor count supporting each controller recovery estimate.
-    "controller_neighbor_support_count",
-    # Count of raw visible neighbors before depth and mask filtering.
-    "controller_neighbor_raw_visible_count",
-    # Count of neighboring controller candidates with valid depth.
-    "controller_neighbor_depth_valid_count",
-    # Count of neighbors inside the processed controller mask.
-    "controller_neighbor_processed_mask_valid_count",
-    # Count of neighbors passing controller motion-validity checks.
-    "controller_neighbor_motion_valid_count",
-    # Residual error from the neighbor-based controller fit.
-    "controller_neighbor_fit_residual",
+    # Boolean mask marking controller anchor frames whose value came from
+    # local rigid-registration recovery instead of a direct measurement
+    # (design_spec.md temporary_invalid handling).
+    "controller_proxied",
 )
 
 # All online frame-axis keys accepted by chunk writing and aggregation.

@@ -85,6 +85,20 @@ class DemoV5LegacyKeyCleanupTests(unittest.TestCase):
         self.assertFalse((root / "demo_v5_1" / "shape_prior_worker.py").exists())
         self.assertFalse(old_worker_path.exists())
 
+    def test_demo_v51_env_files_do_not_reference_deleted_demo_v5_path(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        env_dir = root / "demo_v5_1" / "env"
+        violations: list[str] = []
+
+        for path in sorted(env_dir.iterdir()):
+            if not path.is_file():
+                continue
+            source = path.read_text(encoding="utf-8")
+            if "demo_v5/env" in source:
+                violations.append(str(path.relative_to(root)))
+
+        self.assertEqual([], violations)
+
     def test_demo_v51_shape_prior_warmup_uses_demo_relative_repo_root(self) -> None:
         root = Path(__file__).resolve().parents[1]
         source = (root / "demo_v5_1" / "shape_prior_warmup.py").read_text(

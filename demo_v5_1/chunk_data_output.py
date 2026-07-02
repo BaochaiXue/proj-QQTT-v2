@@ -38,16 +38,7 @@ FINAL_DATA_STATIC_KEYS = (
 )
 OPTIONAL_STATIC_KEYS = ("controller_neighbor_query_ids",)
 TRACK_DIAGNOSTIC_KEYS = (
-    "controller_source_query_ids",
-    "controller_track_mode",
-    "controller_track_confidence",
-    "controller_filter_reason",
-    "controller_neighbor_support_count",
-    "controller_neighbor_raw_visible_count",
-    "controller_neighbor_depth_valid_count",
-    "controller_neighbor_processed_mask_valid_count",
-    "controller_neighbor_motion_valid_count",
-    "controller_neighbor_fit_residual",
+    "controller_proxied",
     "controller_neighbor_query_ids",
     "track_process_status",
 )
@@ -352,10 +343,10 @@ class ChunkDataWriter:
             status=status,
         )
 
-    def finish(self) -> dict[str, Any]:
-        """Publish a finished online manifest."""
+    def finish(self, *, status: str = "finished") -> dict[str, Any]:
+        """Publish a terminal online manifest (``finished`` or ``failed``)."""
         self.version += 1
-        return self._write_manifest(status="finished")
+        return self._write_manifest(status=str(status))
 
     def _append_static_data(self, data: Mapping[str, Any], *, frame_count: int) -> None:
         """Update data/final_data.pkl as a prefix aggregate."""

@@ -70,18 +70,7 @@ CONTROLLER_CANDIDATE_TIME_KEYS = (
     "controller_motions_valid",
 )
 CONTROLLER_CANDIDATE_POINT_KEYS = ("controller_raw_points",)
-CONTROLLER_TRACK_TIME_KEYS = (
-    "controller_source_query_ids",
-    "controller_track_mode",
-    "controller_track_confidence",
-    "controller_filter_reason",
-    "controller_neighbor_support_count",
-    "controller_neighbor_raw_visible_count",
-    "controller_neighbor_depth_valid_count",
-    "controller_neighbor_processed_mask_valid_count",
-    "controller_neighbor_motion_valid_count",
-    "controller_neighbor_fit_residual",
-)
+CONTROLLER_TRACK_TIME_KEYS = ("controller_proxied",)
 CONTROLLER_TRACK_STATIC_KEYS = ("controller_neighbor_query_ids",)
 
 DATA_PROCESS_SAM3D_METRICS = {
@@ -96,8 +85,13 @@ DATA_PROCESS_SAM3D_METRICS = {
     "motion_neighbor_dist_m": 0.01,
     "motion_min_neighbors": 5,
     "motion_similarity_m": 0.005,
-    "controller_visibility_policy": "visible_for_whole_chunk_then_motion_consistent",
+    "controller_visibility_policy": (
+        "chunk0_whole_window_valid_then_per_frame_temporary_invalid"
+    ),
     "controller_final_count": 30,
+    "controller_recovery_source": "design_spec.md::local_rigid_registration",
+    "controller_recovery_neighbor_table_size": 50,
+    "controller_recovery_neighbor_count": 15,
     "object_sampling_source": "data_process_sam3d/data_process_sample.py::process_unique_points",
     "object_volume_sample_size_m": 0.005,
     "shape_prior_sampling_source": "data_process_sam3d/data_process_sample.py",
@@ -340,13 +334,9 @@ def _track_process_payload(
     for key in CONTROLLER_TRACK_TIME_KEYS:
         if key not in track_process_data:
             continue
-        arr = np.asarray(track_process_data[key])
-        if key in {"controller_track_mode", "controller_filter_reason"}:
-            payload[key] = np.asarray(arr, dtype="<U40")
-        elif key == "controller_source_query_ids" or key.endswith("_count"):
-            payload[key] = np.ascontiguousarray(arr.astype(np.int64))
-        else:
-            payload[key] = np.ascontiguousarray(arr.astype(np.float32))
+        payload[key] = np.ascontiguousarray(
+            np.asarray(track_process_data[key], dtype=bool)
+        )
     for key in CONTROLLER_TRACK_STATIC_KEYS:
         if key in track_process_data:
             payload[key] = np.ascontiguousarray(
@@ -600,28 +590,14 @@ def _quality_manifest_fields(
         "first_frame_zero_object_points": _zero_point_count(object_points),
         "first_frame_zero_controller_points": _zero_point_count(controller_points),
     }
-    if "controller_track_confidence" in track_process:
-        confidence = np.asarray(
-            track_process["controller_track_confidence"], dtype=np.float32
-        )
-        payload["controller_track_mean_confidence"] = (
-            float(np.mean(confidence)) if confidence.size else 1.0
-        )
-        payload["controller_track_low_confidence_ratio"] = (
-            float(np.count_nonzero(confidence < 0.25) / confidence.size)
-            if confidence.size
-            else 0.0
-        )
-    if "controller_track_mode" in track_process:
-        modes = np.asarray(track_process["controller_track_mode"], dtype=str)
+    if "controller_proxied" in track_process:
+        proxied = np.asarray(track_process["controller_proxied"], dtype=bool)
         payload["controller_track_direct_frame_count"] = int(
-            np.count_nonzero(modes == "direct_valid")
+            proxied.size - np.count_nonzero(proxied)
         )
-        payload["controller_track_neighbor_recovered_frame_count"] = int(
-            np.count_nonzero(np.char.find(modes.astype(str), "bundle_recovered") >= 0)
-        )
-        payload["controller_track_unrecoverable_frame_count"] = int(
-            np.count_nonzero(np.char.find(modes.astype(str), "unrecoverable") >= 0)
+        payload["controller_track_proxied_frame_count"] = int(np.count_nonzero(proxied))
+        payload["controller_track_proxied_ratio"] = (
+            float(np.count_nonzero(proxied) / proxied.size) if proxied.size else 0.0
         )
     if "track_process_status" in track_process:
         payload["track_process_status"] = str(track_process["track_process_status"])
