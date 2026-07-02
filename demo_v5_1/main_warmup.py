@@ -11,12 +11,10 @@ from typing import Any, Callable
 
 import numpy as np
 
-from qqtt.demo.pcd_filter_fast import AsyncPcdFilterWorker
-from qqtt.demo.realtime_single_camera_pointcloud import (
-    apply_wslg_open3d_env_defaults,
-    build_projection_grid,
-    warm_up_numba_ffs_align,
-)
+from demo_v5_1.utils.ffs_align import warm_up_numba_ffs_align
+from demo_v5_1.utils.pcd_filter import AsyncPcdFilterWorker
+from demo_v5_1.utils.projection import build_projection_grid
+from demo_v5_1.utils.render import apply_wslg_open3d_env_defaults
 from services.ffs_remote import FfsRemoteDepthClient
 
 TRACK_MODE_CONTROLLER_OBJECT = "controller-object"

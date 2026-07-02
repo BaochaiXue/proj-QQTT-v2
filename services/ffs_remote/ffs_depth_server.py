@@ -39,7 +39,7 @@ from data_process.depth_backends.ffs_defaults import (  # noqa: E402
     DEFAULT_FFS_VALID_ITERS,
 )
 from data_process.depth_backends.geometry import quantize_depth_with_invalid_zero  # noqa: E402
-from qqtt.demo.realtime_single_camera_pointcloud import FfsIrToColorAligner, warm_up_numba_ffs_align  # noqa: E402
+from demo_v5_1.utils.ffs_align import FfsIrToColorAligner, warm_up_numba_ffs_align  # noqa: E402
 from services.ffs_remote.protocol import (  # noqa: E402
     COMPRESSION_MODES,
     RETURN_TYPES,

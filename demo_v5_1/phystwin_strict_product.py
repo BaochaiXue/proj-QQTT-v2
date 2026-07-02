@@ -9,9 +9,8 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from data_process.depth_backends.geometry import transform_points
-from qqtt.demo.pcd_postprocess import _detect_radius_outlier_indices
-from qqtt.demo.realtime_single_camera_pointcloud import build_projection_grid_from_matrix
-from qqtt.tracking.sampling import PHYSTWIN_DENSE_QUERY_POINTS, sample_phystwin_dense
+from demo_v5_1.utils.pcd_postprocess import detect_radius_outlier_indices
+from demo_v5_1.utils.projection import build_projection_grid_from_matrix
 
 
 TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY = "realtime-overlay"
@@ -28,13 +27,6 @@ PHYSTWIN_COMPATIBILITY_PATH_NAME = "cotracker"
 QUERY_SEMANTIC_NONE = np.int8(0)
 QUERY_SEMANTIC_OBJECT = np.int8(1)
 QUERY_SEMANTIC_CONTROLLER = np.int8(2)
-
-
-@dataclass(frozen=True)
-class StrictQuerySample:
-    query_txy: np.ndarray
-    query_points_yx: np.ndarray
-    union_mask: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -72,34 +64,6 @@ def normalize_tracking_product_backend(value: str | None) -> str:
 
 def tracking_product_backend_is_strict(value: str | None) -> bool:
     return normalize_tracking_product_backend(value) == TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT
-
-
-def sample_first_frame_union_queries(
-    object_mask: np.ndarray,
-    controller_mask: np.ndarray,
-    *,
-    max_queries: int = PHYSTWIN_DENSE_QUERY_POINTS,
-    seed: int = 42,
-    camera_idx: int = 0,
-) -> StrictQuerySample:
-    obj = np.asarray(object_mask, dtype=bool)
-    ctrl = np.asarray(controller_mask, dtype=bool)
-    if obj.shape != ctrl.shape:
-        raise ValueError("object_mask and controller_mask must have the same shape")
-    union = np.logical_or(obj, ctrl)
-    points_yx = sample_phystwin_dense(union, seed=int(seed), camera_idx=int(camera_idx), torch_device="cpu")
-    cap = int(max_queries)
-    if cap > 0 and len(points_yx) > cap:
-        points_yx = np.ascontiguousarray(points_yx[:cap], dtype=np.float32)
-    query_txy = np.zeros((len(points_yx), 3), dtype=np.float32)
-    if len(points_yx):
-        query_txy[:, 1] = points_yx[:, 1]
-        query_txy[:, 2] = points_yx[:, 0]
-    return StrictQuerySample(
-        query_txy=np.ascontiguousarray(query_txy, dtype=np.float32),
-        query_points_yx=np.ascontiguousarray(points_yx, dtype=np.float32),
-        union_mask=np.ascontiguousarray(union, dtype=bool),
-    )
 
 
 def _mask_from_frame(frame: Mapping[str, Any], key: str, fallback: np.ndarray | None = None) -> np.ndarray:
@@ -263,7 +227,7 @@ def apply_radius_outlier_to_mask_frame(
             class_points = class_points[finite]
         if len(class_points) == 0:
             continue
-        result = _detect_radius_outlier_indices(
+        result = detect_radius_outlier_indices(
             class_points,
             radius_m=float(radius_m),
             nb_points=int(nb_points),
@@ -2259,38 +2223,3 @@ def finalize_headless_capture(
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return manifest
-
-
-StreamingControllerAnchorSelector = StreamingControllerTrackSelector
-StreamingObjectAnchorSelector = StreamingObjectTrackSelector
-
-
-__all__ = [
-    "COMPATIBILITY_TARGET_PHYSTWIN",
-    "DEFAULT_TRACKING_PRODUCT_BACKEND",
-    "PHYSTWIN_STRICT_EXECUTION_MODE",
-    "PreparedPhysTwinFrame",
-    "TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT",
-    "TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY",
-    "TRACKING_PRODUCT_BACKENDS",
-    "StrictQuerySample",
-    "StreamingControllerTrackSelector",
-    "StreamingControllerAnchorSelector",
-    "StreamingObjectTrackSelector",
-    "StreamingObjectAnchorSelector",
-    "apply_depth_validity_to_mask_frame",
-    "apply_phystwin_motion_filters",
-    "apply_radius_outlier_to_mask_frame",
-    "build_track_process_input",
-    "dense_world_pcd_grid",
-    "finalize_headless_capture",
-    "load_prepared_phystwin_frame",
-    "normalize_tracking_product_backend",
-    "prepare_phystwin_frame",
-    "sample_first_frame_union_queries",
-    "sample_object_first_frame_volume",
-    "select_final_controller_points",
-    "tracking_product_backend_is_strict",
-    "write_prepared_phystwin_frame",
-    "write_processed_masks",
-]

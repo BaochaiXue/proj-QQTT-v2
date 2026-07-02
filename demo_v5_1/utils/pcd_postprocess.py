@@ -1,3 +1,5 @@
+"""PhysTwin-parity radius/component point-cloud postprocess filters."""
+
 from __future__ import annotations
 
 import time
@@ -16,7 +18,7 @@ COMPONENT_SELECTION_POLICIES = (
 )
 
 
-def _detect_radius_outlier_indices(
+def detect_radius_outlier_indices(
     points_world: np.ndarray,
     *,
     radius_m: float,
@@ -31,13 +33,7 @@ def _detect_radius_outlier_indices(
     from scipy.spatial import cKDTree
 
     tree = cKDTree(cloud)
-    try:
-        neighbor_counts = tree.query_ball_point(cloud, r=float(radius_m), return_length=True)
-    except TypeError:
-        neighbor_counts = np.asarray(
-            [len(indices) for indices in tree.query_ball_point(cloud, r=float(radius_m))],
-            dtype=np.int64,
-        )
+    neighbor_counts = tree.query_ball_point(cloud, r=float(radius_m), return_length=True)
     inliers = np.flatnonzero(np.asarray(neighbor_counts, dtype=np.int64) >= int(nb_points)).astype(np.int32)
     if len(inliers) == 0:
         return {
@@ -88,24 +84,6 @@ def _build_voxel_components(points: np.ndarray, *, voxel_size: float) -> list[np
     return components
 
 
-def apply_phystwin_like_radius_postprocess(
-    *,
-    points: np.ndarray,
-    colors: np.ndarray,
-    enabled: bool,
-    radius_m: float,
-    nb_points: int,
-) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
-    filtered_points, filtered_colors, stats, _trace = apply_phystwin_like_radius_postprocess_with_trace(
-        points=points,
-        colors=colors,
-        enabled=enabled,
-        radius_m=radius_m,
-        nb_points=nb_points,
-    )
-    return filtered_points, filtered_colors, stats
-
-
 def apply_phystwin_like_radius_postprocess_with_trace(
     *,
     points: np.ndarray,
@@ -136,7 +114,7 @@ def apply_phystwin_like_radius_postprocess_with_trace(
         }
         return point_array, color_array, stats, trace
 
-    result = _detect_radius_outlier_indices(
+    result = detect_radius_outlier_indices(
         point_array,
         radius_m=float(radius_m),
         nb_points=int(nb_points),
@@ -283,7 +261,7 @@ def apply_enhanced_phystwin_like_postprocess_with_trace(
     }
     if bool(enabled) and input_point_count > 0:
         radius_started_s = time.perf_counter()
-        result = _detect_radius_outlier_indices(
+        result = detect_radius_outlier_indices(
             point_array,
             radius_m=float(radius_m),
             nb_points=int(nb_points),
@@ -481,47 +459,3 @@ def apply_enhanced_phystwin_like_postprocess_with_trace(
         }
     )
     return radius_points[component_keep_mask], radius_colors[component_keep_mask], stats, trace
-
-
-def apply_enhanced_phystwin_like_postprocess(
-    *,
-    points: np.ndarray,
-    colors: np.ndarray,
-    enabled: bool,
-    radius_m: float,
-    nb_points: int,
-    component_voxel_size_m: float,
-    keep_near_main_gap_m: float = 0.0,
-    max_component_report_count: int = 32,
-    keep_top_n_components: int = 1,
-    component_selection_policy: str = COMPONENT_SELECTION_LARGEST_N_PLUS_GAP,
-    min_component_points: int = 32,
-    min_component_ratio: float = 0.0,
-) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
-    filtered_points, filtered_colors, stats, _trace = apply_enhanced_phystwin_like_postprocess_with_trace(
-        points=points,
-        colors=colors,
-        enabled=enabled,
-        radius_m=radius_m,
-        nb_points=nb_points,
-        component_voxel_size_m=component_voxel_size_m,
-        keep_near_main_gap_m=keep_near_main_gap_m,
-        max_component_report_count=max_component_report_count,
-        keep_top_n_components=keep_top_n_components,
-        component_selection_policy=component_selection_policy,
-        min_component_points=min_component_points,
-        min_component_ratio=min_component_ratio,
-    )
-    return filtered_points, filtered_colors, stats
-
-
-__all__ = [
-    "apply_enhanced_phystwin_like_postprocess",
-    "apply_enhanced_phystwin_like_postprocess_with_trace",
-    "apply_phystwin_like_radius_postprocess",
-    "apply_phystwin_like_radius_postprocess_with_trace",
-    "COMPONENT_SELECTION_LARGEST_N",
-    "COMPONENT_SELECTION_LARGEST_N_PLUS_GAP",
-    "COMPONENT_SELECTION_MAIN_PLUS_GAP",
-    "COMPONENT_SELECTION_POLICIES",
-]

@@ -1,3 +1,5 @@
+"""Side-by-side RGB / projected-PCD / tracking-overlay panel rendering."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping

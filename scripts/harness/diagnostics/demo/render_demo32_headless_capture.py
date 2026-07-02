@@ -23,8 +23,8 @@ if ROOT_STR in sys.path:
     sys.path.remove(ROOT_STR)
 sys.path.insert(0, ROOT_STR)
 
-from qqtt.demo.query_rainbow import query_rainbow_colors_for_indices
-from qqtt.demo.demo32_side_by_side_panel import (
+from demo_v5_1.utils.query_rainbow import query_rainbow_colors_for_indices
+from demo_v5_1.utils.side_by_side_panel import (
     SideBySidePanelHud,
     SideBySidePanelInputs,
     compute_rgb_ahead_frames,

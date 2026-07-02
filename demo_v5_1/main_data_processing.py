@@ -55,31 +55,32 @@ def _repo_relative_path_text(path: str | Path | None) -> str | None:
         return str(path)
 
 
-from qqtt.demo.realtime_single_camera_pointcloud import (  # noqa: E402
+from demo_v5_1.utils.camera import (  # noqa: E402
     CameraIntrinsics,
-    CoalescedPostGate,
-    DEFAULT_FFS_REPO,
-    DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
-    FfsIrToColorAligner,
-    LatestSlot,
-    RenderStats,
     SUPPORTED_CAPTURE_FPS,
     SUPPORTED_PROFILES,
-    _apply_emitter,
-    _elapsed_ms,
-    _packet_seq,
-    _load_open3d_modules,
-    _load_realsense_module,
+    apply_emitter,
     camera_intrinsics_from_rs,
+    load_realsense_module,
     parse_profile,
     resolve_serial,
     rs_extrinsics_to_matrix,
     rs_intrinsics_to_matrix,
     rs_translation_norm,
-    validate_ffs_paths,
 )
-from qqtt.demo.render_fastpath import Open3DSceneTensorLayer  # noqa: E402
-from qqtt.demo.pcd_filter_fast import (  # noqa: E402
+from demo_v5_1.utils.concurrency import (  # noqa: E402
+    CoalescedPostGate,
+    LatestSlot,
+    elapsed_ms as _elapsed_ms,
+    packet_seq as _packet_seq,
+)
+from demo_v5_1.utils.ffs_align import FfsIrToColorAligner, validate_ffs_paths  # noqa: E402
+from demo_v5_1.utils.render import (  # noqa: E402
+    Open3DSceneTensorLayer,
+    RenderStats,
+    load_open3d_modules,
+)
+from demo_v5_1.utils.pcd_filter import (  # noqa: E402
     FilterBudgetController,
     FilterInput,
     FilterOutput,
@@ -97,8 +98,10 @@ from demo_v5_1.main_warmup import InitialMaskBundle  # noqa: E402
 from data_process.depth_backends.ffs_defaults import (  # noqa: E402
     DEFAULT_FFS_MAX_DISP,
     DEFAULT_FFS_MODEL_NAME,
+    DEFAULT_FFS_REPO,
     DEFAULT_FFS_TRT_BUILDER_OPTIMIZATION_LEVEL,
     DEFAULT_FFS_TRT_ENGINE_SIZE,
+    DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
     DEFAULT_FFS_VALID_ITERS,
 )
 from qqtt.env.camera.table_calibration import (  # noqa: E402
@@ -106,24 +109,21 @@ from qqtt.env.camera.table_calibration import (  # noqa: E402
     TableCalibrationLoadError,
     load_table_calibration_transforms,
 )
-from qqtt.demo.tracking_overlay_render import lift_tracks_yx_to_world  # noqa: E402
-from qqtt.demo.query_rainbow import query_rainbow_colors_from_points_yx_rgb_u8  # noqa: E402
-from qqtt.demo.phystwin_strict_product import (  # noqa: E402
+from demo_v5_1.utils.projection import lift_tracks_yx_to_world  # noqa: E402
+from demo_v5_1.utils.query_rainbow import query_rainbow_colors_from_points_yx_rgb_u8  # noqa: E402
+from demo_v5_1.phystwin_strict_product import (  # noqa: E402
     COMPATIBILITY_TARGET_PHYSTWIN,
     DEFAULT_TRACKING_PRODUCT_BACKEND,
     PHYSTWIN_STRICT_EXECUTION_MODE,
-    PreparedPhysTwinFrame,
-    TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT,
     TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY,
     TRACKING_PRODUCT_BACKENDS,
     finalize_headless_capture,
-    load_prepared_phystwin_frame,
     normalize_tracking_product_backend,
     prepare_phystwin_frame,
     tracking_product_backend_is_strict,
     write_prepared_phystwin_frame,
 )
-from qqtt.demo.demo32_side_by_side_panel import (  # noqa: E402
+from demo_v5_1.utils.side_by_side_panel import (  # noqa: E402
     SideBySidePanelHud,
     SideBySidePanelInputs,
     format_side_by_side_fps_line,
@@ -2817,7 +2817,7 @@ def _apply_color_controls(profile: Any, args: argparse.Namespace, rs: Any) -> No
 
 
 def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime:
-    rs = _load_realsense_module()
+    rs = load_realsense_module()
     width, height = parse_profile(args.profile)
     serial = resolve_serial(rs, args.serial)
 
@@ -2832,7 +2832,7 @@ def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime
         config.enable_stream(rs.stream.depth, width, height, rs.format.z16, int(args.fps))
     profile = pipeline.start(config)
     try:
-        _apply_emitter(profile, args.emitter, rs)
+        apply_emitter(profile, args.emitter, rs)
         _apply_color_controls(profile, args, rs)
         depth_sensor = profile.get_device().first_depth_sensor()
         depth_scale = float(depth_sensor.get_depth_scale())
@@ -6365,7 +6365,7 @@ class MainDataProcessingDemo:
             filtered_colors = np.asarray(capped_colors[density_indices], dtype=np.uint8).reshape(-1, 3)
             filtered_yx = select_yx(capped_yx, density_indices)
         elif mode == PCD_FILTER_PT_FILTER:
-            from qqtt.demo.pcd_postprocess import (
+            from demo_v5_1.utils.pcd_postprocess import (
                 apply_phystwin_like_radius_postprocess_with_trace,
             )
 
@@ -6379,7 +6379,7 @@ class MainDataProcessingDemo:
             kept_indices = np.flatnonzero(np.asarray(trace["kept_mask"], dtype=bool).reshape(-1))
             filtered_yx = select_yx(capped_yx, kept_indices)
         elif mode == PCD_FILTER_ENHANCED_PT:
-            from qqtt.demo.pcd_postprocess import (
+            from demo_v5_1.utils.pcd_postprocess import (
                 apply_enhanced_phystwin_like_postprocess_with_trace,
             )
 
@@ -7629,7 +7629,7 @@ class MainDataProcessingDemo:
     def _run_panel_viewer(self) -> None:
         import cv2
 
-        o3d, gui, rendering = _load_open3d_modules()
+        o3d, gui, rendering = load_open3d_modules()
         o3c = o3d.core
         device = o3c.Device("CPU:0")
         app = gui.Application.instance
@@ -8077,7 +8077,7 @@ class MainDataProcessingDemo:
                 writer.release()
 
     def _run_open3d_viewer(self) -> None:
-        o3d, gui, rendering = _load_open3d_modules()
+        o3d, gui, rendering = load_open3d_modules()
         o3c = o3d.core
         device = o3c.Device("CPU:0")
         app = gui.Application.instance

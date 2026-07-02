@@ -1,3 +1,5 @@
+"""Pinhole projection grids and 2D-track lifting to world coordinates."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -7,7 +9,49 @@ from typing import Any
 import numpy as np
 
 from data_process.depth_backends.geometry import transform_points
-from qqtt.demo.realtime_single_camera_pointcloud import build_projection_grid_from_matrix
+from demo_v5_1.utils.camera import CameraIntrinsics
+
+
+def build_pixel_grid(*, width: int, height: int, stride: int) -> tuple[np.ndarray, np.ndarray]:
+    if width <= 0 or height <= 0:
+        raise ValueError("width and height must be positive")
+    if stride < 1:
+        raise ValueError("stride must be >= 1")
+    xs = np.arange(0, width, stride, dtype=np.float32)
+    ys = np.arange(0, height, stride, dtype=np.float32)
+    return np.meshgrid(xs, ys, indexing="xy")
+
+
+def build_projection_grid(
+    *,
+    width: int,
+    height: int,
+    stride: int,
+    intrinsics: CameraIntrinsics,
+) -> tuple[np.ndarray, np.ndarray]:
+    if intrinsics.fx <= 0 or intrinsics.fy <= 0:
+        raise ValueError("intrinsics fx/fy must be positive")
+    grid_x, grid_y = build_pixel_grid(width=width, height=height, stride=stride)
+    ray_x = (grid_x - np.float32(intrinsics.cx)) / np.float32(intrinsics.fx)
+    ray_y = (grid_y - np.float32(intrinsics.cy)) / np.float32(intrinsics.fy)
+    return np.ascontiguousarray(ray_x, dtype=np.float32), np.ascontiguousarray(ray_y, dtype=np.float32)
+
+
+def build_projection_grid_from_matrix(
+    *,
+    width: int,
+    height: int,
+    K: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    k = np.asarray(K, dtype=np.float32).reshape(3, 3)
+    fx = np.float32(k[0, 0])
+    fy = np.float32(k[1, 1])
+    if fx <= 0 or fy <= 0:
+        raise ValueError("intrinsics fx/fy must be positive")
+    xs = (np.arange(width, dtype=np.float32) - np.float32(k[0, 2])) / fx
+    ys = (np.arange(height, dtype=np.float32) - np.float32(k[1, 2])) / fy
+    ray_x, ray_y = np.meshgrid(xs, ys, indexing="xy")
+    return np.ascontiguousarray(ray_x, dtype=np.float32), np.ascontiguousarray(ray_y, dtype=np.float32)
 
 
 @dataclass(frozen=True)
@@ -46,15 +90,6 @@ def _depth_to_meters(depth: np.ndarray, depth_scale_m_per_unit: float) -> np.nda
     depth_m[~np.isfinite(depth_m)] = 0.0
     depth_m[depth_m < 0.0] = 0.0
     return depth_m
-
-
-def select_overlay_point_indices(visibility: np.ndarray, *, max_points: int | None) -> np.ndarray:
-    visible = np.asarray(visibility, dtype=np.float32).reshape(-1) > 0.0
-    indices = np.where(visible)[0]
-    if max_points is None or int(max_points) < 0 or len(indices) <= int(max_points):
-        return indices.astype(np.int64)
-    selected = indices[np.linspace(0, len(indices) - 1, int(max_points), dtype=np.int64)]
-    return selected.astype(np.int64)
 
 
 def lift_tracks_yx_to_world(
@@ -133,10 +168,3 @@ def lift_tracks_yx_to_world(
         tracks_yx=tracks[source_indices].astype(np.float32),
         valid_mask=valid,
     )
-
-
-__all__ = [
-    "OverlayLiftResult",
-    "lift_tracks_yx_to_world",
-    "select_overlay_point_indices",
-]

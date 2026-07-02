@@ -1,3 +1,5 @@
+"""Voxel-based point-cloud capping/filtering and the async filter worker."""
+
 from __future__ import annotations
 
 from collections import deque
@@ -7,16 +9,6 @@ import time
 from typing import Any, Callable
 
 import numpy as np
-
-
-def _empty_like_points(xyz: np.ndarray) -> np.ndarray:
-    return np.empty((0, 3), dtype=np.asarray(xyz).dtype if np.asarray(xyz).dtype != np.dtype("O") else np.float32)
-
-
-def _empty_like_colors(colors: np.ndarray | None) -> np.ndarray | None:
-    if colors is None:
-        return None
-    return np.empty((0, 3), dtype=np.asarray(colors).dtype)
 
 
 def _empty_indices() -> np.ndarray:
@@ -80,82 +72,6 @@ def voxel_cap_indices(
         keep_idx = first_idx
     keep_idx = np.sort(keep_idx)
     return keep_idx.astype(np.int64, copy=False)
-
-
-def voxel_cap_points(
-    xyz: np.ndarray,
-    colors: np.ndarray | None = None,
-    *,
-    max_points: int = 20_000,
-    voxel_size_m: float = 0.004,
-    rng: np.random.Generator | None = None,
-) -> tuple[np.ndarray, np.ndarray | None]:
-    """
-    Spatially cap point cloud before expensive filtering.
-
-    Keeps at most one representative per voxel first. If that still exceeds
-    max_points, randomly subsamples voxel representatives.
-    """
-
-    points = np.asarray(xyz)
-    if colors is not None and int(np.asarray(colors).shape[0]) != int(points.shape[0]):
-        raise ValueError("colors must have the same first dimension as xyz")
-    keep_idx = voxel_cap_indices(
-        points,
-        max_points=int(max_points),
-        voxel_size_m=float(voxel_size_m),
-        rng=rng,
-    )
-    if points.shape[0] == 0:
-        return _empty_like_points(points), _empty_like_colors(colors)
-    return points[keep_idx], None if colors is None else np.asarray(colors)[keep_idx]
-
-
-def voxel_downsample_points(
-    xyz: np.ndarray,
-    colors: np.ndarray | None = None,
-    *,
-    voxel_size_m: float = 0.004,
-) -> tuple[np.ndarray, np.ndarray | None]:
-    """Keep one representative point per occupied voxel without a fixed cap."""
-
-    points = np.asarray(xyz)
-    if points.ndim != 2 or points.shape[1] != 3:
-        raise ValueError("xyz must be an Nx3 array")
-    if colors is not None and int(np.asarray(colors).shape[0]) != int(points.shape[0]):
-        raise ValueError("colors must have the same first dimension as xyz")
-    if points.shape[0] == 0:
-        return _empty_like_points(points), _empty_like_colors(colors)
-
-    keys = _voxel_keys(points, voxel_size_m=float(voxel_size_m))
-    _unused_unique, first_idx = np.unique(keys, return_index=True)
-    keep_idx = np.sort(first_idx)
-    return points[keep_idx], None if colors is None else np.asarray(colors)[keep_idx]
-
-
-def voxel_density_filter(
-    xyz: np.ndarray,
-    colors: np.ndarray | None = None,
-    *,
-    voxel_size_m: float = 0.004,
-    min_points_per_voxel: int = 2,
-) -> tuple[np.ndarray, np.ndarray | None]:
-    """Fast approximate outlier removal based on voxel occupancy."""
-
-    points = np.asarray(xyz)
-    if points.ndim != 2 or points.shape[1] != 3:
-        raise ValueError("xyz must be an Nx3 array")
-    if colors is not None and int(np.asarray(colors).shape[0]) != int(points.shape[0]):
-        raise ValueError("colors must have the same first dimension as xyz")
-    if min_points_per_voxel <= 1:
-        return points, colors
-    if points.shape[0] == 0:
-        return _empty_like_points(points), _empty_like_colors(colors)
-
-    keys = _voxel_keys(points, voxel_size_m=float(voxel_size_m))
-    _unused_unique, inverse, counts = np.unique(keys, return_inverse=True, return_counts=True)
-    keep = counts[inverse] >= int(min_points_per_voxel)
-    return points[keep], None if colors is None else np.asarray(colors)[keep]
 
 
 def voxel_density_indices(

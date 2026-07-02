@@ -142,16 +142,6 @@ CATALOG: tuple[HarnessEntry, ...] = (
         requires=("camera",),
     ),
     HarnessEntry(
-        "scripts/harness/diagnostics/demo/realtime_single_camera_pointcloud.py",
-        "diagnostics",
-        "demo",
-        "Compatibility path for the active demo_v2 single-D455 realtime point-cloud demo.",
-        "hardware",
-        help=True,
-        automatic=False,
-        requires=("camera", "gpu", "gui"),
-    ),
-    HarnessEntry(
         "scripts/harness/diagnostics/hardware/render_d455_stream_probe_report.py",
         "diagnostics",
         "hardware",

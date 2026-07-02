@@ -1,6 +1,6 @@
-"""Shared runtime helpers for sanctioned QQTT demos.
+"""Shared shape-prior helpers kept for sanctioned QQTT services.
 
-Versioned demo folders keep thin public entrypoints. Reusable demo runtime,
-render, and profiling code lives here so Demo 2.x folders do not import each
-other.
+Demo v5.1 owns its realtime runtime under ``demo_v5_1/``. Only the
+shape-prior warmup/alignment helpers used by ``services/shape_prior_remote``
+remain here.
 """

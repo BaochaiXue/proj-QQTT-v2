@@ -1,5 +1,8 @@
+"""Rainbow palettes for tracking query-point visualization."""
+
 from __future__ import annotations
 
+import matplotlib
 import numpy as np
 
 
@@ -45,14 +48,9 @@ def query_rainbow_colors_from_points_yx_rgb_u8(query_points_yx: np.ndarray) -> n
         normalized = np.zeros((len(points),), dtype=np.float32)
     else:
         normalized = np.clip((y - y_min) / span, 0.0, 1.0).astype(np.float32)
-    try:
-        import matplotlib
-
-        rgba = matplotlib.colormaps.get_cmap("gist_rainbow")(normalized)
-        rgb = np.asarray(rgba[:, :3], dtype=np.float32)
-        return np.ascontiguousarray(np.clip(rgb * np.float32(255.0), 0, 255).astype(np.uint8))
-    except Exception:
-        return np.ascontiguousarray(_hsv_to_rgb_u8(normalized), dtype=np.uint8)
+    rgba = matplotlib.colormaps.get_cmap("gist_rainbow")(normalized)
+    rgb = np.asarray(rgba[:, :3], dtype=np.float32)
+    return np.ascontiguousarray(np.clip(rgb * np.float32(255.0), 0, 255).astype(np.uint8))
 
 
 def query_rainbow_colors_for_indices(query_indices: np.ndarray, *, query_count: int | None = None) -> np.ndarray:
@@ -65,10 +63,3 @@ def query_rainbow_colors_for_indices(query_indices: np.ndarray, *, query_count: 
     colors = np.zeros((len(indices), 3), dtype=np.uint8)
     colors[valid] = palette[indices[valid]]
     return np.ascontiguousarray(colors, dtype=np.uint8)
-
-
-__all__ = [
-    "query_rainbow_colors_for_indices",
-    "query_rainbow_colors_from_points_yx_rgb_u8",
-    "query_rainbow_colors_rgb_u8",
-]

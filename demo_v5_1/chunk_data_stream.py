@@ -21,8 +21,8 @@ from demo_v5_1.chunk_data_payload import (
     build_chunk_data_payload,
 )
 from demo_v5_1.chunk_data_output import ChunkDataWriter
-from qqtt.demo.pcd_postprocess import _detect_radius_outlier_indices
-from qqtt.demo import phystwin_strict_product as strict
+from demo_v5_1.utils.pcd_postprocess import detect_radius_outlier_indices
+from demo_v5_1 import phystwin_strict_product as strict
 
 
 # frames.jsonl is append-only and owned by the camera subprocess. The helpers in
@@ -360,7 +360,7 @@ def _apply_radius_outlier_to_mask_frame(
         if not np.any(point_valid):
             continue
         valid_indices = np.flatnonzero(point_valid)
-        result = _detect_radius_outlier_indices(
+        result = detect_radius_outlier_indices(
             points[point_valid],
             radius_m=float(radius_m),
             nb_points=int(nb_points),
