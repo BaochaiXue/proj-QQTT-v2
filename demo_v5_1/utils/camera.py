@@ -51,13 +51,15 @@ def rs_intrinsics_to_matrix(intrinsics: object) -> np.ndarray:
 
 
 def rs_extrinsics_to_matrix(extrinsics: object) -> np.ndarray:
+    # librealsense stores rotation column-major; return row-major [R|t]
+    # for standard to_point = R @ from_point + t consumers.
     rotation = list(map(float, getattr(extrinsics, "rotation")))
     translation = list(map(float, getattr(extrinsics, "translation")))
     return np.array(
         [
-            [rotation[0], rotation[1], rotation[2], translation[0]],
-            [rotation[3], rotation[4], rotation[5], translation[1]],
-            [rotation[6], rotation[7], rotation[8], translation[2]],
+            [rotation[0], rotation[3], rotation[6], translation[0]],
+            [rotation[1], rotation[4], rotation[7], translation[1]],
+            [rotation[2], rotation[5], rotation[8], translation[2]],
             [0.0, 0.0, 0.0, 1.0],
         ],
         dtype=np.float32,
@@ -65,6 +67,7 @@ def rs_extrinsics_to_matrix(extrinsics: object) -> np.ndarray:
 
 
 def rs_translation_norm(extrinsics: object) -> float:
+    """Translation magnitude in meters (e.g. IR stereo baseline)."""
     tx, ty, tz = map(float, getattr(extrinsics, "translation"))
     return float(math.sqrt(tx * tx + ty * ty + tz * tz))
 
@@ -78,6 +81,7 @@ def load_realsense_module():
 
 
 def _device_info(device: object, info_key: object) -> str:
+    """Read a camera_info field, returning "" when the device does not expose it."""
     if hasattr(device, "supports") and device.supports(info_key):
         return str(device.get_info(info_key))
     return ""

@@ -50,6 +50,7 @@ def apply_wslg_open3d_env_defaults() -> dict[str, str]:
             os.environ.pop(key, None)
             applied[key] = "<unset>"
     for key, value in WSLG_OPEN3D_ENV_DEFAULTS.items():
+        # Respect an explicit user GPU-adapter choice; force the other defaults.
         if key == "MESA_D3D12_DEFAULT_ADAPTER_NAME" and key in os.environ:
             continue
         if os.environ.get(key) != value:
@@ -164,6 +165,9 @@ class Open3DSceneTensorLayer:
         if colors_rgb_u8.ndim != 2 or colors_rgb_u8.shape[1] != 3:
             raise ValueError("colors_rgb_u8 must be an Nx3 array")
         n_points = int(points_xyz_m.shape[0])
+        # Empty update: drop the geometry entirely (Open3D cannot render a
+        # zero-point tensor cloud) and reset capacity so the next non-empty
+        # update rebuilds buffers from scratch.
         if n_points == 0:
             remove_ms = 0.0
             if self.added:
@@ -189,6 +193,9 @@ class Open3DSceneTensorLayer:
         if colors_rgb_u8.shape[0] != n_points:
             raise ValueError("points and colors must have the same length")
 
+        # Capacity only grows (monotonic high-water mark): the Open3D tensors wrap
+        # the numpy buffers without copying, so as long as capacity is unchanged we
+        # can write in place and skip rebinding entirely.
         old_capacity = int(self.capacity)
         next_capacity = max(old_capacity, n_points, int(self.min_capacity))
         capacity_changed = next_capacity != old_capacity
@@ -197,6 +204,7 @@ class Open3DSceneTensorLayer:
         points = self._points_buffer.ensure(next_capacity)
         np.copyto(points[:n_points], points_xyz_m, casting="unsafe")
         if next_capacity > n_points:
+            # Park unused slots at z=-1 (behind the camera) so they never render.
             points[n_points:, 0:2] = np.float32(0.0)
             points[n_points:, 2] = np.float32(-1.0)
         tensor_rebound = capacity_changed or self._refs["points"] is None
@@ -222,6 +230,8 @@ class Open3DSceneTensorLayer:
         add_ms = 0.0
         remove_ms = 0.0
         recreated = False
+        # Slow path (first frame or capacity growth): re-add the geometry so the
+        # scene picks up the rebound tensors. Fast path: flag-based in-place update.
         if not self.added or capacity_changed:
             if self.added:
                 remove_start_s = time.perf_counter()

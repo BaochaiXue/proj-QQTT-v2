@@ -26,19 +26,12 @@ from demo_v5_1 import phystwin_strict_product as strict
 from demo_v5_1 import tracking
 
 
+# ---------------------------------------------------------------------------
+# frames.jsonl tailing
+# ---------------------------------------------------------------------------
 # frames.jsonl is append-only and owned by the camera subprocess. The helpers in
 # this section either tolerate incomplete rows or normalize source-frame metadata
 # so chunking stays deterministic during live tailing.
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-    return rows
-
-
 def _read_jsonl_from_offset(
     path: Path, offset: int
 ) -> tuple[list[dict[str, Any]], int]:
@@ -75,43 +68,23 @@ def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
                 yield json.loads(line)
 
 
-def _count_jsonl_rows(path: Path) -> int:
-    if not path.is_file():
-        return 0
-    count = 0
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            if line.strip():
-                count += 1
-    return count
-
-
-def _online_total_frame_count(
-    frames_path: Path,
-    *,
-    chunk_size: int,
-    max_chunks: int | None,
-) -> int | None:
-    if int(chunk_size) <= 0:
-        return None
-    row_count = _count_jsonl_rows(frames_path)
-    full_chunks = row_count // int(chunk_size)
-    if max_chunks is not None:
-        full_chunks = min(full_chunks, int(max_chunks))
-    return int(full_chunks * int(chunk_size))
-
-
 def _relative_wall_s(origin_s: float) -> float:
+    # All *_wall_s manifest timings are seconds since one shared monotonic
+    # origin so latencies stay comparable across chunks within a run.
     return float(time.monotonic() - float(origin_s))
 
 
 def _complete_chunk_backlog(
     frames_path: Path, *, chunk_size: int, published_chunk_count: int
 ) -> int:
+    """Count fully captured but not-yet-published chunks (manifest telemetry)."""
     if int(chunk_size) <= 0:
         return 0
-    complete_chunks = _count_jsonl_rows(frames_path) // int(chunk_size)
-    return max(0, int(complete_chunks) - int(published_chunk_count))
+    row_count = 0
+    if frames_path.is_file():
+        with frames_path.open("r", encoding="utf-8") as handle:
+            row_count = sum(1 for line in handle if line.strip())
+    return max(0, row_count // int(chunk_size) - int(published_chunk_count))
 
 
 def _optional_int(value: Any) -> int | None:
@@ -133,26 +106,23 @@ def _optional_float(value: Any) -> float | None:
     return result if np.isfinite(result) else None
 
 
-def _row_source_frame_index(row: Mapping[str, Any], fallback: int) -> int:
-    value = _optional_int(row.get("source_frame_index"))
-    if value is not None:
-        return int(value)
-    value = _optional_int(row.get("seq"))
-    if value is not None:
-        return int(value)
-    return int(fallback)
-
-
 def _rows_source_frame_indices(
     rows: Sequence[Mapping[str, Any]], *, fallback_start: int
 ) -> list[int]:
-    return [
-        _row_source_frame_index(row, int(fallback_start) + offset)
-        for offset, row in enumerate(rows)
-    ]
+    """Per-row source frame index: source_frame_index, else seq, else position."""
+    indices: list[int] = []
+    for offset, row in enumerate(rows):
+        value = _optional_int(row.get("source_frame_index"))
+        if value is None:
+            value = _optional_int(row.get("seq"))
+        indices.append(
+            int(value) if value is not None else int(fallback_start) + offset
+        )
+    return indices
 
 
 def _rows_source_timestamps(rows: Sequence[Mapping[str, Any]]) -> list[float] | None:
+    """Per-row capture timestamps; None unless every row carries a finite one."""
     values: list[float] = []
     for row in rows:
         value = _optional_float(row.get("source_timestamp_s"))
@@ -162,6 +132,9 @@ def _rows_source_timestamps(rows: Sequence[Mapping[str, Any]]) -> list[float] | 
     return values
 
 
+# ---------------------------------------------------------------------------
+# Warmup-delayed startup rows
+# ---------------------------------------------------------------------------
 def _row_ready_for_realtime_chunk_start(row: Mapping[str, Any]) -> bool:
     controller_points = _optional_int(row.get("controller_point_count"))
     if controller_points is not None and int(controller_points) < 30:
@@ -280,23 +253,9 @@ def _filter_warmup_start_rows(
     return output
 
 
-def _load_rgb(path: Path) -> np.ndarray:
-    return np.asarray(Image.open(path).convert("RGB"), dtype=np.uint8)
-
-
-def _load_mask_frame(path: Path) -> dict[str, np.ndarray]:
-    payload = np.load(path, allow_pickle=False)
-    frame = {
-        "object": np.asarray(payload["object_mask"], dtype=bool),
-        "controller": np.asarray(payload["controller_mask"], dtype=bool),
-    }
-    if "hand_a_mask" in payload:
-        frame["hand_a"] = np.asarray(payload["hand_a_mask"], dtype=bool)
-    if "hand_b_mask" in payload:
-        frame["hand_b"] = np.asarray(payload["hand_b_mask"], dtype=bool)
-    return strict.normalize_processed_mask_frame(frame)
-
-
+# ---------------------------------------------------------------------------
+# Per-frame mask products (offline data_process_mask parity)
+# ---------------------------------------------------------------------------
 def _apply_depth_validity_to_mask_frame(
     frame: Mapping[str, np.ndarray],
     depth_m: np.ndarray,
@@ -375,17 +334,11 @@ def _apply_radius_outlier_to_mask_frame(
     return strict.normalize_processed_mask_frame(filtered)
 
 
-def _depth_path(capture_dir: Path, row: Mapping[str, Any]) -> Path:
-    if "depth_color_m_path" in row:
-        return capture_dir / str(row["depth_color_m_path"])
-    if "ffs_depth_path" in row:
-        return capture_dir / str(row["ffs_depth_path"])
-    raise ValueError(
-        "headless capture frame is missing depth_color_m_path or legacy ffs_depth_path"
-    )
-
-
+# ---------------------------------------------------------------------------
+# Capture metadata, trajectories, and shape prior
+# ---------------------------------------------------------------------------
 def _intrinsics_matrix(metadata: Mapping[str, Any]) -> np.ndarray:
+    """Accept the fx/fy/cx/cy mapping or matrix metadata forms as float32 3x3."""
     intrinsics = metadata.get("intrinsics")
     if isinstance(intrinsics, Mapping):
         return np.array(
@@ -527,26 +480,6 @@ def _shape_points_from_capture(
     return np.empty((0, 3), dtype=np.float64), np.empty((0, 3), dtype=np.float64)
 
 
-def _has_shape_points(surface_points: np.ndarray, interior_points: np.ndarray) -> bool:
-    return (
-        int(np.asarray(surface_points).reshape(-1, 3).shape[0])
-        + int(np.asarray(interior_points).reshape(-1, 3).shape[0])
-        > 0
-    )
-
-
-def _shape_prior_terminal_error(metadata: Mapping[str, Any]) -> str | None:
-    status = str(metadata.get("shape_prior_status") or "").strip().lower()
-    if status not in {"failed", "unavailable", "disabled"}:
-        return None
-    detail = (
-        metadata.get("shape_prior_error")
-        or metadata.get("error")
-        or "no surface/interior points became ready"
-    )
-    return f"shape prior {status}: {detail}"
-
-
 def _read_json_file_stable(
     path: Path,
     *,
@@ -606,12 +539,22 @@ def _shape_points_for_chunk(
         if (
             explicit_points
             or not bool(require_shape_prior)
-            or _has_shape_points(shape_surface, shape_interior)
+            # "Ready" means at least one surface or interior structure point.
+            or int(np.asarray(shape_surface).reshape(-1, 3).shape[0])
+            + int(np.asarray(shape_interior).reshape(-1, 3).shape[0])
+            > 0
         ):
             return metadata, shape_surface, shape_interior
-        terminal_error = _shape_prior_terminal_error(metadata)
-        if terminal_error is not None:
-            raise RuntimeError(terminal_error)
+        # A terminal shape-prior status can never produce points later; fail
+        # fast instead of waiting out the full deadline.
+        status = str(metadata.get("shape_prior_status") or "").strip().lower()
+        if status in {"failed", "unavailable", "disabled"}:
+            detail = (
+                metadata.get("shape_prior_error")
+                or metadata.get("error")
+                or "no surface/interior points became ready"
+            )
+            raise RuntimeError(f"shape prior {status}: {detail}")
         if time.monotonic() >= deadline:
             raise RuntimeError(
                 "shape prior is required for Demo v5 final_data chunks, "
@@ -630,6 +573,9 @@ def _shape_points_for_chunk(
         time.sleep(max(0.0, float(poll_interval_s)))
 
 
+# ---------------------------------------------------------------------------
+# Track manifest telemetry
+# ---------------------------------------------------------------------------
 def _controller_track_manifest_fields(
     track_process_data: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -729,6 +675,9 @@ def _object_track_manifest_fields(
     }
 
 
+# ---------------------------------------------------------------------------
+# Chunk materialization and publish
+# ---------------------------------------------------------------------------
 def _track_input_with_session_query_schema(
     *,
     tracks_yx: np.ndarray,
@@ -816,8 +765,21 @@ def _chunk_data_window_from_rows(
     query_points_yx: np.ndarray | None = None
 
     for row in rows:
-        rgb = _load_rgb(capture_dir / str(row["rgb_path"]))
-        depth = np.load(_depth_path(capture_dir, row))
+        rgb = np.asarray(
+            Image.open(capture_dir / str(row["rgb_path"])).convert("RGB"),
+            dtype=np.uint8,
+        )
+        # Newer captures write depth_color_m_path; older ones used
+        # ffs_depth_path for the same color-aligned metric depth (meters).
+        if "depth_color_m_path" in row:
+            depth_path = capture_dir / str(row["depth_color_m_path"])
+        elif "ffs_depth_path" in row:
+            depth_path = capture_dir / str(row["ffs_depth_path"])
+        else:
+            raise ValueError(
+                "headless capture frame is missing depth_color_m_path or legacy ffs_depth_path"
+            )
+        depth = np.load(depth_path)
         # Offline parity with data_process_sam3d/data_process_pcd.py:L84-L149
         # and L224-L229. The offline path converts RGB-D into a world-space
         # per-pixel PCD grid, then writes it as pcd/*.npz. This fallback
@@ -830,7 +792,16 @@ def _chunk_data_window_from_rows(
         )
         pcd_points.append(points)
         pcd_colors.append(colors)
-        mask_frame = _load_mask_frame(capture_dir / str(row["mask_path"]))
+        mask_payload = np.load(capture_dir / str(row["mask_path"]), allow_pickle=False)
+        mask_frame: dict[str, np.ndarray] = {
+            "object": np.asarray(mask_payload["object_mask"], dtype=bool),
+            "controller": np.asarray(mask_payload["controller_mask"], dtype=bool),
+        }
+        if "hand_a_mask" in mask_payload:
+            mask_frame["hand_a"] = np.asarray(mask_payload["hand_a_mask"], dtype=bool)
+        if "hand_b_mask" in mask_payload:
+            mask_frame["hand_b"] = np.asarray(mask_payload["hand_b_mask"], dtype=bool)
+        mask_frame = strict.normalize_processed_mask_frame(mask_frame)
         # Offline parity with data_process_sam3d/data_process_mask.py:L42-L152:
         # raw semantic masks plus PCD validity become processed masks. The
         # realtime fallback keeps that product in memory.
@@ -933,8 +904,11 @@ def _chunk_data_window_from_prepared_frames(
     """
     if not frames:
         raise ValueError("prepared data_process chunk requires at least one frame")
-    c2w = _camera_to_world(metadata)
-    intrinsics = _intrinsics_matrix(metadata)
+    # Prepared frames already carry world-space PCD, so the intrinsics/c2w
+    # values are unused here — but malformed capture metadata must still fail
+    # fast, exactly like the legacy rows path.
+    _intrinsics_matrix(metadata)
+    _camera_to_world(metadata)
     first_queries = np.asarray(frames[0].query_points_yx, dtype=np.float32).reshape(
         -1, 2
     )
@@ -1103,9 +1077,17 @@ def _write_chunk_from_rows(
     )
     chunk_source_timestamps_s = _rows_source_timestamps(rows)
 
-    def manifest_extras() -> dict[str, Any]:
-        backlog_count = 0 if backlog_chunks is None else int(backlog_chunks())
-        payload = {
+    final_data, track_process, manifest = build_chunk_data_payload(chunk)
+    manifest.update(
+        {
+            "chunk_name": chunk_name,
+            "online_publish_skipped": False,
+        }
+    )
+    # Provenance plus latency telemetry. backlog_chunks() is sampled here,
+    # after track finalization, so it reflects the backlog at publish time.
+    manifest.update(
+        {
             "source_capture_dir": str(capture),
             "source_row_start": int(row_start),
             "source_row_end": int(row_end),
@@ -1126,22 +1108,13 @@ def _write_chunk_from_rows(
             "materialize_latency_ms": float(
                 (track_finalize_done_wall_s - materialize_start_wall_s) * 1000.0
             ),
-            "backlog_chunks": backlog_count,
+            "backlog_chunks": 0 if backlog_chunks is None else int(backlog_chunks()),
             "chunk_materialization_source": materialization_source,
             "prepared_frame_count": int(prepared_count),
             "legacy_reprocess_frame_count": int(legacy_reprocess_count),
         }
-        payload.update(track_fields)
-        return payload
-
-    final_data, track_process, manifest = build_chunk_data_payload(chunk)
-    manifest.update(
-        {
-            "chunk_name": chunk_name,
-            "online_publish_skipped": False,
-        }
     )
-    manifest.update(manifest_extras())
+    manifest.update(track_fields)
     timing_floor_s = max(
         float(manifest.get("window_closed_wall_s", 0.0) or 0.0),
         float(manifest.get("track_finalize_done_wall_s", 0.0) or 0.0),
@@ -1182,6 +1155,9 @@ def _write_chunk_from_rows(
     return manifest
 
 
+# ---------------------------------------------------------------------------
+# Entry points: completed-capture conversion and live tailing
+# ---------------------------------------------------------------------------
 def write_chunk_data_from_headless_capture(
     capture_dir: str | Path,
     *,
@@ -1231,15 +1207,16 @@ def write_chunk_data_from_headless_capture(
     online_writer = None
     online_case = str(online_case_name or case_prefix)
     if bool(write_online_output):
+        # Only complete windows are published, so the static final_data view is
+        # sized to whole chunks (optionally capped by max_chunks).
+        full_chunks = len(rows_to_process) // chunk_size
+        if max_chunks is not None:
+            full_chunks = min(full_chunks, int(max_chunks))
         online_writer = ChunkDataWriter(
             base_path=base_path,
             case_name=online_case,
             chunk_size=chunk_size,
-            num_frames_total=(
-                min(len(rows_to_process) // chunk_size, int(max_chunks)) * chunk_size
-                if max_chunks is not None
-                else (len(rows_to_process) // chunk_size) * chunk_size
-            ),
+            num_frames_total=full_chunks * chunk_size,
         )
     # Keep the tracking runtime and query schema alive across chunks. Chunk 0
     # freezes identity (design_spec.md): object columns, controller anchors,
@@ -1258,13 +1235,11 @@ def write_chunk_data_from_headless_capture(
         if len(row_buffer) < chunk_size:
             continue
         window_closed_wall_s = _relative_wall_s(float(wall_time_origin_s))
-        chunk_rows = row_buffer
-        chunk_prepared = prepared_buffer
         try:
             manifest = _write_chunk_from_rows(
                 capture=capture,
                 metadata=metadata,
-                rows=chunk_rows,
+                rows=row_buffer,
                 case_prefix=case_prefix,
                 chunk_index=chunk_index,
                 row_start=row_start,
@@ -1278,7 +1253,7 @@ def write_chunk_data_from_headless_capture(
                 mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
                 wall_time_origin_s=wall_time_origin_s,
                 window_closed_wall_s=window_closed_wall_s,
-                prepared_frames=chunk_prepared,
+                prepared_frames=prepared_buffer,
                 backlog_chunks=(
                     lambda path=frames_path,
                     size=chunk_size,
@@ -1418,7 +1393,6 @@ def stream_chunk_data_from_headless_capture(
             if len(row_buffer) < chunk_size:
                 continue
             window_closed_wall_s = _relative_wall_s(float(wall_time_origin_s))
-            chunk_prepared = prepared_buffer
             latest_metadata, shape_surface, shape_interior = _shape_points_for_chunk(
                 capture,
                 surface_points=surface_points,
@@ -1447,7 +1421,7 @@ def stream_chunk_data_from_headless_capture(
                     mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
                     wall_time_origin_s=wall_time_origin_s,
                     window_closed_wall_s=window_closed_wall_s,
-                    prepared_frames=chunk_prepared,
+                    prepared_frames=prepared_buffer,
                     backlog_chunks=(
                         lambda path=frames_path,
                         size=chunk_size,

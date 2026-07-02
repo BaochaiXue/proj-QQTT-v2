@@ -20,8 +20,6 @@ from services.ffs_remote import FfsRemoteDepthClient
 TRACK_MODE_CONTROLLER_OBJECT = "controller-object"
 TRACK_MODE_OBJECT_ONLY = "object-only"
 TRACK_MODE_CONTROLLER_ONLY = "controller-only"
-CONTROLLER_INSTANCE_MODE_SINGLE = "single"
-CONTROLLER_INSTANCE_MODE_TWO_HANDS = "two-hands"
 INIT_MODE_SAM31_FIRST_FRAME = "sam31-first-frame"
 INIT_MODE_SAVED_MASKS = "saved-masks"
 DEFAULT_SAM31_DEVICE = "cuda"
@@ -46,18 +44,9 @@ class SegmentationWarmupState:
     initial_masks: InitialMaskBundle | None
 
 
-def _resolve_path(value: str | Path, *, repo_root: Path) -> Path:
-    path = Path(value).expanduser()
-    return path.resolve() if path.is_absolute() else (Path(repo_root) / path).resolve()
-
-
-def _load_gray_image(path: Path) -> np.ndarray:
-    try:
-        from PIL import Image
-
-        return np.asarray(Image.open(path).convert("L"))
-    except Exception as exc:
-        raise ValueError(f"failed to load mask image {path}: {exc}") from exc
+# ---------------------------------------------------------------------------
+# Frame-0 mask loading (saved-masks init mode)
+# ---------------------------------------------------------------------------
 
 
 def load_binary_mask(
@@ -66,8 +55,18 @@ def load_binary_mask(
     expected_shape: tuple[int, int],
     repo_root: Path,
 ) -> np.ndarray:
-    mask_path = _resolve_path(path, repo_root=repo_root)
-    image = _load_gray_image(mask_path)
+    # Relative CLI mask paths are anchored at the repo root so saved-masks init
+    # behaves the same regardless of the launch directory.
+    mask_path = Path(path).expanduser()
+    if not mask_path.is_absolute():
+        mask_path = Path(repo_root) / mask_path
+    mask_path = mask_path.resolve()
+    try:
+        from PIL import Image
+
+        image = np.asarray(Image.open(mask_path).convert("L"))
+    except Exception as exc:
+        raise ValueError(f"failed to load mask image {mask_path}: {exc}") from exc
     if image.ndim != 2:
         raise ValueError(f"mask must be a 2D image: {mask_path}")
     if tuple(image.shape) != tuple(expected_shape):
@@ -75,7 +74,15 @@ def load_binary_mask(
             f"mask shape {tuple(image.shape)} does not match frame shape "
             f"{tuple(expected_shape)}: {mask_path}"
         )
+    # Any nonzero gray value counts as foreground.
     return np.ascontiguousarray(image > 0)
+
+
+# ---------------------------------------------------------------------------
+# Track-mode predicates
+# ---------------------------------------------------------------------------
+# Each predicate accepts either a parsed argparse.Namespace or a raw
+# --track-mode string so both CLI paths and programmatic callers can use them.
 
 
 def object_tracking_enabled(args_or_track_mode: argparse.Namespace | str) -> bool:
@@ -99,14 +106,9 @@ def controller_tracking_enabled(args_or_track_mode: argparse.Namespace | str) ->
     }
 
 
-def three_identity_controller_enabled(args: argparse.Namespace) -> bool:
-    return bool(
-        controller_tracking_enabled(args)
-        and str(
-            getattr(args, "controller_instance_mode", CONTROLLER_INSTANCE_MODE_SINGLE)
-        )
-        == CONTROLLER_INSTANCE_MODE_TWO_HANDS
-    )
+# ---------------------------------------------------------------------------
+# Mask post-processing (label union, controller hand splitting)
+# ---------------------------------------------------------------------------
 
 
 def bgr_to_pil_rgb(color_bgr: np.ndarray) -> Any:
@@ -116,6 +118,8 @@ def bgr_to_pil_rgb(color_bgr: np.ndarray) -> Any:
 
 
 def _union_masks(masks: list[np.ndarray], *, label: str) -> np.ndarray:
+    # SAM3.1 returns one mask per detected instance; downstream tracking wants a
+    # single foreground mask per label, so OR all instances together.
     if not masks:
         raise RuntimeError(f"SAM3.1 did not produce a mask for label {label!r}")
     output = np.zeros_like(masks[0], dtype=bool)
@@ -131,6 +135,7 @@ def _mask_area(mask: np.ndarray) -> int:
 
 
 def _mask_centroid_x(mask: np.ndarray) -> float:
+    # Sort key for left-to-right hand ordering; empty masks sort last (+inf).
     coords = np.argwhere(np.asarray(mask, dtype=bool))
     if coords.size == 0:
         return float("inf")
@@ -138,6 +143,9 @@ def _mask_centroid_x(mask: np.ndarray) -> float:
 
 
 def _connected_components_by_area(mask: np.ndarray) -> list[np.ndarray]:
+    # Returns 8-connected components sorted largest-first. cv2 is the fast
+    # path; any failure (including cv2 being unavailable) falls back to the
+    # pure-Python flood fill below with the same connectivity and ordering.
     mask_bool = np.asarray(mask, dtype=bool)
     if not np.any(mask_bool):
         return []
@@ -201,6 +209,8 @@ def split_controller_hand_instances(
         for mask in controller_masks
         if _mask_area(mask) > 0
     ]
+    # Two+ instance masks: keep the two largest. A single (merged) mask: split
+    # it into connected components and keep the two largest.
     if len(masks) >= 2:
         candidates = sorted(masks, key=_mask_area, reverse=True)[:2]
     elif len(masks) == 1:
@@ -212,11 +222,20 @@ def split_controller_hand_instances(
             f"SAM3.1 did not produce two separable controller masks for {label!r}; "
             "three-identity demo requires two visible hands in frame 0"
         )
+    # Stable identity assignment: hand A is the leftmost hand in the image.
     candidates = sorted(candidates, key=_mask_centroid_x)
     return (
         np.ascontiguousarray(candidates[0], dtype=bool),
         np.ascontiguousarray(candidates[1], dtype=bool),
     )
+
+
+# ---------------------------------------------------------------------------
+# SAM3.1 runtime cleanup
+# ---------------------------------------------------------------------------
+# Two levels of cleanup: release_* drops the cached model runtime and
+# empties the CUDA allocator; trim_* keeps the cached model alive (for the next
+# camera or shape-prior warmup) and only returns freed blocks to CUDA.
 
 
 def release_sam31_runtime_resources(device: str = DEFAULT_SAM31_DEVICE) -> float:
@@ -265,6 +284,11 @@ def trim_sam31_cuda_allocator(device: str = DEFAULT_SAM31_DEVICE) -> float:
     return (time.perf_counter() - started_s) * 1000.0
 
 
+# ---------------------------------------------------------------------------
+# SAM3.1 frame-0 segmentation and initial-mask resolution
+# ---------------------------------------------------------------------------
+
+
 def run_sam31_first_frame_mask_bundle(
     color_bgr: np.ndarray,
     args: argparse.Namespace,
@@ -274,6 +298,10 @@ def run_sam31_first_frame_mask_bundle(
         run_image_segmentation,
     )
 
+    # Prompt order matters: run_image_segmentation keeps only the best instance
+    # for the first prompt of a multi-prompt request and all instances for the
+    # later ones, so the object prompt must come before the controller prompt
+    # (one object mask, both hand instances preserved).
     prompt_labels = []
     if object_tracking_enabled(args):
         prompt_labels.append(str(args.object_prompt))
@@ -283,6 +311,8 @@ def run_sam31_first_frame_mask_bundle(
         empty = np.zeros(tuple(color_bgr.shape[:2]), dtype=bool)
         return InitialMaskBundle(controller_mask=empty, object_mask=empty)
     text_prompt = ",".join(prompt_labels)
+    # Shape-prior warmup re-runs SAM3.1 on frame 0, so it needs the model kept
+    # in the cache (reuse) and only an allocator trim afterwards.
     reuse_sam31_runtime = bool(
         getattr(args, "sam31_cache_init_model", False)
         or getattr(args, "shape_prior_warmup", False)
@@ -301,6 +331,8 @@ def run_sam31_first_frame_mask_bundle(
             device=str(args.device),
             reuse_model=reuse_sam31_runtime,
         )
+        # Timing breadcrumbs are stashed on args so the demo can report them
+        # after the warmup phase without threading extra return values.
         setattr(args, "_sam31_last_timing_ms", result.get("timing_ms", {}))
     finally:
         if keep_runtime_until_all_cameras_init:
@@ -327,6 +359,8 @@ def run_sam31_first_frame_mask_bundle(
             controller_masks,
             label=args.controller_prompt,
         )
+    # Disabled identities get all-false masks of the enabled identity's shape;
+    # object-only mode returns early because there are no hands to split.
     if object_mask is None and controller_mask is None:
         empty = np.zeros(tuple(color_bgr.shape[:2]), dtype=bool)
         return InitialMaskBundle(controller_mask=empty, object_mask=empty)
@@ -338,15 +372,13 @@ def run_sam31_first_frame_mask_bundle(
             controller_mask=empty_controller,
             object_mask=object_mask,
         )
-    if three_identity_controller_enabled(args):
-        hand_a_mask, hand_b_mask = split_controller_hand_instances(
-            controller_masks,
-            label=str(args.controller_prompt),
-        )
-        controller_mask = np.logical_or(hand_a_mask, hand_b_mask)
-    else:
-        hand_a_mask = np.ascontiguousarray(controller_mask, dtype=bool)
-        hand_b_mask = np.zeros_like(hand_a_mask, dtype=bool)
+    # The published controller mask is rebuilt from the two hand instances so
+    # it stays consistent with hand_a/hand_b even if SAM3.1 returned extras.
+    hand_a_mask, hand_b_mask = split_controller_hand_instances(
+        controller_masks,
+        label=str(args.controller_prompt),
+    )
+    controller_mask = np.logical_or(hand_a_mask, hand_b_mask)
     return InitialMaskBundle(
         controller_mask=np.ascontiguousarray(controller_mask, dtype=bool),
         object_mask=np.ascontiguousarray(object_mask, dtype=bool),
@@ -396,15 +428,17 @@ def resolve_initial_mask_bundle(
             object_mask = np.zeros_like(controller_mask, dtype=bool)
         if controller_mask is None:
             controller_mask = np.zeros_like(object_mask, dtype=bool)
-        if three_identity_controller_enabled(args):
+        if controller_tracking_enabled(args):
+            # A saved controller mask stores both hands in one image; split it
+            # into per-hand instances the same way as the SAM3.1 path.
             hand_a_mask, hand_b_mask = split_controller_hand_instances(
                 [controller_mask],
                 label=str(args.controller_prompt),
             )
             controller_mask = np.logical_or(hand_a_mask, hand_b_mask)
         else:
-            hand_a_mask = np.ascontiguousarray(controller_mask, dtype=bool)
-            hand_b_mask = np.zeros_like(hand_a_mask, dtype=bool)
+            hand_a_mask = np.zeros_like(controller_mask, dtype=bool)
+            hand_b_mask = np.zeros_like(controller_mask, dtype=bool)
         return InitialMaskBundle(
             controller_mask=np.ascontiguousarray(controller_mask, dtype=bool),
             object_mask=np.ascontiguousarray(object_mask, dtype=bool),
@@ -430,6 +464,13 @@ def resolve_initial_masks(
 ) -> tuple[np.ndarray, np.ndarray]:
     bundle = resolve_initial_mask_bundle(frame, args, repo_root=repo_root)
     return bundle.controller_mask, bundle.object_mask
+
+
+# ---------------------------------------------------------------------------
+# Warmup orchestration (called by MainDataProcessingDemo)
+# ---------------------------------------------------------------------------
+# Demo-specific policies and classes are injected as callables/types instead of
+# imported, because main_data_processing imports this module (avoids a cycle).
 
 
 def prepare_runtime_services_and_source(
@@ -532,6 +573,8 @@ def prepare_segmentation_warmup(
 ) -> SegmentationWarmupState:
     hf_stream, torch_module, dtype, model, processor = demo._init_hf_model()
     first_frame = demo._wait_for_first_frame()
+    # first_frame is None when capture shut down before frame 0; the seg worker
+    # treats that state as a clean early exit rather than an error.
     if first_frame is None:
         return SegmentationWarmupState(
             hf_stream=hf_stream,

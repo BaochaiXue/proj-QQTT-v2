@@ -28,6 +28,9 @@ def _align_ir_to_color_numba(
     out_height: int,
     invalid_value: np.float32,
 ) -> None:
+    # Splat every valid IR depth pixel into the color frame, keeping the nearest
+    # depth per color pixel (z-buffer): initialize to +inf, take min, then map
+    # untouched pixels to invalid_value.
     for i in range(out_flat.shape[0]):
         out_flat[i] = np.inf
 
@@ -39,6 +42,9 @@ def _align_ir_to_color_numba(
             if not np.isfinite(z) or z <= 0.0:
                 continue
 
+            # a_{x,y,z} are precomputed per-pixel coefficients (see
+            # FfsIrToColorAligner.__init__) so the IR->color transform reduces
+            # to coeff * z + t per axis.
             coeff_idx = row_offset + x
             z_color = a_z_flat[coeff_idx] * z + tz
             if not np.isfinite(z_color) or z_color <= 0.0:
@@ -59,6 +65,7 @@ def _align_ir_to_color_numba(
 
 
 def warm_up_numba_ffs_align() -> None:
+    """Trigger the numba JIT compile with a 1x1 input so the first real frame is not slow."""
     depth = np.array([[1.0]], dtype=np.float32)
     coeff = np.ones(1, dtype=np.float32)
     output = np.empty(1, dtype=np.float32)
@@ -104,6 +111,9 @@ class FfsIrToColorAligner:
 
         k_color_arr = np.asarray(k_color, dtype=np.float32).reshape(3, 3)
         transform = np.asarray(t_ir_left_to_color, dtype=np.float32).reshape(4, 4)
+        # Fold intrinsics and rotation into per-pixel coefficients: an IR pixel at
+        # depth z maps to color-camera coords (a_x*z + tx, a_y*z + ty, a_z*z + tz),
+        # leaving only one multiply-add per axis in the numba hot loop.
         ray_x, ray_y = build_projection_grid_from_matrix(width=ir_width, height=ir_height, K=k_ir_left)
         r = transform[:3, :3]
 

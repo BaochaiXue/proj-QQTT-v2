@@ -103,6 +103,22 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertFalse(hasattr(runner, name))
 
+    def test_same_conda_env_subprocess_uses_current_python(self) -> None:
+        from demo_v5_1 import main as runner
+
+        with (
+            mock.patch.dict(runner.os.environ, {"CONDA_DEFAULT_ENV": "demo_2_max"}),
+            mock.patch.object(runner.sys, "executable", "/tmp/demo_2_max/bin/python"),
+        ):
+            same_env_command = runner._python_command_prefix("demo_2_max")
+            other_env_command = runner._python_command_prefix("edgetam-max")
+
+        self.assertEqual(["/tmp/demo_2_max/bin/python"], same_env_command)
+        self.assertEqual(
+            ["conda", "run", "-n", "edgetam-max", "--no-capture-output", "python"],
+            other_env_command,
+        )
+
     def test_legacy_gpu_mode_cli_is_not_accepted(self) -> None:
         from demo_v5_1 import main as runner
 
@@ -312,6 +328,7 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
         self.assertIn(str(Path(tmpdir) / "shape_prior_case"), command)
         self.assertIn("--shape-prior-points-npz", command)
         self.assertIn(str(Path(tmpdir) / "shape_prior" / "points.npz"), command)
+        self.assertNotIn("--controller-instance-mode", command)
         self.assertNotIn("shape_prior_worker.py", " ".join(command))
         self.assertNotIn("--shape-prior-endpoint", command)
         self.assertNotIn("--shape-prior-device", command)
@@ -352,6 +369,11 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
             contract["shape_prior_points_npz"],
         )
         self.assertTrue(contract["shape_prior_warmup"])
+        self.assertEqual(
+            ["hand_a", "object", "hand_b"],
+            contract["edgetam_tracking_identities"],
+        )
+        self.assertNotIn("controller_instance_mode", contract)
         self.assertEqual(
             runner.DEFAULT_MAIN_DATA_PROCESSING_CUDA_VISIBLE_DEVICES,
             contract["main_data_processing_cuda_visible_devices"],

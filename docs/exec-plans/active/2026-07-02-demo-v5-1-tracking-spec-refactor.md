@@ -21,13 +21,20 @@ Required final behavior (from the spec):
   farthest-point-samples 30 anchors. Anchors, `query_ids`,
   `query_semantic_labels`, `controller_sample_query_ids`,
   `query_schema_hash` never change afterwards.
-- A one-time table stores each controller point's nearest 50 controller
-  points by first-frame 3D positions (never updated).
+- A one-time table stores each controller point's nearest 100 controller
+  points by first-frame 3D positions (never updated). Neighbors never cross
+  hands: hand identity is frozen at the warmup frame from the hand_a/hand_b
+  processed masks, and a hand with fewer than 100 points fills with that
+  whole hand.
 - Later chunks: a temporarily-invalid anchor frame is filled by local rigid
-  registration — pick the nearest 15 currently-valid of its 50 neighbors,
-  estimate a rigid transform from first frame to current frame, apply it to
-  the anchor's first-frame position. Identity is never replaced.
-- Fewer than 15 valid neighbors among the 50 → raise an exception (spec).
+  registration — donor ladder per design_spec.md 特殊情况: nearest 15
+  currently-valid table neighbors, else 10, else 5; below 5 the donors
+  become the nearest 5-15 currently-valid same-hand controller anchors (as
+  many as available). Estimate a rigid transform from first frame to current
+  frame, apply it to the anchor's first-frame position. Identity is never
+  replaced.
+- Only when even the same-hand anchor fallback has fewer than 5 valid donors
+  → raise an exception (spec).
 - Motion consistency and detail semantics follow `data_process_origin`
   verbatim (constants 0.01 m radius / 5 neighbors / 0.005 m similarity),
   within realtime constraints.

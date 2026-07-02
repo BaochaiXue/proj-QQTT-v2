@@ -21,7 +21,12 @@ def packet_seq(packet: object) -> int:
 
 
 class LatestSlot(Generic[T]):
-    """Thread-safe single-slot latest-wins buffer."""
+    """Thread-safe single-slot latest-wins buffer.
+
+    Producers put(); the consumer polls get_latest_after() with the last seq it
+    handled. Overwriting a packet the consumer never took counts as a drop, both
+    into a total counter and a resettable window counter (reset_dropped_count).
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -32,10 +37,12 @@ class LatestSlot(Generic[T]):
         self._dropped_total = 0
 
     def put(self, packet: T) -> int:
+        """Store packet, count drops if the previous one was never taken; returns window drops."""
         seq = packet_seq(packet)
         with self._lock:
             if self._packet is not None:
                 current_seq = packet_seq(self._packet)
+                # seq gaps count as multiple drops (producer skipped frames upstream).
                 if current_seq > self._last_taken_seq_total:
                     self._dropped_total += max(1, seq - current_seq)
                 if current_seq > self._last_taken_seq_window:

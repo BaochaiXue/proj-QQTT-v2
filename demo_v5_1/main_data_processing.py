@@ -1,5 +1,23 @@
 #!/usr/bin/env python3
 """Demo v5.1 main data processing runtime."""
+# ---------------------------------------------------------------------------
+# Table of contents (top-level regions, in file order)
+# ---------------------------------------------------------------------------
+# 1.  Path bootstrap, imports, module constants
+# 2.  Shared dataclasses & packet types (FramePacket, MaskPacket, TrackerMarkerPacket, ...)
+#     including RecordedRgbdFrameSource for recording replay input
+# 3.  HeadlessCaptureWriter: on-disk artifacts for headless capture runs
+# 4.  Lossless pipeline plumbing: StageStats, OrderedPacketQueue, SameSeqPairer
+# 5.  CLI: build_parser, apply_demo_preset, derived-mode accessors, validate_args
+# 6.  RealSense capture startup
+# 7.  Depth backprojection & mask erosion (masked RGB-D -> point clouds)
+# 8.  Segmentation (EdgeTAM) helpers & model timing
+# 9.  World-Z diagnostics & table-Z filtering
+# 10. Tracker query classification, visibility & marker gating
+# 11. Render-side point capping
+# 12. MainDataProcessingDemo: workers for capture -> segmentation -> tracker/pcd ->
+#     filter -> pairing -> render (panel/Open3D) or headless capture
+# 13. main() entry point
 from __future__ import annotations
 
 import argparse
@@ -142,6 +160,9 @@ from qqtt.tracking.backends.point_tracker_adapter import (  # noqa: E402
 from qqtt.tracking.sampling import PHYSTWIN_DENSE_QUERY_POINTS, sample_phystwin_dense  # noqa: E402
 
 
+# ---------------------------------------------------------------------------
+# Module constants: modes, defaults, geometry layer names, object/track ids
+# ---------------------------------------------------------------------------
 DEFAULT_MODEL_ID = str(Path("vendor") / "demo_runtime" / "EdgeTAM-hf")
 DEFAULT_PROFILE = "848x480"
 DEFAULT_FPS = 60
@@ -233,13 +254,15 @@ HAND_A_ID = 1
 OBJECT_ID = 2
 HAND_B_ID = 3
 CONTROLLER_ID = HAND_A_ID
-OBJECT_LABELS = {CONTROLLER_ID: "controller", OBJECT_ID: "object"}
-THREE_IDENTITY_OBJECT_LABELS = {HAND_A_ID: "hand_a", OBJECT_ID: "object", HAND_B_ID: "hand_b"}
+EDGE_TAM_OBJECT_LABELS = {
+    HAND_A_ID: "hand_a",
+    OBJECT_ID: "object",
+    HAND_B_ID: "hand_b",
+}
 CONTROLLER_COLOR_RGB = (255, 96, 32)
 OBJECT_COLOR_RGB = (64, 180, 255)
 GEOMETRY_CONTROLLER = "masked_edgetam_controller"
 GEOMETRY_OBJECT = "masked_edgetam_object"
-GEOMETRY_SHAPE_PRIOR = "sam3d_shape_prior_reference"
 GEOMETRY_TRACKER_OBJECT = "tapnextpp_tracker_markers_object"
 GEOMETRY_TRACKER_CONTROLLER = "tapnextpp_tracker_markers_controller"
 COORDINATE_FRAME = "camera_color_frame"
@@ -269,9 +292,6 @@ DEFAULT_TRACKER_BACKEND = TRACKER_BACKEND_NONE
 DEFAULT_TRACKER_QUERY_COUNT = PHYSTWIN_DENSE_QUERY_POINTS
 DEFAULT_TRACKER_SEED = 42
 DEFAULT_TRACKER_MARKER_POINT_SIZE = 8.0
-CONTROLLER_INSTANCE_MODE_SINGLE = "single"
-CONTROLLER_INSTANCE_MODE_TWO_HANDS = "two-hands"
-CONTROLLER_INSTANCE_MODES = (CONTROLLER_INSTANCE_MODE_SINGLE, CONTROLLER_INSTANCE_MODE_TWO_HANDS)
 QUERY_CONTROLLER_INSTANCE_NONE = 0
 QUERY_CONTROLLER_INSTANCE_HAND_A = 1
 QUERY_CONTROLLER_INSTANCE_HAND_B = 2
@@ -281,18 +301,20 @@ DEBUG_LOG_INTERVAL_S = 1.0
 DEFAULT_LOSSLESS_INPUT_FPS = 5.0
 
 
+# ---------------------------------------------------------------------------
+# Shared dataclasses & packet types flowing between pipeline stages
+# ---------------------------------------------------------------------------
 def open3d_panel_viewport_layer_plan() -> dict[str, dict[str, Any]]:
     return {
         "middle": {
             "kind": "filtered_pcd",
-            "layers": [GEOMETRY_CONTROLLER, GEOMETRY_OBJECT, GEOMETRY_SHAPE_PRIOR],
+            "layers": [GEOMETRY_CONTROLLER, GEOMETRY_OBJECT],
         },
         "right": {
             "kind": "filtered_pcd_with_tracking",
             "layers": [
                 GEOMETRY_CONTROLLER,
                 GEOMETRY_OBJECT,
-                GEOMETRY_SHAPE_PRIOR,
                 GEOMETRY_TRACKER_OBJECT,
                 GEOMETRY_TRACKER_CONTROLLER,
             ],
@@ -838,15 +860,6 @@ def _fit_bool_array(values: np.ndarray, length: int, *, fill: bool = False) -> n
     return output
 
 
-def _fit_int_array(values: np.ndarray, length: int, *, fill: int = 0) -> np.ndarray:
-    output = np.full((max(0, int(length)),), int(fill), dtype=np.int64)
-    arr = np.asarray(values, dtype=np.int64).reshape(-1)
-    count = min(len(arr), len(output))
-    if count:
-        output[:count] = arr[:count]
-    return output
-
-
 def _remaining_query_class_counts(
     alive_mask: np.ndarray,
     *,
@@ -858,7 +871,12 @@ def _remaining_query_class_counts(
     count = int(alive.shape[0])
     is_object = _fit_bool_array(query_is_object, count)
     is_controller = _fit_bool_array(query_is_controller, count)
-    instance_id = _fit_int_array(query_controller_instance_id, count)
+    # Instance ids fitted to the alive-mask length (truncate or zero-pad), int analog of _fit_bool_array.
+    instance_id = np.zeros((count,), dtype=np.int64)
+    ids = np.asarray(query_controller_instance_id, dtype=np.int64).reshape(-1)
+    fit_count = min(len(ids), count)
+    if fit_count:
+        instance_id[:fit_count] = ids[:fit_count]
     hand_a = alive & (instance_id == QUERY_CONTROLLER_INSTANCE_HAND_A)
     hand_b = alive & (instance_id == QUERY_CONTROLLER_INSTANCE_HAND_B)
     controller = alive & (is_controller | hand_a | hand_b)
@@ -1077,6 +1095,9 @@ class RemoteFfsQualityPacket:
     sparse_points: int = 0
 
 
+# ---------------------------------------------------------------------------
+# Headless capture: on-disk artifact writer (frames, pcds, tracker, metadata)
+# ---------------------------------------------------------------------------
 class HeadlessCaptureWriter:
     def __init__(self, output_dir: str | Path, *, metadata: dict[str, Any]) -> None:
         self.output_dir = _resolve_path(output_dir)
@@ -1448,6 +1469,9 @@ class HeadlessCaptureWriter:
             return int(self._saved_pcd_count)
 
 
+# ---------------------------------------------------------------------------
+# Lossless pipeline plumbing: stage FPS, ordered queues, same-seq pairing
+# ---------------------------------------------------------------------------
 class StageStats:
     def __init__(self, window_s: float = 1.0) -> None:
         self.window_s = float(window_s)
@@ -1806,6 +1830,9 @@ class SameSeqPairer:
             )
 
 
+# ---------------------------------------------------------------------------
+# CLI: argument parsing, demo presets, derived-mode accessors, validation
+# ---------------------------------------------------------------------------
 def _resolve_path(value: str | Path) -> Path:
     path = Path(value).expanduser()
     return path.resolve() if path.is_absolute() else (REPO_ROOT / path).resolve()
@@ -2245,12 +2272,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="SAM3.1 prompt label to union as controller in sam31-first-frame mode.",
     )
     parser.add_argument(
-        "--controller-instance-mode",
-        choices=CONTROLLER_INSTANCE_MODES,
-        default=CONTROLLER_INSTANCE_MODE_SINGLE,
-        help="Use two-hands to propagate hand_a and hand_b as separate EdgeTAM controller identities.",
-    )
-    parser.add_argument(
         "--object-prompt",
         default="stuffed animal",
         help="SAM3.1 prompt label to use as object in sam31-first-frame mode.",
@@ -2577,10 +2598,6 @@ def validate_args(args: argparse.Namespace) -> None:
             "--shape-prior-controller-name is required when --shape-prior-warmup "
             "is enabled"
         )
-    if str(args.controller_instance_mode) not in CONTROLLER_INSTANCE_MODES:
-        raise ValueError(f"--controller-instance-mode must be one of {', '.join(CONTROLLER_INSTANCE_MODES)}")
-    if str(args.controller_instance_mode) == CONTROLLER_INSTANCE_MODE_TWO_HANDS and not controller_tracking_enabled(args):
-        raise ValueError("--controller-instance-mode two-hands requires controller tracking")
     if args.depth_min_m < 0:
         raise ValueError("--depth-min-m must be >= 0")
     if args.depth_max_m > 0 and args.depth_max_m <= args.depth_min_m:
@@ -2798,24 +2815,9 @@ def validate_args(args: argparse.Namespace) -> None:
                 raise ValueError(f"{flag} does not exist: {path}")
 
 
-def _apply_color_controls(profile: Any, args: argparse.Namespace, rs: Any) -> None:
-    exposure = getattr(args, "color_exposure", None)
-    gain = getattr(args, "color_gain", None)
-    if exposure is None and gain is None:
-        return
-    color_sensor = profile.get_device().first_color_sensor()
-    if color_sensor.supports(rs.option.enable_auto_exposure):
-        color_sensor.set_option(rs.option.enable_auto_exposure, 0.0)
-    if exposure is not None:
-        if not color_sensor.supports(rs.option.exposure):
-            raise RuntimeError("RealSense RGB sensor does not support exposure control")
-        color_sensor.set_option(rs.option.exposure, float(exposure))
-    if gain is not None:
-        if not color_sensor.supports(rs.option.gain):
-            raise RuntimeError("RealSense RGB sensor does not support gain control")
-        color_sensor.set_option(rs.option.gain, float(gain))
-
-
+# ---------------------------------------------------------------------------
+# RealSense capture startup
+# ---------------------------------------------------------------------------
 def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime:
     rs = load_realsense_module()
     width, height = parse_profile(args.profile)
@@ -2833,7 +2835,21 @@ def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime
     profile = pipeline.start(config)
     try:
         apply_emitter(profile, args.emitter, rs)
-        _apply_color_controls(profile, args, rs)
+        # Fixed RGB exposure/gain only stick after auto-exposure is disabled on the sensor.
+        exposure = getattr(args, "color_exposure", None)
+        gain = getattr(args, "color_gain", None)
+        if exposure is not None or gain is not None:
+            color_sensor = profile.get_device().first_color_sensor()
+            if color_sensor.supports(rs.option.enable_auto_exposure):
+                color_sensor.set_option(rs.option.enable_auto_exposure, 0.0)
+            if exposure is not None:
+                if not color_sensor.supports(rs.option.exposure):
+                    raise RuntimeError("RealSense RGB sensor does not support exposure control")
+                color_sensor.set_option(rs.option.exposure, float(exposure))
+            if gain is not None:
+                if not color_sensor.supports(rs.option.gain):
+                    raise RuntimeError("RealSense RGB sensor does not support gain control")
+                color_sensor.set_option(rs.option.gain, float(gain))
         depth_sensor = profile.get_device().first_depth_sensor()
         depth_scale = float(depth_sensor.get_depth_scale())
         color_stream = profile.get_stream(rs.stream.color).as_video_stream_profile()
@@ -2891,6 +2907,9 @@ def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime
     )
 
 
+# ---------------------------------------------------------------------------
+# Depth backprojection & mask erosion (masked RGB-D -> per-class point clouds)
+# ---------------------------------------------------------------------------
 def _masked_sample_indices(
     *,
     depth_m: np.ndarray,
@@ -3113,6 +3132,9 @@ def make_solid_colors(point_count: int, rgb: tuple[int, int, int]) -> np.ndarray
     return np.repeat(color, int(point_count), axis=0)
 
 
+# ---------------------------------------------------------------------------
+# Segmentation (EdgeTAM) helpers & model timing
+# ---------------------------------------------------------------------------
 def controller_tracking_enabled(args_or_track_mode: argparse.Namespace | str) -> bool:
     track_mode = args_or_track_mode if isinstance(args_or_track_mode, str) else args_or_track_mode.track_mode
     return str(track_mode) in {TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_CONTROLLER_ONLY}
@@ -3123,76 +3145,53 @@ def object_tracking_enabled(args_or_track_mode: argparse.Namespace | str) -> boo
     return str(track_mode) in {TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_OBJECT_ONLY}
 
 
-def three_identity_controller_enabled(args: argparse.Namespace) -> bool:
-    return bool(
-        controller_tracking_enabled(args)
-        and str(getattr(args, "controller_instance_mode", CONTROLLER_INSTANCE_MODE_SINGLE))
-        == CONTROLLER_INSTANCE_MODE_TWO_HANDS
-    )
-
-
 def object_id_labels(track_mode: str = DEFAULT_TRACK_MODE) -> dict[int, str]:
     if track_mode == TRACK_MODE_NONE:
         return {}
     if track_mode == TRACK_MODE_OBJECT_ONLY:
-        return {OBJECT_ID: OBJECT_LABELS[OBJECT_ID]}
+        return {OBJECT_ID: EDGE_TAM_OBJECT_LABELS[OBJECT_ID]}
     if track_mode == TRACK_MODE_CONTROLLER_ONLY:
-        return {CONTROLLER_ID: OBJECT_LABELS[CONTROLLER_ID]}
+        return {
+            HAND_A_ID: EDGE_TAM_OBJECT_LABELS[HAND_A_ID],
+            HAND_B_ID: EDGE_TAM_OBJECT_LABELS[HAND_B_ID],
+        }
     if track_mode == TRACK_MODE_CONTROLLER_OBJECT:
-        return dict(OBJECT_LABELS)
+        return dict(EDGE_TAM_OBJECT_LABELS)
     raise ValueError(f"unsupported track mode: {track_mode}")
 
 
 def active_object_id_labels(args: argparse.Namespace) -> dict[int, str]:
-    track_mode = str(args.track_mode)
-    if track_mode == TRACK_MODE_NONE:
-        return {}
-    if track_mode == TRACK_MODE_OBJECT_ONLY:
-        return {OBJECT_ID: THREE_IDENTITY_OBJECT_LABELS[OBJECT_ID]}
-    if track_mode == TRACK_MODE_CONTROLLER_ONLY:
-        if three_identity_controller_enabled(args):
-            return {
-                HAND_A_ID: THREE_IDENTITY_OBJECT_LABELS[HAND_A_ID],
-                HAND_B_ID: THREE_IDENTITY_OBJECT_LABELS[HAND_B_ID],
-            }
-        return {CONTROLLER_ID: OBJECT_LABELS[CONTROLLER_ID]}
-    if track_mode == TRACK_MODE_CONTROLLER_OBJECT:
-        if three_identity_controller_enabled(args):
-            return dict(THREE_IDENTITY_OBJECT_LABELS)
-        return dict(OBJECT_LABELS)
-    raise ValueError(f"unsupported track mode: {track_mode}")
+    return object_id_labels(str(args.track_mode))
 
 
 def active_object_ids(args: argparse.Namespace) -> list[int]:
     return list(active_object_id_labels(args).keys())
 
 
-def _coerce_object_ids(value: Any) -> list[int]:
-    if hasattr(value, "detach"):
-        value = value.detach().cpu().tolist()
-    if isinstance(value, np.ndarray):
-        value = value.tolist()
-    if isinstance(value, (int, np.integer)):
-        return [int(value)]
-    return [int(item) for item in list(value)]
-
-
-def _extract_binary_mask(mask_tensor: Any) -> np.ndarray:
-    value = mask_tensor
-    if hasattr(value, "detach"):
-        value = value.detach().float().cpu().numpy()
-    array = np.asarray(value)
-    array = np.squeeze(array)
-    if array.ndim != 2:
-        raise RuntimeError(f"expected 2D mask after squeeze, got {array.shape}")
-    return np.ascontiguousarray(array > 0)
-
-
 def extract_object_masks_from_hf_output(output: Any, post_masks: Any) -> dict[int, np.ndarray]:
-    object_ids = _coerce_object_ids(getattr(output, "object_ids"))
+    # HF EdgeTAM may hand back object ids as a torch tensor, ndarray, scalar, or list.
+    ids_value = getattr(output, "object_ids")
+    if hasattr(ids_value, "detach"):
+        ids_value = ids_value.detach().cpu().tolist()
+    if isinstance(ids_value, np.ndarray):
+        ids_value = ids_value.tolist()
+    if isinstance(ids_value, (int, np.integer)):
+        object_ids = [int(ids_value)]
+    else:
+        object_ids = [int(item) for item in list(ids_value)]
     if len(object_ids) != len(post_masks):
         raise RuntimeError(f"HF output object_ids length {len(object_ids)} != mask length {len(post_masks)}")
-    return {int(obj_id): _extract_binary_mask(post_masks[idx]) for idx, obj_id in enumerate(object_ids)}
+    masks: dict[int, np.ndarray] = {}
+    for idx, obj_id in enumerate(object_ids):
+        # Masks may be GPU tensors with singleton dims; normalize each to a contiguous HxW bool array.
+        value = post_masks[idx]
+        if hasattr(value, "detach"):
+            value = value.detach().float().cpu().numpy()
+        array = np.squeeze(np.asarray(value))
+        if array.ndim != 2:
+            raise RuntimeError(f"expected 2D mask after squeeze, got {array.shape}")
+        masks[int(obj_id)] = np.ascontiguousarray(array > 0)
+    return masks
 
 
 def _load_hf_streaming_runtime() -> Any:
@@ -3230,6 +3229,9 @@ def _time_runtime_ms(
     return value, elapsed_ms, pre_sync_ms, post_sync_ms
 
 
+# Like _time_runtime_ms, but additionally brackets fn() with CUDA events so GPU time can be
+# separated from wall time on async launches. Returns (value, wall_ms, cuda_event_ms,
+# pre_sync_ms, post_sync_ms); cuda_event_ms is 0.0 when events are disabled or CUDA is absent.
 def _time_model_forward(
     *,
     torch_module: Any,
@@ -3287,6 +3289,9 @@ def controller_pcd_mask_erode_pixels(args: argparse.Namespace) -> int:
     return int(value)
 
 
+# ---------------------------------------------------------------------------
+# World-Z diagnostics & table-Z filtering
+# ---------------------------------------------------------------------------
 def _camera_intrinsics_matrix(intrinsics: CameraIntrinsics) -> np.ndarray:
     return np.array(
         [
@@ -3314,38 +3319,17 @@ def _transform_points_c2w(points_xyz_m: np.ndarray, c2w: np.ndarray | None) -> n
 
 
 def _z_quantiles(points_xyz_m: np.ndarray) -> dict[str, float | None]:
+    keys = ("min", "p01", "p05", "p10", "p50", "p90", "p95", "p99", "max")
     points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
-    if points.size == 0:
-        return {
-            "min": None,
-            "p01": None,
-            "p05": None,
-            "p10": None,
-            "p50": None,
-            "p90": None,
-            "p95": None,
-            "p99": None,
-            "max": None,
-        }
     z = points[:, 2]
     finite = z[np.isfinite(z)]
     if finite.size == 0:
-        return {
-            "min": None,
-            "p01": None,
-            "p05": None,
-            "p10": None,
-            "p50": None,
-            "p90": None,
-            "p95": None,
-            "p99": None,
-            "max": None,
-        }
+        # Covers both empty input and all-NaN/inf depth: every quantile is None.
+        return {key: None for key in keys}
     quantiles = np.quantile(
         finite.astype(np.float64),
         [0.0, 0.01, 0.05, 0.10, 0.50, 0.90, 0.95, 0.99, 1.0],
     )
-    keys = ("min", "p01", "p05", "p10", "p50", "p90", "p95", "p99", "max")
     return {key: float(value) for key, value in zip(keys, quantiles)}
 
 
@@ -3527,6 +3511,9 @@ def apply_table_z_filter_with_yx(
     )
 
 
+# ---------------------------------------------------------------------------
+# Tracker query classification, visibility & marker gating
+# ---------------------------------------------------------------------------
 def _tracker_union_mask(mask_packet: MaskPacket) -> np.ndarray:
     controller = np.asarray(mask_packet.controller_mask, dtype=bool)
     obj = np.asarray(mask_packet.object_mask, dtype=bool)
@@ -3628,6 +3615,9 @@ def _select_points_by_yx_mask(points_xyz_m: np.ndarray, yx: np.ndarray, mask: np
     return np.ascontiguousarray(points[:count][keep], dtype=np.float32)
 
 
+# Zeroes visibility for markers outside --tracker-display-scope (display-only; the tracker
+# itself keeps tracking every query point). Label arrays shorter/longer than the visibility
+# vector are fitted with False padding so scope filtering never raises on length drift.
 def _tracker_display_visibility(
     visibility: np.ndarray,
     *,
@@ -3847,6 +3837,9 @@ def _select_visible_spread_indices(tracks_yx: np.ndarray, visibility: np.ndarray
     return visible[np.asarray(selected_local, dtype=np.int64)].astype(np.int64)
 
 
+# ---------------------------------------------------------------------------
+# Render-side point capping
+# ---------------------------------------------------------------------------
 def cap_render_points(
     points_xyz_m: np.ndarray,
     colors_rgb_u8: np.ndarray,
@@ -3949,6 +3942,10 @@ def _latest_tracker_arrays(result: Any) -> tuple[np.ndarray, np.ndarray]:
     )
 
 
+# ---------------------------------------------------------------------------
+# Main runtime: owns the worker threads and queues for
+# capture -> segmentation -> tracker/pcd -> filter -> pairing -> render/headless
+# ---------------------------------------------------------------------------
 class MainDataProcessingDemo:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
@@ -4270,7 +4267,6 @@ class MainDataProcessingDemo:
             "depth_coordinate_frame": COORDINATE_FRAME,
             "depth_alignment_target": "color",
             "track_mode": str(self.args.track_mode),
-            "controller_instance_mode": str(self.args.controller_instance_mode),
             "edgetam_tracking_identities": list(active_object_id_labels(self.args).values()),
             "demo_visual_mode": str(self.args.demo_visual_mode),
             "tracker_backend": str(self.args.tracker_backend),
@@ -4443,6 +4439,9 @@ class MainDataProcessingDemo:
             f"{self.tracker_stats.fps:.1f} / {self.render_stats.render_fps:.1f}"
         )
 
+    # ------------------------------------------------------------------
+    # Lifecycle: run / stop, worker startup, headless loop
+    # ------------------------------------------------------------------
     def run(self) -> int:
         main_warmup.prepare_runtime_services_and_source(
             self,
@@ -4636,6 +4635,9 @@ class MainDataProcessingDemo:
         except KeyboardInterrupt:
             self.stop_event.set()
 
+    # ------------------------------------------------------------------
+    # Capture workers (live RealSense / fake-live recording replay)
+    # ------------------------------------------------------------------
     def _publish_input_preview_packet(self, packet: FramePacket, *, record_s: float | None = None) -> None:
         self.input_preview_slot.put(packet)
         should_write_timeline = _is_replay_input_source(str(self.args.input_source)) or bool(
@@ -4970,6 +4972,9 @@ class MainDataProcessingDemo:
             self._lossless_capture_done.set()
             self.lossless_frame_queue.close()
 
+    # ------------------------------------------------------------------
+    # Segmentation worker: EdgeTAM model init + streaming mask loop
+    # ------------------------------------------------------------------
     def _init_hf_model(self) -> tuple[Any, Any, Any, Any, Any]:
         hf_stream = _load_hf_streaming_runtime()
         torch_module = hf_stream.torch
@@ -5015,7 +5020,6 @@ class MainDataProcessingDemo:
                 FAKE_LIVE_FRAME_SELECTION_POLICY if str(self.args.input_source) == INPUT_SOURCE_FAKE_LIVE else None
             ),
             "track_mode": self.args.track_mode,
-            "controller_instance_mode": str(self.args.controller_instance_mode),
             "edgetam_tracking_identities": list(active_object_id_labels(self.args).values()),
             "depth_source": self.args.depth_source,
             "depth_source_internal": str(self.args.depth_source),
@@ -5240,6 +5244,9 @@ class MainDataProcessingDemo:
                 self.lossless_pcd_mask_queue.close()
                 self.lossless_tracker_mask_queue.close()
 
+    # ------------------------------------------------------------------
+    # Tracker: query seeding, alive masks, marker packets, worker loop
+    # ------------------------------------------------------------------
     def _build_tracker_adapter(self) -> Any:
         config = PointTrackerAdapterConfig(
             backend=str(self.args.tracker_backend),
@@ -5306,8 +5313,6 @@ class MainDataProcessingDemo:
             hand_b_mask=hand_b_query_mask,
             controller_mask=controller_query_mask,
         )
-        if not three_identity_controller_enabled(self.args):
-            query_controller_instance_id = np.zeros_like(query_controller_instance_id, dtype=np.int64)
         adapter.initialize([], query_points)
         self._tracker_query_points_yx = np.ascontiguousarray(query_points, dtype=np.float32)
         self._tracker_query_rgb_u8 = query_rainbow_colors_from_points_yx_rgb_u8(query_points)
@@ -5761,6 +5766,9 @@ class MainDataProcessingDemo:
             if not self.stop_event.is_set():
                 self._record_fatal_worker_error("TAPNext++ tracker worker", exc)
 
+    # ------------------------------------------------------------------
+    # Shape-prior warmup integration
+    # ------------------------------------------------------------------
     def _shape_prior_frame0_request_from_pcd_result(
         self,
         result: PcdBuildResult,
@@ -5866,6 +5874,9 @@ class MainDataProcessingDemo:
     def _run_deferred_shape_prior_after_teardown(self) -> None:
         return
 
+    # ------------------------------------------------------------------
+    # Lossless pairing & publishing (pcd+tracker pairs -> render/headless)
+    # ------------------------------------------------------------------
     def _publish_strict_render_pair(
         self,
         pcd_result: PcdBuildResult,
@@ -6045,6 +6056,9 @@ class MainDataProcessingDemo:
             if not self.stop_event.is_set():
                 self._record_fatal_worker_error("strict same-seq tracker/PCD", exc)
 
+    # ------------------------------------------------------------------
+    # Segmentation frame execution (EdgeTAM forward per frame)
+    # ------------------------------------------------------------------
     def _wait_for_first_frame(self) -> FramePacket | None:
         if self._lossless_enabled():
             return self.lossless_frame_queue.get(stop_event=self.stop_event)
@@ -6130,23 +6144,21 @@ class MainDataProcessingDemo:
             if add_prompt:
                 prompt_obj_ids: list[int] = []
                 prompt_masks: list[np.ndarray] = []
-                if three_identity_controller_enabled(self.args):
-                    if controller_tracking_enabled(self.args):
-                        prompt_obj_ids.append(HAND_A_ID)
-                        prompt_masks.append(np.asarray(initial_masks.hand_a_mask, dtype=bool))
-                    if object_tracking_enabled(self.args):
-                        prompt_obj_ids.append(OBJECT_ID)
-                        prompt_masks.append(np.asarray(initial_masks.object_mask, dtype=bool))
-                    if controller_tracking_enabled(self.args):
-                        prompt_obj_ids.append(HAND_B_ID)
-                        prompt_masks.append(np.asarray(initial_masks.hand_b_mask, dtype=bool))
-                else:
-                    if controller_tracking_enabled(self.args):
-                        prompt_obj_ids.append(CONTROLLER_ID)
-                        prompt_masks.append(np.asarray(initial_masks.controller_mask, dtype=bool))
-                    if object_tracking_enabled(self.args):
-                        prompt_obj_ids.append(OBJECT_ID)
-                        prompt_masks.append(np.asarray(initial_masks.object_mask, dtype=bool))
+                if controller_tracking_enabled(self.args):
+                    prompt_obj_ids.append(HAND_A_ID)
+                    prompt_masks.append(
+                        np.asarray(initial_masks.hand_a_mask, dtype=bool)
+                    )
+                if object_tracking_enabled(self.args):
+                    prompt_obj_ids.append(OBJECT_ID)
+                    prompt_masks.append(
+                        np.asarray(initial_masks.object_mask, dtype=bool)
+                    )
+                if controller_tracking_enabled(self.args):
+                    prompt_obj_ids.append(HAND_B_ID)
+                    prompt_masks.append(
+                        np.asarray(initial_masks.hand_b_mask, dtype=bool)
+                    )
                 _unused, prompt_ms, prompt_pre_sync_ms, prompt_post_sync_ms = _time_runtime_ms(
                     torch_module,
                     self.args.device,
@@ -6186,20 +6198,13 @@ class MainDataProcessingDemo:
         object_mask = masks_by_id.get(OBJECT_ID)
         if object_mask is None:
             object_mask = np.zeros_like(reference_mask, dtype=bool)
-        if three_identity_controller_enabled(self.args):
-            hand_a_mask = masks_by_id.get(HAND_A_ID)
-            if hand_a_mask is None:
-                hand_a_mask = np.zeros_like(reference_mask, dtype=bool)
-            hand_b_mask = masks_by_id.get(HAND_B_ID)
-            if hand_b_mask is None:
-                hand_b_mask = np.zeros_like(reference_mask, dtype=bool)
-            controller_mask = np.logical_or(hand_a_mask, hand_b_mask)
-        else:
-            controller_mask = masks_by_id.get(CONTROLLER_ID)
-            if controller_mask is None:
-                controller_mask = np.zeros_like(reference_mask, dtype=bool)
-            hand_a_mask = np.ascontiguousarray(controller_mask, dtype=bool)
-            hand_b_mask = np.zeros_like(hand_a_mask, dtype=bool)
+        hand_a_mask = masks_by_id.get(HAND_A_ID)
+        if hand_a_mask is None:
+            hand_a_mask = np.zeros_like(reference_mask, dtype=bool)
+        hand_b_mask = masks_by_id.get(HAND_B_ID)
+        if hand_b_mask is None:
+            hand_b_mask = np.zeros_like(reference_mask, dtype=bool)
+        controller_mask = np.logical_or(hand_a_mask, hand_b_mask)
         self._prune_edgetam_live_session(session, current_frame_idx=int(output.frame_idx))
         process_done_s = time.perf_counter()
         timing = replace(
@@ -6240,6 +6245,9 @@ class MainDataProcessingDemo:
             source_step=frame.source_step,
         )
 
+    # ------------------------------------------------------------------
+    # Point-cloud filtering (per-class filters, async budget, telemetry)
+    # ------------------------------------------------------------------
     def _make_filter_input(
         self,
         *,
@@ -6599,6 +6607,9 @@ class MainDataProcessingDemo:
             filter_busy=bool(worker_stats["busy"]),
         )
 
+    # ------------------------------------------------------------------
+    # PCD build: masked backprojection -> MaskedPcdPacket (+ headless writes)
+    # ------------------------------------------------------------------
     def _write_headless_pcd_result(
         self,
         result: PcdBuildResult,
@@ -6996,6 +7007,9 @@ class MainDataProcessingDemo:
             self.pcd_stats.record(result.packet.process_done_perf_s)
             self._request_render_update()
 
+    # ------------------------------------------------------------------
+    # Depth backends: profiling, local FFS, remote FFS, remote sparse quality
+    # ------------------------------------------------------------------
     def _depth_profile_worker(self) -> None:
         last_seq = -1
         while not self.stop_event.is_set():
@@ -7498,6 +7512,9 @@ class MainDataProcessingDemo:
                     flush=True,
                 )
 
+    # ------------------------------------------------------------------
+    # Rendering: side-by-side panel viewer
+    # ------------------------------------------------------------------
     def _build_panel_hud(
         self,
         *,
@@ -7681,9 +7698,6 @@ class MainDataProcessingDemo:
         tracker_controller_material = rendering.MaterialRecord()
         tracker_controller_material.shader = "defaultUnlit"
         tracker_controller_material.point_size = float(self.args.tracker_marker_point_size)
-        shape_prior_material = rendering.MaterialRecord()
-        shape_prior_material.shader = "defaultUnlit"
-        shape_prior_material.point_size = max(1.0, float(self.args.point_size) * 0.75)
 
         def make_geometry_layer(
             scene: object,
@@ -8076,6 +8090,9 @@ class MainDataProcessingDemo:
             if writer is not None:
                 writer.release()
 
+    # ------------------------------------------------------------------
+    # Rendering: Open3D point-cloud viewer
+    # ------------------------------------------------------------------
     def _run_open3d_viewer(self) -> None:
         o3d, gui, rendering = load_open3d_modules()
         o3c = o3d.core
@@ -8159,13 +8176,10 @@ class MainDataProcessingDemo:
         tracker_layer_capacity = int(self.args.tracker_overlay_max_points)
         if tracker_layer_capacity <= 0:
             tracker_layer_capacity = int(self.args.tracker_query_count) or PHYSTWIN_DENSE_QUERY_POINTS
+        # Shape-prior points stay in chunk/final_data products; this internal
+        # Open3D viewer renders only live object/controller/tracker layers.
         controller_state = make_geometry_layer(GEOMETRY_CONTROLLER, pcd_material, min_capacity=pcd_layer_capacity)
         object_state = make_geometry_layer(GEOMETRY_OBJECT, pcd_material, min_capacity=pcd_layer_capacity)
-        shape_prior_state = make_geometry_layer(
-            GEOMETRY_SHAPE_PRIOR,
-            shape_prior_material,
-            min_capacity=pcd_layer_capacity,
-        )
         tracker_object_state = make_geometry_layer(
             GEOMETRY_TRACKER_OBJECT,
             tracker_object_material,
@@ -8292,12 +8306,6 @@ class MainDataProcessingDemo:
                     packet.object_colors_rgb_u8,
                     max_points=int(self.args.render_max_points_per_layer),
                 )
-                shape_convert_ms, shape_update_ms = update_layer(
-                    shape_prior_state,
-                    packet.shape_prior_points_m,
-                    packet.shape_prior_colors_rgb_u8,
-                    max_points=int(self.args.render_max_points_per_layer),
-                )
                 if render_tracker_markers:
                     tracker_convert_ms, tracker_update_ms = update_tracker_layers(marker_packet)
                 else:
@@ -8310,10 +8318,10 @@ class MainDataProcessingDemo:
                 timing = replace(
                     packet.timing,
                     open3d_convert_ms=float(
-                        controller_convert_ms + object_convert_ms + shape_convert_ms + tracker_convert_ms
+                        controller_convert_ms + object_convert_ms + tracker_convert_ms
                     ),
                     open3d_update_ms=float(
-                        controller_update_ms + object_update_ms + shape_update_ms + tracker_update_ms
+                        controller_update_ms + object_update_ms + tracker_update_ms
                     ),
                     receive_to_render_ms=latency_ms,
                 )
@@ -8341,7 +8349,6 @@ class MainDataProcessingDemo:
                 return False
             controller_convert_ms = controller_update_ms = 0.0
             object_convert_ms = object_update_ms = 0.0
-            shape_convert_ms = shape_update_ms = 0.0
             tracker_convert_ms = tracker_update_ms = 0.0
             if packet is not None:
                 last_render_seq["value"] = packet.seq
@@ -8356,12 +8363,6 @@ class MainDataProcessingDemo:
                     object_state,
                     packet.object_xyz_m,
                     packet.object_colors_rgb_u8,
-                    max_points=int(self.args.render_max_points_per_layer),
-                )
-                shape_convert_ms, shape_update_ms = update_layer(
-                    shape_prior_state,
-                    packet.shape_prior_points_m,
-                    packet.shape_prior_colors_rgb_u8,
                     max_points=int(self.args.render_max_points_per_layer),
                 )
             if marker_packet is not None:
@@ -8383,10 +8384,10 @@ class MainDataProcessingDemo:
             timing = replace(
                 active_packet.timing,
                 open3d_convert_ms=float(
-                    controller_convert_ms + object_convert_ms + shape_convert_ms + tracker_convert_ms
+                    controller_convert_ms + object_convert_ms + tracker_convert_ms
                 ),
                 open3d_update_ms=float(
-                    controller_update_ms + object_update_ms + shape_update_ms + tracker_update_ms
+                    controller_update_ms + object_update_ms + tracker_update_ms
                 ),
                 receive_to_render_ms=latency_ms,
             )
@@ -8511,6 +8512,9 @@ class MainDataProcessingDemo:
             if timer is not None:
                 timer.cancel()
 
+    # ------------------------------------------------------------------
+    # HUD formatting & debug logging
+    # ------------------------------------------------------------------
     def _format_hud(
         self,
         *,
@@ -8926,6 +8930,9 @@ class MainDataProcessingDemo:
         )
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)

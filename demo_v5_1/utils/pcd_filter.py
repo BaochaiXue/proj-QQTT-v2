@@ -16,6 +16,7 @@ def _empty_indices() -> np.ndarray:
 
 
 def _voxel_keys(xyz: np.ndarray, *, voxel_size_m: float) -> np.ndarray:
+    """Map each point to an int64 key identifying its voxel of size voxel_size_m."""
     if voxel_size_m <= 0:
         raise ValueError("voxel_size_m must be positive")
     xyz_c = np.ascontiguousarray(xyz)
@@ -28,6 +29,9 @@ def _voxel_keys(xyz: np.ndarray, *, voxel_size_m: float) -> np.ndarray:
     q -= q.min(axis=0, keepdims=True)
     dims = q.max(axis=0) + 1
 
+    # ravel_multi_index needs dims_x*dims_y*dims_z to fit in int64; for extreme
+    # extents fall back to a spatial-hash key (classic large primes). Hash keys
+    # can collide across voxels, which is acceptable for capping/density use.
     limit = np.iinfo(np.int64).max // 4
     product = 1
     for dim in dims:
@@ -66,6 +70,7 @@ def voxel_cap_indices(
     keys = _voxel_keys(points, voxel_size_m=float(voxel_size_m))
     _unused_unique, first_idx = np.unique(keys, return_index=True)
     if first_idx.shape[0] > int(max_points):
+        # Fixed seed by default: identical input clouds must cap identically.
         generator = rng if rng is not None else np.random.default_rng(0)
         keep_idx = generator.choice(first_idx, size=int(max_points), replace=False)
     else:
@@ -80,6 +85,7 @@ def voxel_density_indices(
     voxel_size_m: float = 0.004,
     min_points_per_voxel: int = 2,
 ) -> np.ndarray:
+    """Return indices of points whose voxel holds at least min_points_per_voxel points."""
     points = np.asarray(xyz)
     if points.ndim != 2 or points.shape[1] != 3:
         raise ValueError("xyz must be an Nx3 array")
@@ -125,7 +131,13 @@ class FilterOutput:
 
 
 class AsyncPcdFilterWorker:
-    """Latest-wins worker for non-blocking point-cloud filtering."""
+    """Latest-wins worker for non-blocking point-cloud filtering.
+
+    A single pending slot holds at most one FilterInput: submitting while one is
+    queued replaces it (counted in pending_replace_count / drop_count). The
+    worker thread always filters the newest frame, so consumers polling
+    latest_output() never fall more than one frame behind the filter itself.
+    """
 
     def __init__(self, filter_fn: Callable[[FilterInput], FilterOutput], *, stats_window_s: float = 1.0) -> None:
         self.filter_fn = filter_fn
@@ -159,6 +171,7 @@ class AsyncPcdFilterWorker:
             self._thread.join(timeout=1.0)
 
     def submit_latest(self, item: FilterInput) -> bool:
+        """Queue item, replacing any not-yet-started one; True when the worker was idle."""
         now_s = time.perf_counter()
         with self._condition:
             if self._pending is not None:
@@ -218,6 +231,7 @@ class AsyncPcdFilterWorker:
                 self._pending = None
                 self._busy = True
 
+            # Run the (potentially slow) filter outside the lock so submits keep flowing.
             assert item is not None
             output = self.filter_fn(item)
 
@@ -230,6 +244,7 @@ class AsyncPcdFilterWorker:
                 self._prune_locked(self._output_times, now_s)
 
     def _prune_locked(self, values: deque[float], now_s: float) -> None:
+        # Keep at least one sample so _fps_locked can still span the window edge.
         cutoff = now_s - self.stats_window_s
         while len(values) > 1 and values[0] < cutoff:
             values.popleft()
@@ -245,6 +260,8 @@ class AsyncPcdFilterWorker:
 
 
 class FilterBudgetController:
+    """Adapt the point cap so filter time converges toward target_ms."""
+
     def __init__(
         self,
         *,
@@ -261,6 +278,8 @@ class FilterBudgetController:
     def update(self, measured_ms: float) -> int:
         if measured_ms <= 0 or self.target_ms <= 0:
             return self.cap
+        # Damped proportional step (30% weight on the measurement) to avoid
+        # oscillating the cap on noisy per-frame timings.
         ratio = self.target_ms / float(measured_ms)
         new_cap = int(self.cap * (0.7 + 0.3 * ratio))
         self.cap = int(np.clip(new_cap, self.min_cap, self.max_cap))

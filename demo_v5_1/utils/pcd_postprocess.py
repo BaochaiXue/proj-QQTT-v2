@@ -8,6 +8,10 @@ from typing import Any
 import numpy as np
 
 
+# Component-selection policies for the enhanced postprocess:
+# - main-plus-gap: keep the largest component plus anything whose bbox gap to it is small.
+# - largest-n: keep only the N largest components that pass the min-size thresholds.
+# - largest-n-plus-gap: largest-n, plus components close (bbox gap) to any kept one.
 COMPONENT_SELECTION_MAIN_PLUS_GAP = "main-plus-gap"
 COMPONENT_SELECTION_LARGEST_N = "largest-n"
 COMPONENT_SELECTION_LARGEST_N_PLUS_GAP = "largest-n-plus-gap"
@@ -24,12 +28,19 @@ def detect_radius_outlier_indices(
     radius_m: float,
     nb_points: int,
 ) -> dict[str, np.ndarray]:
+    """Split points into inliers/outliers by neighbor count within radius_m.
+
+    A point is an inlier when it has at least nb_points neighbors (self included)
+    inside radius_m — the same rule as Open3D remove_radius_outlier. Returned
+    index arrays are int32 and sorted ascending.
+    """
     cloud = np.asarray(points_world, dtype=np.float64).reshape(-1, 3)
     point_count = int(len(cloud))
     if point_count == 0:
         empty = np.empty((0,), dtype=np.int32)
         return {"inlier_indices": empty, "outlier_indices": empty}
 
+    # Deferred import: keep scipy off the module import path for non-filtering callers.
     from scipy.spatial import cKDTree
 
     tree = cKDTree(cloud)
@@ -47,6 +58,13 @@ def detect_radius_outlier_indices(
 
 
 def _build_voxel_components(points: np.ndarray, *, voxel_size: float) -> list[np.ndarray]:
+    """Cluster points into 26-connected voxel components, sorted largest-first.
+
+    Points are binned into a voxel grid, then occupied voxels are flood-filled
+    over their 26-neighborhood; each returned array holds the original point
+    indices of one connected component. Voxel size is floored at 0.1 mm to
+    guard against a degenerate zero/negative grid.
+    """
     cloud = np.asarray(points, dtype=np.float32).reshape(-1, 3)
     if len(cloud) == 0:
         return []
@@ -92,6 +110,11 @@ def apply_phystwin_like_radius_postprocess_with_trace(
     radius_m: float,
     nb_points: int,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any], dict[str, np.ndarray]]:
+    """Radius-outlier filter returning (points, colors, stats, per-point trace masks).
+
+    Trace masks are indexed against the input point order so callers can map
+    removals back to source pixels/queries.
+    """
     point_array = np.asarray(points, dtype=np.float32).reshape(-1, 3)
     color_array = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
     point_count = int(len(point_array))
@@ -139,6 +162,7 @@ def apply_phystwin_like_radius_postprocess_with_trace(
 
 
 def _bbox_gap_m(left_min: np.ndarray, left_max: np.ndarray, right_min: np.ndarray, right_max: np.ndarray) -> float:
+    """Euclidean gap (meters) between two axis-aligned boxes; 0.0 when they overlap."""
     left_lo = np.asarray(left_min, dtype=np.float32).reshape(3)
     left_hi = np.asarray(left_max, dtype=np.float32).reshape(3)
     right_lo = np.asarray(right_min, dtype=np.float32).reshape(3)
@@ -155,6 +179,7 @@ def _component_summary(
     gap_to_kept_top_n_m: float,
     kept: bool,
 ) -> dict[str, Any]:
+    """Convert an internal component record into the JSON-friendly stats payload shape."""
     bbox_min = np.asarray(record["bbox_min"], dtype=np.float32).reshape(3)
     bbox_max = np.asarray(record["bbox_max"], dtype=np.float32).reshape(3)
     centroid = np.asarray(record["centroid"], dtype=np.float32).reshape(3)
@@ -173,6 +198,11 @@ def _component_summary(
 
 
 def _component_records(components: list[np.ndarray], points: np.ndarray) -> list[dict[str, Any]]:
+    """Precompute per-component geometry (indices, bbox, centroid) used by selection.
+
+    component_idx follows the largest-first order from _build_voxel_components,
+    so index 0 is always the main (largest) component.
+    """
     point_array = np.asarray(points, dtype=np.float32).reshape(-1, 3)
     records: list[dict[str, Any]] = []
     for component_idx, component_indices in enumerate(components):
@@ -202,6 +232,7 @@ def _component_passes_min_thresholds(
     min_component_points: int,
     min_component_ratio: float,
 ) -> bool:
+    """Size gate for top-N candidacy; the main component (idx 0) always qualifies."""
     if int(record["component_idx"]) == 0:
         return True
     point_count = int(record["point_count"])
@@ -212,6 +243,7 @@ def _component_passes_min_thresholds(
 
 
 def _gap_to_any_kept_top_n(record: dict[str, Any], top_records: list[dict[str, Any]]) -> float:
+    """Smallest bbox gap (meters) from a component to any kept top-N component; inf when none kept."""
     if not top_records:
         return float("inf")
     bbox_min = np.asarray(record["bbox_min"], dtype=np.float32).reshape(3)
@@ -244,6 +276,15 @@ def apply_enhanced_phystwin_like_postprocess_with_trace(
     min_component_points: int = 32,
     min_component_ratio: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any], dict[str, np.ndarray]]:
+    """Two-stage filter: radius-outlier removal, then connected-component selection.
+
+    Stage 1 mirrors apply_phystwin_like_radius_postprocess_with_trace. Stage 2
+    clusters the survivors into voxel components and keeps them according to
+    component_selection_policy (see the policy constants at module top). Returns
+    (points, colors, stats, trace); trace masks are indexed against the input
+    point order, with component removals folded into removed_mask.
+    """
+    # ---- Stage 1: radius-outlier filter --------------------------------
     total_started_s = time.perf_counter()
     point_array = np.asarray(points, dtype=np.float32).reshape(-1, 3)
     color_array = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
@@ -284,6 +325,9 @@ def apply_enhanced_phystwin_like_postprocess_with_trace(
     radius_indices = np.where(radius_kept_mask)[0].astype(np.int32)
     radius_points = point_array[radius_indices]
     radius_colors = color_array[radius_indices]
+
+    # Seed trace/stats with the stage-1 result so every early return below is
+    # already consistent (component fields stay at their "nothing removed" values).
     component_removed_mask = np.zeros((input_point_count,), dtype=bool)
     trace = {
         "kept_mask": radius_kept_mask.copy(),
@@ -340,6 +384,7 @@ def apply_enhanced_phystwin_like_postprocess_with_trace(
     if policy not in COMPONENT_SELECTION_POLICIES:
         raise ValueError(f"component_selection_policy must be one of {COMPONENT_SELECTION_POLICIES}, got {policy}.")
 
+    # ---- Stage 2: voxel connected components ----------------------------
     component_started_s = time.perf_counter()
     components = _build_voxel_components(radius_points, voxel_size=float(component_voxel_size_m))
     records = _component_records(components, radius_points)
@@ -354,6 +399,10 @@ def apply_enhanced_phystwin_like_postprocess_with_trace(
     main_bbox_min = np.asarray(records[0]["bbox_min"], dtype=np.float32).reshape(3)
     main_bbox_max = np.asarray(records[0]["bbox_max"], dtype=np.float32).reshape(3)
 
+    # ---- Component selection --------------------------------------------
+    # Pick the top-N candidates in largest-first order; records failing the size
+    # gate are skipped rather than ending the scan. Guarantee at least the main
+    # component so the output can never go empty at this stage.
     selection_started_s = time.perf_counter()
     top_n_records: list[dict[str, Any]] = []
     for record in records:
@@ -376,6 +425,7 @@ def apply_enhanced_phystwin_like_postprocess_with_trace(
         for record in records
     }
 
+    # Per-policy keep decision for every component (see policy constants).
     keep_component_by_idx: dict[int, bool] = {}
     for record in records:
         component_idx = int(record["component_idx"])
@@ -425,6 +475,7 @@ def apply_enhanced_phystwin_like_postprocess_with_trace(
             removed_component_indices.append(int(component_idx))
             removed_summaries.append(summary)
 
+    # ---- Fold component removals into the input-indexed trace masks -----
     kept_count = int(np.count_nonzero(component_keep_mask))
     removed_count = int(len(radius_points) - kept_count)
     component_removed_radius_mask = ~component_keep_mask

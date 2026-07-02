@@ -32,6 +32,7 @@ def _grid_key(
     min_bound: np.ndarray,
     voxel_size: float,
 ) -> tuple[int, int, int]:
+    """Voxel index of ``point`` on the grid anchored at ``min_bound``."""
     return tuple(np.floor((point - min_bound) / float(voxel_size)).astype(int))
 
 
@@ -42,6 +43,7 @@ def _append_new_voxels(
     voxel_size: float,
     occupied: set[tuple[int, int, int]],
 ) -> np.ndarray:
+    """Keep only points that land in a not-yet-occupied voxel (mutates the set)."""
     kept: list[np.ndarray] = []
     for point in points:
         key = _grid_key(point, min_bound=min_bound, voxel_size=voxel_size)
@@ -54,23 +56,6 @@ def _append_new_voxels(
     return np.ascontiguousarray(np.asarray(kept, dtype=np.float64).reshape(-1, 3))
 
 
-def _sample_mesh_points(
-    case_dir: Path,
-    *,
-    surface_count: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    mesh_path = case_dir / "shape" / "matching" / "final_mesh.glb"
-    if not mesh_path.is_file():
-        raise FileNotFoundError(f"aligned shape-prior mesh not found: {mesh_path}")
-    mesh = as_mesh(trimesh.load(mesh_path, force="mesh"))
-    surface_points, _ = trimesh.sample.sample_surface(mesh, int(surface_count))
-    interior_points = trimesh.sample.volume_mesh(mesh, INTERIOR_CANDIDATE_POINTS)
-    return (
-        np.asarray(surface_points, dtype=np.float64).reshape(-1, 3),
-        np.asarray(interior_points, dtype=np.float64).reshape(-1, 3),
-    )
-
-
 def process_shape_prior_case(
     base_path: Path,
     case_name: str,
@@ -79,6 +64,8 @@ def process_shape_prior_case(
     surface_count: int,
     volume_sample_size: float,
 ) -> dict[str, np.ndarray]:
+    """Rewrite of data_process_origin/data_process_sample.py process_unique_points
+    without the turntable-video rendering."""
     case_dir = Path(base_path) / str(case_name)
     with (case_dir / "track_process_data.pkl").open("rb") as handle:
         track_data = dict(pickle.load(handle))
@@ -88,6 +75,8 @@ def process_shape_prior_case(
     object_visibilities = np.asarray(track_data["object_visibilities"], dtype=bool)
     object_motions_valid = np.asarray(track_data["object_motions_valid"], dtype=bool)
 
+    # Drop duplicate frame-0 points. np.unique returns first-occurrence
+    # indices ordered by point value; sorting restores capture order.
     unique_idx = np.unique(object_points[0], axis=0, return_index=True)[1]
     unique_idx = np.sort(unique_idx)
     object_points = np.ascontiguousarray(object_points[:, unique_idx, :])
@@ -95,19 +84,29 @@ def process_shape_prior_case(
     object_visibilities = np.ascontiguousarray(object_visibilities[:, unique_idx])
     object_motions_valid = np.ascontiguousarray(object_motions_valid[:, unique_idx])
 
+    # Above-table clamp: the table plane is z == 0 and above-table is
+    # negative z, so any z > 0 point is pushed back onto the table.
     object_points[object_points[..., 2] > 0, 2] = 0
 
     if use_shape_prior:
-        surface_points, interior_points = _sample_mesh_points(
-            case_dir,
-            surface_count=int(surface_count),
-        )
+        # Sample the aligned prior mesh: ``surface_count`` surface points plus
+        # a fixed pool of interior candidates (origin counts: 1024 / 10000).
+        mesh_path = case_dir / "shape" / "matching" / "final_mesh.glb"
+        if not mesh_path.is_file():
+            raise FileNotFoundError(f"aligned shape-prior mesh not found: {mesh_path}")
+        mesh = as_mesh(trimesh.load(mesh_path, force="mesh"))
+        surface_points, _ = trimesh.sample.sample_surface(mesh, int(surface_count))
+        interior_points = trimesh.sample.volume_mesh(mesh, INTERIOR_CANDIDATE_POINTS)
+        surface_points = np.asarray(surface_points, dtype=np.float64).reshape(-1, 3)
+        interior_points = np.asarray(interior_points, dtype=np.float64).reshape(-1, 3)
         all_points = np.concatenate([surface_points, interior_points, object_points[0]], axis=0)
     else:
         surface_points = np.empty((0, 3), dtype=np.float64)
         interior_points = np.empty((0, 3), dtype=np.float64)
         all_points = object_points[0]
 
+    # Voxel-dedup with the origin priority: observed object points claim
+    # voxels first, then surface samples, then interior samples.
     min_bound = np.min(all_points, axis=0)
     occupied: set[tuple[int, int, int]] = set()
     object_indices: list[int] = []

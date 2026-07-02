@@ -51,12 +51,14 @@ def intrinsics_distortion_coeffs(intrinsics) -> list[float]:
 
 
 def extrinsics_to_matrix(extrinsics) -> list[list[float]]:
+    # librealsense stores rotation column-major; return row-major [R|t]
+    # for standard to_point = R @ from_point + t consumers.
     rotation = list(map(float, extrinsics.rotation))
     translation = list(map(float, extrinsics.translation))
     return [
-        [rotation[0], rotation[1], rotation[2], translation[0]],
-        [rotation[3], rotation[4], rotation[5], translation[1]],
-        [rotation[6], rotation[7], rotation[8], translation[2]],
+        [rotation[0], rotation[3], rotation[6], translation[0]],
+        [rotation[1], rotation[4], rotation[7], translation[1]],
+        [rotation[2], rotation[5], rotation[8], translation[2]],
         [0.0, 0.0, 0.0, 1.0],
     ]
 

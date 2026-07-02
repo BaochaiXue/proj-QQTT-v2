@@ -14,8 +14,8 @@ import json
 import math
 import os
 from pathlib import Path
-import signal
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -56,10 +56,12 @@ _DEFAULT_CONFIG = load_default_config()
 
 
 def _cfg(section: str, key: str) -> object:
+    """Read one default; config/default.yaml is the single source of defaults."""
     return _DEFAULT_CONFIG[section][key]
 
 
 def _cfg_optional_path(section: str, key: str) -> Path | None:
+    """Read an optional path default; empty/None YAML values mean "unset"."""
     value = _cfg(section, key)
     if value is None or str(value).strip() == "":
         return None
@@ -137,6 +139,7 @@ DEFAULT_VISUALIZER_RENDER_MODE = str(_cfg("visualizer", "visualizer_render_mode"
 DEFAULT_TABLE_CALIBRATE_PATH = Path(str(_cfg("paths", "table_calibrate_path")))
 DEFAULT_SAM31_CHECKPOINT_PATH = Path(str(_cfg("paths", "sam31_checkpoint_path")))
 SAM31_CHECKPOINT_ENV = str(_cfg("paths", "sam31_checkpoint_env"))
+EDGE_TAM_TRACKING_IDENTITIES = ("hand_a", "object", "hand_b")
 
 CAPTURE_DIR_NAME = "capture"
 DATA_DIR_NAME = "data"
@@ -144,6 +147,11 @@ ONLINE_DATA_DIR_NAME = "online_data"
 SHAPE_PRIOR_CASE_DIR_NAME = "shape_prior_case"
 SHAPE_PRIOR_DIR_NAME = "shape_prior"
 RUN_SUMMARY_NAME = "run_summary.json"
+
+
+# ---------------------------------------------------------------------------
+# CLI definition
+# ---------------------------------------------------------------------------
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -457,11 +465,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# ---------------------------------------------------------------------------
+# Option resolution
+# ---------------------------------------------------------------------------
+
+
 def resolve_chunk_frame_count(args: argparse.Namespace) -> int:
     """Resolve the frame count used to close each online chunk."""
     if args.chunk_frame_count is not None:
         value = int(args.chunk_frame_count)
     else:
+        # Chunks are sized on the output replay timeline (--replay-fps), not
+        # the camera capture FPS, so each chunk spans chunk_seconds of output.
         chunk_seconds = float(args.chunk_seconds)
         replay_fps = float(args.replay_fps)
         value = int(round(replay_fps * chunk_seconds))
@@ -543,21 +558,21 @@ def resolve_write_input_rgb_timeline(args: argparse.Namespace) -> bool:
     value = getattr(args, "write_input_rgb_timeline", None)
     if value is not None:
         return bool(value)
+    # Default: the timeline only exists for the side-by-side viewer, so write
+    # it exactly when that viewer will run.
     return str(
         getattr(args, "visualizer_mode", DEFAULT_VISUALIZER_MODE)
     ) == "window" and visualizer_uses_side_by_side(args)
 
 
-def _repo_path(path: str | Path) -> Path:
-    value = Path(path).expanduser()
-    if value.is_absolute():
-        return value
-    return REPO_ROOT / value
-
-
 def _python_command_prefix(conda_env: str | None) -> list[str]:
     env_name = "" if conda_env is None else str(conda_env).strip()
     if env_name:
+        active_env = os.environ.get("CONDA_DEFAULT_ENV", "").strip()
+        if active_env == env_name:
+            # Avoid nesting `conda run` inside the same long-running demo env:
+            # the wrapper can outlive/crash separately from the real child.
+            return [sys.executable]
         return ["conda", "run", "-n", env_name, "--no-capture-output", "python"]
     return ["python"]
 
@@ -612,14 +627,22 @@ def build_visualizer_command(
 
 
 def _load_optional_points(path: Path | None) -> np.ndarray | None:
+    """Load an optional Nx3 float64 point array from an .npy file."""
     if path is None:
         return None
     arr = np.asarray(np.load(path), dtype=np.float64)
     if arr.size == 0:
+        # Normalize empty inputs to (0, 3) so downstream shape checks stay
+        # uniform regardless of how the empty array was saved.
         return np.empty((0, 3), dtype=np.float64)
     if arr.ndim != 2 or arr.shape[1] != 3:
         raise ValueError(f"{path} must contain an Nx3 point array")
     return np.ascontiguousarray(arr, dtype=np.float64)
+
+
+# ---------------------------------------------------------------------------
+# Fixed output layout under --base-path
+# ---------------------------------------------------------------------------
 
 
 def resolve_online_dir(args: argparse.Namespace) -> Path:
@@ -653,6 +676,7 @@ def resolve_run_summary_path(base_path: str | Path) -> Path:
 
 
 def _remove_generated_path(path: Path) -> bool:
+    """Delete a generated file or directory; return True when it existed."""
     if path.is_dir():
         shutil.rmtree(path)
         return True
@@ -712,6 +736,7 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "shape_prior_points_npz": str(resolve_shape_prior_points_npz(args)),
         "max_chunks": args.max_chunks,
         "depth_backend": str(args.depth_backend),
+        "edgetam_tracking_identities": list(EDGE_TAM_TRACKING_IDENTITIES),
         "main_data_processing_capture_dir": str(
             _default_capture_dir(args, Path(args.base_path))
         ),
@@ -786,15 +811,9 @@ def validate_runtime_args(args: argparse.Namespace, *, chunk_frame_count: int) -
         resolve_visualizer_cuda_visible_devices(args)
 
 
-def _main_data_processing_duration_s(
-    args: argparse.Namespace,
-    *,
-    chunk_frame_count: int,
-) -> float:
-    # Demo v5.1 chunks are bounded by the chunk publisher, not by the camera
-    # subprocess. Keeping camera duration unbounded prevents shape-prior warmup
-    # time from consuming the realtime RGB input timeline.
-    return 0.0
+# ---------------------------------------------------------------------------
+# Camera subprocess command and process lifecycle
+# ---------------------------------------------------------------------------
 
 
 def build_main_data_processing_command(
@@ -813,10 +832,11 @@ def build_main_data_processing_command(
         depth_source = "realsense"
     else:
         raise ValueError(f"unsupported depth backend: {args.depth_backend!r}")
-    duration_s = _main_data_processing_duration_s(
-        args,
-        chunk_frame_count=chunk_frame_count,
-    )
+    # Demo v5.1 chunks are bounded by the chunk publisher, not by the camera
+    # subprocess (chunk_frame_count stays in the signature for that contract).
+    # Keeping camera duration unbounded (0.0 = run until stopped) prevents
+    # shape-prior warmup time from consuming the realtime RGB input timeline.
+    duration_s = 0.0
     # This is the only v5.1 camera/tracker entrypoint. It writes prepared
     # per-frame NPZ payloads plus optional input RGB timeline data; chunk
     # materialization happens in chunk_data_stream.py.
@@ -933,6 +953,13 @@ def _default_capture_dir(args: argparse.Namespace, base_path: Path) -> Path:
 
 
 def _stop_process(process: subprocess.Popen[bytes]) -> int | None:
+    """Stop a child, escalating SIGTERM -> SIGKILL with a 10 s grace each.
+
+    Children are launched with ``start_new_session=True``, so signalling the
+    whole process group also reaps grandchildren (conda run wrappers, CUDA
+    workers). When the group signal fails we fall back to plain
+    terminate/kill on the direct child.
+    """
     if process.poll() is not None:
         return process.returncode
     used_process_group = False
@@ -955,27 +982,34 @@ def _stop_process(process: subprocess.Popen[bytes]) -> int | None:
             return process.poll()
 
 
-def _visualizer_env(args: argparse.Namespace) -> dict[str, str]:
-    env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = resolve_visualizer_cuda_visible_devices(args)
-    return env
-
-
 def _start_visualizer(
     args: argparse.Namespace,
     *,
     capture_dir: Path | None = None,
 ) -> subprocess.Popen[bytes]:
     """Launch the lightweight online visualizer in the repo environment."""
+    command = build_visualizer_command(args, capture_dir=capture_dir)
+    # The viewer gets its own CUDA namespace so it never competes with the
+    # capture/tracker GPUs.
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = resolve_visualizer_cuda_visible_devices(args)
     return subprocess.Popen(
-        build_visualizer_command(args, capture_dir=capture_dir),
+        command,
         cwd=REPO_ROOT,
-        env=_visualizer_env(args),
+        env=env,
         start_new_session=True,
     )
 
 
+# ---------------------------------------------------------------------------
+# Run summary and entrypoint
+# ---------------------------------------------------------------------------
+
+
 def _runtime_chunk_summary(manifests: Sequence[dict[str, object]]) -> dict[str, object]:
+    """Aggregate per-chunk manifests into run-level publish/quality stats."""
+    # publish_wall_s values are wall-clock seconds; consecutive differences
+    # measure the steady-state publish cadence downstream consumers observed.
     publish_times = [
         float(item["publish_wall_s"])
         for item in manifests
@@ -996,6 +1030,9 @@ def _runtime_chunk_summary(manifests: Sequence[dict[str, object]]) -> dict[str, 
         if item.get("publish_wall_s") is not None
         and bool(item.get("shape_prior_complete"))
     ]
+    # The worst chunk status becomes the run-level status. Statuses missing
+    # from the table rank lowest (-1) so a stray label never outranks a real
+    # degraded/invalid signal.
     quality_order = {"normal": 0, "degraded": 1, "invalid": 2}
     quality_values = [
         str(item.get("track_process_status", "normal")) for item in manifests
@@ -1112,9 +1149,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     main_data_processing_env = os.environ.copy()
     if not main_data_processing_env.get(SAM31_CHECKPOINT_ENV):
-        main_data_processing_env[SAM31_CHECKPOINT_ENV] = str(
-            _repo_path(DEFAULT_SAM31_CHECKPOINT_PATH)
-        )
+        # A caller-provided checkpoint env var wins. Otherwise anchor the
+        # configured (possibly relative) YAML path to the repo root so launches
+        # from other working directories still find the vendored checkpoint.
+        checkpoint_path = Path(DEFAULT_SAM31_CHECKPOINT_PATH).expanduser()
+        if not checkpoint_path.is_absolute():
+            checkpoint_path = REPO_ROOT / checkpoint_path
+        main_data_processing_env[SAM31_CHECKPOINT_ENV] = str(checkpoint_path)
     main_data_processing_cuda_visible_devices = (
         resolve_main_data_processing_cuda_visible_devices(args).strip()
     )
@@ -1231,7 +1272,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "shape_prior_config": (
             None if args.shape_prior_config is None else str(args.shape_prior_config)
         ),
-        "main_data_processing_return_code": (main_data_processing_return_code),
+        "main_data_processing_return_code": main_data_processing_return_code,
         "main_data_processing_stop_reason": stop_reason,
         "main_data_processing_capture_dir": str(capture_dir),
         "base_path": str(base_path),
@@ -1278,6 +1319,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         encoding="utf-8",
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
+    # Exit policy: a camera failure only fails the run when nothing was
+    # published (chunks already committed remain valid products). Beyond that,
+    # enforce the requested chunk target and visualizer health; a viewer left
+    # running (return code None) is normal for window mode.
     if main_data_processing_return_code not in (0, None) and not manifests:
         return int(main_data_processing_return_code)
     if args.max_chunks is not None and len(manifests) < int(args.max_chunks):

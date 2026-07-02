@@ -25,7 +25,7 @@ def select_point(points, raw_matching_points, object_mask):
     new_match = mask_coords[indices]
     # Pay attention to the case that the keypoint is in different order
     matched_points = points[new_match[:, 1], new_match[:, 0]]
-    return mask_coords[indices], matched_points
+    return new_match, matched_points
 
 
 def plot_mesh_with_points(mesh, points, filename):
@@ -83,16 +83,6 @@ def as_mesh(scene_or_mesh):
             combined_mesh = meshes[0]
         else:
             raise ValueError("No valid meshes found in the GLB file")
-
-        # Get model metadata
-        metadata = {
-            "vertices": combined_mesh.vertices.shape[0],
-            "faces": combined_mesh.faces.shape[0],
-            "bounds": combined_mesh.bounds.tolist(),
-            "center_mass": combined_mesh.center_mass.tolist(),
-            "is_watertight": combined_mesh.is_watertight,
-            "original_scene": combined_mesh,  # Keep reference to original scene
-        }
 
         mesh = combined_mesh
     else:

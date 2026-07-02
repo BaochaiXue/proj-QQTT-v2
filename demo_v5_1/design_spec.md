@@ -1,6 +1,8 @@
 我在第一frame（warmup frame） have already label query points into object points and conttrller points，这个是固定的，之后一直不变。第一帧必须 visible 且落在第一帧 object processed mask 内，才被定义为 object query。第一帧必须 visible 且落在第一帧 controller processed mask 内，才被定义为 controller query。
 
-在我们设计demo 5.1开始会建立一个总表，我们会用dictionary like的数据结构存储每一个controller point的最近的50 controler point。
+正式 Demo v5.1 的 EdgeTAM 是一个 streaming session 里追三个 obj_id：`hand_a`、`object`、`hand_b`。两个 hand id 分开由 EdgeTAM propagate；`controller` 在后续 PCD、TAPNext++、tracking 里仍然定义为 `hand_a | hand_b` 的 union。这个不是参数控制的模式，frame 0 必须能把 controller prompt 分成两只 hand，否则 fail fast。
+
+在我们设计demo 5.1开始会建立一个总表，我们会用dictionary like的数据结构存储每一个controller point的最近的100 controler point。（如果不足则选满同一只手），你必须确保我们的每一个controller point的最近的100 controler point选择的时候都是在同一只手上
 我们会考虑二个大类3种情况。这里先把 invalid state 定义清楚：
 
 - `temporary_invalid`：这一帧的直接观测不能用，但不改变 query/anchor 身份。它包括两种来源：第一，tracker 这一帧仍然认为该 query visible，但是这个 visible track pixel 没有通过当前语义 mask、depth/PCD、或者 motion consistency gate；第二，TAPNext++ 这一帧认为该 query invisible、out of track、或者 loss track。TAPNext++ 本身不提供“这个 query 从此永久丢失”的 lifetime state，所以 tracker invisible / loss track 也只归为这一帧的 `temporary_invalid`。
@@ -27,9 +29,9 @@ For 后续chunks and controller anchor：
 
 当第 `j` 个 controller anchor 在后续 frame/chunk 变成 `temporary_invalid` 时，我们只允许替换这一列的数值来源，不替换这一列的身份。`controller_points[t, j]` 可以由附近 controller candidates 拟合、恢复、或者代理得到，但是第 `j` 列的身份仍然是原始的 `controller_sample_query_ids[j]`。
 
-如果后续chunks某一个frame controller anchor出现了`temporary_invalid`，我们通过他附近的dictionary like的数据结构存储每一个controller point的最近的50 controler point，我们从中挑选出最近的15个当前帧没有`temporary_invalid`的临近controller points，通过局部刚体配准（用附近仍然有效的 controller points 估计一个从第一帧到当前帧的局部刚体变换，然后把这个变换作用到丢失的 anchor 上）临时在这个frame拟合出这个frame controller anchor的位置。如果 `temporary_invalid` 的来源是 TAPNext++ invisible / out of track / loss track，也走同一套恢复/代理逻辑，不改变第 `j` 列的 controller anchor 身份，不改变 `controller_sample_query_ids[j]`，也不改变 `query_schema_hash`。
+如果后续chunks某一个frame controller anchor出现了`temporary_invalid`，我们通过他附近的dictionary like的数据结构存储每一个controller point的最近的100 controler point，我们从中挑选出最近的15个当前帧没有`temporary_invalid`的临近controller points，通过局部刚体配准（用附近仍然有效的 controller points 估计一个从第一帧到当前帧的局部刚体变换，然后把这个变换作用到丢失的 anchor 上）临时在这个frame拟合出这个frame controller anchor的位置。如果 `temporary_invalid` 的来源是 TAPNext++ invisible / out of track / loss track，也走同一套恢复/代理逻辑，不改变第 `j` 列的 controller anchor 身份，不改变 `controller_sample_query_ids[j]`，也不改变 `query_schema_hash`。
 
 
-1.特殊情况：比如 50 个邻居里少于 15 个有效-》 throw 异常
-2.最近 50 是按 first-frame 3D 位置计算，算完之后就不再更新来节省算力
+1.特殊情况：比如 100 个邻居里少于 15 个有效，我们可以只选10个，100 个邻居里少于 10 个有效，我们只选5个，100 个邻居里少于 5 个有效，则从剩余的其他有效(not tempority invlaid)的controller anchor中挑选5-15个最近的controller anchor来估算（越多越好但是不能跨手），如果这个都没有再fail back-》 throw 异常
+2.最近 100 是按 first-frame 3D 位置计算，算完之后就不再更新来节省算力
 3.motion consistency或者一些细节问题，在不损害我们实时性的前提下，你必须完全参考data_process_origin做法，确保一致性

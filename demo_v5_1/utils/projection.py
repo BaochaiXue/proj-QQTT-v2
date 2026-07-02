@@ -63,6 +63,7 @@ class OverlayLiftResult:
 
 
 def _intrinsics_to_matrix(intrinsics: Any) -> np.ndarray:
+    """Normalize a mapping, fx/fy/cx/cy attribute object, or 3x3 array to a float32 K matrix."""
     if isinstance(intrinsics, Mapping):
         fx = float(intrinsics["fx"])
         fy = float(intrinsics["fy"])
@@ -82,6 +83,9 @@ def _intrinsics_to_matrix(intrinsics: Any) -> np.ndarray:
 
 
 def _depth_to_meters(depth: np.ndarray, depth_scale_m_per_unit: float) -> np.ndarray:
+    """Return depth in meters: float inputs are taken as meters already, integer
+    inputs (e.g. uint16 sensor units) are scaled by depth_scale_m_per_unit.
+    Non-finite and negative depths are zeroed so they fail the >0 validity gate."""
     arr = np.asarray(depth)
     if np.issubdtype(arr.dtype, np.floating):
         depth_m = arr.astype(np.float32)
@@ -105,6 +109,12 @@ def lift_tracks_yx_to_world(
     depth_max_m: float = float("inf"),
     max_points: int | None = None,
 ) -> OverlayLiftResult:
+    """Lift 2D tracker points (row, col order) to world-frame 3D via the depth map.
+
+    A track survives only if it is visible, lands in-bounds, inside the optional
+    mask, and samples a depth within [depth_min_m, depth_max_m]. valid_mask is
+    aligned with the input tracks; points_world/tracks_yx hold survivors only.
+    """
     tracks = np.asarray(tracks_yx, dtype=np.float32)
     if tracks.ndim != 2 or tracks.shape[1] != 2:
         raise ValueError(f"tracks_yx must have shape (N,2); got {tracks.shape}")
@@ -136,6 +146,7 @@ def lift_tracks_yx_to_world(
         & (sampled_depth <= float(depth_max_m))
     )
     valid = vis & in_bounds & inside_mask & depth_valid
+    # Deterministic even-stride cap keeps the survivor set stable frame to frame.
     if max_points is not None and int(max_points) >= 0 and int(valid.sum()) > int(max_points):
         valid_indices = np.where(valid)[0]
         keep = valid_indices[np.linspace(0, len(valid_indices) - 1, int(max_points), dtype=np.int64)]

@@ -20,6 +20,8 @@ from demo_v5_1.chunk_data_payload import (
 )
 from demo_v5_1.utils.atomic_io import atomic_json_dump, atomic_pickle_dump
 
+# Shape-prior point clouds do not vary per frame; the latest committed value is
+# republished with every aggregate rewrite.
 STATIC_KEYS = (
     "surface_points",
     "interior_points",
@@ -37,6 +39,8 @@ FINAL_DATA_STATIC_KEYS = (
     *DATA_PROCESS_QUERY_SCHEMA_KEYS,
 )
 OPTIONAL_STATIC_KEYS = ("controller_neighbor_query_ids",)
+# Small track_process subset that rides along with each committed final_data
+# window so online readers get recovery diagnostics without the full payload.
 TRACK_DIAGNOSTIC_KEYS = (
     "controller_proxied",
     "controller_neighbor_query_ids",
@@ -44,23 +48,8 @@ TRACK_DIAGNOSTIC_KEYS = (
 )
 
 
-def _infer_frame_count(data: Mapping[str, Any]) -> int:
-    for key in ("object_points", "controller_points"):
-        if key in data and data[key] is not None:
-            return int(np.asarray(data[key]).shape[0])
-    raise KeyError(
-        "Cannot infer online frame count: missing object_points/controller_points"
-    )
-
-
-def _take_source_frames(value: Any, source_frame_indices: Sequence[int]) -> Any:
-    try:
-        return value[source_frame_indices]
-    except TypeError:
-        return [value[int(idx)] for idx in source_frame_indices]
-
-
 def _as_static_vector(data: Mapping[str, Any], key: str) -> np.ndarray | None:
+    """Fetch ``data[key]`` as a flat int64 vector, or None when absent."""
     value = data.get(key)
     if value is None:
         return None
@@ -68,7 +57,13 @@ def _as_static_vector(data: Mapping[str, Any], key: str) -> np.ndarray | None:
 
 
 def _static_mapping_vectors(data: Mapping[str, Any]) -> dict[str, Any]:
-    """Collect static point/query mapping vectors for an online chunk."""
+    """Collect static point/query mapping vectors for an online chunk.
+
+    Inputs may be strict-tracking output or reconstructed final_data, so each
+    id vector falls back through progressively weaker sources. Every fallback
+    is length-checked against the selected point count so the published
+    vectors always align with the point arrays.
+    """
     data = dict(data)
     vectors: dict[str, Any] = {}
     has_query_schema = all(key in data for key in DATA_PROCESS_QUERY_SCHEMA_KEYS)
@@ -93,6 +88,9 @@ def _static_mapping_vectors(data: Mapping[str, Any]) -> dict[str, Any]:
         selected_controller_ids is None
         or selected_controller_ids.shape[0] != controller_count
     ):
+        # Rebuild from final selection positions: map through candidate query
+        # ids when available (-1 for out-of-range positions), else publish the
+        # positions themselves.
         query_ids = _as_static_vector(data, "controller_query_indices")
         selected_controller_ids = np.full((controller_count,), -1, dtype=np.int64)
         if query_ids is not None:
@@ -125,6 +123,8 @@ def _static_mapping_vectors(data: Mapping[str, Any]) -> dict[str, Any]:
     )
     selected_object_ids = _as_static_vector(data, "object_selected_query_ids")
     if selected_object_ids is None or selected_object_ids.shape[0] != object_count:
+        # Fallback ladder: track-selected ids, then candidate ids (directly or
+        # gathered through the volume-sample indices), then the sample indices.
         query_ids = _as_static_vector(data, "object_track_query_indices")
         if query_ids is None or query_ids.shape[0] != object_count:
             query_ids = _as_static_vector(data, "object_query_indices")
@@ -196,12 +196,16 @@ def build_chunk_data_record(
     # TIME_KEYS are indexed by local frame inside this chunk. Static query and
     # sampling vectors are attached below unchanged so every chunk can be read
     # independently.
+    local_frames = list(range(0, int(end_frame) - int(start_frame)))
     for key in TIME_KEYS:
         value = data.get(key)
-        if value is not None:
-            chunk[key] = _take_source_frames(
-                value, list(range(0, int(end_frame) - int(start_frame)))
-            )
+        if value is None:
+            continue
+        try:
+            chunk[key] = value[local_frames]
+        except TypeError:
+            # Plain Python sequences reject list indices; copy frame by frame.
+            chunk[key] = [value[int(idx)] for idx in local_frames]
     chunk.update(_static_mapping_vectors(data))
     for key in OPTIONAL_STATIC_KEYS:
         if key in data:
@@ -209,21 +213,6 @@ def build_chunk_data_record(
     if "track_process_status" in data:
         chunk["track_process_status"] = str(data["track_process_status"])
     return chunk
-
-
-def _track_diagnostics(track_process: Mapping[str, Any]) -> dict[str, Any]:
-    track_process = dict(track_process)
-    payload: dict[str, Any] = {}
-    for key in TRACK_DIAGNOSTIC_KEYS:
-        if key not in track_process:
-            continue
-        value = track_process[key]
-        payload[key] = (
-            str(value)
-            if key == "track_process_status"
-            else np.ascontiguousarray(np.asarray(value))
-        )
-    return payload
 
 
 class ChunkDataWriter:
@@ -279,7 +268,16 @@ class ChunkDataWriter:
     ) -> dict[str, Any]:
         """Append one final_data chunk and rewrite online metadata atomically."""
         data = dict(data)
-        frame_count = _infer_frame_count(data)
+        # Chunk length is the leading (frame) axis of whichever per-frame
+        # tensor is present.
+        for key in ("object_points", "controller_points"):
+            if key in data and data[key] is not None:
+                frame_count = int(np.asarray(data[key]).shape[0])
+                break
+        else:
+            raise KeyError(
+                "Cannot infer online frame count: missing object_points/controller_points"
+            )
         start_frame = int(self.latest_committed_frame)
         end_frame = start_frame + int(frame_count)
         if source_frame_indices is None:
@@ -332,10 +330,18 @@ class ChunkDataWriter:
         status: str = "recording",
     ) -> dict[str, Any]:
         """Commit one in-memory final_data window plus track diagnostics."""
-        online_data = {
-            **dict(final_data),
-            **_track_diagnostics(track_process),
-        }
+        online_data = dict(final_data)
+        # Only the small TRACK_DIAGNOSTIC_KEYS subset of track_process rides
+        # along; the full track payload is not republished per chunk.
+        for key in TRACK_DIAGNOSTIC_KEYS:
+            if key not in track_process:
+                continue
+            value = track_process[key]
+            online_data[key] = (
+                str(value)
+                if key == "track_process_status"
+                else np.ascontiguousarray(np.asarray(value))
+            )
         return self.commit_chunk_data_record(
             online_data,
             source_frame_indices=source_frame_indices,
@@ -423,6 +429,11 @@ class ChunkDataWriter:
         atomic_json_dump(metadata, self.static_case_dir / "metadata.json")
 
     def _write_manifest(self, *, status: str) -> dict[str, Any]:
+        """Atomically rewrite online_data/manifest.json for the current state.
+
+        ``version`` increases monotonically with every commit/finish, so
+        readers can detect any rewrite even when frame counters are unchanged.
+        """
         latest_frame = int(self.latest_committed_frame)
         total = (
             latest_frame

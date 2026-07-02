@@ -14,6 +14,11 @@ CAMERA_COLOR_FRAME = "camera_color_frame"
 TABLE_WORLD_FRAME_KIND = "table_world_z0"
 
 
+# --------------------------------------------------------------------------
+# HUD dataclasses and text overlay
+# --------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class SideBySidePanelHud:
     rgb_seq: int
@@ -92,6 +97,7 @@ def _resize_to_cell(image: np.ndarray, cell_size: tuple[int, int]) -> np.ndarray
 
 
 def _draw_text_lines(image: np.ndarray, lines: list[str], *, origin: tuple[int, int]) -> None:
+    """Draw text lines over a semi-transparent black box; clips at image edges."""
     if not lines:
         return
 
@@ -99,7 +105,7 @@ def _draw_text_lines(image: np.ndarray, lines: list[str], *, origin: tuple[int, 
     y = max(0, min(int(origin[1]), max(0, image.shape[0] - 1)))
     scale = 0.38
     thickness = 1
-    line_height = 14
+    line_height = 14  # px per text row; HUD anchor math below assumes this value
     max_text_width = max(cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)[0][0] for line in lines)
     box_width = min(image.shape[1] - x, max(1, max_text_width + 8))
     box_height = min(image.shape[0] - y, max(1, line_height * len(lines) + 5))
@@ -127,35 +133,12 @@ def _draw_text_lines(image: np.ndarray, lines: list[str], *, origin: tuple[int, 
         cursor_y += line_height
 
 
-def _hud_lines(hud: SideBySidePanelHud) -> list[str]:
-    input_time = "none" if hud.input_time_s is None else f"{float(hud.input_time_s):.2f}s"
-    return [
-        f"rgb={int(hud.rgb_seq)} paired={int(hud.paired_seq)} ahead={hud.rgb_ahead_frames}f",
-        f"input={input_time} pipe={float(hud.pipeline_latency_ms):.1f}ms disp={float(hud.display_latency_ms):.1f}ms",
-        f"hold={float(hud.startup_hold_s):.2f}s filter={hud.filter_preset} markers={int(hud.marker_count)}",
-        f"bg={hud.tracking_background} obj={int(hud.object_point_count)} ctrl={int(hud.controller_point_count)}",
-        f"shape_prior={hud.shape_prior_status} pts={int(hud.shape_prior_point_count)}",
-        format_side_by_side_fps_line(hud),
-    ]
-
-
-def _remaining_query_legend_lines(hud: SideBySidePanelHud) -> list[str]:
-    query_count = max(0, int(hud.query_count))
-    remaining = max(0, int(hud.remaining_query_count))
-    if query_count <= 0 and remaining <= 0:
-        return []
-    return [
-        f"remaining {remaining}/{query_count}",
-        f"obj={int(hud.remaining_object_query_count)} ctrl={int(hud.remaining_controller_query_count)}",
-        f"hand_a={int(hud.remaining_hand_a_query_count)} hand_b={int(hud.remaining_hand_b_query_count)}",
-    ]
-
-
 def render_side_by_side_panel(
     inputs: SideBySidePanelInputs,
     *,
     cell_size: tuple[int, int] | None = None,
 ) -> np.ndarray:
+    # Default cell size follows the live RGB frame so the camera image is never rescaled.
     left_source = _as_bgr_u8(inputs.rgb_image_bgr)
     if cell_size is None:
         cell_size = (int(left_source.shape[1]), int(left_source.shape[0]))
@@ -165,14 +148,46 @@ def render_side_by_side_panel(
     right = _resize_to_cell(inputs.tracking_panel_bgr, cell_size)
 
     panel = np.concatenate([left, middle, right], axis=1)
-    _draw_text_lines(panel, _remaining_query_legend_lines(inputs.hud), origin=(2, 2))
-    hud_lines = _hud_lines(inputs.hud)
+
+    hud = inputs.hud
+    # Top-left legend: remaining tracking queries split per class. Suppressed until
+    # the tracker has published any query points at all.
+    query_count = max(0, int(hud.query_count))
+    remaining = max(0, int(hud.remaining_query_count))
+    if query_count <= 0 and remaining <= 0:
+        legend_lines: list[str] = []
+    else:
+        legend_lines = [
+            f"remaining {remaining}/{query_count}",
+            f"obj={int(hud.remaining_object_query_count)} ctrl={int(hud.remaining_controller_query_count)}",
+            f"hand_a={int(hud.remaining_hand_a_query_count)} hand_b={int(hud.remaining_hand_b_query_count)}",
+        ]
+    _draw_text_lines(panel, legend_lines, origin=(2, 2))
+
+    # Bottom-left HUD block: seq/latency/config counters plus stage FPS.
+    input_time = "none" if hud.input_time_s is None else f"{float(hud.input_time_s):.2f}s"
+    hud_lines = [
+        f"rgb={int(hud.rgb_seq)} paired={int(hud.paired_seq)} ahead={hud.rgb_ahead_frames}f",
+        f"input={input_time} pipe={float(hud.pipeline_latency_ms):.1f}ms disp={float(hud.display_latency_ms):.1f}ms",
+        f"hold={float(hud.startup_hold_s):.2f}s filter={hud.filter_preset} markers={int(hud.marker_count)}",
+        f"bg={hud.tracking_background} obj={int(hud.object_point_count)} ctrl={int(hud.controller_point_count)}",
+        f"shape_prior={hud.shape_prior_status} pts={int(hud.shape_prior_point_count)}",
+        format_side_by_side_fps_line(hud),
+    ]
+    # Anchor the block so its last line stays on screen (14 px per line + padding,
+    # matching _draw_text_lines line_height).
     hud_y = max(0, panel.shape[0] - (14 * len(hud_lines) + 6))
     _draw_text_lines(panel, hud_lines, origin=(2, hud_y))
     return np.ascontiguousarray(panel, dtype=np.uint8)
 
 
+# --------------------------------------------------------------------------
+# Pinhole projection of world/camera points into panel pixels
+# --------------------------------------------------------------------------
+
+
 def _intrinsics_values(intrinsics: Any) -> tuple[float, float, float, float]:
+    """Extract (fx, fy, cx, cy) from a mapping, an attribute object, or a 3x3 K matrix."""
     if isinstance(intrinsics, Mapping):
         return (
             float(intrinsics["fx"]),
@@ -202,6 +217,7 @@ def _camera_points_for_frame(
     coordinate_frame: str,
     camera_to_world_c2w: Any | None,
 ) -> np.ndarray:
+    """Bring points into the color-camera frame; world-frame inputs need a c2w pose."""
     points = np.asarray(points_xyz, dtype=np.float32).reshape(-1, 3)
     if coordinate_frame == CAMERA_COLOR_FRAME:
         return points
@@ -227,6 +243,7 @@ def _project_points(
     coordinate_frame: str,
     camera_to_world_c2w: Any | None,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Pinhole-project points to integer pixels; valid marks finite, positive-depth, in-bounds hits."""
     points = _camera_points_for_frame(
         points_xyz,
         coordinate_frame=coordinate_frame,
@@ -255,16 +272,8 @@ def _project_points(
     return pixels, valid
 
 
-def _reshape_points(name: str, points_xyz: np.ndarray) -> np.ndarray:
-    points = np.asarray(points_xyz, dtype=np.float32)
-    if points.size == 0:
-        return np.empty((0, 3), dtype=np.float32)
-    if points.ndim != 2 or points.shape[1] != 3:
-        raise ValueError(f"{name} must be an Nx3 array, got {points.shape}")
-    return np.ascontiguousarray(points)
-
-
 def _reshape_rgb(name: str, rgb_u8: np.ndarray) -> np.ndarray:
+    """Validate an Nx3 uint8 color array; empty inputs normalize to shape (0, 3)."""
     colors = np.asarray(rgb_u8, dtype=np.uint8)
     if colors.size == 0:
         return np.empty((0, 3), dtype=np.uint8)
@@ -291,12 +300,20 @@ def _draw_projected_points(
     coordinate_frame: str,
     camera_to_world_c2w: Any | None,
 ) -> int:
-    points = _reshape_points(points_name, points_xyz)
+    # Validate points as Nx3 float32 (empty inputs normalize to shape (0, 3)).
+    points = np.asarray(points_xyz, dtype=np.float32)
+    if points.size == 0:
+        points = np.empty((0, 3), dtype=np.float32)
+    elif points.ndim != 2 or points.shape[1] != 3:
+        raise ValueError(f"{points_name} must be an Nx3 array, got {points.shape}")
+    else:
+        points = np.ascontiguousarray(points)
     colors = _reshape_rgb(colors_name, colors_rgb)
     _require_same_length(points_name, points, colors_name, colors)
     if len(points) == 0:
         return 0
 
+    # Cap render cost with an even (deterministic) subsample rather than random choice.
     if int(max_points) > 0 and len(points) > int(max_points):
         indices = np.linspace(0, len(points) - 1, int(max_points), dtype=np.int64)
         points = points[indices]
@@ -315,9 +332,15 @@ def _draw_projected_points(
     for (u, v), ok, rgb in zip(pixels, valid, colors, strict=False):
         if not bool(ok):
             continue
+        # rgb[::-1]: stored colors are RGB, cv2 draws BGR.
         cv2.circle(image_bgr, (int(u), int(v)), radius, tuple(int(value) for value in rgb[::-1]), thickness=-1)
         drawn += 1
     return drawn
+
+
+# --------------------------------------------------------------------------
+# Panel renderers (projected point cloud, tracking overlay)
+# --------------------------------------------------------------------------
 
 
 def render_projected_pcd_panel(

@@ -5,9 +5,9 @@ from __future__ import annotations
 import os
 import platform
 import re
-import threading
 import time
 from argparse import ArgumentParser
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -19,11 +19,12 @@ from PIL import Image
 QQTT_SAM31_CHECKPOINT_ENV = "QQTT_SAM31_CHECKPOINT"
 QQTT_SAM31_BPE_PATH_ENV = "QQTT_SAM31_BPE_PATH"
 BPE_VOCAB_NAME = "bpe_simple_vocab_16e6.txt.gz"
+# Prompts split on commas/newlines/semicolons, plus periods that are not part
+# of a decimal number (so labels like "sam 3.1" stay intact).
 PROMPT_SPLIT_PATTERN = re.compile(r"[,\n;]+|(?<!\d)\.(?!\d)")
 
-_CUDA_AUTOCAST_CONTEXT = None
-_CUDA_AUTOCAST_CONTEXTS_BY_THREAD: dict[int, Any] = {}
-_CUDA_AUTOCAST_CONTEXT_LOCK = threading.Lock()
+# Keyed by (checkpoint, bpe path, compile flag, confidence threshold, device);
+# lets reuse_model callers skip the multi-second model load on repeat requests.
 _IMAGE_PROCESSOR_CACHE: dict[
     tuple[str, str | None, bool, float, str],
     tuple[Any, Any],
@@ -31,6 +32,7 @@ _IMAGE_PROCESSOR_CACHE: dict[
 
 
 def parse_text_prompts(text_prompt: str) -> list[str]:
+    # Lowercase, collapse whitespace, and de-duplicate while keeping order.
     prompts: list[str] = []
     for chunk in PROMPT_SPLIT_PATTERN.split(text_prompt):
         normalized = " ".join(chunk.strip().lower().split())
@@ -40,6 +42,8 @@ def parse_text_prompts(text_prompt: str) -> list[str]:
 
 
 def resolve_sam31_bpe_path(checkpoint_path: str | Path | None = None) -> str | None:
+    # Search order: env override, next to the checkpoint, then the sam3 package
+    # assets. Returning None lets the model builder use its bundled default.
     candidates: list[Path] = []
     bpe_override = os.getenv(QQTT_SAM31_BPE_PATH_ENV)
     if bpe_override:
@@ -94,11 +98,18 @@ def resolve_sam31_checkpoint_path(checkpoint_path: str | Path | None = None) -> 
 
 
 def _configure_torch_inference(torch_module: Any) -> None:
-    global _CUDA_AUTOCAST_CONTEXT
+    """Apply idempotent process-wide inference settings (SDP backends, TF32).
 
+    Autocast is intentionally NOT entered here: torch autocast state is
+    thread-local, so a long-lived context entered on one thread can never be
+    exited safely from another. Inference wraps itself in a scoped autocast
+    via _inference_autocast instead.
+    """
     if not torch_module.cuda.is_available():
         return
 
+    # Fused SDP kernels are unreliable on Windows CUDA builds: force the math
+    # backend there and skip the autocast/TF32 setup entirely.
     if platform.system() == "Windows":
         if hasattr(torch_module.backends.cuda, "enable_flash_sdp"):
             torch_module.backends.cuda.enable_flash_sdp(False)
@@ -110,16 +121,7 @@ def _configure_torch_inference(torch_module: Any) -> None:
             torch_module.backends.cuda.enable_math_sdp(True)
         return
 
-    thread_id = threading.get_ident()
-    with _CUDA_AUTOCAST_CONTEXT_LOCK:
-        if thread_id not in _CUDA_AUTOCAST_CONTEXTS_BY_THREAD:
-            _CUDA_AUTOCAST_CONTEXT = torch_module.autocast(
-                device_type="cuda",
-                dtype=torch_module.bfloat16,
-            )
-            _CUDA_AUTOCAST_CONTEXT.__enter__()
-            _CUDA_AUTOCAST_CONTEXTS_BY_THREAD[thread_id] = _CUDA_AUTOCAST_CONTEXT
-
+    # TF32 matmul is only worthwhile (and supported) on Ampere+ (SM 8.x).
     device_properties = torch_module.cuda.get_device_properties(
         torch_module.cuda.current_device()
     )
@@ -128,20 +130,29 @@ def _configure_torch_inference(torch_module: Any) -> None:
         torch_module.backends.cudnn.allow_tf32 = True
 
 
+def _inference_autocast(torch_module: Any) -> Any:
+    """Scoped bfloat16 autocast for one inference call on the calling thread.
+
+    Entered and exited on the same thread within run_image_segmentation, so
+    no autocast state ever leaks across calls or threads. Windows keeps the
+    math-SDP fp32 path (see _configure_torch_inference).
+    """
+    if torch_module.cuda.is_available() and platform.system() != "Windows":
+        return torch_module.autocast(device_type="cuda", dtype=torch_module.bfloat16)
+    return nullcontext()
+
+
 def clear_sam31_image_processor_cache() -> None:
     _IMAGE_PROCESSOR_CACHE.clear()
 
 
 def release_sam31_image_segmentation_runtime() -> None:
-    global _CUDA_AUTOCAST_CONTEXT
+    """Drop the cached SAM3.1 model/processor so their GPU memory can be freed.
 
+    There is no autocast state to unwind: inference uses a per-call scoped
+    autocast (_inference_autocast).
+    """
     clear_sam31_image_processor_cache()
-    for autocast_context in reversed(
-        tuple(_CUDA_AUTOCAST_CONTEXTS_BY_THREAD.values())
-    ):
-        autocast_context.__exit__(None, None, None)
-    _CUDA_AUTOCAST_CONTEXTS_BY_THREAD.clear()
-    _CUDA_AUTOCAST_CONTEXT = None
 
 
 def _build_sam31_image_processor(
@@ -152,6 +163,8 @@ def _build_sam31_image_processor(
     device: str,
     reuse_model: bool,
 ) -> tuple[Any, Any, str, str | None, dict[str, float | bool]]:
+    # Each stage is timed separately; the dict lands in the "timing_ms" payload
+    # of run_image_segmentation so callers can attribute warmup cost.
     total_start_s = time.perf_counter()
 
     import_start_s = time.perf_counter()
@@ -225,6 +238,9 @@ def _build_sam31_image_processor(
 
 
 def _as_numpy_array(value: Any) -> np.ndarray:
+    # Duck-typed tensor-to-numpy conversion; works whether the processor hands
+    # back torch tensors or plain arrays. bfloat16 has no numpy equivalent, so
+    # it is upcast to float32 first.
     if hasattr(value, "detach"):
         value = value.detach()
     if hasattr(value, "cpu"):
@@ -244,6 +260,8 @@ def _select_image_output_indices(
     *,
     keep_all_instances: bool,
 ) -> list[int]:
+    # Normalize (H, W) / (N, 1, H, W) mask layouts to (N, H, W); the same
+    # normalization is repeated in _collect_image_prompt_masks.
     masks = _as_numpy_array(state.get("masks", []))
     if masks.size == 0:
         return []
@@ -258,6 +276,8 @@ def _select_image_output_indices(
     if keep_all_instances or object_count == 1:
         return list(range(object_count))
 
+    # Single-instance selection: prefer the highest-score detection; fall back
+    # to the largest mask when scores are missing or malformed.
     scores = _as_numpy_array(state.get("scores", []))
     if scores.size == object_count:
         return [int(scores.reshape(-1).argmax())]
@@ -318,39 +338,51 @@ def run_image_segmentation(
         device=device,
         reuse_model=bool(reuse_model),
     )
+    # The processor holds the model; drop the redundant local reference.
     del model
 
     import torch  # noqa: PLC0415
 
-    set_image_start_s = time.perf_counter()
-    state = processor.set_image(image)
-    set_image_ms = float((time.perf_counter() - set_image_start_s) * 1000.0)
-
     masks_by_label: dict[str, list[np.ndarray]] = {prompt: [] for prompt in prompts}
     per_prompt_counts: dict[str, int] = {}
     prompt_timing_ms: dict[str, float] = {}
-    with torch.inference_mode():
-        for prompt_idx, prompt in enumerate(prompts):
-            prompt_start_s = time.perf_counter()
-            if prompt_idx > 0:
-                processor.reset_all_prompts(state)
-            state = processor.set_text_prompt(prompt, state)
-            keep_all_instances = len(prompts) == 1 or prompt_idx > 0
-            selected_indices = set(
-                _select_image_output_indices(
-                    state,
-                    keep_all_instances=keep_all_instances,
+    # The autocast scope covers the image embedding and every prompt so the
+    # whole call runs under bfloat16, then fully unwinds on this same thread.
+    with _inference_autocast(torch):
+        set_image_start_s = time.perf_counter()
+        state = processor.set_image(image)
+        set_image_ms = float((time.perf_counter() - set_image_start_s) * 1000.0)
+
+        with torch.inference_mode():
+            for prompt_idx, prompt in enumerate(prompts):
+                prompt_start_s = time.perf_counter()
+                # Prompts share one image embedding; only the text state is
+                # reset between prompts.
+                if prompt_idx > 0:
+                    processor.reset_all_prompts(state)
+                state = processor.set_text_prompt(prompt, state)
+                # Instance policy: single-prompt requests and every prompt
+                # after the first keep all instances; only the first prompt of
+                # a multi-prompt request is reduced to its best instance. Demo
+                # callers rely on this by ordering prompts object-first,
+                # controller-second (one object mask, both hand instances
+                # kept).
+                keep_all_instances = len(prompts) == 1 or prompt_idx > 0
+                selected_indices = set(
+                    _select_image_output_indices(
+                        state,
+                        keep_all_instances=keep_all_instances,
+                    )
                 )
-            )
-            prompt_masks = _collect_image_prompt_masks(
-                state,
-                selected_indices=selected_indices,
-            )
-            masks_by_label[prompt].extend(prompt_masks)
-            per_prompt_counts[prompt] = int(len(prompt_masks))
-            prompt_timing_ms[prompt] = float(
-                (time.perf_counter() - prompt_start_s) * 1000.0
-            )
+                prompt_masks = _collect_image_prompt_masks(
+                    state,
+                    selected_indices=selected_indices,
+                )
+                masks_by_label[prompt].extend(prompt_masks)
+                per_prompt_counts[prompt] = int(len(prompt_masks))
+                prompt_timing_ms[prompt] = float(
+                    (time.perf_counter() - prompt_start_s) * 1000.0
+                )
 
     return {
         "checkpoint_path": resolved_checkpoint,
@@ -371,19 +403,6 @@ def run_image_segmentation(
     }
 
 
-def _union_prompt_masks(masks: list[np.ndarray], *, label: str) -> np.ndarray:
-    if not masks:
-        raise RuntimeError(f"SAM3.1 did not produce a mask for label {label!r}")
-
-    output = np.zeros_like(masks[0], dtype=bool)
-    for mask in masks:
-        mask_bool = np.asarray(mask, dtype=bool)
-        if mask_bool.shape != output.shape:
-            raise RuntimeError("SAM3.1 masks for one label have inconsistent shapes")
-        output |= mask_bool
-    return np.ascontiguousarray(output)
-
-
 def segment_image_to_origin_rgba(
     *,
     img_path: str | Path,
@@ -396,6 +415,8 @@ def segment_image_to_origin_rgba(
     if len(prompt_labels) != 1:
         raise ValueError("--TEXT_PROMPT must resolve to exactly one prompt")
 
+    # The image is read twice on purpose: cv2 supplies the raw pixels for the
+    # RGBA export while PIL feeds the model in the format the processor expects.
     image_path = Path(img_path)
     raw_img = cv2.imread(str(image_path))
     if raw_img is None:
@@ -413,17 +434,27 @@ def segment_image_to_origin_rgba(
             reuse_model=bool(reuse_model),
         )
 
+    # Union every instance mask returned for the label; the RGBA export wants
+    # one foreground mask, not per-instance masks.
     label = prompt_labels[0]
-    mask = _union_prompt_masks(
-        list(result["masks_by_label"].get(label, [])),
-        label=label,
-    )
+    label_masks = list(result["masks_by_label"].get(label, []))
+    if not label_masks:
+        raise RuntimeError(f"SAM3.1 did not produce a mask for label {label!r}")
+    mask = np.zeros_like(label_masks[0], dtype=bool)
+    for label_mask in label_masks:
+        label_mask_bool = np.asarray(label_mask, dtype=bool)
+        if label_mask_bool.shape != mask.shape:
+            raise RuntimeError("SAM3.1 masks for one label have inconsistent shapes")
+        mask |= label_mask_bool
+    mask = np.ascontiguousarray(mask)
     if mask.shape != tuple(raw_img.shape[:2]):
         raise RuntimeError(
             f"SAM3.1 mask shape {mask.shape} does not match image shape "
             f"{tuple(raw_img.shape[:2])}"
         )
 
+    # Origin-parity export: foreground keeps the original pixel values, the
+    # alpha channel is 255 inside the mask and 0 (with black RGB) outside.
     h, w = mask.shape
     ref_img = np.zeros((h, w, 4), dtype=np.uint8)
     mask_bool = mask > 0

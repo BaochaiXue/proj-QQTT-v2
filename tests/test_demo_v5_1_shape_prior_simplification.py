@@ -113,23 +113,20 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn('"--single_view_alignment"', source)
-        self.assertIn('choices=("full", "conservative")', source)
-        self.assertIn('default="full"', source)
+        self.assertNotIn('"--single_view_alignment"', source)
+        self.assertNotIn("single_view_alignment", source)
         self.assertIn("original PhysTwin alignment flow", source)
         self.assertIn("align_full_vendor_compatible", source)
         self.assertNotIn("align_multiview_vendor_compatible", source)
 
-    def test_shape_prior_align_conservative_mode_is_opt_in(self) -> None:
+    def test_shape_prior_align_has_no_single_view_bypass_mode(self) -> None:
         source = (ROOT / "demo_v5_1" / "shape_prior_align.py").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn(
-            'if camera_count == 1 and args.single_view_alignment == "conservative":',
-            source,
-        )
-        self.assertIn("align_single_view_conservative", source)
+        self.assertNotIn("align_single_view_conservative", source)
+        self.assertNotIn("single_view_conservative", source)
+        self.assertNotIn("alignment_mode", source)
         self.assertIn("pcd camera count does not match processed mask count", source)
         self.assertNotIn("unsupported two-camera shape-prior alignment mode", source)
 
@@ -517,6 +514,18 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
         self.assertEqual(2, error.exception.code)
         self.assertFalse(hasattr(parser.parse_args([]), "table_z_above_direction"))
 
+    def test_controller_instance_mode_cli_is_removed(self) -> None:
+        from demo_v5_1 import main_data_processing
+
+        parser = main_data_processing.build_parser()
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit) as error,
+        ):
+            parser.parse_args(["--controller-instance-mode", "single"])
+        self.assertEqual(2, error.exception.code)
+        self.assertFalse(hasattr(parser.parse_args([]), "controller_instance_mode"))
+
     def test_sam31_runtime_release_uses_named_module_api(self) -> None:
         main_warmup_source = (ROOT / "demo_v5_1" / "main_warmup.py").read_text(
             encoding="utf-8"
@@ -541,12 +550,16 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
         from demo_v5_1 import main_warmup
         from demo_v5_1 import sam31_image_segmentation
 
-        mask = np.array([[True, False], [False, True]], dtype=bool)
+        object_mask = np.zeros((4, 4), dtype=bool)
+        object_mask[1:3, 1:3] = True
+        hand_a_mask = np.zeros((4, 4), dtype=bool)
+        hand_a_mask[0:2, 0] = True
+        hand_b_mask = np.zeros((4, 4), dtype=bool)
+        hand_b_mask[2:4, 3] = True
         args = argparse.Namespace(
             track_mode="controller-object",
             object_prompt="stuffed animal",
             controller_prompt="hand",
-            controller_instance_mode="single",
             shape_prior_warmup=True,
             device="cuda",
         )
@@ -554,8 +567,8 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
         def fake_run_image_segmentation(**kwargs):
             return {
                 "masks_by_label": {
-                    "stuffed animal": [mask],
-                    "hand": [~mask],
+                    "stuffed animal": [object_mask],
+                    "hand": [hand_b_mask, hand_a_mask],
                 },
                 "timing_ms": {},
             }
@@ -582,7 +595,15 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
                 args,
             )
 
-        self.assertTrue(np.array_equal(mask, bundle.object_mask))
+        self.assertTrue(np.array_equal(object_mask, bundle.object_mask))
+        self.assertTrue(np.array_equal(hand_a_mask, bundle.hand_a_mask))
+        self.assertTrue(np.array_equal(hand_b_mask, bundle.hand_b_mask))
+        self.assertTrue(
+            np.array_equal(
+                np.logical_or(hand_a_mask, hand_b_mask),
+                bundle.controller_mask,
+            )
+        )
         self.assertTrue(run_mock.call_args.kwargs["reuse_model"])
         trim_mock.assert_called_once_with("cuda")
         release_mock.assert_not_called()

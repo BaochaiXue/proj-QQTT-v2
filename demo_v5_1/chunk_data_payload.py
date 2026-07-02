@@ -12,6 +12,8 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
+from demo_v5_1.tracking import NEIGHBOR_TABLE_SIZE, RECOVERY_NEIGHBOR_COUNT
+
 DATA_PROCESS_QUERY_SCHEMA_VERSION = "data_process_sam3d_realtime_query_schema_v1"
 DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION = (
     "data_process_sam3d_realtime_final_data_v1"
@@ -90,8 +92,8 @@ DATA_PROCESS_SAM3D_METRICS = {
     ),
     "controller_final_count": 30,
     "controller_recovery_source": "design_spec.md::local_rigid_registration",
-    "controller_recovery_neighbor_table_size": 50,
-    "controller_recovery_neighbor_count": 15,
+    "controller_recovery_neighbor_table_size": NEIGHBOR_TABLE_SIZE,
+    "controller_recovery_neighbor_count": RECOVERY_NEIGHBOR_COUNT,
     "object_sampling_source": "data_process_sam3d/data_process_sample.py::process_unique_points",
     "object_volume_sample_size_m": 0.005,
     "shape_prior_sampling_source": "data_process_sam3d/data_process_sample.py",
@@ -126,12 +128,15 @@ class ChunkDataWindow:
     source_frame_indices: Sequence[int] | None = None
 
 
-def _frame_count_from_chunk(chunk: ChunkDataWindow) -> int:
-    track_points = np.asarray(chunk.track_process_data["object_points"])
-    return int(track_points.shape[0])
+# ---- Section: query identity schema ----------------------------------------
 
 
 def _int_vector(value: Any, *, default: np.ndarray | None = None) -> np.ndarray:
+    """Coerce ``value`` to a flat contiguous int64 vector.
+
+    ``None`` falls back to ``default`` (or an empty vector when no default is
+    given), so callers can chain ``Mapping.get`` lookups without None checks.
+    """
     if value is None:
         if default is None:
             return np.empty((0,), dtype=np.int64)
@@ -161,6 +166,7 @@ def _query_schema_hash(payload: Mapping[str, Any]) -> str:
 
 
 def _scalar_str(value: Any) -> str:
+    """Render a scalar for JSON manifests, unwrapping 0-d/1-element arrays."""
     if isinstance(value, np.ndarray):
         if value.shape == ():
             return str(value.item())
@@ -188,50 +194,9 @@ def build_query_schema_payload(
         int(controller_points.shape[1]) if controller_points.ndim >= 2 else 0
     )
 
-    # Prepared v5.1 frames usually carry explicit query identity. Synthetic or
-    # reconstructed inputs can still derive ids from object/controller query
-    # arrays before the canonical payload is written.
-    if (
-        "query_ids" in track_process_data
-        and "query_semantic_labels" in track_process_data
-    ):
-        query_ids = np.ascontiguousarray(
-            np.asarray(track_process_data["query_ids"], dtype=np.int64).reshape(-1)
-        )
-        query_semantic_labels = np.ascontiguousarray(
-            np.asarray(
-                track_process_data["query_semantic_labels"], dtype=np.int8
-            ).reshape(-1)
-        )
-    else:
-        object_query_ids = _int_vector(
-            track_process_data.get(
-                "object_candidate_query_ids",
-                track_process_data.get("object_query_indices"),
-            ),
-            default=np.arange(object_count, dtype=np.int64),
-        )
-        controller_query_ids = _int_vector(
-            track_process_data.get(
-                "controller_candidate_query_ids",
-                track_process_data.get("controller_query_indices"),
-            ),
-            default=np.arange(
-                object_count, object_count + controller_count, dtype=np.int64
-            ),
-        )
-        query_ids = np.ascontiguousarray(
-            np.concatenate([object_query_ids, controller_query_ids]), dtype=np.int64
-        )
-        query_semantic_labels = np.ascontiguousarray(
-            np.concatenate(
-                [
-                    np.ones((object_query_ids.shape[0],), dtype=np.int8),
-                    np.full((controller_query_ids.shape[0],), 2, dtype=np.int8),
-                ]
-            ),
-            dtype=np.int8,
-        )
+    # Candidate query ids back both the derived query_ids fallback and the
+    # sample-id defaults below, so compute them once up front. Missing inputs
+    # fall back to positional ids: objects first, controllers after.
     object_query_ids = _int_vector(
         track_process_data.get(
             "object_candidate_query_ids",
@@ -249,6 +214,36 @@ def build_query_schema_payload(
         ),
     )
 
+    # Prepared v5.1 frames usually carry explicit query identity. Synthetic or
+    # reconstructed inputs can still derive ids from object/controller query
+    # arrays before the canonical payload is written.
+    if (
+        "query_ids" in track_process_data
+        and "query_semantic_labels" in track_process_data
+    ):
+        query_ids = np.ascontiguousarray(
+            np.asarray(track_process_data["query_ids"], dtype=np.int64).reshape(-1)
+        )
+        query_semantic_labels = np.ascontiguousarray(
+            np.asarray(
+                track_process_data["query_semantic_labels"], dtype=np.int8
+            ).reshape(-1)
+        )
+    else:
+        query_ids = np.ascontiguousarray(
+            np.concatenate([object_query_ids, controller_query_ids]), dtype=np.int64
+        )
+        # Semantic label convention: 1 = object query, 2 = controller query.
+        query_semantic_labels = np.ascontiguousarray(
+            np.concatenate(
+                [
+                    np.ones((object_query_ids.shape[0],), dtype=np.int8),
+                    np.full((controller_query_ids.shape[0],), 2, dtype=np.int8),
+                ]
+            ),
+            dtype=np.int8,
+        )
+
     if object_sample_query_ids is None:
         object_sample_query_ids = _int_vector(
             track_process_data.get(
@@ -264,13 +259,21 @@ def build_query_schema_payload(
             )
         )
         if controller_sample_query_ids.size == 0:
-            fps = _int_vector(
+            # Map final selection positions back to query ids; out-of-range or
+            # negative positions publish -1 (no originating query).
+            final_indices = _int_vector(
                 track_process_data.get("controller_final_indices"),
                 default=np.arange(controller_count, dtype=np.int64),
             )
-            controller_sample_query_ids = np.full(fps.shape, -1, dtype=np.int64)
-            valid = (fps >= 0) & (fps < controller_query_ids.shape[0])
-            controller_sample_query_ids[valid] = controller_query_ids[fps[valid]]
+            controller_sample_query_ids = np.full(
+                final_indices.shape, -1, dtype=np.int64
+            )
+            valid = (final_indices >= 0) & (
+                final_indices < controller_query_ids.shape[0]
+            )
+            controller_sample_query_ids[valid] = controller_query_ids[
+                final_indices[valid]
+            ]
 
     payload: dict[str, Any] = {
         "query_schema_version": DATA_PROCESS_QUERY_SCHEMA_VERSION,
@@ -285,6 +288,9 @@ def build_query_schema_payload(
     }
     payload["query_schema_hash"] = _query_schema_hash(payload)
     return payload
+
+
+# ---- Section: track_process_data payload -----------------------------------
 
 
 def _track_process_payload(
@@ -346,13 +352,16 @@ def _track_process_payload(
         payload["track_process_status"] = str(
             np.asarray(track_process_data["track_process_status"]).item()
         )
+    # controller_mask is a required key (copied above). When its length differs
+    # from the selected controller count it spans candidate queries, so mirror
+    # it into the explicit candidate keys for readers that would otherwise need
+    # shape heuristics.
     selected_controller_count = int(np.asarray(payload["controller_points"]).shape[1])
     controller_mask_len = int(
         np.asarray(payload["controller_mask"]).reshape(-1).shape[0]
     )
     if (
-        "controller_mask" in payload
-        and "controller_candidate_mask" not in payload
+        "controller_candidate_mask" not in payload
         and controller_mask_len != selected_controller_count
     ):
         payload["controller_candidate_mask"] = np.ascontiguousarray(
@@ -367,6 +376,9 @@ def _track_process_payload(
             np.asarray(payload["controller_query_indices"], dtype=np.int64).reshape(-1)
         )
     return payload
+
+
+# ---- Section: final_data payload --------------------------------------------
 
 
 def _sample_object_volume_indices(
@@ -420,6 +432,7 @@ def _final_data_payload(
     # Otherwise sample against the shape prior so final_data remains compact.
     if "object_track_query_indices" in track_process:
         indices = np.arange(object_points.shape[1], dtype=np.int64)
+        object_sample_indices = indices
     else:
         indices = _sample_object_volume_indices(
             object_points,
@@ -427,9 +440,8 @@ def _final_data_payload(
             interior_points=interior_points,
             volume_sample_size=0.005,
         )
-    if "object_track_query_indices" in track_process:
-        object_sample_indices = indices
-    else:
+        # Trust upstream volume-sample indices only when they match the local
+        # sampling cardinality; otherwise fall back to the local result.
         object_sample_indices = np.asarray(
             track_process.get("object_volume_sample_indices", indices),
             dtype=np.int64,
@@ -545,7 +557,15 @@ def _final_data_payload(
     return final
 
 
+# ---- Section: quality manifest metrics --------------------------------------
+
+
 def _zero_point_count(points: np.ndarray) -> int:
+    """Count first-frame points sitting at the origin (norm <= 1e-9 m).
+
+    Origin-pinned points are a proxy for depth dropouts that were never
+    backfilled, so the manifest surfaces them as a quality counter.
+    """
     pts = np.asarray(points, dtype=np.float64)
     if pts.ndim < 2 or pts.shape[-1] != 3 or pts.shape[0] == 0:
         return 0
@@ -556,6 +576,7 @@ def _quality_manifest_fields(
     final_data: Mapping[str, np.ndarray],
     track_process: Mapping[str, np.ndarray],
 ) -> dict[str, Any]:
+    """Compute per-chunk quality counters published in the online manifest."""
     object_points = np.asarray(final_data["object_points"], dtype=np.float64)
     controller_points = np.asarray(final_data["controller_points"], dtype=np.float64)
     surface_points = np.asarray(final_data["surface_points"], dtype=np.float64).reshape(
@@ -604,11 +625,15 @@ def _quality_manifest_fields(
     return payload
 
 
+# ---- Section: chunk assembly -------------------------------------------------
+
+
 def build_chunk_data_payload(
     chunk: ChunkDataWindow,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Build final_data, track_process diagnostics, and manifest fields."""
-    frame_count = _frame_count_from_chunk(chunk)
+    # Frame count is the leading axis of the (T, N, 3) object track tensor.
+    frame_count = int(np.asarray(chunk.track_process_data["object_points"]).shape[0])
     track_process = _track_process_payload(chunk.track_process_data)
     final_data = _final_data_payload(
         track_process,

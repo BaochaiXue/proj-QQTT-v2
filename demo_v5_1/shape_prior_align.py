@@ -1,3 +1,8 @@
+# Single-camera port of data_process_origin/align.py (original PhysTwin shape
+# alignment). The function bodies are kept structurally parallel to that
+# origin file on purpose -- keep them diffable. Demo-specific deltas are
+# limited to: package-local imports, VIS defaulting to False, and the
+# processed-mask camera_count validation.
 import json
 import os
 import pickle
@@ -37,17 +42,12 @@ parser.add_argument(
     required=True,
     default="",
 )
-parser.add_argument(
-    "--single_view_alignment",
-    type=str,
-    choices=("full", "conservative"),
-    default="full",
-)
+# Import-safe placeholder so the module can be imported without CLI args;
+# main() re-parses argv and rebinds these globals.
 args = Namespace(
     base_path="",
     case_name="",
     controller_name="",
-    single_view_alignment="full",
 )
 
 base_path = args.base_path
@@ -272,10 +272,6 @@ def deform_ARAP_ray_registration(
     return final_mesh_world
 
 
-def align_single_view_conservative(initial_mesh_world):
-    return initial_mesh_world
-
-
 def align_full_vendor_compatible(
     initial_mesh_world,
     mesh_matching_points_world,
@@ -493,15 +489,9 @@ def main(argv=None):
     camera_count = int(np.asarray(data["points"]).shape[0])
     if camera_count != len(processed_masks[0]):
         raise ValueError("pcd camera count does not match processed mask count")
-    # Default: every camera count runs the original PhysTwin alignment flow
-    # (keypoint ARAP, then ray-casting ARAP registration with the above-table
-    # clamp). ``--single_view_alignment conservative`` is the opt-in escape
-    # hatch for one-camera cases where sparse single-view correspondences
-    # would hard-deform the SAM3D mesh prior.
-    if camera_count == 1 and args.single_view_alignment == "conservative":
-        alignment_mode = "single_view_conservative"
-    else:
-        alignment_mode = "full_vendor_compatible"
+    # Every camera count runs the original PhysTwin alignment flow:
+    # keypoint ARAP, then ray-casting ARAP registration with the above-table
+    # clamp. Single-camera warmup has no rigid-prior bypass.
     for i in range(camera_count):
         points = data["points"][i]
         colors = data["colors"][i]
@@ -564,19 +554,16 @@ def main(argv=None):
     trimesh_indices = np.asarray(trimesh_indices, dtype=np.int32)
     initial_mesh_world.transform(mesh2world)
 
-    if alignment_mode == "single_view_conservative":
-        final_mesh_world = align_single_view_conservative(initial_mesh_world)
-    else:
-        final_mesh_world = align_full_vendor_compatible(
-            initial_mesh_world,
-            mesh_matching_points_world,
-            matching_points,
-            obs_points,
-            mesh,
-            trimesh_indices,
-            c2ws,
-            w2cs,
-        )
+    final_mesh_world = align_full_vendor_compatible(
+        initial_mesh_world,
+        mesh_matching_points_world,
+        matching_points,
+        obs_points,
+        mesh,
+        trimesh_indices,
+        c2ws,
+        w2cs,
+    )
 
     if VIS:
         final_mesh_world.compute_vertex_normals()

@@ -7,6 +7,11 @@ import numpy as np
 
 
 def _hsv_to_rgb_u8(hue: np.ndarray) -> np.ndarray:
+    """Vectorized HSV->RGB for hue in [0, 1) at fixed S=0.88, V=1.0.
+
+    Implements the standard six-sector HSV conversion with boolean masks so the
+    whole palette is built in one pass without a Python per-color loop.
+    """
     h = np.asarray(hue, dtype=np.float32).reshape(-1)
     h6 = (h % np.float32(1.0)) * np.float32(6.0)
     sector = np.floor(h6).astype(np.int32)
@@ -58,7 +63,9 @@ def query_rainbow_colors_for_indices(query_indices: np.ndarray, *, query_count: 
     if len(indices) == 0:
         return np.empty((0, 3), dtype=np.uint8)
     resolved_count = int(query_count) if query_count is not None else int(indices.max(initial=-1) + 1)
+    # Grow the palette past query_count if an index exceeds it so lookups never go out of range.
     palette = query_rainbow_colors_rgb_u8(max(resolved_count, int(indices.max(initial=-1) + 1)))
+    # Out-of-range (negative) indices render black instead of raising.
     valid = (indices >= 0) & (indices < len(palette))
     colors = np.zeros((len(indices), 3), dtype=np.uint8)
     colors[valid] = palette[indices[valid]]

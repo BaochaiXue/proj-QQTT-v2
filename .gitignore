@@ -80,6 +80,7 @@ wandb/
 /result/
 /exp_results/
 /test_output/
+/outputs/
 /visualization/
 /_tmp_teleop_frames/
 

@@ -46,6 +46,21 @@ def _masks(*, controller_hole_yx: tuple[int, int] | None = None) -> dict[str, np
     return {"object": obj, "controller": ctrl}
 
 
+HAND_SPLIT_COL = 25
+
+
+def _hand_masks() -> dict[str, np.ndarray]:
+    """Controller region split into hand_a (x < 25) and hand_b (x >= 25)."""
+    frame = _masks()
+    hand_a = np.zeros((IMAGE_SIZE, IMAGE_SIZE), dtype=bool)
+    hand_b = np.zeros((IMAGE_SIZE, IMAGE_SIZE), dtype=bool)
+    hand_a[32:, :HAND_SPLIT_COL] = True
+    hand_b[32:, HAND_SPLIT_COL:] = True
+    frame["hand_a"] = hand_a
+    frame["hand_b"] = hand_b
+    return frame
+
+
 def _window(
     *,
     frame_count: int = 4,
@@ -142,6 +157,92 @@ class Frame0LabelingTests(unittest.TestCase):
             tracker_visible=np.asarray([True]),
         )
         self.assertTrue(bool(valid[0]))
+
+
+class Frame0HandLabelTests(unittest.TestCase):
+    def test_hand_labels_follow_masks_with_hand_a_winning_overlap(self) -> None:
+        frame = _hand_masks()
+        frame["hand_a"][40, 26] = True  # overlap with hand_b at (40, 26)
+        tracks0 = np.asarray(
+            [[40.0, 21.0], [40.0, 27.0], [40.0, 26.0], [9.0, 9.0], [40.0, 22.0]],
+            dtype=np.float32,
+        )
+        visibility0 = np.asarray([True, True, True, True, False])
+        labels = segment.frame0_hand_labels(tracks0, visibility0, mask_frame=frame)
+        self.assertEqual(int(labels[0]), int(segment.QUERY_HAND_A))
+        self.assertEqual(int(labels[1]), int(segment.QUERY_HAND_B))
+        self.assertEqual(int(labels[2]), int(segment.QUERY_HAND_A))  # overlap
+        self.assertEqual(int(labels[3]), int(segment.QUERY_HAND_NONE))  # object area
+        self.assertEqual(int(labels[4]), int(segment.QUERY_HAND_NONE))  # invisible
+
+    def test_frames_without_hand_masks_label_none(self) -> None:
+        labels = segment.frame0_hand_labels(
+            np.asarray([[40.0, 21.0]], dtype=np.float32),
+            np.asarray([True]),
+            mask_frame=_masks(),
+        )
+        self.assertEqual(int(labels[0]), int(segment.QUERY_HAND_NONE))
+
+
+class SameHandNeighborTableTests(unittest.TestCase):
+    def _frozen_runtime(self) -> tuple[tracking.TrackingRuntime, dict[str, np.ndarray]]:
+        runtime = _runtime()
+        window0 = _window(frame_count=4, mask_frames=[_hand_masks()] * 4)
+        runtime.process_window(window0)
+        return runtime, window0
+
+    def test_neighbor_table_never_crosses_hands(self) -> None:
+        runtime, window0 = self._frozen_runtime()
+        hand_labels = np.asarray(window0["controller_hand_labels"], dtype=np.int8)
+        self.assertTrue(bool(np.any(hand_labels == segment.QUERY_HAND_A)))
+        self.assertTrue(bool(np.any(hand_labels == segment.QUERY_HAND_B)))
+        self.assertTrue(runtime._neighbor_table)
+        for candidate_idx, neighbors in runtime._neighbor_table.items():
+            self.assertGreater(neighbors.size, 0)
+            self.assertTrue(
+                bool(np.all(hand_labels[neighbors] == hand_labels[candidate_idx])),
+                f"candidate {candidate_idx} has cross-hand neighbors",
+            )
+
+    def test_small_hand_fills_with_whole_hand(self) -> None:
+        # Patch columns 20-29 split at 25: each hand holds 4x5 = 20 candidates,
+        # fewer than a table_size of 25, so entries hold the hand minus self.
+        runtime = tracking.TrackingRuntime(
+            controller_count=5, neighbor_table_size=25, recovery_neighbor_count=3
+        )
+        window0 = _window(frame_count=4, mask_frames=[_hand_masks()] * 4)
+        runtime.process_window(window0)
+        for neighbors in runtime._neighbor_table.values():
+            self.assertEqual(int(neighbors.size), 19)
+
+    def test_recovery_cannot_borrow_the_other_hand(self) -> None:
+        runtime, window0 = self._frozen_runtime()
+        hand_labels = np.asarray(window0["controller_hand_labels"], dtype=np.int8)
+        anchors = np.asarray(runtime._anchor_indices)
+        hand_a_columns = np.flatnonzero(
+            hand_labels[anchors] == segment.QUERY_HAND_A
+        )
+        self.assertGreater(hand_a_columns.size, 0)
+
+        # Frame 1: every hand_a controller query loses tracking while hand_b
+        # stays fully valid. Same-hand tables must refuse hand_b donors.
+        frame_count = 3
+        query_count = len(OBJECT_PATCH_YX) + len(CONTROLLER_PATCH_YX)
+        visibility = np.ones((frame_count, query_count), dtype=bool)
+        controller_query_indices = np.asarray(window0["controller_query_indices"])
+        hand_a_queries = controller_query_indices[
+            np.flatnonzero(hand_labels == segment.QUERY_HAND_A)
+        ]
+        visibility[1, hand_a_queries] = False
+        window1 = _window(
+            frame_count=frame_count,
+            visibility_override=visibility,
+            mask_frames=[_hand_masks()] * frame_count,
+        )
+        with self.assertRaisesRegex(
+            tracking.TrackingRecoveryError, "valid neighbors among the nearest"
+        ):
+            runtime.process_window(window1)
 
 
 class TemporaryInvalidGateTests(unittest.TestCase):
@@ -400,6 +501,113 @@ class CrossWindowTests(unittest.TestCase):
         # 3x3 patch at 4 mm spacing collapses deterministically onto a 2x2 set
         # of occupied 5 mm voxels (offsets 0/0.004/0.008 -> voxels 0/0/1).
         self.assertEqual(len(object_columns), 4)
+
+
+class RecoveryLadderTests(unittest.TestCase):
+    def test_tier_selection_matches_spec_ladder(self) -> None:
+        runtime = tracking.TrackingRuntime(
+            controller_count=5, neighbor_table_size=100, recovery_neighbor_count=15
+        )
+        self.assertEqual(runtime._recovery_tiers(), [15, 10, 5])
+        self.assertEqual(runtime._recovery_tier(20), 15)
+        self.assertEqual(runtime._recovery_tier(15), 15)
+        self.assertEqual(runtime._recovery_tier(12), 10)
+        self.assertEqual(runtime._recovery_tier(10), 10)
+        self.assertEqual(runtime._recovery_tier(7), 5)
+        self.assertEqual(runtime._recovery_tier(5), 5)
+        self.assertIsNone(runtime._recovery_tier(4))
+        self.assertIsNone(runtime._recovery_tier(0))
+
+    def test_degraded_tier_still_recovers(self) -> None:
+        # 40 candidates, 20-entry tables, ladder [15, 10, 5]: killing the
+        # anchor plus its 13 nearest neighbors leaves 7 valid -> tier 5.
+        runtime = tracking.TrackingRuntime(
+            controller_count=5, neighbor_table_size=20, recovery_neighbor_count=15
+        )
+        window0 = _window(frame_count=4)
+        result0 = runtime.process_window(window0)
+        anchor_column = 0
+        anchor_candidate = int(result0["controller_final_indices"][anchor_column])
+        table = np.asarray(runtime._neighbor_table[anchor_candidate])
+        self.assertEqual(int(table.size), 20)
+
+        frame_count = 3
+        query_count = len(OBJECT_PATCH_YX) + len(CONTROLLER_PATCH_YX)
+        visibility = np.ones((frame_count, query_count), dtype=bool)
+        for candidate in [anchor_candidate] + [int(i) for i in table[:13]]:
+            visibility[1, len(OBJECT_PATCH_YX) + candidate] = False
+        window1 = _window(frame_count=frame_count, visibility_override=visibility)
+        result1 = runtime.process_window(window1)
+
+        proxied = np.asarray(result1["controller_proxied"], dtype=bool)
+        self.assertTrue(bool(proxied[1, anchor_column]))
+        self.assertEqual(str(result1["track_process_status"]), "degraded")
+        # Static neighbors give an identity rigid fit.
+        first_point = np.asarray(result0["controller_points"])[0, anchor_column]
+        np.testing.assert_allclose(
+            np.asarray(result1["controller_points"])[1, anchor_column],
+            first_point,
+            atol=1e-5,
+        )
+
+    def test_anchor_fallback_recovers_when_table_is_exhausted(self) -> None:
+        # 6-entry tables with ladder [6, 4, 3]: killing the anchor plus four
+        # table neighbors leaves at most 2 valid -> ladder exhausted -> the
+        # nearest currently-valid anchors take over as donors.
+        runtime = tracking.TrackingRuntime(
+            controller_count=8, neighbor_table_size=6, recovery_neighbor_count=6
+        )
+        self.assertEqual(runtime._recovery_tiers(), [6, 4, 3])
+        window0 = _window(frame_count=4)
+        result0 = runtime.process_window(window0)
+        anchors = np.asarray(result0["controller_final_indices"])
+        anchor_column = 0
+        anchor_candidate = int(anchors[anchor_column])
+        table = np.asarray(runtime._neighbor_table[anchor_candidate])
+
+        frame_count = 3
+        query_count = len(OBJECT_PATCH_YX) + len(CONTROLLER_PATCH_YX)
+        visibility = np.ones((frame_count, query_count), dtype=bool)
+        dead = {anchor_candidate} | {int(i) for i in table[:4]}
+        for candidate in dead:
+            visibility[1, len(OBJECT_PATCH_YX) + candidate] = False
+        # Precondition: at least 3 anchors stay usable as fallback donors.
+        self.assertGreaterEqual(len([a for a in anchors.tolist() if a not in dead]), 3)
+
+        window1 = _window(frame_count=frame_count, visibility_override=visibility)
+        result1 = runtime.process_window(window1)
+        proxied = np.asarray(result1["controller_proxied"], dtype=bool)
+        self.assertTrue(bool(proxied[1, anchor_column]))
+        first_point = np.asarray(result0["controller_points"])[0, anchor_column]
+        np.testing.assert_allclose(
+            np.asarray(result1["controller_points"])[1, anchor_column],
+            first_point,
+            atol=1e-5,
+        )
+
+    def test_anchor_fallback_never_crosses_hands(self) -> None:
+        runtime = _runtime()
+        window0 = _window(frame_count=4, mask_frames=[_hand_masks()] * 4)
+        result0 = runtime.process_window(window0)
+        hand_labels = np.asarray(window0["controller_hand_labels"], dtype=np.int8)
+        anchors = np.asarray(result0["controller_final_indices"])
+        hand_a_anchor_columns = np.flatnonzero(
+            hand_labels[anchors] == segment.QUERY_HAND_A
+        )
+        self.assertGreater(hand_a_anchor_columns.size, 0)
+        anchor_column = int(hand_a_anchor_columns[0])
+
+        usable = np.zeros((len(hand_labels),), dtype=bool)
+        usable[hand_labels == segment.QUERY_HAND_B] = True  # only hand_b valid
+        self.assertIsNone(runtime._fallback_anchor_donors(anchor_column, usable))
+
+        usable[anchors[hand_a_anchor_columns]] = True  # same-hand anchors valid
+        donors = runtime._fallback_anchor_donors(anchor_column, usable)
+        if hand_a_anchor_columns.size - 1 >= runtime._recovery_tiers()[-1]:
+            self.assertIsNotNone(donors)
+            self.assertTrue(
+                bool(np.all(hand_labels[donors] == segment.QUERY_HAND_A))
+            )
 
 
 class NoConfidenceContractTests(unittest.TestCase):

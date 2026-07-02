@@ -25,7 +25,10 @@ def round_tracks_to_pixels(
     """
     tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
     finite = np.isfinite(tracks).all(axis=1)
+    # Substitute -1 for non-finite coordinates before rounding: NaN/inf do not
+    # cast to int, and -1 is guaranteed to fail the bounds check below.
     safe = np.where(finite[:, None], tracks, np.float32(-1.0))
+    # np.rint rounds half-to-even, the same rule as origin's np.round.
     yy = np.rint(safe[:, 0]).astype(np.int64)
     xx = np.rint(safe[:, 1]).astype(np.int64)
     in_bounds = finite & (yy >= 0) & (yy < int(shape[0])) & (xx >= 0) & (xx < int(shape[1]))
@@ -63,9 +66,11 @@ def sample_world_pcd_at_pixels(
     sampled = points[yy[idx], xx[idx]]
     finite = np.isfinite(sampled).all(axis=1)
     nonzero = np.linalg.norm(sampled, axis=1) > DEPTH_NONZERO_NORM_M
-    keep = idx[finite & nonzero]
+    usable = finite & nonzero
+    keep = idx[usable]
     depth_valid[keep] = True
     if keep.size:
-        out_points[keep] = points[yy[keep], xx[keep]]
+        out_points[keep] = sampled[usable]
+        # Colors arrive as uint8 RGB; published colors are float in [0, 1].
         out_colors[keep] = colors[yy[keep], xx[keep]].astype(np.float32) / 255.0
     return out_points, out_colors, depth_valid

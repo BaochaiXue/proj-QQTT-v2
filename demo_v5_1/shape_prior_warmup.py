@@ -25,8 +25,12 @@ STATUS_FAILED = "failed"
 DEFAULT_SHAPE_PRIOR_TIMEOUT_MS = 180_000
 DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES = "1"
 CASE_NAME = "shape_prior_frame0"
+# Surface/interior sampling counts follow the original PhysTwin offline
+# pipeline (data_process_origin/data_process_sample.py defaults).
 DEFAULT_SURFACE_POINT_COUNT = 1024
 DEFAULT_VOLUME_SAMPLE_SIZE_M = 0.005
+# World frame convention: the table plane is z == 0 and points above the
+# table have negative z (matches the origin capture convention).
 TABLE_Z_ABOVE_DIRECTION = "negative"
 POINTS_NPZ = Path("outputs") / "shape_prior" / "points.npz"
 
@@ -35,6 +39,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 @dataclass(frozen=True)
 class ShapePriorFrame0Request:
+    """Frame-0 capture snapshot needed to build an offline-style case dir."""
+
     seq: int
     source_timestamp_s: float | None
     input_source: str
@@ -83,13 +89,9 @@ def default_profile(*, enabled: bool) -> dict[str, Any]:
     }
 
 
-def _as_rgb_u8(value: np.ndarray) -> np.ndarray:
-    rgb = np.asarray(value)
-    if rgb.ndim != 3 or rgb.shape[2] != 3:
-        raise ValueError("shape prior rgb_u8 must have shape HxWx3")
-    if rgb.dtype != np.uint8:
-        rgb = rgb.astype(np.uint8)
-    return np.ascontiguousarray(rgb)
+# ---------------------------------------------------------------------------
+# Input validation and small IO helpers
+# ---------------------------------------------------------------------------
 
 
 def _as_mask(value: np.ndarray, *, shape: tuple[int, int], name: str) -> np.ndarray:
@@ -97,13 +99,6 @@ def _as_mask(value: np.ndarray, *, shape: tuple[int, int], name: str) -> np.ndar
     if mask.shape != shape:
         raise ValueError(f"{name} shape {mask.shape} does not match RGB shape {shape}")
     return np.ascontiguousarray(mask)
-
-
-def _as_depth(value: np.ndarray, *, shape: tuple[int, int]) -> np.ndarray:
-    depth = np.asarray(value, dtype=np.float32)
-    if depth.shape != shape:
-        raise ValueError(f"depth shape {depth.shape} does not match RGB shape {shape}")
-    return np.ascontiguousarray(depth)
 
 
 def _require_name(value: str, *, field_name: str) -> str:
@@ -118,6 +113,12 @@ def _camera_points_world(
     k_color: np.ndarray,
     c2w: np.ndarray,
 ) -> np.ndarray:
+    """Backproject a dense depth map (meters) to an HxWx3 world-point grid.
+
+    Uses the color pinhole intrinsics ``k_color`` (3x3) and the row-major
+    camera-to-world extrinsics ``c2w`` (4x4). Pixels keep their grid position
+    so downstream masks can index the result directly.
+    """
     height, width = depth_m.shape
     rows, cols = np.indices((height, width), dtype=np.float32)
     k = np.asarray(k_color, dtype=np.float32).reshape(3, 3)
@@ -143,18 +144,11 @@ def _write_json(payload: dict[str, Any], path: Path) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _shape_prior_env(cuda_visible_devices: str) -> dict[str, str]:
-    env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices)
-    python_path = [str(REPO_ROOT), str(REPO_ROOT / "demo_v5_1")]
-    current = env.get("PYTHONPATH")
-    if current:
-        python_path.append(current)
-    env["PYTHONPATH"] = os.pathsep.join(python_path)
-    return env
-
-
 def _run_stage(command: list[str], *, env: dict[str, str]) -> float:
+    """Run one pipeline stage as a subprocess and return its wall time in ms.
+
+    Kept as a module-level function: tests patch it to fake the stage chain.
+    """
     start_s = time.perf_counter()
     subprocess.run(command, cwd=REPO_ROOT, env=env, check=True)
     return (time.perf_counter() - start_s) * 1000.0
@@ -163,10 +157,6 @@ def _run_stage(command: list[str], *, env: dict[str, str]) -> float:
 def _require_stage_file(path: Path, *, stage_name: str) -> None:
     if not path.is_file():
         raise FileNotFoundError(f"{stage_name} did not write {path}")
-
-
-def _case_dir(case_root: Path, case_name: str) -> Path:
-    return Path(case_root) / str(case_name)
 
 
 def _points_array(value: np.ndarray, *, name: str) -> np.ndarray:
@@ -206,13 +196,28 @@ def write_shape_prior_case(
     object_name: str,
     controller_name: str,
 ) -> dict[str, Path]:
+    """Serialize frame 0 as a one-frame, one-camera offline-style case dir.
+
+    The directory layout (color/, mask/, pcd/, calibrate.pkl, metadata.json,
+    processed_masks.pkl, track_process_data.pkl) mirrors what the original
+    PhysTwin data_process_origin scripts expect, with camera index 0 and
+    frame index 0.
+    """
     object_name = _require_name(object_name, field_name="object_name")
     controller_name = _require_name(controller_name, field_name="controller_name")
-    rgb = _as_rgb_u8(frame0.rgb_u8)
+
+    rgb = np.asarray(frame0.rgb_u8)
+    if rgb.ndim != 3 or rgb.shape[2] != 3:
+        raise ValueError("shape prior rgb_u8 must have shape HxWx3")
+    if rgb.dtype != np.uint8:
+        rgb = rgb.astype(np.uint8)
+    rgb = np.ascontiguousarray(rgb)
     image_shape = tuple(rgb.shape[:2])
     object_mask = _as_mask(frame0.object_mask, shape=image_shape, name="object_mask")
     if not np.any(object_mask):
         raise ValueError("shape prior object_mask is empty")
+    # Without an explicit observation mask the segmentation mask doubles as
+    # the depth-observation gate.
     observation_mask = frame0.object_observation_mask
     if observation_mask is None:
         observation_mask = object_mask
@@ -226,11 +231,16 @@ def write_shape_prior_case(
         shape=image_shape,
         name="controller_mask",
     )
-    depth_m = _as_depth(frame0.depth_color_m, shape=image_shape)
+    depth_m = np.asarray(frame0.depth_color_m, dtype=np.float32)
+    if depth_m.shape != image_shape:
+        raise ValueError(
+            f"depth shape {depth_m.shape} does not match RGB shape {image_shape}"
+        )
+    depth_m = np.ascontiguousarray(depth_m)
     k_color = np.asarray(frame0.k_color, dtype=np.float32).reshape(3, 3)
     c2w = np.asarray(frame0.camera_to_world_c2w, dtype=np.float32).reshape(4, 4)
 
-    case = _case_dir(case_root, case_name)
+    case = Path(case_root) / str(case_name)
     color_path = case / "color" / "0" / "0.png"
     shape_dir = case / "shape"
     object_mask_path = case / "mask" / "0" / "0" / "0.png"
@@ -299,17 +309,18 @@ def write_shape_prior_case(
 
     controller_points = points_world[valid_controller]
     if controller_points.size == 0:
+        # Downstream stages require at least one controller point; borrow an
+        # object point rather than failing the whole warmup.
         controller_points = object_points[:1].copy()
 
+    # pcd/0.npz keeps the dense HxW grid (leading axis = camera index) so the
+    # align stage can index it with the processed masks.
     pcd_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         pcd_path,
         points=np.ascontiguousarray(points_world[None], dtype=np.float32),
         colors=np.ascontiguousarray((rgb[None].astype(np.float32) / 255.0)),
-        masks=np.ascontiguousarray(
-            (np.isfinite(depth_m) & (depth_m > 0))[None],
-            dtype=bool,
-        ),
+        masks=np.ascontiguousarray(depth_valid[None], dtype=bool),
     )
     with (case / "mask" / "processed_masks.pkl").open("wb") as handle:
         pickle.dump(
@@ -340,6 +351,14 @@ def write_shape_prior_case(
 
 
 class ShapePriorLocalClient:
+    """Runs the offline shape-prior chain locally on the warmup GPU.
+
+    Stage order matches the original PhysTwin pipeline: image upscale ->
+    SAM3.1 image segmentation (in-process) -> SAM3D generate -> align ->
+    sample. All subprocess stages inherit CUDA_VISIBLE_DEVICES so they stay
+    off the realtime GPU.
+    """
+
     def __init__(
         self,
         *,
@@ -376,7 +395,16 @@ class ShapePriorLocalClient:
             object_name=self.object_name,
             controller_name=self.controller_name,
         )
-        env = _shape_prior_env(self.cuda_visible_devices)
+        # Subprocess stages must import demo_v5_1 both as a package (repo
+        # root) and as top-level modules (demo_v5_1/), pinned to the warmup
+        # GPU via CUDA_VISIBLE_DEVICES.
+        env = os.environ.copy()
+        env["CUDA_VISIBLE_DEVICES"] = str(self.cuda_visible_devices)
+        python_path = [str(REPO_ROOT), str(REPO_ROOT / "demo_v5_1")]
+        current = env.get("PYTHONPATH")
+        if current:
+            python_path.append(current)
+        env["PYTHONPATH"] = os.pathsep.join(python_path)
         timings: dict[str, float] = {}
 
         high_resolution_path = paths["shape"] / "high_resolution.png"
@@ -476,6 +504,8 @@ class ShapePriorLocalClient:
             surface_points=surface,
             interior_points=interior,
         )
+        # Uniform display tint for prior points; real per-point colors are
+        # not available for sampled surface/interior points.
         colors = np.tile(
             np.array([[86, 180, 233]], dtype=np.uint8),
             (points.shape[0], 1),
@@ -507,6 +537,13 @@ class ShapePriorLocalClient:
 
 
 class ShapePriorWarmupManager:
+    """One-shot background runner for the shape-prior warmup.
+
+    ``maybe_submit`` accepts only the first frame-0 request; the pipeline runs
+    on a daemon thread and its status/timings are mirrored into the profile
+    dict under the lock.
+    """
+
     def __init__(self, *, enabled: bool, client: ShapePriorLocalClient | None) -> None:
         self.enabled = bool(enabled)
         self.client = client
