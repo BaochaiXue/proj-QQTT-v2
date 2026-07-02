@@ -32,4 +32,4 @@ For 后续chunks and controller anchor：
 
 1.特殊情况：比如 50 个邻居里少于 15 个有效-》 throw 异常
 2.最近 50 是按 first-frame 3D 位置计算，算完之后就不再更新来节省算力
-3.motion consistency你必须完全参考data_process_origin做法，确保一致性
+3.motion consistency或者一些细节问题，在不损害我们实时性的前提下，你必须完全参考data_process_origin做法，确保一致性
