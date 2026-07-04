@@ -29,6 +29,9 @@ Required final behavior:
   a full window without a successor row materializes without lookahead; its
   tail row publishes origin's end-of-sequence semantics
   (`motions_valid = False`). The final window is never dropped.
+- Prepared-path nonterminal chunks require the borrow row's prepared frame.
+  A successor row with missing prepared payload is a data-contract failure,
+  not terminal flush and not a silent fallback.
 - The all-True interim rule and the seam-carry machinery are removed: the
   chunk-boundary motion (prev last -> next first) is now tested inside the
   publishing chunk via the borrow row, which is exactly origin's indexing
@@ -44,12 +47,15 @@ State changes:
   frames/rows; offline conversion looks ahead in the row list; the live
   tail loop holds a full window pending until the borrow row arrives and
   flushes it without lookahead at capture end; backlog accounting counts a
-  window complete only when its borrow row exists.
+  window complete only when its borrow row exists; prepared-path publishing
+  fails fast if a nonterminal borrow row lacks its prepared frame.
 - `tests/test_demo_v5_1_tracking.py`: tail-row semantics tests replace the
   all-True test; the seam-carry test becomes a borrow-frame boundary test.
 
 Invalid cases:
 - `lookahead_frames` must be >= 0 and < the extended frame count.
+- Prepared-path nonterminal borrow rows must have prepared frames; missing
+  borrow prepared data raises before any chunk is published.
 
 Constraints:
 - Steady-state throughput unchanged (one chunk per chunk_seconds); the
@@ -69,11 +75,16 @@ Unknowns:
       manifest field.
 - [ ] Tests: tail-row real verdict (lookahead), terminal False, boundary
       jump proxies publishing chunk's tail, borrow exclusion from published
-      axes; update chunk-data tests if pinned.
+      axes, and prepared borrow-frame fail-fast; update chunk-data tests if
+      pinned.
 - [ ] Full test suite + smoke validation; adversarial review; commit/push.
 
 ## Validation
 
-- `python -m pytest tests/test_demo_v5_1_tracking.py tests/test_demo_v5_1_chunk_data.py -q`
-- `python -m pytest tests/ -q`
-- `python scripts/harness/validation/run.py --profile smoke`
+- 2026-07-04 fail-fast follow-up:
+  - `conda run -n demo_2_max --no-capture-output python -m py_compile demo_v5_1/chunk_data_stream.py`
+    passed.
+  - `conda run -n demo_2_max --no-capture-output python -m unittest -v tests.test_demo_v5_1_chunk_data tests.test_demo_v5_1_tracking`
+    passed, 44 tests.
+  - `conda run -n demo_2_max --no-capture-output python scripts/harness/validation/run.py --profile smoke`
+    passed, 111 tests.

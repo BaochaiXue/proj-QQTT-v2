@@ -1059,9 +1059,7 @@ def _write_chunk_from_rows(
     prepared = list(prepared_frames or [])
     prepared_count = sum(1 for frame in prepared if frame is not None)
     lookahead_row_list = list(lookahead_rows or ())
-    lookahead_prepared_list = [
-        frame for frame in (lookahead_prepared or ()) if frame is not None
-    ]
+    lookahead_prepared_list = list(lookahead_prepared or ())
     if prepared and len(prepared) == len(rows) and prepared_count == len(rows):
         # Prepared frames are the realtime path: RGB, masks, dense world PCD,
         # full tracks, visibility, and query points are already synchronized by
@@ -1070,13 +1068,39 @@ def _write_chunk_from_rows(
         # reprocessing because the camera process already emitted the
         # data_process_pcd.py, data_process_mask.py, and cotracker-equivalent
         # per-frame products.
-        # The borrow frame is used only when its prepared payload is complete;
-        # otherwise the window falls back to end-of-sequence tail semantics.
-        prepared_lookahead = (
-            lookahead_prepared_list
-            if len(lookahead_prepared_list) == len(lookahead_row_list)
-            else []
-        )
+        if lookahead_row_list:
+            if len(lookahead_prepared_list) != len(lookahead_row_list):
+                borrow_rows = ", ".join(
+                    "seq="
+                    f"{row.get('seq')}, source_frame_index="
+                    f"{row.get('source_frame_index')}"
+                    for row in lookahead_row_list
+                )
+                raise RuntimeError(
+                    "prepared chunk borrow frame count mismatch for "
+                    f"chunk {chunk_index}: got {len(lookahead_prepared_list)} "
+                    f"prepared frames for {len(lookahead_row_list)} borrow "
+                    f"rows ({borrow_rows})"
+                )
+            missing_borrow_rows = [
+                lookahead_row_list[idx]
+                for idx, frame in enumerate(lookahead_prepared_list)
+                if frame is None
+            ]
+            if missing_borrow_rows:
+                borrow_rows = ", ".join(
+                    "seq="
+                    f"{row.get('seq')}, source_frame_index="
+                    f"{row.get('source_frame_index')}"
+                    for row in missing_borrow_rows
+                )
+                raise RuntimeError(
+                    "prepared chunk borrow frame is missing for nonterminal "
+                    f"chunk {chunk_index}: {borrow_rows}"
+                )
+        prepared_lookahead = [
+            frame for frame in lookahead_prepared_list if frame is not None
+        ]
         chunk = _chunk_data_window_from_prepared_frames(
             metadata,
             [frame for frame in prepared if frame is not None],

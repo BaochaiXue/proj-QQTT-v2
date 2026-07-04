@@ -394,6 +394,140 @@ class DemoV51ChunkDataTest(unittest.TestCase):
                 root=root,
             )
 
+    def test_prepared_nonterminal_borrow_frame_missing_fails_fast(self) -> None:
+        from demo_v5_1 import chunk_data_stream
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.object(
+                chunk_data_stream,
+                "_chunk_data_window_from_prepared_frames",
+            ) as prepared_builder:
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "chunk 7.*seq=35.*source_frame_index=2569",
+                ):
+                    chunk_data_stream._write_chunk_from_rows(
+                        capture=Path(tmpdir),
+                        metadata={"serial_numbers": ["test-camera"]},
+                        rows=[{"seq": 34, "source_frame_index": 2568}],
+                        case_prefix="demo_v5_1",
+                        chunk_index=7,
+                        row_start=34,
+                        row_end=35,
+                        fps=5,
+                        serial_number="test-camera",
+                        surface_points=np.empty((0, 3), dtype=np.float32),
+                        interior_points=np.empty((0, 3), dtype=np.float32),
+                        mask_radius_outlier_filter=True,
+                        mask_radius_outlier_radius_m=0.01,
+                        mask_radius_outlier_nb_points=40,
+                        wall_time_origin_s=0.0,
+                        window_closed_wall_s=0.0,
+                        prepared_frames=[object()],
+                        lookahead_rows=[
+                            {"seq": 35, "source_frame_index": 2569}
+                        ],
+                        lookahead_prepared=[None],
+                    )
+                prepared_builder.assert_not_called()
+
+    def test_prepared_terminal_without_borrow_frame_still_publishes(self) -> None:
+        from demo_v5_1 import chunk_data_payload
+        from demo_v5_1 import chunk_data_stream
+
+        def fake_prepared_window(*args: object, **kwargs: object):
+            self.assertEqual([], list(kwargs["lookahead_frames"]))
+            return _minimal_chunk_data_window(
+                chunk_data_payload,
+                frame_count=1,
+                chunk_index=2,
+                source_frame_indices=[42],
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.object(
+                chunk_data_stream,
+                "_chunk_data_window_from_prepared_frames",
+                side_effect=fake_prepared_window,
+            ):
+                manifest = chunk_data_stream._write_chunk_from_rows(
+                    capture=Path(tmpdir),
+                    metadata={"serial_numbers": ["test-camera"]},
+                    rows=[{"seq": 42, "source_frame_index": 42}],
+                    case_prefix="demo_v5_1",
+                    chunk_index=2,
+                    row_start=42,
+                    row_end=43,
+                    fps=5,
+                    serial_number="test-camera",
+                    surface_points=np.empty((0, 3), dtype=np.float32),
+                    interior_points=np.empty((0, 3), dtype=np.float32),
+                    mask_radius_outlier_filter=True,
+                    mask_radius_outlier_radius_m=0.01,
+                    mask_radius_outlier_nb_points=40,
+                    wall_time_origin_s=0.0,
+                    window_closed_wall_s=0.0,
+                    prepared_frames=[object()],
+                    lookahead_rows=[],
+                    lookahead_prepared=[],
+                )
+
+        self.assertEqual(0, manifest["motion_lookahead_frames"])
+
+    def test_legacy_nonterminal_borrow_row_reaches_legacy_builder(self) -> None:
+        from demo_v5_1 import chunk_data_payload
+        from demo_v5_1 import chunk_data_stream
+
+        def fake_legacy_window(*args: object, **kwargs: object):
+            self.assertEqual(
+                [{"seq": 1, "source_frame_index": 1}],
+                kwargs["lookahead_rows"],
+            )
+            return _minimal_chunk_data_window(
+                chunk_data_payload,
+                frame_count=1,
+                chunk_index=0,
+                source_frame_indices=[0],
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                mock.patch.object(
+                    chunk_data_stream,
+                    "_chunk_data_window_from_rows",
+                    side_effect=fake_legacy_window,
+                ) as legacy_builder,
+                mock.patch.object(
+                    chunk_data_stream,
+                    "_chunk_data_window_from_prepared_frames",
+                ) as prepared_builder,
+            ):
+                manifest = chunk_data_stream._write_chunk_from_rows(
+                    capture=Path(tmpdir),
+                    metadata={"serial_numbers": ["test-camera"]},
+                    rows=[{"seq": 0, "source_frame_index": 0}],
+                    case_prefix="demo_v5_1",
+                    chunk_index=0,
+                    row_start=0,
+                    row_end=1,
+                    fps=5,
+                    serial_number="test-camera",
+                    surface_points=np.empty((0, 3), dtype=np.float32),
+                    interior_points=np.empty((0, 3), dtype=np.float32),
+                    mask_radius_outlier_filter=True,
+                    mask_radius_outlier_radius_m=0.01,
+                    mask_radius_outlier_nb_points=40,
+                    wall_time_origin_s=0.0,
+                    window_closed_wall_s=0.0,
+                    prepared_frames=[None],
+                    lookahead_rows=[{"seq": 1, "source_frame_index": 1}],
+                    lookahead_prepared=[None],
+                )
+
+        legacy_builder.assert_called_once()
+        prepared_builder.assert_not_called()
+        self.assertEqual(1, manifest["motion_lookahead_frames"])
+
     def test_warmup_trim_returns_delayed_source_frame_zero(self) -> None:
         from demo_v5_1 import chunk_data_stream
 
