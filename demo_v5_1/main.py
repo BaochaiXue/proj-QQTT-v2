@@ -71,6 +71,7 @@ def _cfg_optional_path(section: str, key: str) -> Path | None:
 # Defaults below describe the current Demo v5.1 realtime path.
 DEFAULT_DATA_PROCESS_BASE_PATH = Path(str(_cfg("paths", "data_process_base_path")))
 DEFAULT_INPUT_SOURCE = str(_cfg("input", "input_source"))
+DEFAULT_FAKE_LIVE_CASE = _cfg_optional_path("input", "fake_live_case")
 DEFAULT_REPLAY_FPS = float(_cfg("input", "replay_fps"))
 DEFAULT_CHUNK_SECONDS = float(_cfg("chunking", "chunk_seconds"))
 DEFAULT_CHUNK_POLL_INTERVAL_S = float(_cfg("chunking", "chunk_poll_interval_s"))
@@ -115,10 +116,16 @@ DEFAULT_VISUALIZER_CUDA_VISIBLE_DEVICES = str(
 DEFAULT_PERCEPTION_DEVICE = str(_cfg("camera", "perception_device"))
 DEFAULT_TRACKER_DEVICE = str(_cfg("camera", "tracker_device"))
 DEFAULT_INFERENCE_DTYPE = str(_cfg("camera", "inference_dtype"))
+DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD = float(
+    _cfg("camera", "edgetam_mask_logit_threshold")
+)
 DEFAULT_VISUALIZER_MODE = str(_cfg("visualizer", "visualizer_mode"))
 DEFAULT_VISUALIZER_CONDA_ENV = str(_cfg("visualizer", "visualizer_conda_env"))
 DEFAULT_VISUALIZER_CAM_IDX = int(_cfg("visualizer", "visualizer_cam_idx"))
 DEFAULT_VISUALIZER_POLL_SEC = float(_cfg("visualizer", "visualizer_poll_sec"))
+DEFAULT_VISUALIZER_PLAYBACK_FPS = float(
+    _cfg("visualizer", "visualizer_playback_fps")
+)
 DEFAULT_VISUALIZER_OBJECT_STRIDE = int(_cfg("visualizer", "visualizer_object_stride"))
 DEFAULT_VISUALIZER_OBJECT_RADIUS = int(_cfg("visualizer", "visualizer_object_radius"))
 DEFAULT_VISUALIZER_CONTROLLER_RADIUS = int(
@@ -154,6 +161,21 @@ RUN_SUMMARY_NAME = "run_summary.json"
 # ---------------------------------------------------------------------------
 
 
+class _StoreFakeLiveCase(argparse.Action):
+    """Track whether --fake-live-case was explicitly provided."""
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: object,
+        option_string: str | None = None,
+    ) -> None:
+        del parser, option_string
+        setattr(namespace, self.dest, values)
+        setattr(namespace, "fake_live_case_cli_override", True)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI parser for Demo v5.1 realtime orchestration."""
     parser = argparse.ArgumentParser(
@@ -182,6 +204,14 @@ def build_parser() -> argparse.ArgumentParser:
             "--replay-fps; Demo v5 output metadata/window math still use --replay-fps."
         ),
     )
+    parser.add_argument(
+        "--fake-live-case",
+        action=_StoreFakeLiveCase,
+        type=Path,
+        default=DEFAULT_FAKE_LIVE_CASE,
+        help="Raw data_collect case folder passed to Demo v5.1 fake-live replay.",
+    )
+    parser.set_defaults(fake_live_case_cli_override=False)
     parser.add_argument("--chunk-seconds", type=float, default=DEFAULT_CHUNK_SECONDS)
     parser.add_argument(
         "--chunk-poll-interval-s",
@@ -234,6 +264,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Torch autocast dtype passed to the camera runtime.",
     )
     parser.add_argument(
+        "--edgetam-mask-logit-threshold",
+        type=float,
+        default=DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD,
+        help=(
+            "Logit threshold passed to EdgeTAM mask binarization. "
+            "Lower values make masks more permissive."
+        ),
+    )
+    parser.add_argument(
         "--camera-lossless-max-backlog-seconds",
         type=float,
         default=None,
@@ -247,7 +286,10 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         choices=CAMERA_FPS_CHOICES,
         default=DEFAULT_CAMERA_FPS,
-        help="RealSense capture FPS passed to Demo v5.1 live camera. Defaults to 5 FPS.",
+        help=(
+            "RealSense capture FPS passed to Demo v5.1 live camera. "
+            "The default 30 FPS input is sampled at replay FPS for output."
+        ),
     )
     parser.add_argument(
         "--camera-color-exposure",
@@ -336,6 +378,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(shape_prior_warmup=True)
     parser.add_argument(
+        "--shape-prior-prewarm-stage-workers",
+        dest="shape_prior_prewarm_stage_workers",
+        action="store_true",
+        help=(
+            "Spawn pre-warmed one-shot upscale/generate/align workers at app "
+            "boot so model loading happens before frame 0 arrives."
+        ),
+    )
+    parser.add_argument(
+        "--no-shape-prior-prewarm-stage-workers",
+        dest="shape_prior_prewarm_stage_workers",
+        action="store_false",
+        help="Load shape-prior stage models only when the frame-0 request runs.",
+    )
+    parser.set_defaults(shape_prior_prewarm_stage_workers=True)
+    parser.add_argument(
         "--shape-prior-timeout-ms",
         type=int,
         default=DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
@@ -420,6 +478,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--visualizer-poll-sec", type=float, default=DEFAULT_VISUALIZER_POLL_SEC
+    )
+    parser.add_argument(
+        "--visualizer-playback-fps",
+        type=float,
+        default=DEFAULT_VISUALIZER_PLAYBACK_FPS,
+        help="Playback FPS for the visualizer final_data timeline.",
     )
     parser.add_argument(
         "--visualizer-object-stride",
@@ -603,7 +667,7 @@ def build_visualizer_command(
         "--cam-idx",
         str(int(args.visualizer_cam_idx)),
         "--fps",
-        str(float(args.replay_fps)),
+        str(float(args.visualizer_playback_fps)),
         "--poll-sec",
         str(float(args.visualizer_poll_sec)),
         "--object-stride",
@@ -751,6 +815,9 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "camera_headless_prepared_only": bool(args.camera_headless_prepared_only),
         "write_input_rgb_timeline": resolve_write_input_rgb_timeline(args),
         "shape_prior_warmup": bool(args.shape_prior_warmup),
+        "shape_prior_prewarm_stage_workers": bool(
+            args.shape_prior_prewarm_stage_workers
+        ),
         "shape_prior_warmup_cuda_visible_devices": (
             resolve_shape_prior_warmup_cuda_visible_devices(args)
         ),
@@ -782,7 +849,7 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         ),
         "visualizer_start_policy": visualizer_start_policy(args),
         "visualizer_capture_dir": None,
-        "visualizer_fps": float(args.replay_fps),
+        "visualizer_fps": float(args.visualizer_playback_fps),
         "visualizer_object_color_mode": str(args.visualizer_object_color_mode),
     }
 
@@ -791,9 +858,20 @@ def validate_runtime_args(args: argparse.Namespace, *, chunk_frame_count: int) -
     """Validate cross-option constraints before launching subprocesses."""
     if float(args.chunk_poll_interval_s) <= 0.0:
         raise ValueError("--chunk-poll-interval-s must be positive")
+    if not np.isfinite(float(args.visualizer_playback_fps)):
+        raise ValueError("--visualizer-playback-fps must be finite")
+    if float(args.visualizer_playback_fps) <= 0.0:
+        raise ValueError("--visualizer-playback-fps must be positive")
     resolve_camera_source_replay_fps(args)
+    if (
+        bool(getattr(args, "fake_live_case_cli_override", False))
+        and str(args.input_source) != "fake-live"
+    ):
+        raise ValueError("--fake-live-case requires --input-source fake-live")
     if int(chunk_frame_count) <= 0:
         raise ValueError("chunk frame count must be positive")
+    if not np.isfinite(float(args.edgetam_mask_logit_threshold)):
+        raise ValueError("--edgetam-mask-logit-threshold must be finite")
     resolve_main_data_processing_cuda_visible_devices(args)
     if bool(args.shape_prior_warmup):
         resolve_shape_prior_warmup_cuda_visible_devices(args)
@@ -884,6 +962,8 @@ def build_main_data_processing_command(
         str(args.perception_device),
         "--dtype",
         str(args.inference_dtype),
+        "--edgetam-mask-logit-threshold",
+        str(float(args.edgetam_mask_logit_threshold)),
         "--tracker-device",
         str(args.tracker_device),
         "--enable-pcd-filter",
@@ -908,6 +988,8 @@ def build_main_data_processing_command(
                 str(float(args.camera_lossless_max_backlog_seconds)),
             ]
         )
+    if str(args.input_source) == "fake-live" and args.fake_live_case is not None:
+        command.extend(["--fake-live-case", str(args.fake_live_case)])
     if float(camera_source_replay_fps) != float(DEFAULT_CAMERA_SOURCE_REPLAY_FPS):
         command.extend(["--lossless-input-fps", str(float(camera_source_replay_fps))])
     if bool(args.camera_headless_prepared_only):
@@ -932,6 +1014,10 @@ def build_main_data_processing_command(
                 str(resolve_shape_prior_points_npz(args)),
             ]
         )
+        if bool(args.shape_prior_prewarm_stage_workers):
+            command.append("--shape-prior-prewarm-stage-workers")
+        else:
+            command.append("--no-shape-prior-prewarm-stage-workers")
         if args.shape_prior_sam3d_root is not None:
             command.extend(
                 ["--shape-prior-sam3d-root", str(args.shape_prior_sam3d_root)]
@@ -1309,7 +1395,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "visualizer_cuda_visible_devices": resolve_visualizer_cuda_visible_devices(
             args
         ),
-        "visualizer_fps": float(args.replay_fps),
+        "visualizer_fps": float(args.visualizer_playback_fps),
         "visualizer_object_color_mode": str(args.visualizer_object_color_mode),
         "visualizer_return_code": visualizer_return_code,
         "visualizer_left_running": visualizer_left_running,

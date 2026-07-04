@@ -1,6 +1,7 @@
 """Single-camera shape-prior warmup for Demo v5.1."""
 from __future__ import annotations
 
+import atexit
 from dataclasses import dataclass, field
 import json
 import os
@@ -33,6 +34,18 @@ DEFAULT_VOLUME_SAMPLE_SIZE_M = 0.005
 # table have negative z (matches the origin capture convention).
 TABLE_Z_ABOVE_DIRECTION = "negative"
 POINTS_NPZ = Path("outputs") / "shape_prior" / "points.npz"
+# Pre-warmed one-shot stage workers: spawned at app boot with --wait-signal so
+# model loading happens off the frame-0 critical path; each worker runs its
+# stage once on GO and exits, releasing its whole CUDA context.
+PREWARM_STAGE_UPSCALE = "upscale"
+PREWARM_STAGE_GENERATE = "generate"
+PREWARM_STAGE_ALIGN = "align"
+PREWARM_STAGES = (
+    PREWARM_STAGE_UPSCALE,
+    PREWARM_STAGE_GENERATE,
+    PREWARM_STAGE_ALIGN,
+)
+PREWARM_WORKER_EXIT_TIMEOUT_S = 10.0
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -396,16 +409,12 @@ class ShapePriorLocalClient:
         self.sam3d_config = None if sam3d_config is None else Path(sam3d_config)
         self.sam31_device = str(sam31_device)
         self.reuse_sam31_model = bool(reuse_sam31_model)
+        self._prewarm_workers: dict[str, subprocess.Popen[str]] = {}
+        self._prewarm_lock = threading.Lock()
+        self._atexit_registered = False
 
-    def request_shape_prior(self, frame0: ShapePriorFrame0Request) -> ShapePriorResult:
-        """Request shape prior."""
-        paths = write_shape_prior_case(
-            frame0,
-            case_root=self.case_root,
-            case_name=self.case_name,
-            object_name=self.object_name,
-            controller_name=self.controller_name,
-        )
+    def _stage_env(self) -> dict[str, str]:
+        """Environment shared by all stage subprocesses (cold or pre-warmed)."""
         # Subprocess stages must import demo_v5_1 both as a package (repo
         # root) and as top-level modules (demo_v5_1/), pinned to the warmup
         # GPU via CUDA_VISIBLE_DEVICES.
@@ -416,26 +425,174 @@ class ShapePriorLocalClient:
         if current:
             python_path.append(current)
         env["PYTHONPATH"] = os.pathsep.join(python_path)
+        return env
+
+    def _stage_commands(self) -> dict[str, list[str]]:
+        """Stage commands; paths mirror the write_shape_prior_case layout."""
+        case = Path(self.case_root) / self.case_name
+        shape_dir = case / "shape"
+        upscale = [
+            sys.executable,
+            "-m",
+            "demo_v5_1.utils.image_upscale",
+            "--img_path",
+            str(case / "color" / "0" / "0.png"),
+            "--mask_path",
+            str(case / "mask" / "0" / "0" / "0.png"),
+            "--output_path",
+            str(shape_dir / "high_resolution.png"),
+            "--category",
+            self.object_name,
+        ]
+        generate = [
+            sys.executable,
+            "-m",
+            "demo_v5_1.shape_prior_generate",
+            "--img_path",
+            str(shape_dir / "masked_image.png"),
+            "--output_dir",
+            str(shape_dir),
+            "--skip-visualization",
+        ]
+        if self.sam3d_root is not None:
+            generate.extend(["--sam3d-root", str(self.sam3d_root)])
+        if self.sam3d_config is not None:
+            generate.extend(["--config", str(self.sam3d_config)])
+        align = [
+            sys.executable,
+            "-m",
+            "demo_v5_1.shape_prior_align",
+            "--base_path",
+            str(self.case_root),
+            "--case_name",
+            self.case_name,
+            "--controller_name",
+            self.controller_name,
+        ]
+        return {
+            PREWARM_STAGE_UPSCALE: upscale,
+            PREWARM_STAGE_GENERATE: generate,
+            PREWARM_STAGE_ALIGN: align,
+        }
+
+    def prewarm(self) -> None:
+        """Spawn pre-warmed one-shot workers for the heavy subprocess stages.
+
+        Each worker front-loads what it safely can (stage inputs need not
+        exist yet), then blocks on stdin until ``request_shape_prior`` writes
+        GO after the frame-0 case dir is on disk. Workers exit after one
+        request, so no VRAM stays allocated once the warmup finishes.
+
+        VRAM budget on the single warmup GPU: upscale (SD-x4 weights) and
+        align (SuperGlue) preload fully, but the generate worker only runs
+        its CPU-side import tree before GO -- SAM3D weights would otherwise
+        be resident during the upscale stage's inference peak, which does not
+        fit on a 24GB card. Weights move to the GPU after GO, exactly like
+        the cold path's serial ordering.
+        """
+        with self._prewarm_lock:
+            env = self._stage_env()
+            commands = self._stage_commands()
+            for stage in PREWARM_STAGES:
+                if stage in self._prewarm_workers:
+                    continue
+                self._prewarm_workers[stage] = subprocess.Popen(
+                    [*commands[stage], "--wait-signal"],
+                    cwd=REPO_ROOT,
+                    env=env,
+                    stdin=subprocess.PIPE,
+                    text=True,
+                )
+            if not self._atexit_registered:
+                atexit.register(self.close)
+                self._atexit_registered = True
+
+    def close(self) -> None:
+        """Ask any unused pre-warmed workers to exit and reap them."""
+        with self._prewarm_lock:
+            workers = dict(self._prewarm_workers)
+            self._prewarm_workers.clear()
+        for worker in workers.values():
+            if worker.poll() is not None:
+                continue
+            try:
+                if worker.stdin is not None:
+                    worker.stdin.write("EXIT\n")
+                    worker.stdin.flush()
+                    worker.stdin.close()
+            except (BrokenPipeError, OSError, ValueError):
+                pass
+            try:
+                worker.wait(timeout=PREWARM_WORKER_EXIT_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                worker.terminate()
+                try:
+                    worker.wait(timeout=PREWARM_WORKER_EXIT_TIMEOUT_S)
+                except subprocess.TimeoutExpired:
+                    worker.kill()
+                    worker.wait()
+
+    def _take_prewarmed_worker(self, stage: str) -> subprocess.Popen[str] | None:
+        with self._prewarm_lock:
+            return self._prewarm_workers.pop(stage, None)
+
+    def _run_prewarmed_stage(
+        self, worker: subprocess.Popen[str], *, stage_name: str
+    ) -> float:
+        """Signal GO to a pre-warmed worker and wait; returns wall time in ms."""
+        if worker.poll() is not None:
+            raise RuntimeError(
+                f"pre-warmed {stage_name} worker exited before GO "
+                f"with code {worker.returncode}"
+            )
+        start_s = time.perf_counter()
+        assert worker.stdin is not None
+        worker.stdin.write("GO\n")
+        worker.stdin.flush()
+        worker.stdin.close()
+        returncode = worker.wait()
+        if returncode != 0:
+            raise subprocess.CalledProcessError(returncode, worker.args)
+        return (time.perf_counter() - start_s) * 1000.0
+
+    def _run_stage_maybe_prewarmed(
+        self,
+        stage: str,
+        command: list[str],
+        *,
+        env: dict[str, str],
+        prewarmed_stages: list[str],
+    ) -> float:
+        """Run a stage via its pre-warmed worker when present, else cold."""
+        worker = self._take_prewarmed_worker(stage)
+        if worker is None:
+            return _run_stage(command, env=env)
+        elapsed_ms = self._run_prewarmed_stage(worker, stage_name=stage)
+        prewarmed_stages.append(stage)
+        return elapsed_ms
+
+    def request_shape_prior(self, frame0: ShapePriorFrame0Request) -> ShapePriorResult:
+        """Request shape prior."""
+        paths = write_shape_prior_case(
+            frame0,
+            case_root=self.case_root,
+            case_name=self.case_name,
+            object_name=self.object_name,
+            controller_name=self.controller_name,
+        )
+        env = self._stage_env()
+        commands = self._stage_commands()
+        prewarmed_stages: list[str] = []
         timings: dict[str, float] = {}
 
         high_resolution_path = paths["shape"] / "high_resolution.png"
         masked_image_path = paths["shape"] / "masked_image.png"
 
-        timings["shape_prior_upscale_ms"] = _run_stage(
-            [
-                sys.executable,
-                "-m",
-                "demo_v5_1.utils.image_upscale",
-                "--img_path",
-                str(paths["color"]),
-                "--mask_path",
-                str(paths["object_mask"]),
-                "--output_path",
-                str(high_resolution_path),
-                "--category",
-                self.object_name,
-            ],
+        timings["shape_prior_upscale_ms"] = self._run_stage_maybe_prewarmed(
+            PREWARM_STAGE_UPSCALE,
+            commands[PREWARM_STAGE_UPSCALE],
             env=env,
+            prewarmed_stages=prewarmed_stages,
         )
         _require_stage_file(high_resolution_path, stage_name="shape-prior upscale")
 
@@ -454,35 +611,18 @@ class ShapePriorLocalClient:
         ) * 1000.0
         _require_stage_file(masked_image_path, stage_name="shape-prior segment")
 
-        generate_command = [
-            sys.executable,
-            "-m",
-            "demo_v5_1.shape_prior_generate",
-            "--img_path",
-            str(masked_image_path),
-            "--output_dir",
-            str(paths["case"] / "shape"),
-            "--skip-visualization",
-        ]
-        if self.sam3d_root is not None:
-            generate_command.extend(["--sam3d-root", str(self.sam3d_root)])
-        if self.sam3d_config is not None:
-            generate_command.extend(["--config", str(self.sam3d_config)])
-        timings["shape_prior_generate_ms"] = _run_stage(generate_command, env=env)
-
-        timings["shape_prior_align_ms"] = _run_stage(
-            [
-                sys.executable,
-                "-m",
-                "demo_v5_1.shape_prior_align",
-                "--base_path",
-                str(self.case_root),
-                "--case_name",
-                self.case_name,
-                "--controller_name",
-                self.controller_name,
-            ],
+        timings["shape_prior_generate_ms"] = self._run_stage_maybe_prewarmed(
+            PREWARM_STAGE_GENERATE,
+            commands[PREWARM_STAGE_GENERATE],
             env=env,
+            prewarmed_stages=prewarmed_stages,
+        )
+
+        timings["shape_prior_align_ms"] = self._run_stage_maybe_prewarmed(
+            PREWARM_STAGE_ALIGN,
+            commands[PREWARM_STAGE_ALIGN],
+            env=env,
+            prewarmed_stages=prewarmed_stages,
         )
         timings["shape_prior_sample_ms"] = _run_stage(
             [
@@ -530,6 +670,7 @@ class ShapePriorLocalClient:
             "shape_prior_controller_name": self.controller_name,
             "shape_prior_sam31_device": self.sam31_device,
             "shape_prior_sam31_reuse_model": self.reuse_sam31_model,
+            "shape_prior_prewarmed_stages": list(prewarmed_stages),
             "shape_prior_surface_point_count": int(surface.shape[0]),
             "shape_prior_interior_point_count": int(interior.shape[0]),
             "shape_prior_point_count": int(points.shape[0]),

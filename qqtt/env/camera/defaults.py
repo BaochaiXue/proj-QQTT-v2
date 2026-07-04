@@ -1,5 +1,6 @@
 """Shared camera workflow defaults for the camera-only repo."""
 
+# Fake-camera/fake-live records are captured at this raw RealSense size.
 DEFAULT_WIDTH = 848
 DEFAULT_HEIGHT = 480
 DEFAULT_FPS = 30

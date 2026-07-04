@@ -58,6 +58,8 @@ QUICK_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_demo_v5_1_chunk_data",
     "tests.test_demo_v5_1_tools_io",
     "tests.test_demo_v5_1_tracking",
+    "tests.test_demo_v5_1_visualize_track",
+    "tests.test_realsense_extrinsics_matrix",
     "tests.test_single_view_shape_align",
     "tests.test_validation_smoke_manifest",
 )
@@ -69,8 +71,6 @@ FULL_ONLY_UNITTEST_MODULES: tuple[str, ...] = (
 SMOKE_UNITTEST_MODULES: tuple[str, ...] = QUICK_UNITTEST_MODULES
 DETERMINISTIC_ONLY_UNITTEST_MODULES: tuple[str, ...] = FULL_ONLY_UNITTEST_MODULES
 EXHAUSTIVE_ONLY_UNITTEST_MODULES: tuple[str, ...] = ()
-
-PYTEST_BATCHES: tuple[tuple[str, ...], ...] = ()
 
 CHECK_COMMANDS: tuple[tuple[str, ...], ...] = (
     ("scripts/harness/guards/check_harness_catalog.py",),
@@ -125,10 +125,6 @@ def _unittest_commands(
     *, python: str, module_batches: tuple[tuple[str, ...], ...]
 ) -> list[list[str]]:
     return [[python, "-m", "unittest", "-v", *modules] for modules in module_batches]
-
-
-def _pytest_commands(*, python: str) -> list[list[str]]:
-    return [[python, "-m", "pytest", *batch] for batch in PYTEST_BATCHES]
 
 
 def _profile_unittest_batches(profile: str) -> tuple[tuple[str, ...], ...]:
@@ -198,8 +194,6 @@ def build_commands(
                 python=python, module_batches=_profile_unittest_batches(profile)
             ),
         ]
-        if profile == "exhaustive":
-            commands.extend(_pytest_commands(python=python))
         return commands
     raise ValueError(f"Unsupported profile: {profile}")
 

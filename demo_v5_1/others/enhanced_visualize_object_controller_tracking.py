@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Render large-displacement Demo v5.1 tracking chunks as an MP4.
+"""Render Demo v5.1 object/controller tracking chunks as an MP4.
 
-Only tracks with at least one adjacent-frame displacement above the configured
-threshold are shown. Object points use fixed rainbow colors from the first-frame
-y coordinate; controller points are red spheres. The selected points are animated
-at their current frame positions instead of drawing full historical paths.
+The rendering style follows ``data_process_origin/data_process_sample.py``:
+object points use fixed rainbow colors from the first-frame y coordinate, and
+controller points are red spheres moving through the same 3D view.
 """
 
 from __future__ import annotations
@@ -23,23 +22,18 @@ import open3d as o3d
 matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt  # noqa: E402
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CHUNKS_DIR = REPO_ROOT / "outputs/online_data/chunks"
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "demo_v5_1/others/obj_shape_asap_outputs"
+DEFAULT_CHUNKS_DIR = Path("outputs/online_data/chunks")
+DEFAULT_OUTPUT_DIR = Path("demo_v5_1/others/obj_shape_asap_outputs")
 DEFAULT_OUTPUT_PATH = (
-    DEFAULT_OUTPUT_DIR
-    / "enhanced_object_controller_large_displacement_tracking_5fps.mp4"
+    DEFAULT_OUTPUT_DIR / "object_controller_tracking_all_chunks_5fps.mp4"
 )
 DEFAULT_SUMMARY_PATH = (
-    DEFAULT_OUTPUT_DIR
-    / "enhanced_object_controller_large_displacement_tracking_5fps.json"
+    DEFAULT_OUTPUT_DIR / "object_controller_tracking_all_chunks_5fps.json"
 )
 DEFAULT_FPS = 5.0
 DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 900
 DEFAULT_CONTROLLER_RADIUS_M = 0.01
-DEFAULT_DISPLACEMENT_THRESHOLD_M = 0.05
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -72,28 +66,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH)
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT)
     parser.add_argument(
-        "--displacement-threshold-m",
-        type=float,
-        default=DEFAULT_DISPLACEMENT_THRESHOLD_M,
-        help=(
-            "Select points whose adjacent-frame displacement is greater than "
-            "this threshold, in meters."
-        ),
-    )
-    parser.add_argument(
         "--controller-radius-m",
         type=float,
         default=DEFAULT_CONTROLLER_RADIUS_M,
         help="Open3D sphere radius used for each controller point.",
-    )
-    parser.add_argument(
-        "--object-filter",
-        choices=("visibility", "motion-valid"),
-        default="visibility",
-        help=(
-            "Recorded in the JSON summary for comparability with the base "
-            "visualizer; enhanced rendering shows only selected jump tracks."
-        ),
     )
     return parser
 
@@ -255,7 +231,9 @@ def load_tracking_chunks(chunks_dir: Path) -> dict[str, Any]:
         "controller_points": np.concatenate(controller_points_parts, axis=0),
         "source_frame_indices": source_frame_indices,
         "source_timestamps_s": source_timestamps_s,
-        "query_schema_hash": "" if expected_schema_hash is None else expected_schema_hash,
+        "query_schema_hash": ""
+        if expected_schema_hash is None
+        else expected_schema_hash,
         "track_status_counts": status_counts,
     }
 
@@ -287,53 +265,86 @@ def _sphere_mesh(
     return mesh
 
 
-def _adjacent_displacements(points: np.ndarray, *, name: str) -> np.ndarray:
-    """Return the adjacent displacements."""
-    points = _require_track_points(points, name=name)
-    if points.shape[0] < 2:
-        raise ValueError(f"{name} needs at least two frames for displacement")
-    return np.linalg.norm(np.diff(points, axis=0), axis=2)
+def _point_cloud(
+    points: np.ndarray,
+    colors: np.ndarray,
+) -> o3d.geometry.PointCloud:
+    """Return an Open3D point cloud."""
+    points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    color_array = np.asarray(colors, dtype=np.float64).reshape(-1, 3)
+    if color_array.shape != points.shape:
+        raise ValueError(
+            f"point cloud colors must have shape {points.shape}, got "
+            f"{color_array.shape}"
+        )
+    cloud = o3d.geometry.PointCloud()
+    cloud.points = o3d.utility.Vector3dVector(points)
+    cloud.colors = o3d.utility.Vector3dVector(color_array)
+    return cloud
 
 
-def add_large_displacement_selection(
-    tracking: dict[str, Any],
+def _capture_rgb(
+    visualizer: o3d.visualization.Visualizer,
     *,
-    threshold_m: float,
-) -> dict[str, Any]:
-    """Add large displacement selection."""
-    if float(threshold_m) <= 0.0:
-        raise ValueError("displacement_threshold_m must be positive")
+    width: int,
+    height: int,
+) -> np.ndarray:
+    """Capture one RGB frame from an Open3D visualizer."""
+    visualizer.poll_events()
+    visualizer.update_renderer()
+    frame = np.asarray(visualizer.capture_screen_float_buffer(do_render=True))
+    frame_u8 = np.clip(frame * 255.0, 0.0, 255.0).astype(np.uint8)
+    if frame_u8.shape[:2] != (int(height), int(width)):
+        frame_u8 = cv2.resize(
+            frame_u8,
+            (int(width), int(height)),
+            interpolation=cv2.INTER_AREA,
+        )
+    return frame_u8
 
-    object_points = np.asarray(tracking["object_points"], dtype=np.float64)
-    controller_points = np.asarray(tracking["controller_points"], dtype=np.float64)
-    object_displacements = _adjacent_displacements(
-        object_points,
-        name="object_points",
-    )
-    controller_displacements = _adjacent_displacements(
-        controller_points,
-        name="controller_points",
-    )
-    object_events = object_displacements > float(threshold_m)
-    controller_events = controller_displacements > float(threshold_m)
 
-    enriched = dict(tracking)
-    enriched.update(
-        {
-            "displacement_threshold_m": float(threshold_m),
-            "object_adjacent_displacements_m": object_displacements,
-            "controller_adjacent_displacements_m": controller_displacements,
-            "object_large_displacement_events": object_events,
-            "controller_large_displacement_events": controller_events,
-            "object_large_displacement_indices": np.flatnonzero(
-                np.any(object_events, axis=0)
-            ).astype(np.int64),
-            "controller_large_displacement_indices": np.flatnonzero(
-                np.any(controller_events, axis=0)
-            ).astype(np.int64),
-        }
+def _draw_frame_label(
+    frame_bgr: np.ndarray,
+    *,
+    frame_idx: int,
+    frame_count: int,
+    source_frame: int,
+) -> None:
+    """Draw the output frame label in the upper-left corner."""
+    label = (
+        f"frame {int(frame_idx)}/{int(frame_count) - 1} | source {int(source_frame)}"
     )
-    return enriched
+    origin = (24, 38)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(
+        frame_bgr,
+        label,
+        origin,
+        font,
+        0.82,
+        (0, 0, 0),
+        5,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        frame_bgr,
+        label,
+        origin,
+        font,
+        0.82,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+
+
+def _object_render_mask_for_frame(
+    object_visibilities: np.ndarray,
+    object_motions_valid: np.ndarray,
+    frame_idx: int,
+) -> np.ndarray:
+    """Return object points allowed to appear in one rendered frame."""
+    return object_visibilities[frame_idx] & object_motions_valid[frame_idx]
 
 
 def render_tracking_video(
@@ -344,8 +355,6 @@ def render_tracking_video(
     width: int,
     height: int,
     controller_radius_m: float,
-    object_filter: str,
-    displacement_threshold_m: float,
 ) -> None:
     """Render tracking video."""
     if float(fps) <= 0.0:
@@ -354,40 +363,21 @@ def render_tracking_video(
         raise ValueError("width and height must be positive")
     if float(controller_radius_m) <= 0.0:
         raise ValueError("controller_radius_m must be positive")
-    if float(displacement_threshold_m) <= 0.0:
-        raise ValueError("displacement_threshold_m must be positive")
 
     object_points = np.asarray(tracking["object_points"], dtype=np.float64)
+    object_visibilities = np.asarray(tracking["object_visibilities"], dtype=bool)
+    object_motions_valid = np.asarray(tracking["object_motions_valid"], dtype=bool)
     controller_points = np.asarray(tracking["controller_points"], dtype=np.float64)
-    object_events = np.asarray(tracking["object_large_displacement_events"], dtype=bool)
-    controller_events = np.asarray(
-        tracking["controller_large_displacement_events"],
-        dtype=bool,
-    )
     frame_count = int(object_points.shape[0])
     if int(controller_points.shape[0]) != frame_count:
         raise ValueError("object/controller frame count mismatch")
-    expected_object_event_shape = (frame_count - 1, int(object_points.shape[1]))
-    expected_controller_event_shape = (
-        frame_count - 1,
-        int(controller_points.shape[1]),
-    )
-    if object_events.shape != expected_object_event_shape:
-        raise ValueError("object large-displacement event shape mismatch")
-    if controller_events.shape != expected_controller_event_shape:
-        raise ValueError("controller large-displacement event shape mismatch")
-    object_selected_indices = np.asarray(
-        tracking["object_large_displacement_indices"],
-        dtype=np.int64,
-    ).reshape(-1)
-    controller_selected_indices = np.asarray(
-        tracking["controller_large_displacement_indices"],
-        dtype=np.int64,
-    ).reshape(-1)
-    if object_selected_indices.size == 0 and controller_selected_indices.size == 0:
-        raise ValueError(
-            "no object or controller tracks exceed the displacement threshold"
-        )
+    if object_visibilities.shape != object_points.shape[:2]:
+        raise ValueError("object_visibilities shape mismatch")
+    if object_motions_valid.shape != object_points.shape[:2]:
+        raise ValueError("object_motions_valid shape mismatch")
+    source_frame_indices = [int(value) for value in tracking["source_frame_indices"]]
+    if len(source_frame_indices) != frame_count:
+        raise ValueError("source_frame_indices length mismatch")
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -407,20 +397,20 @@ def render_tracking_video(
 
     writer: cv2.VideoWriter | None = None
     try:
-        object_cloud: o3d.geometry.PointCloud | None = None
-        if object_selected_indices.size:
-            object_cloud = o3d.geometry.PointCloud()
-            object_cloud.points = o3d.utility.Vector3dVector(
-                object_points[0, object_selected_indices]
-            )
-            object_cloud.colors = o3d.utility.Vector3dVector(
-                rainbow_colors[object_selected_indices]
-            )
-            visualizer.add_geometry(object_cloud)
+        first_mask = _object_render_mask_for_frame(
+            object_visibilities,
+            object_motions_valid,
+            0,
+        )
+        object_cloud = _point_cloud(
+            object_points[0, first_mask],
+            rainbow_colors[first_mask],
+        )
+        visualizer.add_geometry(object_cloud)
 
         controller_meshes: list[o3d.geometry.TriangleMesh] = []
         previous_centers: list[np.ndarray] = []
-        for point in controller_points[0, controller_selected_indices]:
+        for point in controller_points[0]:
             mesh = _sphere_mesh(
                 point,
                 color=(1.0, 0.0, 0.0),
@@ -450,20 +440,18 @@ def render_tracking_video(
             raise RuntimeError(f"could not open video writer: {output_path}")
 
         for frame_idx in range(frame_count):
-            if object_cloud is not None:
-                object_cloud.points = o3d.utility.Vector3dVector(
-                    object_points[frame_idx, object_selected_indices]
-                )
-                object_cloud.colors = o3d.utility.Vector3dVector(
-                    rainbow_colors[object_selected_indices]
-                )
-                visualizer.update_geometry(object_cloud)
-
-            current_controller_points = controller_points[
+            mask = _object_render_mask_for_frame(
+                object_visibilities,
+                object_motions_valid,
                 frame_idx,
-                controller_selected_indices,
-            ]
-            for point_idx, point in enumerate(current_controller_points):
+            )
+            object_cloud.points = o3d.utility.Vector3dVector(
+                object_points[frame_idx, mask]
+            )
+            object_cloud.colors = o3d.utility.Vector3dVector(rainbow_colors[mask])
+            visualizer.update_geometry(object_cloud)
+
+            for point_idx, point in enumerate(controller_points[frame_idx]):
                 current = np.asarray(point, dtype=np.float64)
                 controller_meshes[point_idx].translate(
                     current - previous_centers[point_idx]
@@ -471,19 +459,19 @@ def render_tracking_video(
                 visualizer.update_geometry(controller_meshes[point_idx])
                 previous_centers[point_idx] = current.copy()
 
-            visualizer.poll_events()
-            visualizer.update_renderer()
-            frame = np.asarray(
-                visualizer.capture_screen_float_buffer(do_render=True)
+            base_rgb = _capture_rgb(
+                visualizer,
+                width=int(width),
+                height=int(height),
             )
-            frame_u8 = np.clip(frame * 255.0, 0.0, 255.0).astype(np.uint8)
-            if frame_u8.shape[:2] != (int(height), int(width)):
-                frame_u8 = cv2.resize(
-                    frame_u8,
-                    (int(width), int(height)),
-                    interpolation=cv2.INTER_AREA,
-                )
-            writer.write(cv2.cvtColor(frame_u8, cv2.COLOR_RGB2BGR))
+            frame_bgr = cv2.cvtColor(base_rgb, cv2.COLOR_RGB2BGR)
+            _draw_frame_label(
+                frame_bgr,
+                frame_idx=frame_idx,
+                frame_count=frame_count,
+                source_frame=source_frame_indices[frame_idx],
+            )
+            writer.write(frame_bgr)
             if (frame_idx + 1) % 100 == 0 or frame_idx + 1 == frame_count:
                 print(f"rendered {frame_idx + 1}/{frame_count}", flush=True)
     finally:
@@ -500,60 +488,24 @@ def build_summary(
     width: int,
     height: int,
     controller_radius_m: float,
-    object_filter: str,
 ) -> dict[str, Any]:
     """Build summary."""
     object_points = np.asarray(tracking["object_points"])
     object_visibilities = np.asarray(tracking["object_visibilities"], dtype=bool)
     object_motions_valid = np.asarray(tracking["object_motions_valid"], dtype=bool)
     controller_points = np.asarray(tracking["controller_points"])
-    object_events = np.asarray(tracking["object_large_displacement_events"], dtype=bool)
-    controller_events = np.asarray(
-        tracking["controller_large_displacement_events"],
-        dtype=bool,
-    )
-    object_displacements = np.asarray(
-        tracking["object_adjacent_displacements_m"],
-        dtype=np.float64,
-    )
-    controller_displacements = np.asarray(
-        tracking["controller_adjacent_displacements_m"],
-        dtype=np.float64,
-    )
-    object_selected_indices = np.asarray(
-        tracking["object_large_displacement_indices"],
-        dtype=np.int64,
-    )
-    controller_selected_indices = np.asarray(
-        tracking["controller_large_displacement_indices"],
-        dtype=np.int64,
-    )
     source_frames = [int(value) for value in tracking["source_frame_indices"]]
+    rendered_object_mask = object_visibilities & object_motions_valid
     return {
         "chunk_count": int(len(tracking["chunk_paths"])),
         "controller_point_count": int(controller_points.shape[1]),
-        "controller_large_displacement_event_count": int(
-            np.count_nonzero(controller_events)
-        ),
-        "controller_large_displacement_indices": controller_selected_indices.tolist(),
-        "controller_large_displacement_track_count": int(
-            controller_selected_indices.shape[0]
-        ),
-        "controller_max_adjacent_displacement_m": float(
-            np.max(controller_displacements)
-        ),
         "controller_sphere_radius_m": float(controller_radius_m),
-        "displacement_threshold_m": float(tracking["displacement_threshold_m"]),
         "fps": float(fps),
         "frame_count": int(object_points.shape[0]),
         "height": int(height),
-        "object_filter": str(object_filter),
-        "object_large_displacement_event_count": int(np.count_nonzero(object_events)),
-        "object_large_displacement_indices": object_selected_indices.tolist(),
-        "object_large_displacement_track_count": int(object_selected_indices.shape[0]),
-        "object_max_adjacent_displacement_m": float(np.max(object_displacements)),
         "object_motion_valid_ratio": float(np.mean(object_motions_valid)),
         "object_point_count": int(object_points.shape[1]),
+        "object_rendered_valid_ratio": float(np.mean(rendered_object_mask)),
         "object_visibility_ratio": float(np.mean(object_visibilities)),
         "output_path": str(output_path),
         "query_schema_hash": str(tracking["query_schema_hash"]),
@@ -561,11 +513,6 @@ def build_summary(
         "source_frame_last": source_frames[-1] if source_frames else None,
         "style_reference": "data_process_origin/data_process_sample.py::visualize_track",
         "track_status_counts": dict(tracking["track_status_counts"]),
-        "visualization_policy": (
-            "animate_only_tracks_with_adjacent_frame_displacement_above_threshold"
-        ),
-        "visualized_controller_point_count": int(controller_selected_indices.shape[0]),
-        "visualized_object_point_count": int(object_selected_indices.shape[0]),
         "width": int(width),
     }
 
@@ -578,22 +525,10 @@ def write_summary(summary: dict[str, Any], path: Path) -> Path:
     return path
 
 
-def console_summary(summary: dict[str, Any]) -> dict[str, Any]:
-    """Build the console summary."""
-    compact = dict(summary)
-    compact.pop("object_large_displacement_indices", None)
-    compact.pop("controller_large_displacement_indices", None)
-    return compact
-
-
 def main(argv: list[str] | None = None) -> None:
     """Run the command-line entry point."""
     args = build_parser().parse_args(argv)
     tracking = load_tracking_chunks(args.chunks_dir)
-    tracking = add_large_displacement_selection(
-        tracking,
-        threshold_m=float(args.displacement_threshold_m),
-    )
     render_tracking_video(
         tracking,
         output_path=args.output_path,
@@ -601,8 +536,6 @@ def main(argv: list[str] | None = None) -> None:
         width=int(args.width),
         height=int(args.height),
         controller_radius_m=float(args.controller_radius_m),
-        object_filter=str(args.object_filter),
-        displacement_threshold_m=float(args.displacement_threshold_m),
     )
     summary = build_summary(
         tracking,
@@ -611,10 +544,9 @@ def main(argv: list[str] | None = None) -> None:
         width=int(args.width),
         height=int(args.height),
         controller_radius_m=float(args.controller_radius_m),
-        object_filter=str(args.object_filter),
     )
     summary_path = write_summary(summary, args.summary_path)
-    print(json.dumps(console_summary(summary), indent=2, sort_keys=True))
+    print(json.dumps(summary, indent=2, sort_keys=True))
     print(f"wrote video: {args.output_path}")
     print(f"wrote summary: {summary_path}")
 

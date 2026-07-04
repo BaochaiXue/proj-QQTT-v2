@@ -163,3 +163,49 @@ def get_charuco_chessboard_corners(board):
     if hasattr(board, "chessboardCorners"):
         return board.chessboardCorners
     raise RuntimeError("Unsupported ChArUco board object: missing chessboard corners.")
+
+
+def detect_charuco_board(image, board):
+    """Detect ChArUco image corners with the current OpenCV detector API."""
+    import cv2
+
+    if not hasattr(cv2.aruco, "CharucoDetector"):
+        raise RuntimeError("This OpenCV build does not provide CharucoDetector.")
+    detector = cv2.aruco.CharucoDetector(board)
+    return detector.detectBoard(image)
+
+
+def estimate_charuco_board_pose(
+    *,
+    charuco_corners,
+    charuco_ids,
+    board,
+    camera_matrix,
+    dist_coeffs,
+):
+    """Estimate board pose from detected ChArUco corners using solvePnP."""
+    import cv2
+    import numpy as np
+
+    if charuco_corners is None or charuco_ids is None:
+        return False, None, None
+
+    charuco_id_values = np.asarray(charuco_ids, dtype=np.int64).reshape(-1)
+    observed_corners = np.asarray(charuco_corners, dtype=np.float64).reshape(-1, 1, 2)
+    if charuco_id_values.shape[0] < 4:
+        return False, None, None
+    if observed_corners.shape[0] != charuco_id_values.shape[0]:
+        raise ValueError("ChArUco corner/id count mismatch.")
+
+    chessboard_corners = np.asarray(
+        get_charuco_chessboard_corners(board),
+        dtype=np.float64,
+    )
+    object_points = chessboard_corners[charuco_id_values, :]
+    return cv2.solvePnP(
+        object_points,
+        observed_corners,
+        np.asarray(camera_matrix, dtype=np.float64),
+        None if dist_coeffs is None else np.asarray(dist_coeffs, dtype=np.float64),
+        flags=cv2.SOLVEPNP_ITERATIVE,
+    )

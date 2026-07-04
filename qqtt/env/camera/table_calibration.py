@@ -1016,6 +1016,8 @@ def estimate_table_c2w_from_charuco_image(
 
     from qqtt.env.camera.calibration_boards import (
         create_charuco_board,
+        detect_charuco_board,
+        estimate_charuco_board_pose,
         get_charuco_chessboard_corners,
     )
 
@@ -1038,35 +1040,29 @@ def estimate_table_c2w_from_charuco_image(
     else:
         diagnostic_bgr = image.copy()
 
-    dictionary, board = create_charuco_board(board_config)
-    corners, ids, _rejected = cv2.aruco.detectMarkers(
-        image=image,
-        dictionary=dictionary,
-        parameters=None,
+    _dictionary, board = create_charuco_board(board_config)
+    (
+        charuco_corners,
+        charuco_ids,
+        marker_corners,
+        marker_ids,
+    ) = detect_charuco_board(
+        image,
+        board,
     )
-    if ids is None or len(corners) == 0:
+    if marker_ids is None or len(marker_corners) == 0:
         raise ValueError("No ArUco markers detected for table calibration.")
 
-    cv2.aruco.drawDetectedMarkers(diagnostic_bgr, corners, ids)
-    _retval, charuco_corners, charuco_ids = cv2.aruco.interpolateCornersCharuco(
-        markerCorners=corners,
-        markerIds=ids,
-        image=image,
-        board=board,
-        cameraMatrix=intrinsic,
-        distCoeffs=dist_coeffs_array,
-    )
+    cv2.aruco.drawDetectedMarkers(diagnostic_bgr, marker_corners, marker_ids)
     if charuco_corners is None or charuco_ids is None or len(charuco_corners) == 0:
         raise ValueError("No ChArUco corners detected for table calibration.")
 
-    pose_ok, rvec, tvec = cv2.aruco.estimatePoseCharucoBoard(
-        charuco_corners,
-        charuco_ids,
-        board,
-        intrinsic,
-        dist_coeffs_array,
-        rvec=None,
-        tvec=None,
+    pose_ok, rvec, tvec = estimate_charuco_board_pose(
+        charuco_corners=charuco_corners,
+        charuco_ids=charuco_ids,
+        board=board,
+        camera_matrix=intrinsic,
+        dist_coeffs=dist_coeffs_array,
     )
     if (not pose_ok) or rvec is None or tvec is None:
         raise ValueError("Failed to estimate ChArUco pose for table calibration.")

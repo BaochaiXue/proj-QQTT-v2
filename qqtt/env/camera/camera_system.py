@@ -4,6 +4,8 @@ from .calibration_metadata import build_calibration_metadata, write_calibration_
 from .calibration_boards import (
     charuco_board_config_to_metadata,
     create_charuco_board,
+    detect_charuco_board,
+    estimate_charuco_board_pose,
     get_charuco_chessboard_corners,
     get_calibration_board_config,
 )
@@ -494,7 +496,7 @@ class CameraSystem:
             raise ValueError("calibration_samples must be >= 1.")
         # Initialize the calibration board information.
         board_config = get_calibration_board_config(board_config)
-        dictionary, board = create_charuco_board(board_config)
+        _dictionary, board = create_charuco_board(board_config)
         # Get the intrinsic information from the realsense camera
         intrinsics = self.realsense.get_intrinsics()
         color_dist_coeffs = [
@@ -557,28 +559,22 @@ class CameraSystem:
                 # cv2.imshow("cablibration", calibration_img)
                 # cv2.waitKey(0)
 
-                corners, ids, rejectedImgPoints = cv2.aruco.detectMarkers(
-                    image=calibration_img,
-                    dictionary=dictionary,
-                    parameters=None,
+                (
+                    charuco_corners,
+                    charuco_ids,
+                    marker_corners,
+                    marker_ids,
+                ) = detect_charuco_board(
+                    calibration_img,
+                    board,
                 )
-                if ids is None or len(corners) == 0:
+                if marker_ids is None or len(marker_corners) == 0:
                     sample_failed = True
                     print(
                         f"{cam_tag} No ArUco markers detected. "
                         "Please adjust the board and try again."
                     )
                     break
-                retval, charuco_corners, charuco_ids = (
-                    cv2.aruco.interpolateCornersCharuco(
-                        markerCorners=corners,
-                        markerIds=ids,
-                        image=calibration_img,
-                        board=board,
-                        cameraMatrix=intrinsic,
-                        distCoeffs=dist_coeffs,
-                    )
-                )
                 if (
                     charuco_corners is None
                     or charuco_ids is None
@@ -596,14 +592,12 @@ class CameraSystem:
 
                 rvec = None
                 tvec = None
-                retval, rvec, tvec = cv2.aruco.estimatePoseCharucoBoard(
-                    charuco_corners,
-                    charuco_ids,
-                    board,
-                    intrinsic,
-                    dist_coeffs,
-                    rvec=rvec,
-                    tvec=tvec,
+                retval, rvec, tvec = estimate_charuco_board_pose(
+                    charuco_corners=charuco_corners,
+                    charuco_ids=charuco_ids,
+                    board=board,
+                    camera_matrix=intrinsic,
+                    dist_coeffs=dist_coeffs,
                 )
                 if (not retval) or (rvec is None) or (tvec is None):
                     sample_failed = True
@@ -654,7 +648,11 @@ class CameraSystem:
 
                 if visualize:
                     calibration_vis = calibration_img.copy()
-                    cv2.aruco.drawDetectedMarkers(calibration_vis, corners, ids)
+                    cv2.aruco.drawDetectedMarkers(
+                        calibration_vis,
+                        marker_corners,
+                        marker_ids,
+                    )
                     cv2.aruco.drawDetectedCornersCharuco(
                         image=calibration_vis,
                         charucoCorners=charuco_corners.reshape(-1, 1, 2),

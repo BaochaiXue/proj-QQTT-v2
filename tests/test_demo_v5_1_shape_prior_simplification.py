@@ -62,6 +62,42 @@ def _frame0_request_with_isolated_object_outlier():
     )
 
 
+def _command_arg(command: list[str], flag: str) -> str:
+    return command[command.index(flag) + 1]
+
+
+def _command_module(command: list[str]) -> str:
+    return _command_arg(command, "-m")
+
+
+def _write_blank_image(path: Path, shape: tuple[int, ...]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(np.zeros(shape, dtype=np.uint8)).save(path)
+
+
+def _write_dummy_shape_prior_final_data(case: Path) -> None:
+    case.mkdir(parents=True, exist_ok=True)
+    with (case / "final_data.pkl").open("wb") as handle:
+        pickle.dump(
+            {
+                "surface_points": np.zeros((1, 3), dtype=np.float32),
+                "interior_points": np.ones((1, 3), dtype=np.float32),
+            },
+            handle,
+            protocol=pickle.HIGHEST_PROTOCOL,
+        )
+
+
+def _fake_segment_image_to_origin_rgba(calls: list[dict[str, object]] | None = None):
+    def fake_segment_image_to_origin_rgba(**kwargs):
+        if calls is not None:
+            calls.append(dict(kwargs))
+        _write_blank_image(Path(kwargs["output_path"]), (2, 2, 4))
+        return Path(kwargs["output_path"])
+
+    return fake_segment_image_to_origin_rgba
+
+
 class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
     def test_shape_prior_pipeline_modules_are_local_files(self) -> None:
         expected_files = (
@@ -255,39 +291,22 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
         commands: list[list[str]] = []
         segment_calls: list[dict[str, object]] = []
 
-        def arg_value(command: list[str], flag: str) -> str:
-            return command[command.index(flag) + 1]
-
         def fake_run_stage(command: list[str], *, env: dict[str, str]) -> float:
             del env
             commands.append(command)
-            module = command[command.index("-m") + 1]
+            module = _command_module(command)
             if module == "demo_v5_1.utils.image_upscale":
-                Image.fromarray(np.zeros((2, 2, 3), dtype=np.uint8)).save(
-                    arg_value(command, "--output_path")
+                _write_blank_image(
+                    Path(_command_arg(command, "--output_path")),
+                    (2, 2, 3),
                 )
             elif module == "demo_v5_1.shape_prior_sample":
-                case = Path(arg_value(command, "--base_path")) / arg_value(
+                case = Path(_command_arg(command, "--base_path")) / _command_arg(
                     command,
                     "--case_name",
                 )
-                with (case / "final_data.pkl").open("wb") as handle:
-                    pickle.dump(
-                        {
-                            "surface_points": np.zeros((1, 3), dtype=np.float32),
-                            "interior_points": np.ones((1, 3), dtype=np.float32),
-                        },
-                        handle,
-                        protocol=pickle.HIGHEST_PROTOCOL,
-                    )
+                _write_dummy_shape_prior_final_data(case)
             return float(len(commands))
-
-        def fake_segment_image_to_origin_rgba(**kwargs):
-            segment_calls.append(dict(kwargs))
-            Image.fromarray(np.zeros((2, 2, 4), dtype=np.uint8)).save(
-                kwargs["output_path"]
-            )
-            return Path(kwargs["output_path"])
 
         with tempfile.TemporaryDirectory() as tmpdir:
             client = shape_prior_warmup.ShapePriorLocalClient(
@@ -306,13 +325,13 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
                 mock.patch.object(
                     sam31_image_segmentation,
                     "segment_image_to_origin_rgba",
-                    side_effect=fake_segment_image_to_origin_rgba,
+                    side_effect=_fake_segment_image_to_origin_rgba(segment_calls),
                 ),
             ):
                 result = client.request_shape_prior(_frame0_request())
 
             self.assertTrue(result.ready)
-            modules = [command[command.index("-m") + 1] for command in commands]
+            modules = [_command_module(command) for command in commands]
             self.assertEqual(
                 [
                     "demo_v5_1.utils.image_upscale",
@@ -334,7 +353,7 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
             generate_command = commands[1]
             self.assertEqual(
                 str(Path(tmpdir) / "shape_prior_frame0" / "shape" / "masked_image.png"),
-                arg_value(generate_command, "--img_path"),
+                _command_arg(generate_command, "--img_path"),
             )
             self.assertFalse(
                 (Path(tmpdir) / "shape_prior_frame0" / "shape" / "sam3d_input_rgba.png")
@@ -526,6 +545,57 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
         self.assertEqual(2, error.exception.code)
         self.assertFalse(hasattr(parser.parse_args([]), "controller_instance_mode"))
 
+    def test_edgetam_mask_logit_threshold_cli_is_runtime_parameter(self) -> None:
+        from demo_v5_1 import main_data_processing
+
+        parser = main_data_processing.build_parser()
+        default_args = parser.parse_args([])
+        loose_args = parser.parse_args(["--edgetam-mask-logit-threshold", "-0.5"])
+
+        self.assertEqual(0.0, default_args.edgetam_mask_logit_threshold)
+        self.assertEqual(-0.5, loose_args.edgetam_mask_logit_threshold)
+
+        infinite_args = parser.parse_args(["--edgetam-mask-logit-threshold", "inf"])
+        with self.assertRaisesRegex(ValueError, "edgetam-mask-logit-threshold"):
+            main_data_processing.validate_args(infinite_args)
+
+    def test_edgetam_mask_logit_threshold_controls_binarization(self) -> None:
+        from demo_v5_1 import main_data_processing
+
+        output = argparse.Namespace(object_ids=[main_data_processing.OBJECT_ID])
+        post_masks = [
+            np.asarray(
+                [
+                    [-0.25, 0.0],
+                    [0.10, -0.75],
+                ],
+                dtype=np.float32,
+            )
+        ]
+
+        default_masks = main_data_processing.extract_object_masks_from_hf_output(
+            output,
+            post_masks,
+        )
+        loose_masks = main_data_processing.extract_object_masks_from_hf_output(
+            output,
+            post_masks,
+            mask_logit_threshold=-0.5,
+        )
+
+        self.assertTrue(
+            np.array_equal(
+                default_masks[main_data_processing.OBJECT_ID],
+                np.asarray([[False, False], [True, False]], dtype=bool),
+            )
+        )
+        self.assertTrue(
+            np.array_equal(
+                loose_masks[main_data_processing.OBJECT_ID],
+                np.asarray([[True, True], [True, False]], dtype=bool),
+            )
+        )
+
     def test_sam31_runtime_release_uses_named_module_api(self) -> None:
         main_warmup_source = (ROOT / "demo_v5_1" / "main_warmup.py").read_text(
             encoding="utf-8"
@@ -699,6 +769,190 @@ class DemoV51ShapePriorSimplificationTests(unittest.TestCase):
         self.assertFalse(hasattr(parsed, "shape_prior_device"))
         self.assertFalse(hasattr(parsed, "_".join(("optimization", "mode"))))
         self.assertFalse(hasattr(parsed, "_".join(("realtime", "phystwin", "root"))))
+
+
+class _FakePrewarmWorker:
+    """Stands in for a --wait-signal stage subprocess in orchestrator tests."""
+
+    def __init__(self, args: list[str], *, on_go=None) -> None:
+        self.args = list(args)
+        self.stdin = mock.Mock()
+        self.returncode: int | None = None
+        self.signals: list[str] = []
+        self._on_go = on_go
+        self.stdin.write.side_effect = self.signals.append
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def wait(self, timeout: float | None = None) -> int:
+        del timeout
+        if self._on_go is not None and "GO\n" in self.signals:
+            self._on_go()
+        self.returncode = 0
+        return 0
+
+    def terminate(self) -> None:
+        self.returncode = -15
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+
+class DemoV51ShapePriorPrewarmWorkerTests(unittest.TestCase):
+    def _client(self, tmpdir: str):
+        from demo_v5_1 import shape_prior_warmup
+
+        return shape_prior_warmup.ShapePriorLocalClient(
+            case_root=Path(tmpdir),
+            object_name="stuffed animal",
+            controller_name="hand",
+            points_npz=Path(tmpdir) / "points.npz",
+            sam31_device="cuda",
+        )
+
+    def test_prewarm_spawns_wait_signal_workers_and_close_reaps(self) -> None:
+        from demo_v5_1 import shape_prior_warmup
+
+        spawned: list[tuple[list[str], dict[str, str]]] = []
+
+        def fake_popen(command, *, cwd, env, stdin, text):
+            del cwd, stdin, text
+            spawned.append((list(command), dict(env)))
+            return _FakePrewarmWorker(command)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client = self._client(tmpdir)
+            with mock.patch.object(
+                shape_prior_warmup.subprocess, "Popen", side_effect=fake_popen
+            ):
+                client.prewarm()
+                client.prewarm()  # idempotent: must not respawn
+
+            self.assertEqual(3, len(spawned))
+            commands = client._stage_commands()
+            for stage, (command, env) in zip(
+                shape_prior_warmup.PREWARM_STAGES, spawned
+            ):
+                self.assertEqual([*commands[stage], "--wait-signal"], command)
+                self.assertEqual(
+                    client.cuda_visible_devices, env["CUDA_VISIBLE_DEVICES"]
+                )
+
+            workers = dict(client._prewarm_workers)
+            client.close()
+            self.assertEqual({}, client._prewarm_workers)
+            for worker in workers.values():
+                self.assertIn("EXIT\n", worker.signals)
+
+    def test_request_shape_prior_runs_prewarmed_workers(self) -> None:
+        from demo_v5_1 import sam31_image_segmentation
+        from demo_v5_1 import shape_prior_warmup
+
+        cold_commands: list[list[str]] = []
+
+        def fake_run_stage(command: list[str], *, env: dict[str, str]) -> float:
+            del env
+            cold_commands.append(command)
+            self.assertEqual("demo_v5_1.shape_prior_sample", _command_module(command))
+            case = Path(_command_arg(command, "--base_path")) / _command_arg(
+                command,
+                "--case_name",
+            )
+            _write_dummy_shape_prior_final_data(case)
+            return 1.0
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client = self._client(tmpdir)
+            commands = client._stage_commands()
+            shape_dir = Path(tmpdir) / "shape_prior_frame0" / "shape"
+
+            def write_high_resolution() -> None:
+                _write_blank_image(shape_dir / "high_resolution.png", (2, 2, 3))
+
+            workers = {
+                shape_prior_warmup.PREWARM_STAGE_UPSCALE: _FakePrewarmWorker(
+                    commands[shape_prior_warmup.PREWARM_STAGE_UPSCALE],
+                    on_go=write_high_resolution,
+                ),
+                shape_prior_warmup.PREWARM_STAGE_GENERATE: _FakePrewarmWorker(
+                    commands[shape_prior_warmup.PREWARM_STAGE_GENERATE]
+                ),
+                shape_prior_warmup.PREWARM_STAGE_ALIGN: _FakePrewarmWorker(
+                    commands[shape_prior_warmup.PREWARM_STAGE_ALIGN]
+                ),
+            }
+            client._prewarm_workers.update(workers)
+
+            with (
+                mock.patch.object(
+                    shape_prior_warmup,
+                    "_run_stage",
+                    side_effect=fake_run_stage,
+                ),
+                mock.patch.object(
+                    sam31_image_segmentation,
+                    "segment_image_to_origin_rgba",
+                    side_effect=_fake_segment_image_to_origin_rgba(),
+                ),
+            ):
+                result = client.request_shape_prior(_frame0_request())
+
+            self.assertTrue(result.ready)
+            # Only the sample stage remains a cold subprocess.
+            self.assertEqual(1, len(cold_commands))
+            self.assertEqual(
+                list(shape_prior_warmup.PREWARM_STAGES),
+                result.metadata["shape_prior_prewarmed_stages"],
+            )
+            self.assertEqual({}, client._prewarm_workers)
+            for worker in workers.values():
+                self.assertIn("GO\n", worker.signals)
+                worker.stdin.close.assert_called_once()
+
+    def test_request_fails_fast_when_prewarmed_worker_died(self) -> None:
+        from demo_v5_1 import sam31_image_segmentation
+        from demo_v5_1 import shape_prior_warmup
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            client = self._client(tmpdir)
+            dead = _FakePrewarmWorker(["upscale-cmd"])
+            dead.returncode = 3
+            client._prewarm_workers[shape_prior_warmup.PREWARM_STAGE_UPSCALE] = dead
+            with (
+                mock.patch.object(
+                    shape_prior_warmup,
+                    "_run_stage",
+                    side_effect=AssertionError("cold path must not run"),
+                ),
+                mock.patch.object(
+                    sam31_image_segmentation,
+                    "segment_image_to_origin_rgba",
+                    side_effect=AssertionError("segment must not run"),
+                ),
+                self.assertRaisesRegex(RuntimeError, "exited before GO"),
+            ):
+                client.request_shape_prior(_frame0_request())
+
+    def test_stage_prewarm_wait_for_go_protocol(self) -> None:
+        from demo_v5_1.utils import stage_prewarm
+
+        for stdin_text, expected_run in (("GO\n", True), ("EXIT\n", False), ("", False)):
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                mock.patch.object(stage_prewarm.sys, "stdin", io.StringIO(stdin_text)),
+            ):
+                self.assertIs(
+                    expected_run,
+                    stage_prewarm.wait_for_go("test-stage"),
+                )
+
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            mock.patch.object(stage_prewarm.sys, "stdin", io.StringIO("BOGUS\n")),
+            self.assertRaisesRegex(ValueError, "unexpected signal"),
+        ):
+            stage_prewarm.wait_for_go("test-stage")
 
 
 if __name__ == "__main__":

@@ -283,6 +283,15 @@ class TemporaryInvalidGateTests(unittest.TestCase):
 
 
 class MotionConsistencyTests(unittest.TestCase):
+    def test_origin_motion_consistency_keeps_tail_row_false(self) -> None:
+        window = _window(frame_count=4)
+        pts = np.asarray(window["object_points"], dtype=np.float32)
+        vis = np.asarray(window["object_visibilities"], dtype=bool)
+        motions_valid, _ = tracking.motion_consistency(
+            pts, vis, once_false_mask=False
+        )
+        self.assertFalse(bool(np.any(motions_valid[-1])))
+
     def test_divergent_motion_is_rejected_per_frame(self) -> None:
         frame_count = 3
         window = _window(frame_count=frame_count)
@@ -355,6 +364,35 @@ class CrossWindowTests(unittest.TestCase):
         )
         np.testing.assert_array_equal(
             result0["object_sample_query_ids"], result1["object_sample_query_ids"]
+        )
+
+    def test_published_motion_valid_marks_chunk_tail_valid(self) -> None:
+        runtime, result0 = self._init_runtime()
+        result1 = runtime.process_window(
+            _window(frame_count=4, shift_px_per_window=4)
+        )
+
+        for result in (result0, result1):
+            object_valid = np.asarray(result["object_motions_valid"], dtype=bool)
+            controller_valid = np.asarray(
+                result["controller_motions_valid"], dtype=bool
+            )
+            candidate_valid = np.asarray(
+                result["controller_candidate_motions_valid"], dtype=bool
+            )
+            self.assertTrue(bool(np.all(object_valid[-1])))
+            self.assertTrue(bool(np.all(controller_valid[-1])))
+            self.assertTrue(bool(np.all(candidate_valid[-1])))
+
+        self.assertTrue(
+            bool(np.all(np.asarray(result1["object_motions_valid"], dtype=bool)[0]))
+        )
+        self.assertTrue(
+            bool(
+                np.all(
+                    np.asarray(result1["controller_motions_valid"], dtype=bool)[0]
+                )
+            )
         )
 
     def test_rigid_recovery_fills_temporary_invalid_anchor(self) -> None:

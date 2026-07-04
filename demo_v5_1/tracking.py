@@ -699,7 +699,6 @@ class TrackingRuntime:
         # motion-gate failures are temporary_invalid, so their frames get a
         # rigid proxy value and must not read as visible.
         out_vis = np.ascontiguousarray(ctrl_usable[:, anchors], dtype=bool)
-        out_motions = np.ascontiguousarray(ctrl_motions_valid[:, anchors], dtype=bool)
         out_colors = np.ascontiguousarray(
             np.asarray(result["controller_colors"], dtype=np.float32)[:, anchors, :]
         )
@@ -720,6 +719,23 @@ class TrackingRuntime:
                 )
                 proxied[frame_idx, column] = True
 
+        published_object_motions_valid = np.ascontiguousarray(
+            object_motions_valid, dtype=bool
+        )
+        published_controller_candidate_motions_valid = np.ascontiguousarray(
+            ctrl_motions_valid, dtype=bool
+        )
+        if frame_count:
+            # Temporary publishing rule: origin motion validity is a forward
+            # t -> t+1 test, so an online chunk cannot test or later backfill
+            # its tail row. Publish that structural unknown as valid for now;
+            # visibility remains the separate direct-observation gate.
+            published_object_motions_valid[-1, :] = True
+            published_controller_candidate_motions_valid[-1, :] = True
+        published_controller_motions_valid = np.ascontiguousarray(
+            published_controller_candidate_motions_valid[:, anchors], dtype=bool
+        )
+
         # Phase 4 — publish: frozen-identity metadata plus this window's
         # values, re-indexed onto the anchor / object-column axes.
         controller_query_indices = np.asarray(
@@ -728,7 +744,7 @@ class TrackingRuntime:
         anchor_query_indices = controller_query_indices[anchors]
         # Candidate-axis diagnostics keep the pre-selection arrays inspectable.
         result["controller_candidate_motions_valid"] = np.ascontiguousarray(
-            ctrl_motions_valid, dtype=bool
+            published_controller_candidate_motions_valid, dtype=bool
         )
         result["controller_candidate_mask"] = np.ascontiguousarray(
             self._chunk0_controller_mask, dtype=bool
@@ -772,7 +788,7 @@ class TrackingRuntime:
         )
         result["object_visibilities"] = np.ascontiguousarray(obj_vis[:, cols])
         result["object_motions_valid"] = np.ascontiguousarray(
-            object_motions_valid[:, cols]
+            published_object_motions_valid[:, cols]
         )
         result["object_volume_sample_indices"] = np.ascontiguousarray(cols, dtype=np.int64)
         result["object_sample_indices"] = np.ascontiguousarray(cols, dtype=np.int64)
@@ -793,7 +809,7 @@ class TrackingRuntime:
         result["controller_points"] = out_points
         result["controller_colors"] = out_colors
         result["controller_visibilities"] = out_vis
-        result["controller_motions_valid"] = out_motions
+        result["controller_motions_valid"] = published_controller_motions_valid
         result["controller_proxied"] = proxied
         result["controller_mask"] = np.ascontiguousarray(
             self._chunk0_controller_mask, dtype=bool

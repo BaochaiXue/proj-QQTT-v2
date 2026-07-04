@@ -13,6 +13,8 @@ paths:
 input:
   # Input backend for the demo runner; fake-live replays prepared data as a live stream.
   input_source: "fake-live"
+  # Raw data_collect case used by fake-live replay when the CLI does not override it.
+  fake_live_case: "data_collect/sloth_both_eval_3min_e70_g60_20260621_202627"
   # Output metadata/window FPS used for replay-mode chunk math.
   replay_fps: 5.0
   # Default replay FPS used by the camera subprocess for fake-live input.
@@ -29,8 +31,8 @@ chunking:
 
 # Camera capture, depth, masks, and local model runtime.
 camera:
-  # Target camera capture frame rate.
-  camera_fps: 5
+  # RealSense live input FPS; replay_fps controls the 5 FPS output cadence.
+  camera_fps: 30
   # Allowed camera FPS choices exposed by the Demo v5.1 CLI/UI.
   camera_fps_choices: [5, 15, 30, 60]
   # Manual RealSense color exposure used by the camera process.
@@ -41,6 +43,8 @@ camera:
   case_prefix: "demo_v5_1"
   # Depth source used for realtime point cloud generation.
   depth_backend: "native-realsense"
+  # Logit threshold used to binarize EdgeTAM masks; lower values grow masks.
+  edgetam_mask_logit_threshold: 0
   # Radius, in meters, for mask point-cloud outlier filtering.
   mask_radius_outlier_radius_m: 0.01
   # Minimum neighbor count for mask point-cloud radius outlier filtering.
@@ -84,6 +88,8 @@ visualizer:
   visualizer_cam_idx: 0
   # Poll interval, in seconds, for visualizer data refresh.
   visualizer_poll_sec: 0.1
+  # Playback FPS used by the visualizer's final_data timeline.
+  visualizer_playback_fps: 5.2
   # Subsampling stride for object points in the viewer.
   visualizer_object_stride: 1
   # Render radius for object points in the viewer.

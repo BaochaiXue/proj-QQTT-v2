@@ -42,12 +42,19 @@ parser.add_argument(
     required=True,
     default="",
 )
+parser.add_argument(
+    "--wait-signal",
+    dest="wait_signal",
+    action="store_true",
+    help="Preload CUDA + SuperGlue, then block on stdin for GO before aligning.",
+)
 # Import-safe placeholder so the module can be imported without CLI args;
 # main() re-parses argv and rebinds these globals.
 args = Namespace(
     base_path="",
     case_name="",
     controller_name="",
+    wait_signal=False,
 )
 
 base_path = args.base_path
@@ -319,6 +326,20 @@ def line_point_distance(p, points):
     return cross_product / np.linalg.norm(p)
 
 
+def _prewarm_models():
+    """Initialize the CUDA context and load SuperGlue weights ahead of GO.
+
+    ``pose_selection_render_superglue`` -> ``image_pair_matching`` reuses the
+    cached model via ``get_matching_model`` defaults, so this only front-loads
+    checkpoint I/O and CUDA init; the compute path stays byte-identical.
+    """
+    if torch.cuda.is_available():
+        torch.zeros(1, device="cuda")
+    from demo_v5_1.shape_prior_match_pairs import get_matching_model  # noqa: PLC0415
+
+    get_matching_model()
+
+
 def main(argv=None):
     """Run the command-line entry point."""
     global args, base_path, case_name, CONTROLLER_NAME, output_dir
@@ -328,6 +349,13 @@ def main(argv=None):
     case_name = args.case_name
     CONTROLLER_NAME = args.controller_name
     output_dir = f"{base_path}/{case_name}/shape/matching"
+
+    if args.wait_signal:
+        from demo_v5_1.utils import stage_prewarm  # noqa: PLC0415
+
+        _prewarm_models()
+        if not stage_prewarm.wait_for_go("align"):
+            return
 
     existDir(output_dir)
 

@@ -2,6 +2,16 @@
 
 正式 Demo v5.1 的 EdgeTAM 是一个 streaming session 里追三个 obj_id：`hand_a`、`object`、`hand_b`。两个 hand id 分开由 EdgeTAM propagate；`controller` 在后续 PCD、TAPNext++、tracking 里仍然定义为 `hand_a | hand_b` 的 union。这个不是参数控制的模式，frame 0 必须能把 controller prompt 分成两只 hand，否则 fail fast。
 
+## warmup / 正式 chunk 两阶段时间线
+
+- warmup / shape-prior 阶段：只服务初始化和 shape prior 生成；左侧预览（input_frames.jsonl）持续显示；这个阶段处理过的帧**不进入**正式 final_data chunk 时间线（frames.jsonl 只写 warmup frame 0 这一行，其余帧照常喂 EdgeTAM/TAPNext++ 但不落 product 行）。
+- 正式 chunk 阶段：shape prior ready 之后，从当前第一帧起记为 output frame 1，直接拼接在 warmup frame 0 后面，此后每 35 帧生成一个 chunk。发布时间线按 `frame0=0.0s, frame1=0.2s, frame2=0.4s, ...`（frame_index × 1/fps）计；行里的 `source_timestamp_s`/`source_frame_index` 保留真实采集来源作为 provenance。
+- 依据操作员 hold-still 约定：warmup 期间手/controller/object 保持不动，因此 frame 0 与 frame 1 之间的接缝运动视为 0；等待期积压的历史帧不补处理。
+- shape prior 进入终态失败（failed/unavailable）时闸门解除，让 chunk bridge 的 shape-prior 错误路径正常报错，而不是让行流无声停滞。
+- 闸门自带 deadline：`--shape-prior-timeout-ms` 限定行流最多被扣留多久；超时后行流永久恢复，由 bridge 的 shape-prior 等待/失败路径响亮报错（防止 prior 子进程挂死导致无限静默停滞）。
+- warmup frame 0 的锚位只能由 chunk-ready 的行占据（controller ≥ 30 点、object > 0 点，与 bridge 的 `_row_ready_for_realtime_chunk_start` 一致）；实况相机在对齐 PCD 就绪前吐出的无效首帧照常写行、由 bridge 修剪，不触发闸门。
+- run 在闸门期内结束（prior 未就绪、正式时间线从未开始）时，收尾必须响亮报错并在 metadata 标记 `formal_timeline_incomplete`，绝不能以"成功零 chunk"收场。`--duration-s` 只计正式采集时段，不含闸门等待。
+
 在我们设计demo 5.1开始会建立一个总表，我们会用dictionary like的数据结构存储每一个controller point的最近的100 controler point。（如果不足则选满同一只手），你必须确保我们的每一个controller point的最近的100 controler point选择的时候都是在同一只手上
 我们会考虑二个大类3种情况。这里先把 invalid state 定义清楚：
 

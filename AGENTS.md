@@ -18,9 +18,11 @@ repo-wide default.
 - During Demo v5.1 shape-prior warmup the controller/hand and the object must
   stay still; the warmup frame-0 to frame-1 wall-clock gap is intentionally
   published as one uniform `1/fps` step and relies on this convention.
-- Demo v5.1 intentionally runs at 5 FPS (`replay_fps` / `camera_fps` in
-  `demo_v5_1/config/default.yaml`) on 30 FPS recordings; this is a deliberate
-  throughput choice, not a bug.
+- Demo v5.1 intentionally keeps its output/chunk timeline at 5 FPS
+  (`replay_fps` in `demo_v5_1/config/default.yaml`). Live RealSense capture
+  defaults to 30 FPS (`camera_fps`) and the strict 5 FPS runtime samples the
+  latest live input once every `1/replay_fps`; this is a deliberate throughput
+  choice, not a bug.
 
 ## File Map
 

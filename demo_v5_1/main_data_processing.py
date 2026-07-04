@@ -114,6 +114,7 @@ from services.ffs_remote.protocol import (  # noqa: E402
 )
 from demo_v5_1 import main_warmup  # noqa: E402
 from demo_v5_1 import shape_prior_warmup  # noqa: E402
+from demo_v5_1.tracking import CONTROLLER_FINAL_COUNT  # noqa: E402
 from demo_v5_1.main_warmup import InitialMaskBundle  # noqa: E402
 from data_process.depth_backends.ffs_defaults import (  # noqa: E402
     DEFAULT_FFS_MAX_DISP,
@@ -186,7 +187,7 @@ INPUT_SOURCE_LIVE = "live"
 INPUT_SOURCE_FAKE_LIVE = "fake-live"
 INPUT_SOURCE_RECORDING = "recording"
 INPUT_SOURCES = (INPUT_SOURCE_LIVE, INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_RECORDING)
-DEFAULT_FAKE_LIVE_CASE = Path("data_collect/sloth_both_eval_3min_e70_g60_20260621_202627")
+DEFAULT_FAKE_LIVE_CASE = Path("data_collect/stuffed_animal_hand_both_eval_5fps_normal")
 PCD_MODES = ("masked", "none")
 DEFAULT_PCD_MODE = "masked"
 RENDER_MODE_POINTCLOUD = "pointcloud"
@@ -251,6 +252,7 @@ DEFAULT_CONTROLLER_FILTER_MIN_RAW_RETAIN_RATIO = 0.5
 DEFAULT_FILTER_MAX_AGE_FRAMES = 3
 DEFAULT_LOSSLESS_CONTROLLER_FILTER_MIN_CAP = 2500
 DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES = 64
+DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD = 0.0
 DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES = 8
 HAND_A_ID = 1
 OBJECT_ID = 2
@@ -405,6 +407,43 @@ class FramePacket:
     source_timestamp_s: float | None = None
     source_frame_index: int | None = None
     source_step: int | None = None
+
+
+class LiveLatestFrameSampler:
+    """Sample the latest live camera frame on a fixed output cadence."""
+
+    def __init__(self, sample_fps: float) -> None:
+        """Initialize LiveLatestFrameSampler."""
+        fps = float(sample_fps)
+        if fps <= 0.0:
+            raise ValueError("live latest sampler FPS must be positive")
+        self.period_s = 1.0 / fps
+        self._next_sample_s: float | None = None
+        self._pending_packet: FramePacket | None = None
+
+    def start(self, *, first_publish_s: float) -> None:
+        """Start fixed-cadence sampling after the first published frame."""
+        self._next_sample_s = float(first_publish_s) + self.period_s
+        self._pending_packet = None
+
+    def put_latest(self, packet: FramePacket) -> None:
+        """Store the newest live input frame."""
+        if self._next_sample_s is None:
+            raise RuntimeError("live latest sampler must be started before use")
+        self._pending_packet = packet
+
+    def pop_due(self, *, now_s: float) -> tuple[FramePacket, float] | None:
+        """Return the pending packet if its fixed output tick is due."""
+        if self._next_sample_s is None:
+            return None
+        if self._pending_packet is None or float(now_s) < self._next_sample_s:
+            return None
+        packet = self._pending_packet
+        sample_s = self._next_sample_s
+        self._pending_packet = None
+        while self._next_sample_s <= float(now_s):
+            self._next_sample_s += self.period_s
+        return packet, sample_s
 
 
 @dataclass(frozen=True)
@@ -1014,6 +1053,29 @@ class TrackerMarkerPacket:
         return int(self.marker_xyz_m.shape[0])
 
 
+def _formal_chunk_rows_gated(*, warmup_anchor_written: bool, shape_prior_status: str) -> bool:
+    """design_spec.md warmup/formal timeline split.
+
+    Rows always write until a chunk-ready warmup anchor row has landed (live
+    RealSense can emit an invalid strict pair before color-aligned PCD is
+    ready; the bridge trims those, so they must not consume the frame-0
+    slot). After the anchor, frames processed while the shape prior is still
+    computing stay OUT of the formal final_data chunk timeline (they keep
+    feeding the trackers and the left preview, which pace by
+    input_frames.jsonl). The first frame after the prior is ready becomes
+    output frame 1, stitched directly after warmup frame 0 under the
+    operator hold-still convention. Terminal states (ready/disabled/failed)
+    lift the gate — a failed prior must surface through the chunk bridge's
+    shape-prior error path instead of silently stalling the row stream.
+    """
+    if not warmup_anchor_written:
+        return False
+    return str(shape_prior_status) in (
+        shape_prior_warmup.STATUS_PENDING,
+        shape_prior_warmup.STATUS_RUNNING,
+    )
+
+
 def _full_tracker_arrays_for_prepared_frame(packet: TrackerMarkerPacket) -> tuple[np.ndarray, np.ndarray]:
     """Return the full tracker arrays for prepared frame."""
     query_count = int(np.asarray(packet.query_points_yx, dtype=np.float32).reshape(-1, 2).shape[0])
@@ -1588,7 +1650,7 @@ class OrderedPacketQueue(Generic[PacketT]):
                 )
             if len(self._items) >= self.max_backlog_frames:
                 raise LosslessPipelineError(
-                    "lossless 5 FPS backlog exceeded "
+                    "lossless input FPS backlog exceeded "
                     f"stage={self.name} queue_len={len(self._items) + 1} "
                     f"max={self.max_backlog_frames} expected_seq={self._last_get_seq + 1} "
                     f"latest_seq={seq}"
@@ -1883,7 +1945,7 @@ class SameSeqPairer:
         """Check backlog locked."""
         if len(self._pending_pcd) > self.max_backlog_frames or len(self._pending_tracker) > self.max_backlog_frames:
             raise LosslessPipelineError(
-                "lossless 5 FPS backlog exceeded "
+                "lossless input FPS backlog exceeded "
                 f"stage=pairer expected_seq={self._expected_seq} "
                 f"pending_pcd={len(self._pending_pcd)} pending_tracker={len(self._pending_tracker)} "
                 f"max={self.max_backlog_frames}"
@@ -2001,7 +2063,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--lossless-max-backlog-seconds",
         type=float,
         default=DEFAULT_LOSSLESS_MAX_BACKLOG_SECONDS,
-        help="Maximum strict 5 FPS lossless replay backlog window before treating the run as stalled.",
+        help=(
+            "Maximum strict lossless input-FPS backlog window before treating "
+            "the run as stalled."
+        ),
     )
     parser.add_argument(
         "--lossless-input-fps",
@@ -2259,6 +2324,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(shape_prior_warmup=False)
     parser.add_argument(
+        "--shape-prior-prewarm-stage-workers",
+        dest="shape_prior_prewarm_stage_workers",
+        action="store_true",
+        help=(
+            "Spawn pre-warmed one-shot upscale/generate/align workers at boot "
+            "so shape-prior model loading happens before frame 0."
+        ),
+    )
+    parser.add_argument(
+        "--no-shape-prior-prewarm-stage-workers",
+        dest="shape_prior_prewarm_stage_workers",
+        action="store_false",
+        help="Load shape-prior stage models only when the frame-0 request runs.",
+    )
+    parser.set_defaults(shape_prior_prewarm_stage_workers=True)
+    parser.add_argument(
         "--shape-prior-timeout-ms",
         type=int,
         default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
@@ -2362,6 +2443,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES,
         help="Keep this many recent streamed EdgeTAM frames/outputs in live session state; 0 disables pruning.",
+    )
+    parser.add_argument(
+        "--edgetam-mask-logit-threshold",
+        type=float,
+        default=DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD,
+        help=(
+            "Logit threshold used to binarize EdgeTAM masks. "
+            "Lower values make masks more permissive."
+        ),
     )
     parser.add_argument(
         "--compile-mode",
@@ -2702,6 +2792,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--controller-pcd-mask-erode-pixels must be >= 0")
     if int(args.edgetam_live_session_keep_frames) < 0:
         raise ValueError("--edgetam-live-session-keep-frames must be >= 0")
+    if not np.isfinite(float(args.edgetam_mask_logit_threshold)):
+        raise ValueError("--edgetam-mask-logit-threshold must be finite")
     if int(args.render_max_points_per_layer) < 0:
         raise ValueError("--render-max-points-per-layer must be >= 0")
     if args.point_size <= 0:
@@ -2719,6 +2811,13 @@ def validate_args(args: argparse.Namespace) -> None:
         <= 0
     ):
         raise ValueError("--shape-prior-timeout-ms must be positive")
+    if bool(getattr(args, "shape_prior_warmup", False)) and not getattr(
+        args, "table_calibrate", None
+    ):
+        # Without the table world frame the frame-0 shape-prior request can
+        # never be built, so the prior would sit in 'pending' forever and the
+        # formal chunk timeline would never start.
+        raise ValueError("--shape-prior-warmup requires --table-calibrate")
     if bool(getattr(args, "enable_table_z_filter", False)) and bool(
         getattr(args, "disable_table_z_filter", False)
     ):
@@ -3268,7 +3367,12 @@ def active_object_ids(args: argparse.Namespace) -> list[int]:
     return list(active_object_id_labels(args).keys())
 
 
-def extract_object_masks_from_hf_output(output: Any, post_masks: Any) -> dict[int, np.ndarray]:
+def extract_object_masks_from_hf_output(
+    output: Any,
+    post_masks: Any,
+    *,
+    mask_logit_threshold: float = DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD,
+) -> dict[int, np.ndarray]:
     # HF EdgeTAM may hand back object ids as a torch tensor, ndarray, scalar, or list.
     """Extract object masks from HF output."""
     ids_value = getattr(output, "object_ids")
@@ -3291,7 +3395,9 @@ def extract_object_masks_from_hf_output(output: Any, post_masks: Any) -> dict[in
         array = np.squeeze(np.asarray(value))
         if array.ndim != 2:
             raise RuntimeError(f"expected 2D mask after squeeze, got {array.shape}")
-        masks[int(obj_id)] = np.ascontiguousarray(array > 0)
+        masks[int(obj_id)] = np.ascontiguousarray(
+            array > float(mask_logit_threshold)
+        )
     return masks
 
 
@@ -4174,6 +4280,11 @@ class MainDataProcessingDemo:
         self.headless_capture_writer: HeadlessCaptureWriter | None = None
         self.shape_prior_manager = self._create_shape_prior_manager()
         self._shape_prior_written = False
+        self._formal_timeline_gated_frames = 0
+        self._formal_timeline_metadata_written = False
+        self._warmup_anchor_row_written = False
+        self._formal_timeline_gate_started_s: float | None = None
+        self._formal_timeline_gate_expired = False
         self.table_c2w: np.ndarray | None = None
         self.table_calibration_path: Path | None = None
         self._recording_first_frame_segmented = threading.Event()
@@ -4239,6 +4350,8 @@ class MainDataProcessingDemo:
                 sam31_device=str(self.args.device),
                 reuse_sam31_model=True,
             )
+            if bool(getattr(self.args, "shape_prior_prewarm_stage_workers", False)):
+                client.prewarm()
         return shape_prior_warmup.ShapePriorWarmupManager(
             enabled=enabled,
             client=client,
@@ -4679,6 +4792,33 @@ class MainDataProcessingDemo:
         self.remote_quality_client = None
         self._run_deferred_shape_prior_after_teardown()
         self._write_shape_prior_profile_json()
+        if (
+            self.headless_capture_writer is not None
+            and self._formal_timeline_gated_frames > 0
+            and not self._formal_timeline_metadata_written
+        ):
+            # The run ended while formal rows were still gated on the shape
+            # prior: frames.jsonl holds only the warmup row and can never be
+            # chunked. Mark the capture and route the failure through the
+            # existing fatal-error path so the process exits nonzero.
+            error_message = (
+                "run ended while formal chunk rows were still gated on "
+                f"the shape prior ({self._formal_timeline_gated_frames} frames "
+                "withheld); the capture has no formal timeline and cannot be "
+                "chunked."
+            )
+            self.headless_capture_writer.update_metadata(
+                {
+                    "formal_timeline_incomplete": True,
+                    "formal_timeline_gated_frame_count": int(
+                        self._formal_timeline_gated_frames
+                    ),
+                }
+            )
+            self._record_fatal_worker_error(
+                "formal chunk timeline",
+                RuntimeError(error_message),
+            )
         self.headless_capture_writer = None
         if self.filter_worker is not None:
             self.filter_worker.stop()
@@ -4785,7 +4925,13 @@ class MainDataProcessingDemo:
                 if self.args.duration_s > 0:
                     now_s = time.perf_counter()
                     if self.headless_capture_writer is not None:
-                        if self.headless_capture_writer.saved_pcd_count <= 0:
+                        # --duration-s budgets the FORMAL capture: don't start
+                        # the clock before the first row, nor while rows are
+                        # gated on the shape-prior wait.
+                        if (
+                            self.headless_capture_writer.saved_pcd_count <= 0
+                            or self._headless_product_rows_gated()
+                        ):
                             time.sleep(0.05)
                             continue
                         if started_s is None:
@@ -5040,11 +5186,23 @@ class MainDataProcessingDemo:
         if _is_replay_input_source(str(self.args.input_source)):
             self._capture_recording_worker()
             return
-        seq = 0
-        lossless_task_period_s = 1.0 / self._lossless_input_fps()
-        next_lossless_task_s = 0.0
+        raw_seq = 0
+        output_seq = 0
+        live_sampler = (
+            LiveLatestFrameSampler(self._lossless_input_fps())
+            if self._lossless_enabled()
+            else None
+        )
         pipeline = self.runtime.pipeline
         align = self.runtime.align
+
+        def publish_output_packet(packet: FramePacket, *, record_s: float) -> None:
+            """Publish one live output packet with contiguous demo sequencing."""
+            nonlocal output_seq
+            output_packet = replace(packet, seq=output_seq)
+            self._publish_capture_packet(output_packet, record_s=float(record_s))
+            output_seq += 1
+
         while not self.stop_event.is_set():
             wait_start_s = time.perf_counter()
             try:
@@ -5054,6 +5212,13 @@ class MainDataProcessingDemo:
                     self._record_fatal_worker_error("RealSense capture", exc)
                 break
             receive_perf_s = time.perf_counter()
+            published_sample_before_current = False
+            if live_sampler is not None:
+                due_sample = live_sampler.pop_due(now_s=receive_perf_s)
+                if due_sample is not None:
+                    due_packet, sample_s = due_sample
+                    publish_output_packet(due_packet, record_s=sample_s)
+                    published_sample_before_current = True
             align_start_s = receive_perf_s
             if self.args.depth_source in {"ffs", "ffs_remote"}:
                 align_done_s = receive_perf_s
@@ -5087,8 +5252,6 @@ class MainDataProcessingDemo:
                 else:
                     ir_left_frame = None
                     ir_right_frame = None
-            if self._lossless_enabled() and seq > 0 and receive_perf_s < next_lossless_task_s:
-                continue
             copy_start_s = time.perf_counter()
             color_bgr = np.ascontiguousarray(np.asanyarray(color_frame.get_data()).copy())
             if self.args.depth_source in {"ffs", "ffs_remote"}:
@@ -5112,7 +5275,7 @@ class MainDataProcessingDemo:
                     ir_right_u8 = None
             copy_done_s = time.perf_counter()
             packet = FramePacket(
-                seq=seq,
+                seq=raw_seq,
                 color_bgr=color_bgr,
                 depth_source=str(self.args.depth_source),
                 intrinsics=self.runtime.intrinsics,
@@ -5131,16 +5294,26 @@ class MainDataProcessingDemo:
                 k_color=self.runtime.k_color,
                 ir_baseline_m=self.runtime.ir_baseline_m,
             )
-            self._publish_capture_packet(packet, record_s=copy_done_s)
-            if self._lossless_enabled():
-                if seq == 0 and self.args.track_mode != "none":
+            raw_seq += 1
+            if live_sampler is None:
+                publish_output_packet(packet, record_s=copy_done_s)
+                continue
+            if output_seq == 0:
+                publish_output_packet(packet, record_s=copy_done_s)
+                if self.args.track_mode != "none":
                     while not self.stop_event.is_set():
                         if self._recording_first_frame_segmented.wait(timeout=0.01):
                             break
                     if self.stop_event.is_set():
                         break
-                next_lossless_task_s = time.perf_counter() + lossless_task_period_s
-            seq += 1
+                live_sampler.start(first_publish_s=time.perf_counter())
+                continue
+            live_sampler.put_latest(packet)
+            if not published_sample_before_current:
+                due_sample = live_sampler.pop_due(now_s=copy_done_s)
+                if due_sample is not None:
+                    due_packet, sample_s = due_sample
+                    publish_output_packet(due_packet, record_s=sample_s)
         if self._lossless_enabled():
             self._lossless_capture_done.set()
             self.lossless_frame_queue.close()
@@ -5942,7 +6115,7 @@ class MainDataProcessingDemo:
                 if packet is None:
                     continue
                 self.tracker_marker_slot.put(packet)
-                if self.headless_capture_writer is not None:
+                if self.headless_capture_writer is not None and not self._headless_product_rows_gated():
                     self.headless_capture_writer.write_tracker(packet)
                 self.tracker_stats.record(packet.process_done_perf_s)
                 self._request_render_update()
@@ -6094,8 +6267,14 @@ class MainDataProcessingDemo:
             self._lossless_first_pair_published.set()
         if self.headless_capture_writer is not None:
             self._maybe_write_shape_prior_headless_result()
-            self.headless_capture_writer.write_tracker(tracker_packet)
-            self._write_headless_pcd_result(pcd_result, tracker_packet=tracker_packet)
+            # One gate decision per frame: the row and its query_trajectory
+            # sidecar must agree even if the prior flips ready mid-frame.
+            rows_gated = self._headless_product_rows_gated()
+            if not rows_gated:
+                self.headless_capture_writer.write_tracker(tracker_packet)
+            self._write_headless_pcd_result(
+                pcd_result, tracker_packet=tracker_packet, gated=rows_gated
+            )
         self._request_render_update()
         return pair
 
@@ -6394,7 +6573,11 @@ class MainDataProcessingDemo:
                 )[0],
                 sync_enabled=bool(self.args.profile_sync),
             )
-        masks_by_id = extract_object_masks_from_hf_output(output, post_masks)
+        masks_by_id = extract_object_masks_from_hf_output(
+            output,
+            post_masks,
+            mask_logit_threshold=float(self.args.edgetam_mask_logit_threshold),
+        )
         missing = [obj_id for obj_id in active_object_ids(self.args) if obj_id not in masks_by_id]
         if missing:
             raise RuntimeError(f"HF output missing tracked object ids: {missing}")
@@ -6821,16 +7004,89 @@ class MainDataProcessingDemo:
     # ------------------------------------------------------------------
     # PCD build: masked backprojection -> MaskedPcdPacket (+ headless writes)
     # ------------------------------------------------------------------
+    def _headless_product_rows_gated(self) -> bool:
+        """True while post-warmup frames must stay out of the chunk timeline.
+
+        The gate carries its own deadline: --shape-prior-timeout-ms bounds how
+        long formal rows may be withheld. On expiry rows resume so the chunk
+        bridge's shape-prior wait/failure path reports loudly, instead of the
+        row stream stalling silently on a hung prior.
+        """
+        writer = self.headless_capture_writer
+        if writer is None or self._formal_timeline_gate_expired:
+            return False
+        profile = self._shape_prior_profile()
+        gated = _formal_chunk_rows_gated(
+            warmup_anchor_written=self._warmup_anchor_row_written,
+            shape_prior_status=str(
+                profile.get("shape_prior_status", shape_prior_warmup.STATUS_DISABLED)
+            ),
+        )
+        if not gated:
+            return False
+        now_s = time.perf_counter()
+        if self._formal_timeline_gate_started_s is None:
+            self._formal_timeline_gate_started_s = now_s
+        timeout_ms = int(
+            getattr(
+                self.args,
+                "shape_prior_timeout_ms",
+                shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
+            )
+        )
+        if timeout_ms > 0 and (now_s - self._formal_timeline_gate_started_s) * 1000.0 >= float(timeout_ms):
+            self._formal_timeline_gate_expired = True
+            print(
+                "[WARN] shape prior still not ready after --shape-prior-timeout-ms="
+                f"{timeout_ms}; resuming formal chunk rows so the chunk bridge can "
+                "surface the shape-prior wait/failure loudly.",
+                flush=True,
+            )
+            return False
+        return True
+
     def _write_headless_pcd_result(
         self,
         result: PcdBuildResult,
         tracker_packet: TrackerMarkerPacket | None = None,
+        *,
+        gated: bool | None = None,
     ) -> None:
-        """Write headless PCD result."""
+        """Write headless PCD result.
+
+        ``gated`` lets callers that already consulted
+        :meth:`_headless_product_rows_gated` for this frame (to skip the
+        tracker sidecar) reuse that single decision — the shape-prior worker
+        flips the status asynchronously, so evaluating twice per frame could
+        write a row whose query_trajectory sidecar was skipped.
+        """
         if self.headless_capture_writer is None or result.depth_m is None:
             return
         if result.controller_pcd_mask is None or result.object_pcd_mask is None:
             return
+        if gated is None:
+            gated = self._headless_product_rows_gated()
+        if gated:
+            self._formal_timeline_gated_frames += 1
+            return
+        if self._formal_timeline_gated_frames and not self._formal_timeline_metadata_written:
+            # First formal frame after the shape-prior wait: record the seam so
+            # downstream tools can tell warmup frame 0 from output frame 1.
+            self.headless_capture_writer.update_metadata(
+                {
+                    "formal_timeline_gated_frame_count": int(self._formal_timeline_gated_frames),
+                    "formal_timeline_start_seq": int(result.packet.seq),
+                }
+            )
+            self._formal_timeline_metadata_written = True
+        if not self._warmup_anchor_row_written:
+            # Mirror chunk_data_stream._row_ready_for_realtime_chunk_start: only
+            # a chunk-ready row may claim the warmup frame-0 slot; invalid
+            # startup rows keep writing and are trimmed by the bridge.
+            self._warmup_anchor_row_written = (
+                int(result.packet.controller_point_count) >= CONTROLLER_FINAL_COUNT
+                and int(result.packet.object_point_count) > 0
+            )
         self.headless_capture_writer.write_pcd(
             result.packet,
             depth_m=result.depth_m,

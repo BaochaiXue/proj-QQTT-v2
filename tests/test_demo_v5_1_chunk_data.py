@@ -9,6 +9,9 @@ from unittest import mock
 import numpy as np
 
 
+TRACK_STATUS_SEQUENCE = ("normal", "invalid", "degraded")
+
+
 def _minimal_chunk_data_window(
     chunk_data_payload,
     *,
@@ -64,6 +67,64 @@ def _minimal_chunk_data_window(
             if source_frame_indices is None
             else source_frame_indices
         ),
+    )
+
+
+def _status_window_factory(
+    chunk_data_payload,
+):
+    next_chunk_index = 0
+
+    def fake_window(*args: object, **kwargs: object):
+        del args, kwargs
+        nonlocal next_chunk_index
+        chunk_index = next_chunk_index
+        next_chunk_index += 1
+        return _minimal_chunk_data_window(
+            chunk_data_payload,
+            chunk_index=chunk_index,
+            source_frame_indices=[chunk_index],
+            track_process_status=TRACK_STATUS_SEQUENCE[chunk_index],
+        )
+
+    return fake_window
+
+
+def _assert_status_stream_output(
+    test_case: unittest.TestCase,
+    *,
+    manifests: list[dict[str, object]],
+    callbacks: list[dict[str, object]],
+    root: Path,
+) -> None:
+    expected_chunk_count = len(TRACK_STATUS_SEQUENCE)
+    test_case.assertEqual(expected_chunk_count, len(manifests))
+    test_case.assertEqual(expected_chunk_count, len(callbacks))
+    test_case.assertEqual(
+        list(TRACK_STATUS_SEQUENCE),
+        [manifest["track_process_status"] for manifest in manifests],
+    )
+    test_case.assertEqual(
+        [False] * expected_chunk_count,
+        [manifest["online_publish_skipped"] for manifest in manifests],
+    )
+    skip_reasons = [
+        manifest for manifest in manifests if "online_publish_skip_reason" in manifest
+    ]
+    test_case.assertEqual([], skip_reasons)
+    test_case.assertEqual(
+        list(range(expected_chunk_count)),
+        [manifest["online_chunk_id"] for manifest in manifests],
+    )
+    for idx in range(expected_chunk_count):
+        test_case.assertTrue(
+            (root / "online_data" / "chunks" / f"chunk_{idx:06d}.pkl").is_file()
+        )
+    with (root / "data" / "final_data.pkl").open("rb") as handle:
+        static_data = pickle.load(handle)
+    test_case.assertEqual(
+        expected_chunk_count,
+        int(np.asarray(static_data["object_points"]).shape[0]),
     )
 
 
@@ -192,20 +253,12 @@ class DemoV51ChunkDataTest(unittest.TestCase):
         from demo_v5_1 import chunk_data_payload
         from demo_v5_1 import chunk_data_stream
 
-        statuses = iter(("normal", "invalid", "degraded"))
         callbacks: list[dict[str, object]] = []
-
-        def fake_window(*args: object, **kwargs: object):
-            return _minimal_chunk_data_window(
-                chunk_data_payload,
-                chunk_index=len(callbacks),
-                source_frame_indices=[len(callbacks)],
-                track_process_status=next(statuses),
-            )
+        fake_window = _status_window_factory(chunk_data_payload)
 
         rows = [
             {"seq": idx, "source_frame_index": idx, "source_timestamp_s": idx * 0.2}
-            for idx in range(3)
+            for idx in range(len(TRACK_STATUS_SEQUENCE))
         ]
         metadata = {
             "serial_numbers": ["test-camera"],
@@ -254,47 +307,23 @@ class DemoV51ChunkDataTest(unittest.TestCase):
                 )
 
             root = Path(tmpdir)
-            self.assertEqual(3, len(manifests))
-            self.assertEqual(3, len(callbacks))
-            self.assertEqual(
-                ["normal", "invalid", "degraded"],
-                [manifest["track_process_status"] for manifest in manifests],
+            _assert_status_stream_output(
+                self,
+                manifests=manifests,
+                callbacks=callbacks,
+                root=root,
             )
-            self.assertEqual(
-                [False, False, False],
-                [manifest["online_publish_skipped"] for manifest in manifests],
-            )
-            self.assertFalse(any("online_publish_skip_reason" in item for item in manifests))
-            self.assertEqual(
-                [0, 1, 2],
-                [manifest["online_chunk_id"] for manifest in manifests],
-            )
-            for idx in range(3):
-                self.assertTrue(
-                    (root / "online_data" / "chunks" / f"chunk_{idx:06d}.pkl").is_file()
-                )
-            with (root / "data" / "final_data.pkl").open("rb") as handle:
-                static_data = pickle.load(handle)
-            self.assertEqual(3, int(np.asarray(static_data["object_points"]).shape[0]))
 
     def test_live_stream_publishes_all_track_statuses(self) -> None:
         from demo_v5_1 import chunk_data_payload
         from demo_v5_1 import chunk_data_stream
 
-        statuses = iter(("normal", "invalid", "degraded"))
         callbacks: list[dict[str, object]] = []
-
-        def fake_window(*args: object, **kwargs: object):
-            return _minimal_chunk_data_window(
-                chunk_data_payload,
-                chunk_index=len(callbacks),
-                source_frame_indices=[len(callbacks)],
-                track_process_status=next(statuses),
-            )
+        fake_window = _status_window_factory(chunk_data_payload)
 
         rows = [
             {"seq": idx, "source_frame_index": idx, "source_timestamp_s": idx * 0.2}
-            for idx in range(3)
+            for idx in range(len(TRACK_STATUS_SEQUENCE))
         ]
         read_calls = 0
 
@@ -358,28 +387,12 @@ class DemoV51ChunkDataTest(unittest.TestCase):
                 )
 
             root = Path(tmpdir)
-            self.assertEqual(3, len(manifests))
-            self.assertEqual(3, len(callbacks))
-            self.assertEqual(
-                ["normal", "invalid", "degraded"],
-                [manifest["track_process_status"] for manifest in manifests],
+            _assert_status_stream_output(
+                self,
+                manifests=manifests,
+                callbacks=callbacks,
+                root=root,
             )
-            self.assertEqual(
-                [False, False, False],
-                [manifest["online_publish_skipped"] for manifest in manifests],
-            )
-            self.assertFalse(any("online_publish_skip_reason" in item for item in manifests))
-            self.assertEqual(
-                [0, 1, 2],
-                [manifest["online_chunk_id"] for manifest in manifests],
-            )
-            for idx in range(3):
-                self.assertTrue(
-                    (root / "online_data" / "chunks" / f"chunk_{idx:06d}.pkl").is_file()
-                )
-            with (root / "data" / "final_data.pkl").open("rb") as handle:
-                static_data = pickle.load(handle)
-            self.assertEqual(3, int(np.asarray(static_data["object_points"]).shape[0]))
 
     def test_warmup_trim_returns_delayed_source_frame_zero(self) -> None:
         from demo_v5_1 import chunk_data_stream
@@ -423,6 +436,168 @@ class DemoV51ChunkDataTest(unittest.TestCase):
             [0, 42, 43],
             [row["source_frame_index"] for row in result.rows],
         )
+
+    def test_warmup_trim_keeps_shape_prior_gated_timeline(self) -> None:
+        # design_spec.md warmup/formal split: the producer writes only warmup
+        # frame 0 during the shape-prior wait, so the first formal row jumps
+        # far ahead in source index and wall time. Frame 0 must stay first and
+        # nothing may be dropped.
+        from demo_v5_1 import chunk_data_stream
+
+        def _row(seq: int, source: int, ts: float, latency_ms: float) -> dict:
+            return {
+                "seq": seq,
+                "source_frame_index": source,
+                "source_timestamp_s": ts,
+                "startup_hold_s": 4.0,
+                "pipeline_latency_ms": latency_ms,
+                "controller_point_count": 30,
+                "object_point_count": 1,
+            }
+
+        result = chunk_data_stream._trim_warmup_delayed_rows(
+            [
+                _row(0, 0, 0.0, 17900.0),
+                _row(350, 395, 78.6, 220.0),
+                _row(351, 396, 78.8, 220.0),
+                _row(352, 397, 79.0, 220.0),
+            ]
+        )
+
+        self.assertEqual(0, result.skipped_count)
+        self.assertIsNotNone(result.warmup_row)
+        self.assertEqual(
+            [0, 395, 396, 397],
+            [row["source_frame_index"] for row in result.rows],
+        )
+
+    def test_formal_chunk_rows_gate_truth_table(self) -> None:
+        from demo_v5_1 import shape_prior_warmup
+        from demo_v5_1.main_data_processing import _formal_chunk_rows_gated
+
+        # Rows always write until a chunk-ready warmup anchor row has landed,
+        # whatever the prior status is (invalid startup rows must not gate).
+        for status in (
+            shape_prior_warmup.STATUS_DISABLED,
+            shape_prior_warmup.STATUS_PENDING,
+            shape_prior_warmup.STATUS_RUNNING,
+            shape_prior_warmup.STATUS_READY,
+            shape_prior_warmup.STATUS_FAILED,
+        ):
+            self.assertFalse(
+                _formal_chunk_rows_gated(
+                    warmup_anchor_written=False, shape_prior_status=status
+                ),
+                status,
+            )
+
+        # After the anchor, rows are held back only while the prior computes.
+        for status in (
+            shape_prior_warmup.STATUS_PENDING,
+            shape_prior_warmup.STATUS_RUNNING,
+        ):
+            self.assertTrue(
+                _formal_chunk_rows_gated(
+                    warmup_anchor_written=True, shape_prior_status=status
+                ),
+                status,
+            )
+        # Terminal states lift the gate: ready starts the formal timeline,
+        # disabled keeps the legacy ungated behavior, failed lets the chunk
+        # bridge surface its shape-prior error instead of stalling silently.
+        for status in (
+            shape_prior_warmup.STATUS_READY,
+            shape_prior_warmup.STATUS_DISABLED,
+            shape_prior_warmup.STATUS_FAILED,
+        ):
+            self.assertFalse(
+                _formal_chunk_rows_gated(
+                    warmup_anchor_written=True, shape_prior_status=status
+                ),
+                status,
+            )
+
+    def test_headless_gate_deadline_expires_and_stays_lifted(self) -> None:
+        # The demo-level gate enforces --shape-prior-timeout-ms: a prior stuck
+        # in 'running' may withhold rows only until the deadline, after which
+        # rows resume permanently so the bridge can fail loudly.
+        import time as time_module
+        from types import SimpleNamespace
+
+        from demo_v5_1.main_data_processing import MainDataProcessingDemo
+
+        stub = SimpleNamespace(
+            headless_capture_writer=SimpleNamespace(saved_pcd_count=1),
+            args=SimpleNamespace(shape_prior_timeout_ms=50),
+            _warmup_anchor_row_written=True,
+            _formal_timeline_gate_started_s=None,
+            _formal_timeline_gate_expired=False,
+            _shape_prior_profile=lambda: {"shape_prior_status": "running"},
+        )
+        gated = MainDataProcessingDemo._headless_product_rows_gated
+        self.assertTrue(gated(stub))
+        # Simulate the deadline having passed.
+        stub._formal_timeline_gate_started_s = time_module.perf_counter() - 1.0
+        self.assertFalse(gated(stub))
+        self.assertTrue(stub._formal_timeline_gate_expired)
+        # Expiry is permanent even though the prior is still 'running'.
+        self.assertFalse(gated(stub))
+
+    def test_incomplete_formal_timeline_records_fatal_error(self) -> None:
+        import threading
+        from types import SimpleNamespace
+
+        from demo_v5_1.main_data_processing import MainDataProcessingDemo
+
+        metadata_updates: list[dict[str, object]] = []
+        stop_event = threading.Event()
+        stub = SimpleNamespace(
+            stop_event=stop_event,
+            _close_lossless_queues=lambda: None,
+            _threads=[],
+            runtime=None,
+            recording_source=None,
+            ffs_remote_client=None,
+            remote_quality_client=None,
+            _run_deferred_shape_prior_after_teardown=lambda: None,
+            _write_shape_prior_profile_json=lambda: None,
+            headless_capture_writer=SimpleNamespace(
+                update_metadata=metadata_updates.append,
+            ),
+            _formal_timeline_gated_frames=3,
+            _formal_timeline_metadata_written=False,
+            _fatal_error_lock=threading.Lock(),
+            _fatal_error=None,
+            _request_render_update=lambda: None,
+            filter_worker=None,
+            _local_ffs_lock=threading.Lock(),
+            _local_ffs_depth_cache={},
+        )
+        stub._record_fatal_worker_error = (  # type: ignore[attr-defined]
+            MainDataProcessingDemo._record_fatal_worker_error.__get__(
+                stub,
+                type(stub),
+            )
+        )
+
+        MainDataProcessingDemo.stop(stub)
+
+        self.assertTrue(stop_event.is_set())
+        self.assertEqual(
+            [
+                {
+                    "formal_timeline_incomplete": True,
+                    "formal_timeline_gated_frame_count": 3,
+                }
+            ],
+            metadata_updates,
+        )
+        fatal = MainDataProcessingDemo._fatal_error_snapshot(stub)
+        self.assertIsNotNone(fatal)
+        assert fatal is not None
+        self.assertEqual("formal chunk timeline", fatal.stage)
+        self.assertEqual("RuntimeError", fatal.exc_type)
+        self.assertIn("no formal timeline", fatal.message)
 
     def test_warmup_frame_is_first_frame_of_chunk_zero(self) -> None:
         from demo_v5_1 import chunk_data_output

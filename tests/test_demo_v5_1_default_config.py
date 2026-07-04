@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+import numpy as np
 import yaml
 
 
@@ -333,6 +334,190 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
         self.assertNotIn("--shape-prior-endpoint", command)
         self.assertNotIn("--shape-prior-device", command)
 
+    def test_visualizer_playback_fps_is_independent_from_replay_fps(self) -> None:
+        from demo_v5_1 import main as runner
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parsed = runner.build_parser().parse_args(["--base-path", tmpdir])
+            command = runner.build_visualizer_command(parsed)
+
+        fps_index = command.index("--fps") + 1
+        self.assertEqual("5.2", command[fps_index])
+        self.assertEqual(5.0, parsed.replay_fps)
+        self.assertEqual(5.2, parsed.visualizer_playback_fps)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parsed = runner.build_parser().parse_args(
+                [
+                    "--base-path",
+                    tmpdir,
+                    "--visualizer-playback-fps",
+                    "5.3",
+                ]
+            )
+            command = runner.build_visualizer_command(parsed)
+
+        fps_index = command.index("--fps") + 1
+        self.assertEqual("5.3", command[fps_index])
+        self.assertEqual(5.0, parsed.replay_fps)
+
+        invalid_args = runner.build_parser().parse_args(
+            ["--visualizer-playback-fps", "0"]
+        )
+        with self.assertRaisesRegex(ValueError, "visualizer-playback-fps"):
+            runner.validate_runtime_args(invalid_args, chunk_frame_count=1)
+
+    def test_edgetam_mask_logit_threshold_is_passed_to_runtime(self) -> None:
+        from demo_v5_1 import main as runner
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parsed = runner.build_parser().parse_args(
+                [
+                    "--base-path",
+                    tmpdir,
+                    "--case-prefix",
+                    "loose_edgetam",
+                    "--edgetam-mask-logit-threshold",
+                    "-0.5",
+                ]
+            )
+            command = runner.build_main_data_processing_command(
+                parsed,
+                capture_dir=Path(tmpdir) / "capture",
+                profile_json=Path(tmpdir) / "shape_prior_profile.json",
+                chunk_frame_count=1,
+            )
+
+        self.assertEqual(-0.5, parsed.edgetam_mask_logit_threshold)
+        self.assertIn("--edgetam-mask-logit-threshold", command)
+        threshold_index = command.index("--edgetam-mask-logit-threshold") + 1
+        self.assertEqual("-0.5", command[threshold_index])
+
+        infinite_args = runner.build_parser().parse_args(
+            ["--edgetam-mask-logit-threshold", "inf"]
+        )
+        with self.assertRaisesRegex(ValueError, "edgetam-mask-logit-threshold"):
+            runner.validate_runtime_args(infinite_args, chunk_frame_count=1)
+
+    def test_fake_live_case_default_is_loaded_from_yaml(self) -> None:
+        from demo_v5_1 import main as runner
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parsed = runner.build_parser().parse_args(
+                [
+                    "--base-path",
+                    tmpdir,
+                    "--case-prefix",
+                    "yaml_fake_live",
+                ]
+            )
+            command = runner.build_main_data_processing_command(
+                parsed,
+                capture_dir=Path(tmpdir) / "capture",
+                profile_json=Path(tmpdir) / "shape_prior_profile.json",
+                chunk_frame_count=1,
+            )
+
+        self.assertEqual(runner.DEFAULT_FAKE_LIVE_CASE, parsed.fake_live_case)
+        self.assertFalse(parsed.fake_live_case_cli_override)
+        self.assertIn("--fake-live-case", command)
+        case_index = command.index("--fake-live-case") + 1
+        self.assertEqual(str(runner.DEFAULT_FAKE_LIVE_CASE), command[case_index])
+
+    def test_fake_live_case_live_mode_boundary(self) -> None:
+        from demo_v5_1 import main as runner
+
+        parser = runner.build_parser()
+        live_default = parser.parse_args(["--input-source", "live"])
+        runner.validate_runtime_args(live_default, chunk_frame_count=1)
+        live_command = runner.build_main_data_processing_command(
+            live_default,
+            capture_dir=Path("capture"),
+            profile_json=Path("shape_prior_profile.json"),
+            chunk_frame_count=1,
+        )
+        self.assertNotIn("--fake-live-case", live_command)
+
+        live_explicit = parser.parse_args(
+            [
+                "--input-source",
+                "live",
+                "--fake-live-case",
+                "data_collect/sloth_both_eval_3min_e70_g60_20260621_202627",
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "--fake-live-case"):
+            runner.validate_runtime_args(live_explicit, chunk_frame_count=1)
+
+    def test_live_camera_default_captures_30fps_for_5fps_output(self) -> None:
+        from demo_v5_1 import main as runner
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parsed = runner.build_parser().parse_args(
+                [
+                    "--input-source",
+                    "live",
+                    "--base-path",
+                    tmpdir,
+                    "--case-prefix",
+                    "live_30fps_input",
+                ]
+            )
+            command = runner.build_main_data_processing_command(
+                parsed,
+                capture_dir=Path(tmpdir) / "capture",
+                profile_json=Path(tmpdir) / "shape_prior_profile.json",
+                chunk_frame_count=1,
+            )
+
+        self.assertEqual(30, parsed.camera_fps)
+        self.assertEqual(5.0, parsed.replay_fps)
+        fps_index = command.index("--fps") + 1
+        replay_index = command.index("--replay-fps") + 1
+        self.assertEqual("30", command[fps_index])
+        self.assertEqual("5.0", command[replay_index])
+
+    def test_live_latest_sampler_uses_latest_input_at_fixed_ticks(self) -> None:
+        from demo_v5_1.main_data_processing import (
+            FramePacket,
+            LiveLatestFrameSampler,
+            PipelineTiming,
+        )
+        from demo_v5_1.utils.camera import CameraIntrinsics
+
+        def make_packet(seq: int) -> FramePacket:
+            return FramePacket(
+                seq=seq,
+                color_bgr=np.zeros((2, 2, 3), dtype=np.uint8),
+                depth_source="none",
+                intrinsics=CameraIntrinsics(fx=1.0, fy=1.0, cx=0.0, cy=0.0),
+                depth_scale_m_per_unit=0.001,
+                receive_perf_s=100.0 + float(seq) / 30.0,
+                timing=PipelineTiming(),
+            )
+
+        sampler = LiveLatestFrameSampler(5.0)
+        sampler.start(first_publish_s=100.0)
+
+        sampler.put_latest(make_packet(1))
+        self.assertIsNone(sampler.pop_due(now_s=100.18))
+        sampler.put_latest(make_packet(2))
+        due = sampler.pop_due(now_s=100.205)
+        self.assertIsNotNone(due)
+        assert due is not None
+        packet, sample_s = due
+        self.assertEqual(2, packet.seq)
+        self.assertAlmostEqual(100.2, sample_s)
+
+        sampler.put_latest(make_packet(3))
+        sampler.put_latest(make_packet(4))
+        due = sampler.pop_due(now_s=100.401)
+        self.assertIsNotNone(due)
+        assert due is not None
+        packet, sample_s = due
+        self.assertEqual(4, packet.seq)
+        self.assertAlmostEqual(100.4, sample_s)
+
     def test_dry_run_contract_preserves_warmup_and_viewer_defaults(self) -> None:
         from demo_v5_1 import main as runner
 
@@ -441,6 +626,10 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
         )
         self.assertEqual(defaults["input"]["input_source"], runner.DEFAULT_INPUT_SOURCE)
         self.assertEqual(
+            Path(defaults["input"]["fake_live_case"]),
+            runner.DEFAULT_FAKE_LIVE_CASE,
+        )
+        self.assertEqual(
             float(defaults["input"]["replay_fps"]), runner.DEFAULT_REPLAY_FPS
         )
         self.assertEqual(
@@ -473,6 +662,10 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
         self.assertEqual(defaults["camera"]["case_prefix"], runner.DEFAULT_CASE_PREFIX)
         self.assertEqual(
             defaults["camera"]["depth_backend"], runner.DEFAULT_DEPTH_BACKEND
+        )
+        self.assertEqual(
+            float(defaults["camera"]["edgetam_mask_logit_threshold"]),
+            runner.DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD,
         )
         self.assertIsNone(runner.DEFAULT_MAX_CHUNKS)
         self.assertEqual(
@@ -610,6 +803,10 @@ class DemoV51DefaultConfigTest(unittest.TestCase):
         self.assertEqual(
             float(defaults["visualizer"]["visualizer_poll_sec"]),
             runner.DEFAULT_VISUALIZER_POLL_SEC,
+        )
+        self.assertEqual(
+            float(defaults["visualizer"]["visualizer_playback_fps"]),
+            runner.DEFAULT_VISUALIZER_PLAYBACK_FPS,
         )
         self.assertEqual(
             int(defaults["visualizer"]["visualizer_object_stride"]),
