@@ -336,6 +336,21 @@ class Chunk0SelectionTests(unittest.TestCase):
         self.assertEqual(str(result["track_process_status"]), "normal")
         self.assertFalse(bool(result["controller_proxied"].any()))
 
+    def test_chunk0_selection_includes_borrow_row_strictness(self) -> None:
+        frame_count = 4
+        query_count = len(OBJECT_PATCH_YX) + len(CONTROLLER_PATCH_YX)
+        flaky_query = len(OBJECT_PATCH_YX) + 7
+        visibility = np.ones((frame_count, query_count), dtype=bool)
+        # Invisible ONLY at the borrow row: the once-fail selection filter
+        # runs over the extended window, so the candidate must be excluded.
+        visibility[3, flaky_query] = False
+        window = _window(frame_count=frame_count, visibility_override=visibility)
+        result = _runtime().process_window(window, lookahead_frames=1)
+        controller_query_indices = np.asarray(window["controller_query_indices"])
+        flaky_candidate = int(np.flatnonzero(controller_query_indices == flaky_query)[0])
+        self.assertNotIn(flaky_candidate, result["controller_final_indices"].tolist())
+        self.assertEqual(int(np.asarray(result["controller_points"]).shape[0]), 3)
+
     def test_too_few_survivors_raises(self) -> None:
         frame_count = 3
         query_count = len(OBJECT_PATCH_YX) + len(CONTROLLER_PATCH_YX)
@@ -366,32 +381,61 @@ class CrossWindowTests(unittest.TestCase):
             result0["object_sample_query_ids"], result1["object_sample_query_ids"]
         )
 
-    def test_published_motion_valid_marks_chunk_tail_valid(self) -> None:
-        runtime, result0 = self._init_runtime()
-        result1 = runtime.process_window(
-            _window(frame_count=4, shift_px_per_window=4)
+    def test_lookahead_gives_tail_row_a_real_motion_verdict(self) -> None:
+        runtime, _result0 = self._init_runtime()
+        # Extended window: 3 published rows + 1 borrow row, all static and
+        # visible — the published tail row is really tested and passes.
+        result1 = runtime.process_window(_window(frame_count=4), lookahead_frames=1)
+        object_valid = np.asarray(result1["object_motions_valid"], dtype=bool)
+        controller_valid = np.asarray(result1["controller_motions_valid"], dtype=bool)
+        candidate_valid = np.asarray(
+            result1["controller_candidate_motions_valid"], dtype=bool
         )
-
-        for result in (result0, result1):
-            object_valid = np.asarray(result["object_motions_valid"], dtype=bool)
-            controller_valid = np.asarray(
-                result["controller_motions_valid"], dtype=bool
+        # Borrow rows never reach ANY published time-axis array.
+        for key in (
+            "object_points",
+            "object_colors",
+            "object_visibilities",
+            "object_motions_valid",
+            "controller_points",
+            "controller_colors",
+            "controller_visibilities",
+            "controller_motions_valid",
+            "controller_proxied",
+            "controller_candidate_motions_valid",
+            "controller_raw_points",
+            "controller_raw_visible",
+            "controller_processed_mask_valid",
+            "controller_depth_valid",
+            "controller_measurement_valid",
+        ):
+            self.assertEqual(
+                int(np.asarray(result1[key]).shape[0]), 3, f"unsliced key: {key}"
             )
-            candidate_valid = np.asarray(
-                result["controller_candidate_motions_valid"], dtype=bool
-            )
-            self.assertTrue(bool(np.all(object_valid[-1])))
-            self.assertTrue(bool(np.all(controller_valid[-1])))
-            self.assertTrue(bool(np.all(candidate_valid[-1])))
+        self.assertTrue(bool(np.all(object_valid[-1])))
+        self.assertTrue(bool(np.all(controller_valid[-1])))
+        self.assertTrue(bool(np.all(candidate_valid[-1])))
+        self.assertFalse(bool(np.any(np.asarray(result1["controller_proxied"]))))
 
-        self.assertTrue(
-            bool(np.all(np.asarray(result1["object_motions_valid"], dtype=bool)[0]))
+    def test_terminal_window_tail_keeps_origin_end_semantics(self) -> None:
+        runtime, _result0 = self._init_runtime()
+        # No borrow row (capture end): the tail row is unknown, not failed —
+        # origin's end-of-sequence semantics, no proxying, values stay direct.
+        result1 = runtime.process_window(_window(frame_count=3))
+        self.assertFalse(
+            bool(np.any(np.asarray(result1["object_motions_valid"], dtype=bool)[-1]))
+        )
+        self.assertFalse(
+            bool(
+                np.any(np.asarray(result1["controller_motions_valid"], dtype=bool)[-1])
+            )
+        )
+        self.assertFalse(
+            bool(np.any(np.asarray(result1["controller_proxied"], dtype=bool)[-1]))
         )
         self.assertTrue(
             bool(
-                np.all(
-                    np.asarray(result1["controller_motions_valid"], dtype=bool)[0]
-                )
+                np.all(np.asarray(result1["controller_visibilities"], dtype=bool)[-1])
             )
         )
 
@@ -490,33 +534,38 @@ class CrossWindowTests(unittest.TestCase):
             atol=1e-5,
         )
 
-    def test_chunk_boundary_jump_is_caught_by_seam_carry(self) -> None:
+    def test_boundary_jump_is_caught_in_publishing_chunk_tail(self) -> None:
         runtime, result0 = self._init_runtime()
         anchors = np.asarray(result0["controller_final_indices"])
-        anchor_column = None
-        for column, candidate in enumerate(anchors.tolist()):
-            if CONTROLLER_PATCH_YX[candidate][1] <= 23:
-                anchor_column = column
-                break
-        self.assertIsNotNone(anchor_column)
-        jump_candidate = int(anchors[anchor_column])
-        jump_query = len(OBJECT_PATCH_YX) + jump_candidate
+        anchor_column = 0
+        jump_query = len(OBJECT_PATCH_YX) + int(anchors[anchor_column])
 
-        # The anchor jumps 6 px between window 0 and window 1 and then stays
-        # static inside the cluster. Within window 1 its motion is zero and
-        # consistent, so only the carried seam test can catch the jump.
-        frame_count = 3
+        # Extended window: 3 published rows + 1 borrow row. The anchor jumps
+        # 6 px (24 mm) exactly at the borrow row while its neighbors stay
+        # still — a chunk-boundary jump. Origin marks the earlier frame, so
+        # the publishing chunk's tail row must fail motion and get proxied.
+        frame_count = 4
         window1 = _window(
             frame_count=frame_count,
-            pixel_offsets={
-                frame: {jump_query: (0.0, 6.0)} for frame in range(frame_count)
-            },
+            pixel_offsets={3: {jump_query: (0.0, 6.0)}},
         )
-        result1 = runtime.process_window(window1)
+        result1 = runtime.process_window(window1, lookahead_frames=1)
         proxied = np.asarray(result1["controller_proxied"], dtype=bool)
-        self.assertTrue(bool(proxied[0, anchor_column]))
-        self.assertFalse(bool(proxied[1, anchor_column]))
+        motions = np.asarray(result1["controller_motions_valid"], dtype=bool)
+        self.assertEqual(proxied.shape[0], 3)
+        self.assertTrue(bool(proxied[2, anchor_column]))
+        self.assertFalse(bool(motions[2, anchor_column]))
+        self.assertFalse(
+            bool(result1["controller_visibilities"][2, anchor_column])
+        )
         self.assertEqual(str(result1["track_process_status"]), "degraded")
+        # Static donors give an identity rigid fit at the tail row.
+        first_point = np.asarray(result0["controller_points"])[0, anchor_column]
+        np.testing.assert_allclose(
+            np.asarray(result1["controller_points"])[2, anchor_column],
+            first_point,
+            atol=1e-5,
+        )
 
     def test_object_frames_without_observation_stay_unsynthesized(self) -> None:
         runtime, result0 = self._init_runtime()

@@ -404,10 +404,6 @@ class TrackingRuntime:
         self._object_column_indices: np.ndarray | None = None
         self._query_ids: np.ndarray | None = None
         self._query_semantic_labels: np.ndarray | None = None
-        self._carry_object_points: np.ndarray | None = None
-        self._carry_object_vis: np.ndarray | None = None
-        self._carry_controller_points: np.ndarray | None = None
-        self._carry_controller_vis: np.ndarray | None = None
 
     @property
     def initialized(self) -> bool:
@@ -612,21 +608,42 @@ class TrackingRuntime:
         *,
         surface_points: np.ndarray | None = None,
         interior_points: np.ndarray | None = None,
+        lookahead_frames: int = 0,
     ) -> dict[str, np.ndarray]:
-        """Run the per-window state machine and return track_process arrays."""
+        """Run the per-window state machine and return track_process arrays.
+
+        ``window`` may carry ``lookahead_frames`` extra rows at the tail (the
+        next window's first row(s), the "borrow" frames). Motion consistency
+        — including the chunk-0 once-fail selection filter — is computed over
+        the extended window so every published row, the tail included, gets a
+        real forward-motion verdict. Published outputs are sliced back to the
+        window rows; borrow data never reaches published arrays. With
+        ``lookahead_frames=0`` (capture end / offline tail) the last row
+        publishes origin's end-of-sequence semantics
+        (``motions_valid = False``).
+        """
         result = {key: np.asarray(value).copy() for key, value in window.items()}
-        # Point arrays are (T, N, 3) world-frame meters; visibility masks are
-        # (T, N) bool on the same window-frame x query axes.
+        # Point arrays are (T_ext, N, 3) world-frame meters; visibility masks
+        # are (T_ext, N) bool on the same extended-window-frame x query axes.
         obj_points = np.asarray(result["object_points"], dtype=np.float32)
         obj_vis = np.asarray(result["object_visibilities"], dtype=bool)
         ctrl_points = np.asarray(result["controller_points"], dtype=np.float32)
         ctrl_vis = np.asarray(result["controller_visibilities"], dtype=bool)
-        frame_count = int(ctrl_points.shape[0])
+        extended_count = int(ctrl_points.shape[0])
+        lookahead = int(lookahead_frames)
+        if lookahead < 0 or lookahead >= max(1, extended_count):
+            raise ValueError(
+                "lookahead_frames must be >= 0 and smaller than the extended "
+                f"window; got {lookahead} of {extended_count} frames"
+            )
+        frame_count = extended_count - lookahead
 
-        # Phase 1 — motion gates. Chunk 0 runs the origin whole-window gates
-        # and freezes session identity; later windows verify the frozen query
-        # schema and extend the motion test across the chunk seam.
-        ctrl_seam_failed = np.zeros((int(ctrl_points.shape[1]),), dtype=bool)
+        # Phase 1 — motion gates over the extended window. Chunk 0 runs the
+        # origin whole-window gates and freezes session identity; later
+        # windows verify the frozen query schema. The borrow row makes the
+        # tail-row motion (window last -> next window first) a real test in
+        # the publishing chunk, which is origin's own indexing for boundary
+        # jumps.
         if not self.initialized:
             object_motions_valid, _ = motion_consistency(
                 obj_points, obj_vis, once_false_mask=False
@@ -647,37 +664,12 @@ class TrackingRuntime:
                     "controller candidate count changed across chunks; session "
                     "query schema is frozen"
                 )
-            assert self._carry_object_points is not None
-            assert self._carry_object_vis is not None
-            assert self._carry_controller_points is not None
-            assert self._carry_controller_vis is not None
-            # Origin tests every consecutive frame pair. Prepending the
-            # previous window's last frame closes the chunk-boundary blind
-            # spot: the seam motion (previous last -> this frame 0) is tested
-            # here, while the seam row itself belongs to the already-published
-            # previous window and is dropped from this window's outputs.
-            obj_ext_pts = np.concatenate(
-                [self._carry_object_points[None], obj_points], axis=0
+            object_motions_valid, _ = motion_consistency(
+                obj_points, obj_vis, once_false_mask=False
             )
-            obj_ext_vis = np.concatenate(
-                [self._carry_object_vis[None], obj_vis], axis=0
+            ctrl_motions_valid, _ = motion_consistency(
+                ctrl_points, ctrl_vis, once_false_mask=False
             )
-            omv_ext, _ = motion_consistency(
-                obj_ext_pts, obj_ext_vis, once_false_mask=False
-            )
-            object_motions_valid = omv_ext[1:]
-            ctrl_ext_pts = np.concatenate(
-                [self._carry_controller_points[None], ctrl_points], axis=0
-            )
-            ctrl_ext_vis = np.concatenate(
-                [self._carry_controller_vis[None], ctrl_vis], axis=0
-            )
-            cmv_ext, _ = motion_consistency(
-                ctrl_ext_pts, ctrl_ext_vis, once_false_mask=False
-            )
-            ctrl_motions_valid = cmv_ext[1:]
-            seam_tested = self._carry_controller_vis & ctrl_vis[0]
-            ctrl_seam_failed = seam_tested & ~cmv_ext[0]
 
         assert self._anchor_indices is not None
         assert self._object_column_indices is not None
@@ -685,28 +677,32 @@ class TrackingRuntime:
 
         # Phase 2 — mark temporary_invalid frames.
         # design_spec.md temporary_invalid: no direct observation this frame.
-        # The motion term only applies where forward motion was testable; a
-        # seam-motion failure marks this window's frame 0.
+        # The motion term only applies where forward motion was testable; the
+        # published tail row is testable exactly when a borrow row is present.
         ctrl_motion_failed = _motion_failed_mask(ctrl_vis, ctrl_motions_valid)
-        if frame_count:
-            ctrl_motion_failed[0] |= ctrl_seam_failed
         ctrl_usable = ctrl_vis & ~ctrl_motion_failed
 
         anchors = self._anchor_indices
         anchor_count = int(anchors.shape[0])
-        out_points = np.ascontiguousarray(ctrl_points[:, anchors, :], dtype=np.float32)
+        out_points = np.ascontiguousarray(
+            ctrl_points[:frame_count, anchors, :], dtype=np.float32
+        )
         # Published visibility means "this value is a direct measurement":
         # motion-gate failures are temporary_invalid, so their frames get a
         # rigid proxy value and must not read as visible.
-        out_vis = np.ascontiguousarray(ctrl_usable[:, anchors], dtype=bool)
+        out_vis = np.ascontiguousarray(ctrl_usable[:frame_count, anchors], dtype=bool)
         out_colors = np.ascontiguousarray(
-            np.asarray(result["controller_colors"], dtype=np.float32)[:, anchors, :]
+            np.asarray(result["controller_colors"], dtype=np.float32)[
+                :frame_count, anchors, :
+            ]
         )
-        # Phase 3 — recovery loop. Each temporarily-invalid anchor frame is
-        # filled with a rigid proxy from currently-valid donors (first-frame
-        # -> current-frame registration applied to the anchor's first-frame
-        # position); when even the fallback donor ladder is too thin,
-        # _recover_anchor raises TrackingRecoveryError and the window aborts.
+        # Phase 3 — recovery loop over the published rows only (borrow rows
+        # are re-processed as the next window's first frames). Each
+        # temporarily-invalid anchor frame is filled with a rigid proxy from
+        # currently-valid donors (first-frame -> current-frame registration
+        # applied to the anchor's first-frame position); when even the
+        # fallback donor ladder is too thin, _recover_anchor raises
+        # TrackingRecoveryError and the window aborts.
         proxied = np.zeros((frame_count, anchor_count), dtype=bool)
         for frame_idx in range(frame_count):
             invalid_columns = np.flatnonzero(~ctrl_usable[frame_idx, anchors])
@@ -719,19 +715,15 @@ class TrackingRuntime:
                 )
                 proxied[frame_idx, column] = True
 
+        # With a borrow row the published tail carries a real forward-motion
+        # verdict; without one (capture end) it stays False — origin's
+        # end-of-sequence semantics.
         published_object_motions_valid = np.ascontiguousarray(
-            object_motions_valid, dtype=bool
+            object_motions_valid[:frame_count], dtype=bool
         )
         published_controller_candidate_motions_valid = np.ascontiguousarray(
-            ctrl_motions_valid, dtype=bool
+            ctrl_motions_valid[:frame_count], dtype=bool
         )
-        if frame_count:
-            # Temporary publishing rule: origin motion validity is a forward
-            # t -> t+1 test, so an online chunk cannot test or later backfill
-            # its tail row. Publish that structural unknown as valid for now;
-            # visibility remains the separate direct-observation gate.
-            published_object_motions_valid[-1, :] = True
-            published_controller_candidate_motions_valid[-1, :] = True
         published_controller_motions_valid = np.ascontiguousarray(
             published_controller_candidate_motions_valid[:, anchors], dtype=bool
         )
@@ -776,17 +768,17 @@ class TrackingRuntime:
         object_sample_query_ids = object_query_indices[cols]
         object_status = np.asarray(
             [
-                "direct" if bool(np.any(obj_vis[:, int(col)])) else "missing"
+                "direct" if bool(np.any(obj_vis[:frame_count, int(col)])) else "missing"
                 for col in cols
             ],
             dtype="<U8",
         )
 
-        result["object_points"] = np.ascontiguousarray(obj_points[:, cols, :])
+        result["object_points"] = np.ascontiguousarray(obj_points[:frame_count, cols, :])
         result["object_colors"] = np.ascontiguousarray(
-            np.asarray(result["object_colors"], dtype=np.float32)[:, cols, :]
+            np.asarray(result["object_colors"], dtype=np.float32)[:frame_count, cols, :]
         )
-        result["object_visibilities"] = np.ascontiguousarray(obj_vis[:, cols])
+        result["object_visibilities"] = np.ascontiguousarray(obj_vis[:frame_count, cols])
         result["object_motions_valid"] = np.ascontiguousarray(
             published_object_motions_valid[:, cols]
         )
@@ -829,11 +821,17 @@ class TrackingRuntime:
         result["track_process_status"] = np.asarray(
             TRACK_STATUS_DEGRADED if bool(np.any(proxied)) else TRACK_STATUS_NORMAL
         )
-        # Phase 5 — carry the last raw frame so the next window can test the
-        # seam motion (this window's last frame -> next window's frame 0).
-        if frame_count:
-            self._carry_object_points = obj_points[-1].copy()
-            self._carry_object_vis = obj_vis[-1].copy()
-            self._carry_controller_points = ctrl_points[-1].copy()
-            self._carry_controller_vis = ctrl_vis[-1].copy()
+        # Candidate-axis raw diagnostics pass through from the window copy;
+        # slice off the borrow rows so no published array carries them.
+        for raw_key in (
+            "controller_raw_points",
+            "controller_raw_visible",
+            "controller_processed_mask_valid",
+            "controller_depth_valid",
+            "controller_measurement_valid",
+        ):
+            if raw_key in result:
+                result[raw_key] = np.ascontiguousarray(
+                    np.asarray(result[raw_key])[:frame_count]
+                )
         return result

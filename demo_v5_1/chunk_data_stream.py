@@ -79,14 +79,19 @@ def _relative_wall_s(origin_s: float) -> float:
 def _complete_chunk_backlog(
     frames_path: Path, *, chunk_size: int, published_chunk_count: int
 ) -> int:
-    """Count fully captured but not-yet-published chunks (manifest telemetry)."""
+    """Count fully captured but not-yet-published chunks (manifest telemetry).
+
+    A window is publishable once its borrow row (the next window's first
+    row) exists, so the newest full-but-borrowless window does not count as
+    backlog while the capture is still running.
+    """
     if int(chunk_size) <= 0:
         return 0
     row_count = 0
     if frames_path.is_file():
         with frames_path.open("r", encoding="utf-8") as handle:
             row_count = sum(1 for line in handle if line.strip())
-    return max(0, row_count // int(chunk_size) - int(published_chunk_count))
+    return max(0, max(0, row_count - 1) // int(chunk_size) - int(published_chunk_count))
 
 
 def _optional_int(value: Any) -> int | None:
@@ -757,12 +762,15 @@ def _chunk_data_window_from_rows(
     mask_radius_outlier_nb_points: int,
     tracking_runtime: tracking.TrackingRuntime | None = None,
     session_query_schema: dict[str, np.ndarray] | None = None,
+    lookahead_rows: Sequence[Mapping[str, Any]] = (),
 ) -> ChunkDataWindow:
     """Materialize a chunk from legacy row artifacts.
 
     This path is kept for older captures that did not write prepared data_process
     frame NPZs. New realtime runs usually use ``_chunk_data_window_from_prepared_frames``
     to avoid rebuilding dense PCD and masks from separate files.
+    ``lookahead_rows`` are borrow frames: they extend the motion-consistency
+    domain but are excluded from the published window.
     """
     c2w = _camera_to_world(metadata)
     intrinsics = _intrinsics_matrix(metadata)
@@ -774,7 +782,7 @@ def _chunk_data_window_from_rows(
     visibility: list[np.ndarray] = []
     query_points_yx: np.ndarray | None = None
 
-    for row in rows:
+    for row in list(rows) + list(lookahead_rows):
         rgb = np.asarray(
             Image.open(capture_dir / str(row["rgb_path"])).convert("RGB"),
             dtype=np.uint8,
@@ -860,6 +868,7 @@ def _chunk_data_window_from_rows(
         track_input,
         surface_points=surface_points,
         interior_points=interior_points,
+        lookahead_frames=len(lookahead_rows),
     )
 
     return ChunkDataWindow(
@@ -905,13 +914,16 @@ def _chunk_data_window_from_prepared_frames(
     chunk_index: int,
     tracking_runtime: tracking.TrackingRuntime | None = None,
     session_query_schema: dict[str, np.ndarray] | None = None,
+    lookahead_frames: Sequence[strict.PreparedPhysTwinFrame] = (),
 ) -> ChunkDataWindow:
     """Materialize a chunk from prepared per-frame NPZ payloads.
 
     This is the current v5.1 realtime path. The camera process already wrote
     RGB, masks, dense world PCD, tracks, visibility, and query points for the
     same source frame, so this function only enforces shared queries and runs
-    the design_spec.md tracking state machine.
+    the design_spec.md tracking state machine. ``lookahead_frames`` are borrow
+    frames: they extend the motion-consistency domain but are excluded from
+    the published window.
     """
     if not frames:
         raise ValueError("prepared data_process chunk requires at least one frame")
@@ -931,7 +943,7 @@ def _chunk_data_window_from_prepared_frames(
     pcd_colors: list[np.ndarray] = []
     source_frame_indices: list[int] = []
 
-    for frame in frames:
+    for frame in list(frames) + list(lookahead_frames):
         queries = np.asarray(frame.query_points_yx, dtype=np.float32).reshape(-1, 2)
         if queries.shape != first_queries.shape or not np.allclose(
             queries, first_queries
@@ -950,6 +962,8 @@ def _chunk_data_window_from_prepared_frames(
         )
         pcd_points.append(np.ascontiguousarray(frame.pcd_points, dtype=np.float32))
         pcd_colors.append(np.ascontiguousarray(frame.pcd_colors, dtype=np.uint8))
+
+    for frame in frames:
         source_frame_indices.append(
             int(
                 frame.source_frame_index
@@ -982,6 +996,7 @@ def _chunk_data_window_from_prepared_frames(
         track_input,
         surface_points=surface_points,
         interior_points=interior_points,
+        lookahead_frames=len(lookahead_frames),
     )
 
     return ChunkDataWindow(
@@ -1027,14 +1042,26 @@ def _write_chunk_from_rows(
     tracking_runtime: tracking.TrackingRuntime | None = None,
     session_query_schema: dict[str, np.ndarray] | None = None,
     warmup_skipped_rows: int = 0,
+    lookahead_rows: Sequence[Mapping[str, Any]] = (),
+    lookahead_prepared: Sequence[strict.PreparedPhysTwinFrame | None] = (),
 ) -> dict[str, Any]:
-    """Materialize one final_data window and optionally commit it online."""
+    """Materialize one final_data window and optionally commit it online.
+
+    ``lookahead_rows``/``lookahead_prepared`` carry the borrow frame(s) —
+    normally the next window's first row — so the published tail row gets a
+    real motion verdict. Without them (capture end) the tail row publishes
+    origin's end-of-sequence semantics.
+    """
     chunk_name = f"{case_prefix}_online_chunk_{chunk_index:04d}"
     source_window_start_s = float(row_start) / float(fps)
     source_window_end_s = float(row_end) / float(fps)
     materialize_start_wall_s = _relative_wall_s(float(wall_time_origin_s))
     prepared = list(prepared_frames or [])
     prepared_count = sum(1 for frame in prepared if frame is not None)
+    lookahead_row_list = list(lookahead_rows or ())
+    lookahead_prepared_list = [
+        frame for frame in (lookahead_prepared or ()) if frame is not None
+    ]
     if prepared and len(prepared) == len(rows) and prepared_count == len(rows):
         # Prepared frames are the realtime path: RGB, masks, dense world PCD,
         # full tracks, visibility, and query points are already synchronized by
@@ -1043,6 +1070,13 @@ def _write_chunk_from_rows(
         # reprocessing because the camera process already emitted the
         # data_process_pcd.py, data_process_mask.py, and cotracker-equivalent
         # per-frame products.
+        # The borrow frame is used only when its prepared payload is complete;
+        # otherwise the window falls back to end-of-sequence tail semantics.
+        prepared_lookahead = (
+            lookahead_prepared_list
+            if len(lookahead_prepared_list) == len(lookahead_row_list)
+            else []
+        )
         chunk = _chunk_data_window_from_prepared_frames(
             metadata,
             [frame for frame in prepared if frame is not None],
@@ -1053,9 +1087,11 @@ def _write_chunk_from_rows(
             chunk_index=chunk_index,
             tracking_runtime=tracking_runtime,
             session_query_schema=session_query_schema,
+            lookahead_frames=prepared_lookahead,
         )
         materialization_source = "prepared_data_process_frame"
         legacy_reprocess_count = 0
+        motion_lookahead_frames = len(prepared_lookahead)
     else:
         # Fallback for historical captures where Demo v5.1 has to reconstruct
         # the strict product from image/depth/mask/trajectory sidecar files.
@@ -1073,9 +1109,11 @@ def _write_chunk_from_rows(
             mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
             tracking_runtime=tracking_runtime,
             session_query_schema=session_query_schema,
+            lookahead_rows=lookahead_row_list,
         )
         materialization_source = "legacy_reprocess"
         legacy_reprocess_count = len(rows)
+        motion_lookahead_frames = len(lookahead_row_list)
     track_finalize_done_wall_s = max(
         _relative_wall_s(float(wall_time_origin_s)), window_closed_wall_s
     )
@@ -1123,6 +1161,7 @@ def _write_chunk_from_rows(
             "chunk_materialization_source": materialization_source,
             "prepared_frame_count": int(prepared_count),
             "legacy_reprocess_frame_count": int(legacy_reprocess_count),
+            "motion_lookahead_frames": int(motion_lookahead_frames),
         }
     )
     manifest.update(track_fields)
@@ -1246,6 +1285,14 @@ def write_chunk_data_from_headless_capture(
         if len(row_buffer) < chunk_size:
             continue
         window_closed_wall_s = _relative_wall_s(float(wall_time_origin_s))
+        # Borrow frame: the next row in the completed capture, when present.
+        # The exact-multiple tail window publishes end-of-sequence semantics.
+        lookahead_rows: list[dict[str, Any]] = []
+        lookahead_prepared: list[strict.PreparedPhysTwinFrame | None] = []
+        if row_idx + 1 < len(rows_to_process):
+            borrow_row = rows_to_process[row_idx + 1]
+            lookahead_rows = [borrow_row]
+            lookahead_prepared = [_prepared_frame_from_row(capture, borrow_row)]
         try:
             manifest = _write_chunk_from_rows(
                 capture=capture,
@@ -1278,6 +1325,8 @@ def write_chunk_data_from_headless_capture(
                 tracking_runtime=tracking_runtime,
                 session_query_schema=session_query_schema,
                 warmup_skipped_rows=warmup_skipped_rows,
+                lookahead_rows=lookahead_rows,
+                lookahead_prepared=lookahead_prepared,
             )
         except Exception:
             # design_spec.md failures (controller selection / recovery) abort
@@ -1345,7 +1394,9 @@ def stream_chunk_data_from_headless_capture(
     write_online_output: bool = True,
     online_case_name: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Tail a live headless capture and publish chunks as windows close."""
+    """Tail a live headless capture and publish each closed window once its
+    borrow row (the next window's first row) arrives; at capture end the
+    final full window flushes without a borrow row."""
     capture = Path(capture_dir)
     if int(chunk_frame_count) <= 0:
         raise ValueError("chunk_frame_count must be positive")
@@ -1382,6 +1433,71 @@ def stream_chunk_data_from_headless_capture(
     # conversion so chunk N+1 continues the identity frozen by chunk 0.
     tracking_runtime = tracking.TrackingRuntime()
     session_query_schema: dict[str, np.ndarray] = {}
+    # A full window is held pending until its borrow row (the next window's
+    # first row) arrives, so the published tail row carries a real motion
+    # verdict. This trades one output frame of publish latency; steady-state
+    # throughput is unchanged. At capture end the pending window flushes
+    # without a borrow row (origin end-of-sequence tail semantics) — the
+    # final full window is never dropped.
+    pending_window: dict[str, Any] | None = None
+
+    def _materialize_pending(
+        pending: dict[str, Any],
+        lookahead_rows: list[dict[str, Any]],
+        lookahead_prepared: list[strict.PreparedPhysTwinFrame | None],
+    ) -> dict[str, Any]:
+        latest_metadata, shape_surface, shape_interior = _shape_points_for_chunk(
+            capture,
+            surface_points=surface_points,
+            interior_points=interior_points,
+            require_shape_prior=bool(require_shape_prior),
+            shape_prior_wait_timeout_s=float(shape_prior_wait_timeout_s),
+            capture_finished=capture_finished,
+            before_poll=before_poll,
+            poll_interval_s=float(poll_interval_s),
+        )
+        try:
+            return _write_chunk_from_rows(
+                capture=capture,
+                metadata=latest_metadata,
+                rows=pending["rows"],
+                case_prefix=case_prefix,
+                chunk_index=int(pending["chunk_index"]),
+                row_start=int(pending["row_start"]),
+                row_end=int(pending["row_end"]),
+                fps=int(fps),
+                serial_number=serial_number,
+                surface_points=shape_surface,
+                interior_points=shape_interior,
+                mask_radius_outlier_filter=bool(mask_radius_outlier_filter),
+                mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
+                mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
+                wall_time_origin_s=wall_time_origin_s,
+                window_closed_wall_s=float(pending["window_closed_wall_s"]),
+                prepared_frames=pending["prepared"],
+                backlog_chunks=(
+                    lambda path=frames_path,
+                    size=chunk_size,
+                    published=int(pending["chunk_index"]) + 1: _complete_chunk_backlog(
+                        path,
+                        chunk_size=size,
+                        published_chunk_count=published,
+                    )
+                ),
+                online_writer=online_writer,
+                tracking_runtime=tracking_runtime,
+                session_query_schema=session_query_schema,
+                warmup_skipped_rows=warmup_start_filter.skipped_rows,
+                lookahead_rows=lookahead_rows,
+                lookahead_prepared=lookahead_prepared,
+            )
+        except Exception:
+            # design_spec.md failures (controller selection / recovery)
+            # abort the stream; leave a terminal manifest instead of
+            # "recording".
+            if online_writer is not None:
+                online_writer.finish(status="failed")
+            raise
 
     while True:
         if max_chunks is not None and len(manifests) >= int(max_chunks):
@@ -1396,77 +1512,48 @@ def stream_chunk_data_from_headless_capture(
             capture_finished=bool(capture_finished()),
         )
         for row in rows:
+            prepared_row = _prepared_frame_from_row(capture, row)
+            if pending_window is not None:
+                # This row is the pending window's borrow frame — and also
+                # the first row of the next window below.
+                manifest = _materialize_pending(pending_window, [row], [prepared_row])
+                pending_window = None
+                manifests.append(manifest)
+                if on_chunk_written is not None:
+                    on_chunk_written(manifest)
+                chunk_index += 1
+                if max_chunks is not None and len(manifests) >= int(max_chunks):
+                    break
             # A chunk closes strictly by row count. Shape-prior readiness and
-            # final_data materialization are handled after this window boundary
-            # so source pacing remains tied to the camera/fake-camera stream.
+            # final_data materialization are handled at borrow-row arrival so
+            # source pacing remains tied to the camera/fake-camera stream.
             row_buffer.append(row)
-            prepared_buffer.append(_prepared_frame_from_row(capture, row))
+            prepared_buffer.append(prepared_row)
             next_row_idx += 1
             if len(row_buffer) < chunk_size:
                 continue
-            window_closed_wall_s = _relative_wall_s(float(wall_time_origin_s))
-            latest_metadata, shape_surface, shape_interior = _shape_points_for_chunk(
-                capture,
-                surface_points=surface_points,
-                interior_points=interior_points,
-                require_shape_prior=bool(require_shape_prior),
-                shape_prior_wait_timeout_s=float(shape_prior_wait_timeout_s),
-                capture_finished=capture_finished,
-                before_poll=before_poll,
-                poll_interval_s=float(poll_interval_s),
-            )
-            try:
-                manifest = _write_chunk_from_rows(
-                    capture=capture,
-                    metadata=latest_metadata,
-                    rows=row_buffer,
-                    case_prefix=case_prefix,
-                    chunk_index=chunk_index,
-                    row_start=row_start,
-                    row_end=next_row_idx,
-                    fps=int(fps),
-                    serial_number=serial_number,
-                    surface_points=shape_surface,
-                    interior_points=shape_interior,
-                    mask_radius_outlier_filter=bool(mask_radius_outlier_filter),
-                    mask_radius_outlier_radius_m=float(mask_radius_outlier_radius_m),
-                    mask_radius_outlier_nb_points=int(mask_radius_outlier_nb_points),
-                    wall_time_origin_s=wall_time_origin_s,
-                    window_closed_wall_s=window_closed_wall_s,
-                    prepared_frames=prepared_buffer,
-                    backlog_chunks=(
-                        lambda path=frames_path,
-                        size=chunk_size,
-                        published=chunk_index + 1: _complete_chunk_backlog(
-                            path,
-                            chunk_size=size,
-                            published_chunk_count=published,
-                        )
-                    ),
-                    online_writer=online_writer,
-                    tracking_runtime=tracking_runtime,
-                    session_query_schema=session_query_schema,
-                    warmup_skipped_rows=warmup_start_filter.skipped_rows,
-                )
-            except Exception:
-                # design_spec.md failures (controller selection / recovery)
-                # abort the stream; leave a terminal manifest instead of
-                # "recording".
-                if online_writer is not None:
-                    online_writer.finish(status="failed")
-                raise
-            manifests.append(manifest)
-            if on_chunk_written is not None:
-                on_chunk_written(manifest)
-            chunk_index += 1
+            pending_window = {
+                "rows": row_buffer,
+                "prepared": prepared_buffer,
+                "chunk_index": chunk_index,
+                "row_start": row_start,
+                "row_end": next_row_idx,
+                "window_closed_wall_s": _relative_wall_s(float(wall_time_origin_s)),
+            }
             row_start = next_row_idx
             row_buffer = []
             prepared_buffer = []
-            if max_chunks is not None and len(manifests) >= int(max_chunks):
-                break
         if max_chunks is not None and len(manifests) >= int(max_chunks):
             break
         if capture_finished() and not saw_new_rows:
+            if pending_window is not None:
+                # Terminal flush: no successor row will arrive.
+                manifest = _materialize_pending(pending_window, [], [])
+                pending_window = None
+                manifests.append(manifest)
+                if on_chunk_written is not None:
+                    on_chunk_written(manifest)
+                chunk_index += 1
             break
         time.sleep(max(0.0, float(poll_interval_s)))
     if online_writer is not None:
