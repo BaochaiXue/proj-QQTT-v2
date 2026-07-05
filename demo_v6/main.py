@@ -449,9 +449,10 @@ def build_parser() -> argparse.ArgumentParser:
         dest="asap_augment",
         action="store_true",
         help=(
-            "Rewrite published object_points as [filled object points, "
-            "deformed shape-prior surface points, deformed interior points] "
-            "via live ASAP mesh deformation (design_spec_v6.md)."
+            "Fill invalid object_points in place and publish deformed "
+            "shape-prior trajectories as asap_surface_points/"
+            "asap_interior_points via live ASAP mesh deformation "
+            "(design_spec_v6.md)."
         ),
     )
     parser.add_argument(

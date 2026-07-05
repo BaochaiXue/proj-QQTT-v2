@@ -1101,9 +1101,10 @@ def _write_chunk_from_rows(
     real motion verdict. Without them (capture end) the tail row publishes
     origin's end-of-sequence semantics.
 
-    ``asap_runtime`` (design_spec_v6.md) rewrites the published object arrays
-    as ``[filled object points, deformed surface points, deformed interior
-    points]`` before payload assembly.
+    ``asap_runtime`` (design_spec_v6.md) fills invalid ``object_points``
+    entries in place and publishes deformed shape-prior trajectories as
+    dedicated ``asap_surface_points`` / ``asap_interior_points`` keys before
+    payload assembly.
     """
     chunk_name = f"{case_prefix}_online_chunk_{chunk_index:04d}"
     source_window_start_s = float(row_start) / float(fps)
@@ -1194,8 +1195,9 @@ def _write_chunk_from_rows(
     track_finalize_done_wall_s = max(
         _relative_wall_s(float(wall_time_origin_s)), window_closed_wall_s
     )
-    # Track manifest fields describe the REAL tracking output, so they are
-    # computed before ASAP widens the object arrays with prior columns.
+    # Track manifest fields describe the REAL tracking output, so compute them
+    # before ASAP fills invalid object entries and attaches dedicated
+    # shape-prior trajectory keys.
     track_fields = _object_track_manifest_fields(chunk.track_process_data)
     track_fields.update(_controller_track_manifest_fields(chunk.track_process_data))
     asap_summary: dict[str, Any] = {}
