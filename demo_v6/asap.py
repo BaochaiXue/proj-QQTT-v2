@@ -9,13 +9,14 @@ currently valid tracked object points; the mesh motion then carries
 - shape-prior surface points,
 - shape-prior interior points
 
-to estimated positions. The augmented window publishes
-``object_points = [filled original object points, deformed surface points,
-deformed interior points]`` along the point axis. Estimated entries keep the
-original ``object_visibilities`` / ``object_motions_valid`` values (False),
-so downstream losses that gate on those masks never treat an estimate as a
-measurement, while consumers of raw ``object_points`` see a complete,
-temporally coherent particle set.
+to estimated positions. The augmented window keeps ``object_points`` at its
+tracking width — invalid entries are filled in place — and publishes the
+deformed shape-prior trajectories as dedicated per-frame keys
+``asap_surface_points`` / ``asap_interior_points``. Estimated entries keep
+the original ``object_visibilities`` / ``object_motions_valid`` values
+(False), so downstream losses that gate on those masks never treat an
+estimate as a measurement, while consumers of raw ``object_points`` see a
+complete, temporally coherent particle set.
 
 The offline original recomputed everything after the capture finished; this
 module runs live at chunk-materialization time. The heavy per-query rigid
@@ -37,50 +38,11 @@ DEFAULT_MAX_CONSTRAINT_DIST_M = 0.03
 DEFAULT_MAX_CONSTRAINTS = 1500
 DEFAULT_MIN_CONSTRAINTS = 30
 
-# Synthetic query-id ranges for the deformed shape-prior columns.
-# Rationale: tracker query ids are the session ``arange(query_count)`` (small
-# non-negative ints), and ``-1`` is already used as a padding sentinel in
-# trace arrays, so negative ids would be ambiguous. Large disjoint offset
-# bases stay readable in logs, sort stably, and make membership a range
-# check: surface ids live in [1e9, 2e9), interior ids in [2e9, 3e9).
-SURFACE_QUERY_ID_BASE = 1_000_000_000
-INTERIOR_QUERY_ID_BASE = 2_000_000_000
-
-# Shape-prior columns carry no tracked RGB; use the repo's shape-prior
-# visualization convention (surface cyan, interior orange) as default colors.
-SURFACE_DEFAULT_COLOR_RGB = (0.0, 1.0, 1.0)
-INTERIOR_DEFAULT_COLOR_RGB = (1.0, 0.65, 0.0)
-
-# object_track_status label for synthetic shape-prior columns (dtype <U8).
-PRIOR_TRACK_STATUS = "prior"
-
 MESH_RELATIVE_PATH = Path("shape") / "matching" / "final_mesh.glb"
 
 
 class AsapMeshError(RuntimeError):
     """The aligned shape-prior mesh required by ASAP is missing or unusable."""
-
-
-def surface_query_ids(count: int) -> np.ndarray:
-    """Return the surface query ids."""
-    return SURFACE_QUERY_ID_BASE + np.arange(int(count), dtype=np.int64)
-
-
-def interior_query_ids(count: int) -> np.ndarray:
-    """Return the interior query ids."""
-    return INTERIOR_QUERY_ID_BASE + np.arange(int(count), dtype=np.int64)
-
-
-def is_surface_query_id(values: np.ndarray) -> np.ndarray:
-    """Return the is surface query id."""
-    arr = np.asarray(values, dtype=np.int64)
-    return (arr >= SURFACE_QUERY_ID_BASE) & (arr < INTERIOR_QUERY_ID_BASE)
-
-
-def is_interior_query_id(values: np.ndarray) -> np.ndarray:
-    """Return the is interior query id."""
-    arr = np.asarray(values, dtype=np.int64)
-    return arr >= INTERIOR_QUERY_ID_BASE
 
 
 def resolve_final_mesh_path(
@@ -266,8 +228,6 @@ class AsapRuntime:
         self._object_embedding: LocalRigidEmbedding | None = None
         self._surface_embedding: LocalRigidEmbedding | None = None
         self._interior_embedding: LocalRigidEmbedding | None = None
-        self._surface_ids: np.ndarray | None = None
-        self._interior_ids: np.ndarray | None = None
         self._fallback_vertices: np.ndarray | None = None
         self._first_frame_is_reference = True
 
@@ -327,8 +287,6 @@ class AsapRuntime:
         self._interior_embedding = LocalRigidEmbedding(
             interior, self._vertices_ref, k=self.embed_k
         )
-        self._surface_ids = surface_query_ids(surface.shape[0])
-        self._interior_ids = interior_query_ids(interior.shape[0])
         self._fallback_vertices = self._vertices_ref.copy()
         self._first_frame_is_reference = True
 
@@ -409,7 +367,6 @@ class AsapRuntime:
         object_points = np.asarray(result["object_points"], dtype=np.float32)
         visibilities = np.asarray(result["object_visibilities"], dtype=bool)
         motions_valid = np.asarray(result["object_motions_valid"], dtype=bool)
-        colors = np.asarray(result["object_colors"], dtype=np.float32)
         frame_count = int(object_points.shape[0])
 
         if not self.initialized:
@@ -429,8 +386,6 @@ class AsapRuntime:
         assert self._object_embedding is not None
         assert self._surface_embedding is not None
         assert self._interior_embedding is not None
-        assert self._surface_ids is not None
-        assert self._interior_ids is not None
 
         # A usable direct measurement needs visibility, motion validity, and a
         # real (finite, nonzero) coordinate; everything else is estimated.
@@ -438,13 +393,11 @@ class AsapRuntime:
         nonzero = np.linalg.norm(object_points, axis=2) > 1e-9
         valid_now = visibilities & motions_valid & finite & nonzero
 
+        surface_count = int(self._surface_embedding.query_points.shape[0])
+        interior_count = int(self._interior_embedding.query_points.shape[0])
         filled = np.empty_like(object_points)
-        surface_frames = np.empty(
-            (frame_count, self._surface_ids.shape[0], 3), dtype=np.float32
-        )
-        interior_frames = np.empty(
-            (frame_count, self._interior_ids.shape[0], 3), dtype=np.float32
-        )
+        surface_frames = np.empty((frame_count, surface_count, 3), dtype=np.float32)
+        interior_frames = np.empty((frame_count, interior_count, 3), dtype=np.float32)
         constraint_counts = np.zeros((frame_count,), dtype=np.int64)
         deform_ok = np.zeros((frame_count,), dtype=bool)
         for frame_idx in range(frame_count):
@@ -471,65 +424,19 @@ class AsapRuntime:
         # Direct measurements always win over mesh estimates.
         filled[valid_now] = object_points[valid_now]
 
-        surface_count = int(self._surface_ids.shape[0])
-        interior_count = int(self._interior_ids.shape[0])
-        surface_colors = np.tile(
-            np.asarray(SURFACE_DEFAULT_COLOR_RGB, dtype=np.float32),
-            (frame_count, surface_count, 1),
+        # Publish contract (design_spec_v6.md): object arrays keep their
+        # tracking width — invalid entries are filled in place and keep their
+        # original visibility/motion masks (False), so downstream losses that
+        # gate on those masks never treat an estimate as a measurement. The
+        # deformed shape-prior trajectories are published as dedicated
+        # per-frame keys instead of widening object_points.
+        result["object_points"] = np.ascontiguousarray(filled, dtype=np.float32)
+        result["asap_surface_points"] = np.ascontiguousarray(
+            surface_frames, dtype=np.float32
         )
-        interior_colors = np.tile(
-            np.asarray(INTERIOR_DEFAULT_COLOR_RGB, dtype=np.float32),
-            (frame_count, interior_count, 1),
+        result["asap_interior_points"] = np.ascontiguousarray(
+            interior_frames, dtype=np.float32
         )
-        prior_false = np.zeros(
-            (frame_count, surface_count + interior_count), dtype=bool
-        )
-
-        result["object_points"] = np.ascontiguousarray(
-            np.concatenate([filled, surface_frames, interior_frames], axis=1),
-            dtype=np.float32,
-        )
-        result["object_colors"] = np.ascontiguousarray(
-            np.concatenate([colors, surface_colors, interior_colors], axis=1),
-            dtype=np.float32,
-        )
-        # Estimated entries keep the original masks (False), and the synthetic
-        # shape-prior columns are never measurements: downstream chamfer/track
-        # losses gate on these masks, so estimates never become supervision.
-        result["object_visibilities"] = np.ascontiguousarray(
-            np.concatenate([visibilities, prior_false], axis=1), dtype=bool
-        )
-        result["object_motions_valid"] = np.ascontiguousarray(
-            np.concatenate([motions_valid, prior_false], axis=1), dtype=bool
-        )
-
-        synthetic_ids = np.concatenate([self._surface_ids, self._interior_ids])
-        for key in (
-            "object_sample_query_ids",
-            "object_selected_query_ids",
-            "object_track_query_indices",
-            "object_track_active_query_indices",
-        ):
-            if key in result:
-                original = np.asarray(result[key], dtype=np.int64).reshape(-1)
-                result[key] = np.ascontiguousarray(
-                    np.concatenate([original, synthetic_ids]), dtype=np.int64
-                )
-        for key in ("object_volume_sample_indices", "object_sample_indices"):
-            if key in result:
-                original = np.asarray(result[key], dtype=np.int64).reshape(-1)
-                padding = np.full((synthetic_ids.shape[0],), -1, dtype=np.int64)
-                result[key] = np.ascontiguousarray(
-                    np.concatenate([original, padding]), dtype=np.int64
-                )
-        if "object_track_status" in result:
-            original_status = np.asarray(result["object_track_status"], dtype="<U8")
-            prior_status = np.full(
-                (synthetic_ids.shape[0],), PRIOR_TRACK_STATUS, dtype="<U8"
-            )
-            result["object_track_status"] = np.concatenate(
-                [original_status, prior_status]
-            )
 
         summary = {
             "asap_augmented": True,

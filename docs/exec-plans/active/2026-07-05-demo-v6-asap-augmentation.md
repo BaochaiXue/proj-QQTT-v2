@@ -11,14 +11,17 @@ points. Demo v6 must do this live, at chunk materialization, and publish
 the result inside `object_points` directly.
 
 Required final behavior: see `demo_v6/design_spec_v6.md` (authoritative).
-Key points: `object_points = [filled object points, deformed surface
-points, deformed interior points]`; estimates only where
-`visibilities & motions_valid & finite & nonzero` fails; estimated entries
-keep the original mask values (False) so downstream losses never consume
-estimates; synthetic query ids at offset bases 1e9 (surface) / 2e9
-(interior); default colors cyan/orange; `final_mesh.glb` missing -> fail
-fast; the downstream-provided previous-frame-vertices fallback is kept with
-a revisit comment; static `surface_points`/`interior_points` unchanged.
+Key points (revised 2026-07-05, user decision): `object_points` keeps its
+tracking width — invalid entries are filled in place; the deformed
+shape-prior trajectories publish as dedicated per-frame keys
+`asap_surface_points` / `asap_interior_points` and never widen the object
+arrays (no synthetic query ids, no placeholder colors/masks/status);
+estimates only where `visibilities & motions_valid & finite & nonzero`
+fails; estimated entries keep the original mask values (False) so
+downstream losses never consume estimates; `final_mesh.glb` missing ->
+fail fast; the downstream-provided previous-frame-vertices fallback is
+kept with a revisit comment; static `surface_points`/`interior_points`
+unchanged.
 
 State changes:
 - New: `demo_v6/asap.py`, `demo_v6/design_spec_v6.md`,

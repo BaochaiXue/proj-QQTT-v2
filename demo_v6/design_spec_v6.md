@@ -2,8 +2,10 @@
 
 Demo v6 = Demo v5.1 的 tracking/chunk 管线（design_spec.md 不变）+ 实时
 ASAP 增强：每个 chunk 物化时，用对齐后的 shape-prior mesh
-（`final_mesh.glb`）的逐帧 ARAP 形变，把无效的 object 观测点和 shape-prior
-surface/interior 点估算到合理位置，并一起发布进 `object_points`。
+（`final_mesh.glb`）的逐帧 ARAP 形变，把无效的 object 观测点就地估算到
+合理位置（`object_points` 宽度不变），并把形变后的 shape-prior
+surface/interior 轨迹作为独立逐帧键 `asap_surface_points` /
+`asap_interior_points` 发布。
 
 来源：下游同事提供的离线全量后处理
 `july2_chunk_vis.py::write_asap_online_chunks`（vis.ipynb cell 12），本模块
@@ -35,35 +37,31 @@ surface/interior 点估算到合理位置，并一起发布进 `object_points`�
 
 ## 发布契约
 
-- `object_points = [filled original object points, deformed surface points,
-  deformed interior points]`（点轴拼接）。原始未恢复的 tracking **不另存**。
+- `object_points` **宽度保持 tracking 原样**（M 列）：无效条目就地回填
+  估算值。原始未恢复的 tracking **不另存**。
+- 形变后的 shape-prior 轨迹发布为**独立逐帧键**：
+  `asap_surface_points (T, S, 3)`、`asap_interior_points (T, I, 3)`
+  （`data_keys.py` 的 OPTIONAL_TIME_KEYS 早已声明这两个键，沿用下游离线
+  后处理的键名）。它们**不再**拼进 `object_points`，也不占位
+  `object_colors` / `object_visibilities` / `object_motions_valid`。
 - `object_visibilities` / `object_motions_valid`：估算条目**保持原始值**
-  （即 False），surface/interior 列恒为 False。依据下游消费方式：
-  `realtime_phystwin` 的 chamfer loss 按 `object_visibilities` 门控、track
-  loss 按 `object_motions_valid` 门控——保持 False 使估算值永远不会被当作
-  监督信号，而直接消费 `object_points` 的一侧（粒子初始化/可视化/几何）
-  得到完整且时间连贯的点集。"估算与否"可由掩码推导
-  （object 列：`~(vis & motions)` 即估算；prior 列恒为估算），无需额外键。
-- `object_colors` 与 `object_points` 同形状：object 列保留追踪色，
-  surface 列用默认青色 (0,1,1)，interior 列用默认橙色 (1,0.65,0)
-  ——沿用仓库 shape-prior 可视化配色约定。
-- **合成 query id**：surface/interior 不是 tracker query。候选方案比较：
-  负数 id（与 trace 数组的 -1 填充哨兵冲突，弃）；高位标志位（日志不可
-  读，弃）；大偏移基址（可读、可排序、范围判定即成员判定，选用）。
-  surface id ∈ [1e9, 2e9)，interior id ∈ [2e9, 3e9)，与会话 tracker id
-  （arange，数量级 ≤1e4）不可能重合。`object_sample_query_ids` 等身份数组
-  同步扩展；发布层 `query_ids` / `query_semantic_labels` 也追加这些
-  synthetic id，对应 semantic label 为 object (`1`)；tracking runtime 的
-  原始 tracker schema 不回写这些发布层 id。
-  `object_volume_sample_indices`/`object_sample_indices` 以 -1 填充；
-  `object_track_status` 扩展为 `"prior"`。
-- 静态字段 `surface_points` / `interior_points` 原样保留。
+  （即 False）。依据下游消费方式：`realtime_phystwin` 的 chamfer loss 按
+  `object_visibilities` 门控、track loss 按 `object_motions_valid` 门控——
+  保持 False 使估算值永远不会被当作监督信号，而直接消费 `object_points`
+  的一侧（粒子初始化/可视化/几何）得到完整且时间连贯的点集。
+  "估算与否"可由掩码推导（`~(vis & motions)` 即估算），无需额外键。
+- object 的身份数组（`object_sample_query_ids` 等）、colors、status 全部
+  不变——prior 点不再进入 object 列，不需要合成 query id、默认色和
+  `"prior"` 状态（payload 层的 `_extend_query_schema_for_sample_ids`
+  机制保留，对本契约为 no-op）。
+- 静态字段 `surface_points` / `interior_points` 原样保留（第 0 帧参考
+  位形）；`asap_surface_points[0] == surface_points`、
+  `asap_interior_points[0] == interior_points`（首窗口首帧为参考帧）。
 - manifest 增加 `asap_*` 遥测（mesh 路径、约束数 min/max、回退帧数、
   估算条目数、每 chunk 耗时 `asap_ms`）。manifest 的
-  `object_track_*` 字段在增强**之前**计算（反映真实 tracking）；payload
-  内的 `object_point_count` 等质量计数在增强之后计算，因此包含 prior 列
-  ——真实列数以 `asap_object_column_count` 为准；
-  `first_frame_zero_object_points` 在增强后恒为 0（零占位已被估算覆盖）。
+  `object_track_*` 字段在增强**之前**计算（反映真实 tracking）；
+  `first_frame_zero_object_points` 在增强后恒为 0（object 列零占位已被
+  估算覆盖）。
 - 流式路径下，若首个窗口物化时 warmup 尚未写完（显式 surface/interior
   覆盖会跳过 shape-point 等待），会以 `shape_prior_wait_timeout_s` 等待
   `shape_prior_case_dir` 出现；终态失败或超时仍然 fail fast。

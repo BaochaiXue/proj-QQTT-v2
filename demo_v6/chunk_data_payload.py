@@ -769,6 +769,14 @@ def build_chunk_data_payload(
         surface_points=chunk.surface_points,
         interior_points=chunk.interior_points,
     )
+    # design_spec_v6.md: deformed shape-prior trajectories ride as dedicated
+    # final_data per-frame keys; they never widen the object arrays and are
+    # not duplicated into the track_process diagnostics.
+    for asap_key in ("asap_surface_points", "asap_interior_points"):
+        if asap_key in chunk.track_process_data:
+            final_data[asap_key] = np.ascontiguousarray(
+                np.asarray(chunk.track_process_data[asap_key], dtype=np.float64)
+            )
     # Keep the same query schema hash in both payloads so online chunks can be
     # concatenated without changing query semantic identity.
     for key in DATA_PROCESS_QUERY_SCHEMA_KEYS:

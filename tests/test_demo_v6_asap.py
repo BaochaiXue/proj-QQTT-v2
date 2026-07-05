@@ -146,20 +146,6 @@ class RigidFitParityTests(unittest.TestCase):
             self.assertGreater(float(np.linalg.det(rot_batch[m])), 0.0)
 
 
-class SyntheticIdTests(unittest.TestCase):
-    def test_id_ranges_are_disjoint_and_detectable(self) -> None:
-        surface_ids = asap.surface_query_ids(3)
-        interior_ids = asap.interior_query_ids(3)
-        tracker_ids = np.arange(10_000, dtype=np.int64)
-        self.assertFalse(np.intersect1d(surface_ids, interior_ids).size)
-        self.assertFalse(np.intersect1d(surface_ids, tracker_ids).size)
-        self.assertFalse(np.intersect1d(interior_ids, tracker_ids).size)
-        self.assertTrue(bool(asap.is_surface_query_id(surface_ids).all()))
-        self.assertFalse(bool(asap.is_surface_query_id(interior_ids).any()))
-        self.assertTrue(bool(asap.is_interior_query_id(interior_ids).all()))
-        self.assertFalse(bool(asap.is_interior_query_id(tracker_ids).any()))
-
-
 class AugmentWindowTests(unittest.TestCase):
     def _augmented(self, fixture, window):
         runtime = asap.AsapRuntime()
@@ -173,7 +159,7 @@ class AugmentWindowTests(unittest.TestCase):
             ),
         )
 
-    def test_layout_masks_colors_ids_and_status(self) -> None:
+    def test_layout_masks_ids_and_asap_keys(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture = _fixture(tmpdir)
             window = _window(fixture["object0"], frame_count=3)
@@ -181,47 +167,44 @@ class AugmentWindowTests(unittest.TestCase):
             window["object_points"][2, 5] = 0.0
             _runtime, out, summary = self._augmented(fixture, window)
 
-            total = OBJECT_COUNT + SURFACE_COUNT + INTERIOR_COUNT
-            self.assertEqual(out["object_points"].shape, (3, total, 3))
-            self.assertEqual(out["object_colors"].shape, (3, total, 3))
-            self.assertEqual(out["object_visibilities"].shape, (3, total))
-            self.assertEqual(out["object_motions_valid"].shape, (3, total))
-            # Estimated entries keep the original mask values; prior columns
-            # are never measurements.
+            # Object arrays keep their tracking width; the deformed priors
+            # ride as dedicated per-frame keys.
+            self.assertEqual(out["object_points"].shape, (3, OBJECT_COUNT, 3))
+            self.assertEqual(out["object_colors"].shape, (3, OBJECT_COUNT, 3))
+            self.assertEqual(out["object_visibilities"].shape, (3, OBJECT_COUNT))
+            self.assertEqual(out["object_motions_valid"].shape, (3, OBJECT_COUNT))
+            self.assertEqual(
+                out["asap_surface_points"].shape, (3, SURFACE_COUNT, 3)
+            )
+            self.assertEqual(
+                out["asap_interior_points"].shape, (3, INTERIOR_COUNT, 3)
+            )
+            # First window frame 0 is the reference frame: identity motion.
+            np.testing.assert_allclose(
+                out["asap_surface_points"][0], fixture["surface"], atol=1e-5
+            )
+            np.testing.assert_allclose(
+                out["asap_interior_points"][0], fixture["interior"], atol=1e-5
+            )
+            # Estimated entries keep the original mask values.
             self.assertFalse(bool(out["object_visibilities"][2, 5]))
-            self.assertFalse(bool(out["object_visibilities"][:, OBJECT_COUNT:].any()))
-            self.assertFalse(bool(out["object_motions_valid"][:, OBJECT_COUNT:].any()))
             # Valid entries stay bit-exact original measurements.
             np.testing.assert_array_equal(
-                out["object_points"][0, :OBJECT_COUNT],
-                window["object_points"][0],
+                out["object_points"][0], window["object_points"][0]
             )
-            # Default prior colors.
-            np.testing.assert_allclose(
-                out["object_colors"][0, OBJECT_COUNT],
-                np.asarray(asap.SURFACE_DEFAULT_COLOR_RGB, dtype=np.float32),
+            # Identity/trace arrays and colors are untouched by augmentation.
+            np.testing.assert_array_equal(
+                out["object_sample_query_ids"], window["object_sample_query_ids"]
             )
-            np.testing.assert_allclose(
-                out["object_colors"][0, OBJECT_COUNT + SURFACE_COUNT],
-                np.asarray(asap.INTERIOR_DEFAULT_COLOR_RGB, dtype=np.float32),
+            np.testing.assert_array_equal(
+                out["object_volume_sample_indices"],
+                window["object_volume_sample_indices"],
             )
-            # Synthetic ids, -1 sample-index padding, prior status.
-            ids = np.asarray(out["object_sample_query_ids"])
-            self.assertEqual(int(ids[OBJECT_COUNT]), asap.SURFACE_QUERY_ID_BASE)
-            self.assertEqual(
-                int(ids[OBJECT_COUNT + SURFACE_COUNT]), asap.INTERIOR_QUERY_ID_BASE
+            np.testing.assert_array_equal(
+                out["object_track_status"], window["object_track_status"]
             )
-            self.assertTrue(
-                bool(
-                    (
-                        np.asarray(out["object_volume_sample_indices"])[OBJECT_COUNT:]
-                        == -1
-                    ).all()
-                )
-            )
-            self.assertEqual(
-                str(np.asarray(out["object_track_status"])[OBJECT_COUNT]),
-                asap.PRIOR_TRACK_STATUS,
+            np.testing.assert_array_equal(
+                out["object_colors"], window["object_colors"]
             )
             self.assertEqual(int(summary["asap_estimated_entry_count"]), 1)
             self.assertTrue(summary["asap_augmented"])
@@ -241,12 +224,12 @@ class AugmentWindowTests(unittest.TestCase):
                 out["object_points"][2, 5], expected, atol=1e-4
             )
             np.testing.assert_allclose(
-                out["object_points"][3, OBJECT_COUNT : OBJECT_COUNT + SURFACE_COUNT],
+                out["asap_surface_points"][3],
                 fixture["surface"] + 3 * SHIFT_M,
                 atol=1e-4,
             )
             np.testing.assert_allclose(
-                out["object_points"][3, OBJECT_COUNT + SURFACE_COUNT :],
+                out["asap_interior_points"][3],
                 fixture["interior"] + 3 * SHIFT_M,
                 atol=1e-4,
             )
@@ -276,7 +259,7 @@ class AugmentWindowTests(unittest.TestCase):
             )
             self.assertEqual(int(summary["asap_fallback_frame_count"]), 1)
             np.testing.assert_allclose(
-                out["object_points"][1, :OBJECT_COUNT],
+                out["object_points"][1],
                 fixture["object0"] + 4 * SHIFT_M,
                 atol=1e-4,
             )
@@ -329,7 +312,7 @@ class AugmentWindowTests(unittest.TestCase):
             )
             self.assertGreaterEqual(int(summary["asap_fallback_frame_count"]), 1)
             np.testing.assert_allclose(
-                out["object_points"][0, :OBJECT_COUNT],
+                out["object_points"][0],
                 fixture["object0"] + SHIFT_M,
                 atol=1e-4,
             )
@@ -376,7 +359,7 @@ class AugmentWindowTests(unittest.TestCase):
 
 
 class QuerySchemaPayloadTests(unittest.TestCase):
-    def test_augmented_prior_ids_are_added_to_query_schema(self) -> None:
+    def test_final_data_carries_asap_keys_without_schema_extension(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture = _fixture(tmpdir)
             runtime = asap.AsapRuntime()
@@ -420,20 +403,26 @@ class QuerySchemaPayloadTests(unittest.TestCase):
                 )
             )
 
-            prior_ids = np.asarray(final_data["object_sample_query_ids"])[OBJECT_COUNT:]
-            self.assertEqual(prior_ids.shape[0], SURFACE_COUNT + INTERIOR_COUNT)
-            self.assertTrue(
-                bool(np.isin(prior_ids, final_data["query_ids"]).all())
+            # The deformed priors ride as dedicated final_data time keys.
+            self.assertEqual(
+                np.asarray(final_data["asap_surface_points"]).shape,
+                (3, SURFACE_COUNT, 3),
             )
-            label_by_id = {
-                int(query_id): int(label)
-                for query_id, label in zip(
-                    np.asarray(final_data["query_ids"]).tolist(),
-                    np.asarray(final_data["query_semantic_labels"]).tolist(),
-                )
-            }
-            self.assertTrue(
-                all(label_by_id[int(query_id)] == 1 for query_id in prior_ids)
+            self.assertEqual(
+                np.asarray(final_data["asap_interior_points"]).shape,
+                (3, INTERIOR_COUNT, 3),
+            )
+            # Object arrays and the query schema stay at tracking width: no
+            # synthetic ids are added anywhere.
+            self.assertEqual(
+                np.asarray(final_data["object_points"]).shape[1], OBJECT_COUNT
+            )
+            self.assertEqual(
+                np.asarray(final_data["object_sample_query_ids"]).shape[0],
+                OBJECT_COUNT,
+            )
+            self.assertEqual(
+                np.asarray(final_data["query_ids"]).shape[0], query_count
             )
             self.assertEqual(
                 final_data["query_schema_hash"],
@@ -463,7 +452,7 @@ class QuerySchemaPayloadTests(unittest.TestCase):
             "query_ids": np.asarray([1], dtype=np.int64),
             "query_semantic_labels": np.asarray([1], dtype=np.int8),
         }
-        shared_missing_id = np.asarray([asap.SURFACE_QUERY_ID_BASE], dtype=np.int64)
+        shared_missing_id = np.asarray([1_000_000_000], dtype=np.int64)
         with self.assertRaisesRegex(ValueError, "semantic label"):
             chunk_data_payload.build_query_schema_payload(
                 payload,
