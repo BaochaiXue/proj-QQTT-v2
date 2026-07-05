@@ -1,0 +1,53 @@
+Demo v6 validated environment snapshot, 2026-06-25
+
+main env: demo_2_max
+python==3.12.13
+torch==2.11.0+cu130
+torchvision==0.26.0
+numpy==2.4.5
+pillow==12.2.0
+opencv-python==4.13.0.92
+opencv-python-headless==4.13.0.92
+open3d==0.19.0
+pyzmq==27.1.0
+scipy==1.17.1
+matplotlib==3.10.9
+PyYAML==6.0.3
+pyrealsense2==2.56.5.9235
+trimesh==4.12.2
+warp-lang==1.13.0
+cma==4.4.4
+wandb==0.27.0
+imageio==2.37.3
+tqdm==4.67.3
+scikit-learn==1.8.0
+numba==0.65.1
+
+shape-prior worker env: phystwin-max
+python==3.12.13
+torch==2.12.0+cu130
+torchvision==0.27.0+cu130
+numpy==1.26.4
+pillow==11.3.0
+opencv-python==4.11.0.86
+opencv-python-headless==4.11.0.86
+pyzmq==27.1.0
+scipy==1.17.1
+trimesh==4.12.2
+diffusers==0.38.0
+transformers==5.9.0
+accelerate==1.13.0
+kaolin==0.18.0
+pytorch3d==0.7.9
+moge==1.0.0
+open3d==0.19.0
+xformers==0.0.35
+gsplat==1.4.0
+
+Required repo-local assets:
+vendor/demo_runtime/EdgeTAM-hf
+vendor/demo_runtime/tapnet
+vendor/demo_runtime/checkpoints/tapnextpp/tapnextpp_ckpt.pt
+vendor/demo_runtime/sam-3d-objects
+vendor/demo_runtime/stable-diffusion-x4-upscaler
+table_calibrate.pkl

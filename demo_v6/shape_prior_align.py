@@ -1,27 +1,33 @@
-import open3d as o3d
-import numpy as np
-from argparse import ArgumentParser, Namespace
-import pickle
-import trimesh
-import cv2
+# Single-camera port of data_process_origin/align.py (original PhysTwin shape
+# alignment). The function bodies are kept structurally parallel to that
+# origin file on purpose -- keep them diffable. Demo-specific deltas are
+# limited to: package-local imports, VIS defaulting to False, and the
+# processed-mask camera_count validation.
 import json
-import torch
 import os
-from utils.align_util import (
-    render_multi_images,
-    render_image,
-    as_mesh,
-    project_2d_to_3d,
-    plot_mesh_with_points,
-    plot_image_with_points,
-    select_point,
-)
-from match_pairs import image_pair_matching
+import pickle
+from argparse import ArgumentParser, Namespace
+
+import cv2
 import matplotlib.pyplot as plt
+import numpy as np
+import open3d as o3d
+import torch
+import trimesh
+from demo_v6.shape_prior_match_pairs import image_pair_matching
 from scipy.optimize import minimize
 from scipy.spatial import KDTree
+from demo_v6.utils.align_util import (
+    as_mesh,
+    plot_image_with_points,
+    plot_mesh_with_points,
+    project_2d_to_3d,
+    render_image,
+    render_multi_images,
+    select_point,
+)
 
-VIS = True
+VIS = False
 parser = ArgumentParser()
 parser.add_argument(
     "--base_path",
@@ -36,10 +42,19 @@ parser.add_argument(
     required=True,
     default="",
 )
+parser.add_argument(
+    "--wait-signal",
+    dest="wait_signal",
+    action="store_true",
+    help="Preload CUDA + SuperGlue, then block on stdin for GO before aligning.",
+)
+# Import-safe placeholder so the module can be imported without CLI args;
+# main() re-parses argv and rebinds these globals.
 args = Namespace(
     base_path="",
     case_name="",
     controller_name="",
+    wait_signal=False,
 )
 
 base_path = args.base_path
@@ -49,6 +64,7 @@ output_dir = f"{base_path}/{case_name}/shape/matching"
 
 
 def existDir(dir_path):
+    """Return the exist dir."""
     if not os.path.exists(dir_path):
         os.makedirs(dir_path)
 
@@ -57,6 +73,7 @@ def pose_selection_render_superglue(
     raw_img, fov, mesh_path, mesh, crop_img, output_dir
 ):
     # Calculate suitable rendering radius
+    """Return the pose selection render superglue."""
     bounding_box = mesh.bounds
     max_dimension = np.linalg.norm(bounding_box[1] - bounding_box[0])
     radius = 2 * (max_dimension / 2) / np.tan(fov / 2)
@@ -87,6 +104,7 @@ def pose_selection_render_superglue(
 
 def registration_pnp(mesh_matching_points, raw_matching_points, intrinsic):
     # Solve the PNP and verify the reprojection error
+    """Return the registration pnp."""
     success, rvec, tvec = cv2.solvePnP(
         np.float32(mesh_matching_points),
         np.float32(raw_matching_points),
@@ -119,7 +137,9 @@ def registration_pnp(mesh_matching_points, raw_matching_points, intrinsic):
 
 def registration_scale(mesh_matching_points_cam, matching_points_cam):
     # After PNP, optimize the scale in the camera coordinate
+    """Return the registration scale."""
     def objective(scale, mesh_points, pcd_points):
+        """Return the objective."""
         transformed_points = scale * mesh_points
         loss = np.sum(np.sum((transformed_points - pcd_points) ** 2, axis=1))
         return loss
@@ -138,6 +158,7 @@ def registration_scale(mesh_matching_points_cam, matching_points_cam):
 
 def deform_ARAP(initial_mesh_world, mesh_matching_points_world, matching_points):
     # Do the ARAP deformation based on the matching keypoints
+    """Return the deform a r a p."""
     mesh_vertices = np.asarray(initial_mesh_world.vertices)
     kdtree = KDTree(mesh_vertices)
     _, mesh_points_indices = kdtree.query(mesh_matching_points_world)
@@ -154,6 +175,7 @@ def get_matching_ray_registration(
     mesh_world, obs_points_world, mesh, trimesh_indices, c2w, w2c
 ):
     # Get the matching indices and targets based on the viewpoint
+    """Return the get matching ray registration."""
     obs_points_cam = np.dot(
         w2c,
         np.hstack((obs_points_world, np.ones((obs_points_world.shape[0], 1)))).T,
@@ -192,8 +214,7 @@ def get_matching_ray_registration(
             vertex_distance = np.linalg.norm(vertex)
             intersection_distance = np.linalg.norm(first_intersection)
             if intersection_distance < vertex_distance - 1e-4:
-                # If the intersection point is not the vertex, the vertex is
-                # hidden from the current camera viewpoint.
+                # If the intersection point is not the vertex, it means the vertex is not visible from the camera viewpoint
                 ignore_flag = True
 
         if ignore_flag:
@@ -227,6 +248,7 @@ def deform_ARAP_ray_registration(
     mesh_points_indices,
     matching_points,
 ):
+    """Return the deform a r a p ray registration."""
     final_indices = []
     final_targets = []
     for index, target in zip(mesh_points_indices, matching_points):
@@ -265,15 +287,61 @@ def deform_ARAP_ray_registration(
     return final_mesh_world
 
 
+def align_full_vendor_compatible(
+    initial_mesh_world,
+    mesh_matching_points_world,
+    matching_points,
+    obs_points,
+    mesh,
+    trimesh_indices,
+    c2ws,
+    w2cs,
+):
+    # ARAP based on the keypoints
+    """Return the align full vendor compatible."""
+    deform_kp_mesh_world, mesh_points_indices = deform_ARAP(
+        initial_mesh_world, mesh_matching_points_world, matching_points
+    )
+
+    # Do the ARAP based on both the ray-casting matching and the keypoints
+    # Identify the vertex which blocks or blocked by the observation, then match them with the observation points on the ray
+    return deform_ARAP_ray_registration(
+        deform_kp_mesh_world,
+        obs_points,
+        mesh,
+        trimesh_indices,
+        c2ws,
+        w2cs,
+        mesh_points_indices,
+        matching_points,
+    )
+
+
 def line_point_distance(p, points):
     # Compute the distance between points and the line between p and [0, 0, 0]
+    """Return the line point distance."""
     p = p / np.linalg.norm(p)
     points_to_origin = points
     cross_product = np.linalg.norm(np.cross(points_to_origin, p), axis=1)
     return cross_product / np.linalg.norm(p)
 
 
+def _prewarm_models():
+    """Initialize the CUDA context and load SuperGlue weights ahead of GO.
+
+    ``pose_selection_render_superglue`` -> ``image_pair_matching`` reuses the
+    cached model via ``get_matching_model`` defaults, so this only front-loads
+    checkpoint I/O and CUDA init; the compute path stays byte-identical.
+    """
+    if torch.cuda.is_available():
+        torch.zeros(1, device="cuda")
+    from demo_v6.shape_prior_match_pairs import get_matching_model  # noqa: PLC0415
+
+    get_matching_model()
+
+
 def main(argv=None):
+    """Run the command-line entry point."""
     global args, base_path, case_name, CONTROLLER_NAME, output_dir
 
     args = parser.parse_args(argv)
@@ -281,6 +349,13 @@ def main(argv=None):
     case_name = args.case_name
     CONTROLLER_NAME = args.controller_name
     output_dir = f"{base_path}/{case_name}/shape/matching"
+
+    if args.wait_signal:
+        from demo_v6.utils import stage_prewarm  # noqa: PLC0415
+
+        _prewarm_models()
+        if not stage_prewarm.wait_for_go("align"):
+            return
 
     existDir(output_dir)
 
@@ -416,8 +491,7 @@ def main(argv=None):
             f"{output_dir}/raw_matching.png",
         )
 
-    # Optimize the rotation between the 3D mesh keypoints and the 2D image
-    # keypoints.
+    # Do PnP optimization to optimize the rotation between the 3D mesh keypoints and the 2D image keypoints
     mesh2raw_camera = registration_pnp(
         mesh_matching_points, raw_matching_points, intrinsic
     )
@@ -448,32 +522,19 @@ def main(argv=None):
     obs_colors = []
     pcd_path = f"{base_path}/{case_name}/pcd/0.npz"
     mask_path = f"{base_path}/{case_name}/mask/processed_masks.pkl"
-    pcd_data = np.load(pcd_path)
+    data = np.load(pcd_path)
     with open(mask_path, "rb") as f:
         processed_masks = pickle.load(f)
-    camera_count = pcd_data["points"].shape[0]
-    if camera_count == 0:
-        raise ValueError(f"No cameras found in {pcd_path}")
-    if camera_count != len(c2ws):
-        raise ValueError(
-            f"Camera count mismatch: {pcd_path} has {camera_count}, "
-            f"calibrate.pkl has {len(c2ws)}."
-        )
-
-    first_frame_masks = processed_masks[0]
-    missing_camera_indices = [
-        i for i in range(camera_count) if i not in first_frame_masks
-    ]
-    if missing_camera_indices:
-        raise KeyError(
-            "processed_masks.pkl missing first-frame masks for cameras "
-            f"{missing_camera_indices}."
-        )
-
+    camera_count = int(np.asarray(data["points"]).shape[0])
+    if camera_count != len(processed_masks[0]):
+        raise ValueError("pcd camera count does not match processed mask count")
+    # Every camera count runs the original PhysTwin alignment flow:
+    # keypoint ARAP, then ray-casting ARAP registration with the above-table
+    # clamp. Single-camera warmup has no rigid-prior bypass.
     for i in range(camera_count):
-        points = pcd_data["points"][i]
-        colors = pcd_data["colors"][i]
-        mask = first_frame_masks[i]["object"]
+        points = data["points"][i]
+        colors = data["colors"][i]
+        mask = processed_masks[0][i]["object"]
         obs_points.append(points[mask])
         obs_colors.append(colors[mask])
         if i == 0:
@@ -503,8 +564,7 @@ def main(argv=None):
             new_match,
         )
 
-    # Use camera-coordinate matching points to optimize the scale between the
-    # mesh and the observation.
+    # Use the matching points in the camera coordinate to optimize the scame between the mesh and the observation
     optimal_scale = registration_scale(mesh_matching_points_cam, matching_points_cam)
 
     # Compute the rigid transformation from the original mesh to the final world coordinate
@@ -525,8 +585,7 @@ def main(argv=None):
     initial_mesh_world = o3d.geometry.TriangleMesh()
     initial_mesh_world.vertices = o3d.utility.Vector3dVector(np.asarray(mesh.vertices))
     initial_mesh_world.triangles = o3d.utility.Vector3iVector(np.asarray(mesh.faces))
-    # Open3D needs deduplicated vertices; trimesh still keeps duplicated
-    # vertices for texture export.
+    # Need to remove the duplicated vertices to enable open3d, however, the duplicated points are important in trimesh for texture
     initial_mesh_world = initial_mesh_world.remove_duplicated_vertices()
     # Get the index from original vertices to the mesh vertices, mapping between trimesh and open3d
     kdtree = KDTree(initial_mesh_world.vertices)
@@ -534,23 +593,15 @@ def main(argv=None):
     trimesh_indices = np.asarray(trimesh_indices, dtype=np.int32)
     initial_mesh_world.transform(mesh2world)
 
-    # ARAP based on the keypoints
-    deform_kp_mesh_world, mesh_points_indices = deform_ARAP(
-        initial_mesh_world, mesh_matching_points_world, matching_points
-    )
-
-    # Do the ARAP based on both the ray-casting matching and the keypoints
-    # Identify vertices visible to the observation, then match them with
-    # observation points on the corresponding ray.
-    final_mesh_world = deform_ARAP_ray_registration(
-        deform_kp_mesh_world,
+    final_mesh_world = align_full_vendor_compatible(
+        initial_mesh_world,
+        mesh_matching_points_world,
+        matching_points,
         obs_points,
         mesh,
         trimesh_indices,
         c2ws,
         w2cs,
-        mesh_points_indices,
-        matching_points,
     )
 
     if VIS:

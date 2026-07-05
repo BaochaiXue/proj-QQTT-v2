@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw
 
 
 def read_video_from_path(path):
+    """Read all RGB frames from a video path."""
     try:
         reader = imageio.get_reader(path)
     except Exception as e:
@@ -30,6 +31,7 @@ def read_video_from_path(path):
 
 def draw_circle(rgb, coord, radius, color=(255, 0, 0), visible=True, color_alpha=None):
     # Create a draw object
+    """Draw circle."""
     draw = ImageDraw.Draw(rgb)
     # Calculate the bounding box of the circle
     left_up_point = (coord[0] - radius, coord[1] - radius)
@@ -46,6 +48,7 @@ def draw_circle(rgb, coord, radius, color=(255, 0, 0), visible=True, color_alpha
 
 
 def draw_line(rgb, coord_y, coord_x, color, linewidth):
+    """Draw line."""
     draw = ImageDraw.Draw(rgb)
     draw.line(
         (coord_y[0], coord_y[1], coord_x[0], coord_x[1]),
@@ -56,6 +59,7 @@ def draw_line(rgb, coord_y, coord_x, color, linewidth):
 
 
 def add_weighted(rgb, alpha, original, beta, gamma):
+    """Add weighted."""
     return (rgb * alpha + original * beta + gamma).astype("uint8")
 
 
@@ -71,6 +75,7 @@ class Visualizer:
         show_first_frame: int = 10,
         tracks_leave_trace: int = 0,  # -1 for infinite
     ):
+        """Initialize Visualizer."""
         self.mode = mode
         self.save_dir = save_dir
         if mode == "rainbow":
@@ -99,6 +104,7 @@ class Visualizer:
         compensate_for_camera_motion: bool = False,
         opacity: float = 1.0,
     ):
+        """Visualize Visualizer."""
         if compensate_for_camera_motion:
             assert segm_mask is not None
         if segm_mask is not None:
@@ -134,6 +140,7 @@ class Visualizer:
         return res_video
 
     def save_video(self, video, filename, writer=None, step=0):
+        """Save video."""
         if writer is not None:
             writer.add_video(
                 filename,
@@ -171,6 +178,7 @@ class Visualizer:
         compensate_for_camera_motion=False,
         color_alpha: int = 255,
     ):
+        """Draw tracks on video."""
         B, T, C, H, W = video.shape
         _, _, N, D = tracks.shape
 
@@ -299,6 +307,7 @@ class Visualizer:
         vector_colors: np.ndarray,
         alpha: float = 0.5,
     ):
+        """Draw pred tracks."""
         T, N, _ = tracks.shape
         rgb = Image.fromarray(np.uint8(rgb))
         for s in range(T - 1):
@@ -332,6 +341,7 @@ class Visualizer:
         rgb: np.ndarray,  # H x W x 3,
         gt_tracks: np.ndarray,  # T x 2
     ):
+        """Draw gt tracks."""
         T, N, _ = gt_tracks.shape
         color = np.array((211, 0, 0))
         rgb = Image.fromarray(np.uint8(rgb))

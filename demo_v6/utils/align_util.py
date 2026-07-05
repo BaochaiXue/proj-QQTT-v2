@@ -8,7 +8,6 @@ from pytorch3d.renderer import (
     RasterizationSettings,
     AmbientLights,
     BlendParams,
-    MeshRenderer,
     MeshRasterizer,
     SoftPhongShader,
 )
@@ -16,6 +15,7 @@ from scipy.spatial import cKDTree
 
 
 def select_point(points, raw_matching_points, object_mask):
+    """Select point."""
     mask_coords = np.column_stack(np.where(object_mask > 0))
     mask_coords = mask_coords[:, ::-1]
     tree = cKDTree(mask_coords)
@@ -25,10 +25,11 @@ def select_point(points, raw_matching_points, object_mask):
     new_match = mask_coords[indices]
     # Pay attention to the case that the keypoint is in different order
     matched_points = points[new_match[:, 1], new_match[:, 0]]
-    return mask_coords[indices], matched_points
+    return new_match, matched_points
 
 
 def plot_mesh_with_points(mesh, points, filename):
+    """Plot mesh with points."""
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
     ax.plot_trisurf(
@@ -51,6 +52,7 @@ def plot_mesh_with_points(mesh, points, filename):
 
 
 def plot_image_with_points(image, points, save_dir, points2=None):
+    """Plot image with points."""
     plt.imshow(image)
     plt.scatter(points[:, 0], points[:, 1], color="red", s=5)
     if points2 is not None:
@@ -83,16 +85,6 @@ def as_mesh(scene_or_mesh):
             combined_mesh = meshes[0]
         else:
             raise ValueError("No valid meshes found in the GLB file")
-
-        # Get model metadata
-        metadata = {
-            "vertices": combined_mesh.vertices.shape[0],
-            "faces": combined_mesh.faces.shape[0],
-            "bounds": combined_mesh.bounds.tolist(),
-            "center_mass": combined_mesh.center_mass.tolist(),
-            "is_watertight": combined_mesh.is_watertight,
-            "original_scene": combined_mesh,  # Keep reference to original scene
-        }
 
         mesh = combined_mesh
     else:
@@ -166,18 +158,31 @@ def sample_camera_poses(radius, num_samples, num_up_samples=4, device="cpu"):
     return torch.tensor(np.array(camera_poses), device=device)
 
 
-def render_image(mesh, camera_poses, width=640, height=480, fov=1, device="cpu"):
-    camera_poses = torch.tensor(camera_poses, device=device)
+def _camera_poses_tensor(camera_poses, device):
+    """Return camera poses on the render device."""
+    if isinstance(camera_poses, torch.Tensor):
+        camera_poses = camera_poses.to(device=device)
+    else:
+        camera_poses = torch.tensor(camera_poses, device=device)
     if len(camera_poses.shape) == 2:
         camera_poses = camera_poses[None, :]
+    return camera_poses
 
+
+def _load_pytorch3d_mesh(mesh_path, device):
+    """Load one GLB mesh for one or more render batches."""
     from pytorch3d.io import IO
     from pytorch3d.io.experimental_gltf_io import MeshGlbFormat
 
     io = IO()
     io.register_meshes_format(MeshGlbFormat())
-    mesh = io.load_mesh(mesh)
-    mesh = mesh.to(device)
+    mesh = io.load_mesh(mesh_path)
+    return mesh.to(device)
+
+
+def _render_loaded_mesh(mesh, camera_poses, width=640, height=480, fov=1, device="cpu"):
+    """Render color and depth from an already loaded PyTorch3D mesh."""
+    camera_poses = _camera_poses_tensor(camera_poses, device)
 
     R = camera_poses[:, :3, :3]
     T = camera_poses[:, 3, :3]
@@ -186,13 +191,10 @@ def render_image(mesh, camera_poses, width=640, height=480, fov=1, device="cpu")
         R=R,
         T=T,
         device=device,
-        focal_length=torch.ones(num_poses, 1)
-        * 0.5
-        * width
-        / np.tan(fov / 2),  # Calculate focal length from FOV in radians
+        focal_length=torch.ones(num_poses, 1) * 0.5 * width / np.tan(fov / 2),
         principal_point=torch.tensor((width / 2, height / 2))
         .repeat(num_poses)
-        .reshape(-1, 2),  # different order from image_size!!
+        .reshape(-1, 2),
         image_size=torch.tensor((height, width)).repeat(num_poses).reshape(-1, 2),
         in_ndc=False,
     )
@@ -204,25 +206,36 @@ def render_image(mesh, camera_poses, width=640, height=480, fov=1, device="cpu")
         faces_per_pixel=1,
         bin_size=0,
     )
-    renderer = MeshRenderer(
-        rasterizer=MeshRasterizer(
-            cameras=cameras,
-            raster_settings=raster_settings,
-        ),
-        shader=SoftPhongShader(
-            device=device,
-            blend_params=BlendParams(background_color=(0, 0, 0)),
-            cameras=cameras,
-            lights=lights,
-        ),
+    rasterizer = MeshRasterizer(
+        cameras=cameras,
+        raster_settings=raster_settings,
     )
-    extended_mesh = mesh.extend(num_poses).to(device)
-    fragments = renderer.rasterizer(extended_mesh)
+    shader = SoftPhongShader(
+        device=device,
+        blend_params=BlendParams(background_color=(0, 0, 0)),
+        cameras=cameras,
+        lights=lights,
+    )
+    mesh_batch = mesh.extend(num_poses).to(device)
+    fragments = rasterizer(mesh_batch)
     depth = fragments.zbuf.squeeze().cpu().numpy()
-    rendered_images = renderer(mesh.extend(num_poses))
+    rendered_images = shader(fragments, mesh_batch)
     color = (rendered_images[..., :3].cpu().numpy() * 255).astype(np.uint8)
 
     return color, depth
+
+
+def render_image(mesh, camera_poses, width=640, height=480, fov=1, device="cpu"):
+    """Render image."""
+    loaded_mesh = _load_pytorch3d_mesh(mesh, device)
+    return _render_loaded_mesh(
+        loaded_mesh,
+        camera_poses,
+        width=width,
+        height=height,
+        fov=fov,
+        device=device,
+    )
 
 
 def render_multi_images(
@@ -236,6 +249,7 @@ def render_multi_images(
     device="cpu",
 ):
     # Sample camera poses
+    """Render multi images."""
     camera_poses = sample_camera_poses(radius, num_samples, num_ups, device)
 
     # Calculate intrinsics
@@ -246,13 +260,25 @@ def render_multi_images(
 
     num_cameras = camera_poses.shape[0]
 
-    # Render two times to avoid memory overflow
+    loaded_mesh = _load_pytorch3d_mesh(mesh, device)
+
+    # Render two batches to preserve the current memory envelope.
     split = num_cameras // 2
-    color1, depth1 = render_image(
-        mesh, camera_poses[:split], width, height, fov, device
+    color1, depth1 = _render_loaded_mesh(
+        loaded_mesh,
+        camera_poses[:split],
+        width=width,
+        height=height,
+        fov=fov,
+        device=device,
     )
-    color2, depth2 = render_image(
-        mesh, camera_poses[split:], width, height, fov, device
+    color2, depth2 = _render_loaded_mesh(
+        loaded_mesh,
+        camera_poses[split:],
+        width=width,
+        height=height,
+        fov=fov,
+        device=device,
     )
     color = np.concatenate([color1, color2], axis=0)
     depth = np.concatenate([depth1, depth2], axis=0)

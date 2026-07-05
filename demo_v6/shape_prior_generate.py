@@ -27,6 +27,7 @@ DEFAULT_SEED = 42
 
 
 def build_parser():
+    """Build the command-line argument parser."""
     parser = ArgumentParser(
         description="Generate shape prior via SAM3D with the original API."
     )
@@ -50,10 +51,17 @@ def build_parser():
         action="store_true",
         help="Skip optional visualization.mp4 generation.",
     )
+    parser.add_argument(
+        "--wait-signal",
+        dest="wait_signal",
+        action="store_true",
+        help="Load the SAM3D pipeline, then block on stdin for GO before running.",
+    )
     return parser
 
 
 def resolve_sam3d_root(value=None):
+    """Resolve SAM3D root."""
     candidates = [Path(value).expanduser()] if value else []
     candidates.extend(DEFAULT_SAM3D_ROOT_CANDIDATES)
     for candidate in candidates:
@@ -71,6 +79,7 @@ def resolve_sam3d_root(value=None):
 
 
 def default_config_for_root(root):
+    """Return the default config for root."""
     for candidate in (
         root / "checkpoints" / "hf" / "pipeline.yaml",
         root / "checkpoints" / "hf" / "checkpoints" / "pipeline.yaml",
@@ -81,6 +90,7 @@ def default_config_for_root(root):
 
 
 def load_inference_class(root):
+    """Load inference class."""
     for path in (root, root / "notebook"):
         path_str = str(path)
         if path_str not in sys.path:
@@ -91,6 +101,7 @@ def load_inference_class(root):
 
 
 def rgba_to_sam3d_inputs(image):
+    """Return the RGBA to SAM3D inputs."""
     final_im = image.convert("RGBA")
     rgba = np.asarray(final_im, dtype=np.uint8)
     alpha = rgba[:, :, 3]
@@ -102,12 +113,14 @@ def rgba_to_sam3d_inputs(image):
 
 
 def _first(value):
+    """Return the first."""
     if isinstance(value, (list, tuple)):
         return value[0] if value else None
     return value
 
 
 def export_mesh(mesh_obj, path):
+    """Return the export mesh."""
     if mesh_obj is None:
         raise ValueError("SAM3D output did not include a mesh/glb object.")
     if hasattr(mesh_obj, "success") and getattr(mesh_obj, "success") is False:
@@ -130,19 +143,32 @@ def export_mesh(mesh_obj, path):
     trimesh.Trimesh(vertices=vertices, faces=faces, process=False).export(path)
 
 
-def run_sam3d_shape_prior(args):
+def resolve_inference_inputs(args):
+    """Resolve the SAM3D checkout and import its Inference class (CPU-only)."""
     sam3d_root = resolve_sam3d_root(args.sam3d_root)
     config = Path(args.config).expanduser() if args.config else None
     config = config or default_config_for_root(sam3d_root)
     if not config.exists():
         raise FileNotFoundError(f"SAM3D config not found: {config}")
+    Inference = load_inference_class(sam3d_root)
+    return Inference, config
+
+
+def load_sam3d_inference(args):
+    """Resolve the SAM3D checkout and load its inference pipeline (the slow part)."""
+    Inference, config = resolve_inference_inputs(args)
+    return Inference(str(config), compile=False)
+
+
+def run_sam3d_shape_prior(args, infer=None):
+    """Run SAM3D shape prior."""
+    if infer is None:
+        infer = load_sam3d_inference(args)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     image_rgb, mask = rgba_to_sam3d_inputs(Image.open(args.img_path))
 
-    Inference = load_inference_class(sam3d_root)
-    infer = Inference(str(config), compile=False)
     pipeline = getattr(infer, "_pipeline", None)
     if pipeline is not None and hasattr(pipeline, "run"):
         if hasattr(pipeline, "rendering_engine"):
@@ -180,7 +206,21 @@ def run_sam3d_shape_prior(args):
 
 
 def main(argv=None):
+    """Run the command-line entry point."""
     args = build_parser().parse_args(argv)
+    if args.wait_signal:
+        from demo_v6.utils import stage_prewarm
+
+        # Pre-GO work is CPU-only (checkout resolution + the sam3d_objects
+        # import tree). Weights go to the GPU only after GO: the upscale
+        # stage's inference peak plus resident SAM3D weights do not fit on
+        # one 24GB warmup GPU, so they must never overlap.
+        Inference, config = resolve_inference_inputs(args)
+        if not stage_prewarm.wait_for_go("generate"):
+            return
+        infer = Inference(str(config), compile=False)
+        run_sam3d_shape_prior(args, infer=infer)
+        return
     run_sam3d_shape_prior(args)
 
 

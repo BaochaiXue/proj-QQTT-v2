@@ -1,81 +1,162 @@
-# Process to get the masks of the controller and the object
-from argparse import ArgumentParser
-from pathlib import Path
-import shutil
-import subprocess
-import sys
+"""Semantic-mask gates for Demo v6 tracking (see demo_v6/design_spec.md).
 
-parser = ArgumentParser()
-parser.add_argument(
-    "--base_path",
-    type=str,
-    required=True,
-)
-parser.add_argument("--case_name", type=str, required=True)
-parser.add_argument("--TEXT_PROMPT", type=str, required=True)
+This module owns the mask half of the per-frame observation gate:
+
+- frame-0 query labeling — a query is an object query iff it is visible at
+  frame 0 and its pixel lies inside the frame-0 object processed mask, and a
+  controller query iff visible and inside the controller processed mask. The
+  labels are frozen for the whole session.
+- per-frame class-mask membership for later frames.
+
+Offline parity: data_process_origin/data_process_track.py:L58-L94. Origin
+keeps the object/controller mask overlap in both classes, so this module
+never subtracts the controller mask from the object mask.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Mapping
+
+import numpy as np
+
+from demo_v6 import ffs
+
+QUERY_SEMANTIC_NONE = np.int8(0)
+QUERY_SEMANTIC_OBJECT = np.int8(1)
+QUERY_SEMANTIC_CONTROLLER = np.int8(2)
+
+QUERY_HAND_NONE = np.int8(0)
+QUERY_HAND_A = np.int8(1)
+QUERY_HAND_B = np.int8(2)
 
 
-def discover_camera_indices(case_dir):
-    depth_dir = case_dir / "depth"
-    if not depth_dir.is_dir():
-        raise FileNotFoundError(f"Depth directory not found: {depth_dir}")
+def object_mask_from_frame(frame: Mapping[str, Any]) -> np.ndarray:
+    """Return the per-class object processed mask without controller subtraction."""
+    if "object" not in frame or frame["object"] is None:
+        raise ValueError("mask frame is missing the 'object' mask")
+    return np.asarray(frame["object"], dtype=bool)
 
-    camera_indices = sorted(
-        int(path.name)
-        for path in depth_dir.iterdir()
-        if path.is_dir() and path.name.isdigit()
+
+def controller_mask_from_frame(frame: Mapping[str, Any]) -> np.ndarray:
+    """Return the controller processed mask, unioning hand masks when needed."""
+    if "controller" in frame and frame["controller"] is not None:
+        return np.asarray(frame["controller"], dtype=bool)
+    obj = object_mask_from_frame(frame)
+    hand_a = np.asarray(frame.get("hand_a", np.zeros_like(obj, dtype=bool)), dtype=bool)
+    hand_b = np.asarray(frame.get("hand_b", np.zeros_like(obj, dtype=bool)), dtype=bool)
+    if hand_a.shape != obj.shape or hand_b.shape != obj.shape:
+        raise ValueError("hand masks must match the object mask shape")
+    return np.logical_or(hand_a, hand_b)
+
+
+def frame0_semantic_labels(
+    tracks0_yx: np.ndarray,
+    visibility0: np.ndarray,
+    *,
+    object_mask: np.ndarray,
+    controller_mask: np.ndarray,
+) -> np.ndarray:
+    """Label queries once from the warmup frame (design_spec.md line 1).
+
+    A query visible at frame 0 whose pixel is inside both masks keeps the
+    existing session convention: the controller label wins.
+
+    ``tracks0_yx`` is ``(N, 2)`` float pixels in (y, x) = (row, col) order;
+    returns ``(N,)`` int8 labels (0 none / 1 object / 2 controller).
+    """
+    obj_mask = np.asarray(object_mask, dtype=bool)
+    ctrl_mask = np.asarray(controller_mask, dtype=bool)
+    if obj_mask.shape != ctrl_mask.shape:
+        raise ValueError("object/controller masks must have the same shape")
+    vis0 = np.asarray(visibility0, dtype=bool).reshape(-1)
+    yy, xx, in_bounds = ffs.round_tracks_to_pixels(tracks0_yx, obj_mask.shape)
+    if vis0.shape[0] != yy.shape[0]:
+        raise ValueError("visibility0 must match tracks0_yx query count")
+    labels = np.zeros((vis0.shape[0],), dtype=np.int8)
+    visible = vis0 & in_bounds
+    if np.any(visible):
+        # Gather only the in-bounds subset: out-of-image or non-finite frame-0
+        # tracks are unlabeled observations, not indexing errors.
+        vis_idx = np.flatnonzero(visible)
+        obj_hit = obj_mask[yy[vis_idx], xx[vis_idx]].astype(bool)
+        ctrl_hit = ctrl_mask[yy[vis_idx], xx[vis_idx]].astype(bool)
+        labels[vis_idx[obj_hit]] = QUERY_SEMANTIC_OBJECT
+        labels[vis_idx[ctrl_hit]] = QUERY_SEMANTIC_CONTROLLER
+    return labels
+
+
+def frame0_hand_labels(
+    tracks0_yx: np.ndarray,
+    visibility0: np.ndarray,
+    *,
+    mask_frame: Mapping[str, Any],
+) -> np.ndarray:
+    """Attribute each query to hand_a/hand_b from the warmup frame, frozen.
+
+    design_spec.md: the controller neighbor table never crosses hands, so
+    every controller query needs a hand identity at frame 0. A pixel inside
+    both hand masks deterministically counts as hand_a. Sessions without hand
+    masks return all NONE, keeping a single neighbor pool.
+
+    ``tracks0_yx`` is ``(N, 2)`` float (y, x) pixels; returns ``(N,)`` int8.
+    """
+    vis0 = np.asarray(visibility0, dtype=bool).reshape(-1)
+    labels = np.full((vis0.shape[0],), QUERY_HAND_NONE, dtype=np.int8)
+    hand_a = mask_frame.get("hand_a")
+    hand_b = mask_frame.get("hand_b")
+    if hand_a is None and hand_b is None:
+        return labels
+    shape = np.asarray(hand_a if hand_a is not None else hand_b).shape
+    a_mask = (
+        np.asarray(hand_a, dtype=bool)
+        if hand_a is not None
+        else np.zeros(shape, dtype=bool)
     )
-    if not camera_indices:
-        raise ValueError(f"No camera depth directories found under {depth_dir}")
-    return camera_indices
-
-
-def run_camera_segmentation(case_dir, case_name, text_prompt, camera_idx):
-    video_path = case_dir / "color" / f"{camera_idx}.mp4"
-    if not video_path.is_file():
-        raise FileNotFoundError(f"Color video not found: {video_path}")
-
-    script_path = Path(__file__).resolve().with_name("segment_util_video.py")
-    subprocess.run(
-        [
-            sys.executable,
-            str(script_path),
-            "--base_path",
-            str(case_dir.parent),
-            "--case_name",
-            case_name,
-            "--TEXT_PROMPT",
-            text_prompt,
-            "--camera_idx",
-            str(camera_idx),
-        ],
-        check=True,
+    b_mask = (
+        np.asarray(hand_b, dtype=bool)
+        if hand_b is not None
+        else np.zeros(shape, dtype=bool)
     )
+    if a_mask.shape != b_mask.shape:
+        raise ValueError("hand_a/hand_b masks must have the same shape")
+    yy, xx, in_bounds = ffs.round_tracks_to_pixels(tracks0_yx, a_mask.shape)
+    if vis0.shape[0] != yy.shape[0]:
+        raise ValueError("visibility0 must match tracks0_yx query count")
+    vis_idx = np.flatnonzero(vis0 & in_bounds)
+    if vis_idx.size:
+        # hand_a is written last so it wins the (rare) hand-mask overlap.
+        labels[vis_idx[b_mask[yy[vis_idx], xx[vis_idx]]]] = QUERY_HAND_B
+        labels[vis_idx[a_mask[yy[vis_idx], xx[vis_idx]]]] = QUERY_HAND_A
+    return labels
 
 
-def main(argv=None):
-    args = parser.parse_args(argv)
-    base_path = args.base_path
-    case_name = args.case_name
-    case_dir = Path(base_path) / case_name
-    camera_indices = discover_camera_indices(case_dir)
+def class_mask_valid(
+    tracks_yx: np.ndarray,
+    semantic_labels: np.ndarray,
+    *,
+    object_mask: np.ndarray,
+    controller_mask: np.ndarray,
+    tracker_visible: np.ndarray,
+) -> np.ndarray:
+    """Per-frame class-mask membership gate (design_spec.md 大类一).
 
-    print(f"Processing {case_name}")
+    Object queries must land inside the frame's object processed mask,
+    controller queries inside the controller processed mask. Queries labeled
+    neither are never mask-valid. Out-of-image pixels are invalid.
 
-    for camera_idx in camera_indices:
-        print(f"Processing {case_name} camera {camera_idx}")
-        try:
-            run_camera_segmentation(
-                case_dir,
-                case_name,
-                args.TEXT_PROMPT,
-                camera_idx,
-            )
-        finally:
-            tmp_data_dir = case_dir / "tmp_data"
-            if tmp_data_dir.exists():
-                shutil.rmtree(tmp_data_dir)
-
-
-if __name__ == "__main__":
-    main()
+    ``tracks_yx`` is ``(N, 2)`` float (y, x) pixels; returns ``(N,)`` bool.
+    """
+    obj_mask = np.asarray(object_mask, dtype=bool)
+    ctrl_mask = np.asarray(controller_mask, dtype=bool)
+    labels = np.asarray(semantic_labels, dtype=np.int8).reshape(-1)
+    visible = np.asarray(tracker_visible, dtype=bool).reshape(-1)
+    yy, xx, in_bounds = ffs.round_tracks_to_pixels(tracks_yx, obj_mask.shape)
+    valid = np.zeros((labels.shape[0],), dtype=bool)
+    candidates = visible & in_bounds
+    object_queries = candidates & (labels == QUERY_SEMANTIC_OBJECT)
+    controller_queries = candidates & (labels == QUERY_SEMANTIC_CONTROLLER)
+    if np.any(object_queries):
+        valid[object_queries] = obj_mask[yy[object_queries], xx[object_queries]]
+    if np.any(controller_queries):
+        valid[controller_queries] = ctrl_mask[yy[controller_queries], xx[controller_queries]]
+    return valid

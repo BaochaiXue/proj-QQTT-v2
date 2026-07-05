@@ -75,16 +75,19 @@ def normalize_keypoints(kpts, image_shape):
 class KeypointEncoder(nn.Module):
     """ Joint encoding of visual appearance and location using MLPs"""
     def __init__(self, feature_dim: int, layers: List[int]) -> None:
+        """Initialize KeypointEncoder."""
         super().__init__()
         self.encoder = MLP([3] + layers + [feature_dim])
         nn.init.constant_(self.encoder[-1].bias, 0.0)
 
     def forward(self, kpts, scores):
+        """Run the module's forward pass."""
         inputs = [kpts.transpose(1, 2), scores.unsqueeze(1)]
         return self.encoder(torch.cat(inputs, dim=1))
 
 
 def attention(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> Tuple[torch.Tensor,torch.Tensor]:
+    """Return the attention."""
     dim = query.shape[1]
     scores = torch.einsum('bdhn,bdhm->bhnm', query, key) / dim**.5
     prob = torch.nn.functional.softmax(scores, dim=-1)
@@ -94,6 +97,7 @@ def attention(query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> Tu
 class MultiHeadedAttention(nn.Module):
     """ Multi-head attention to increase model expressivitiy """
     def __init__(self, num_heads: int, d_model: int):
+        """Initialize MultiHeadedAttention."""
         super().__init__()
         assert d_model % num_heads == 0
         self.dim = d_model // num_heads
@@ -102,6 +106,7 @@ class MultiHeadedAttention(nn.Module):
         self.proj = nn.ModuleList([deepcopy(self.merge) for _ in range(3)])
 
     def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
+        """Run the module's forward pass."""
         batch_dim = query.size(0)
         query, key, value = [l(x).view(batch_dim, self.dim, self.num_heads, -1)
                              for l, x in zip(self.proj, (query, key, value))]
@@ -111,18 +116,21 @@ class MultiHeadedAttention(nn.Module):
 
 class AttentionalPropagation(nn.Module):
     def __init__(self, feature_dim: int, num_heads: int):
+        """Initialize AttentionalPropagation."""
         super().__init__()
         self.attn = MultiHeadedAttention(num_heads, feature_dim)
         self.mlp = MLP([feature_dim*2, feature_dim*2, feature_dim])
         nn.init.constant_(self.mlp[-1].bias, 0.0)
 
     def forward(self, x: torch.Tensor, source: torch.Tensor) -> torch.Tensor:
+        """Run the module's forward pass."""
         message = self.attn(x, source, source)
         return self.mlp(torch.cat([x, message], dim=1))
 
 
 class AttentionalGNN(nn.Module):
     def __init__(self, feature_dim: int, layer_names: List[str]) -> None:
+        """Initialize AttentionalGNN."""
         super().__init__()
         self.layers = nn.ModuleList([
             AttentionalPropagation(feature_dim, 4)
@@ -130,6 +138,7 @@ class AttentionalGNN(nn.Module):
         self.names = layer_names
 
     def forward(self, desc0: torch.Tensor, desc1: torch.Tensor) -> Tuple[torch.Tensor,torch.Tensor]:
+        """Run the module's forward pass."""
         for layer, name in zip(self.layers, self.names):
             if name == 'cross':
                 src0, src1 = desc1, desc0
@@ -173,6 +182,7 @@ def log_optimal_transport(scores: torch.Tensor, alpha: torch.Tensor, iters: int)
 
 
 def arange_like(x, dim: int):
+    """Return the arange like."""
     return x.new_ones(x.shape[dim]).cumsum(0) - 1  # traceable in 1.1
 
 
@@ -204,6 +214,7 @@ class SuperGlue(nn.Module):
     }
 
     def __init__(self, config):
+        """Initialize SuperGlue."""
         super().__init__()
         self.config = {**self.default_config, **config}
 

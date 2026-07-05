@@ -58,6 +58,7 @@ class AverageTimer:
     """ Class to help manage printing simple timing of code execution. """
 
     def __init__(self, smoothing=0.3, newline=False):
+        """Initialize AverageTimer."""
         self.smoothing = smoothing
         self.newline = newline
         self.times = OrderedDict()
@@ -65,6 +66,7 @@ class AverageTimer:
         self.reset()
 
     def reset(self):
+        """Reset AverageTimer."""
         now = time.time()
         self.start = now
         self.last_time = now
@@ -72,6 +74,7 @@ class AverageTimer:
             self.will_print[name] = False
 
     def update(self, name='default'):
+        """Update AverageTimer."""
         now = time.time()
         dt = now - self.last_time
         if name in self.times:
@@ -81,6 +84,7 @@ class AverageTimer:
         self.last_time = now
 
     def print(self, text='Timer'):
+        """Print AverageTimer."""
         total = 0.
         print('[{}]'.format(text), end=' ')
         for key in self.times:
@@ -104,6 +108,7 @@ class VideoStreamer:
         4.) A video file, such as an .mp4 or .avi file.
     """
     def __init__(self, basedir, resize, skip, image_glob, max_length=1000000):
+        """Initialize VideoStreamer."""
         self._ip_grabbed = False
         self._ip_running = False
         self._ip_camera = False
@@ -211,6 +216,7 @@ class VideoStreamer:
         return (image, True)
 
     def start_ip_camera_thread(self):
+        """Start ip camera thread."""
         self._ip_thread = Thread(target=self.update_ip_camera, args=())
         self._ip_running = True
         self._ip_thread.start()
@@ -218,6 +224,7 @@ class VideoStreamer:
         return self
 
     def update_ip_camera(self):
+        """Update ip camera."""
         while self._ip_running:
             ret, img = self.cap.read()
             if ret is False:
@@ -233,11 +240,13 @@ class VideoStreamer:
 
 
     def cleanup(self):
+        """Clean up VideoStreamer."""
         self._ip_running = False
 
 # --- PREPROCESSING ---
 
 def process_resize(w, h, resize):
+    """Process resize."""
     assert(len(resize) > 0 and len(resize) <= 2)
     if len(resize) == 1 and resize[0] > -1:
         scale = resize[0] / max(h, w)
@@ -257,10 +266,12 @@ def process_resize(w, h, resize):
 
 
 def frame2tensor(frame, device):
+    """Return the frame2tensor."""
     return torch.from_numpy(frame/255.).float()[None, None].to(device)
 
 
 def read_image(image, device, resize, rotation, resize_float):
+    """Read image."""
     w, h = image.shape[1], image.shape[0]
     w_new, h_new = process_resize(w, h, resize)
     scales = (float(w) / float(w_new), float(h) / float(h_new))
@@ -283,6 +294,7 @@ def read_image(image, device, resize, rotation, resize_float):
 
 
 def estimate_pose(kpts0, kpts1, K0, K1, thresh, conf=0.99999):
+    """Estimate pose."""
     if len(kpts0) < 5:
         return None
 
@@ -330,6 +342,7 @@ def rotate_intrinsics(K, image_shape, rot):
 
 
 def rotate_pose_inplane(i_T_w, rot):
+    """Rotate pose inplane."""
     rotation_matrices = [
         np.array([[np.cos(r), -np.sin(r), 0., 0.],
                   [np.sin(r), np.cos(r), 0., 0.],
@@ -341,15 +354,18 @@ def rotate_pose_inplane(i_T_w, rot):
 
 
 def scale_intrinsics(K, scales):
+    """Scale intrinsics."""
     scales = np.diag([1./scales[0], 1./scales[1], 1.])
     return np.dot(scales, K)
 
 
 def to_homogeneous(points):
+    """Convert to homogeneous."""
     return np.concatenate([points, np.ones_like(points[:, :1])], axis=-1)
 
 
 def compute_epipolar_error(kpts0, kpts1, T_0to1, K0, K1):
+    """Compute epipolar error."""
     kpts0 = (kpts0 - K0[[0, 1], [2, 2]][None]) / K0[[0, 1], [0, 1]][None]
     kpts1 = (kpts1 - K1[[0, 1], [2, 2]][None]) / K1[[0, 1], [0, 1]][None]
     kpts0 = to_homogeneous(kpts0)
@@ -372,17 +388,20 @@ def compute_epipolar_error(kpts0, kpts1, T_0to1, K0, K1):
 
 
 def angle_error_mat(R1, R2):
+    """Return the angle error mat."""
     cos = (np.trace(np.dot(R1.T, R2)) - 1) / 2
     cos = np.clip(cos, -1., 1.)  # numercial errors can make it out of bounds
     return np.rad2deg(np.abs(np.arccos(cos)))
 
 
 def angle_error_vec(v1, v2):
+    """Return the angle error vec."""
     n = np.linalg.norm(v1) * np.linalg.norm(v2)
     return np.rad2deg(np.arccos(np.clip(np.dot(v1, v2) / n, -1.0, 1.0)))
 
 
 def compute_pose_error(T_0to1, R, t):
+    """Compute pose error."""
     R_gt = T_0to1[:3, :3]
     t_gt = T_0to1[:3, 3]
     error_t = angle_error_vec(t, t_gt)
@@ -392,6 +411,7 @@ def compute_pose_error(T_0to1, R, t):
 
 
 def pose_auc(errors, thresholds):
+    """Return the pose auc."""
     sort_idx = np.argsort(errors)
     errors = np.array(errors.copy())[sort_idx]
     recall = (np.arange(len(errors)) + 1) / len(errors)
@@ -410,6 +430,7 @@ def pose_auc(errors, thresholds):
 
 
 def plot_image_pair(imgs, dpi=100, size=6, pad=.5):
+    """Plot image pair."""
     n = len(imgs)
     assert n == 2, 'number of images must be two'
     figsize = (size*n, size*3/4) if size is not None else None
@@ -424,12 +445,14 @@ def plot_image_pair(imgs, dpi=100, size=6, pad=.5):
 
 
 def plot_keypoints(kpts0, kpts1, color='w', ps=2):
+    """Plot keypoints."""
     ax = plt.gcf().axes
     ax[0].scatter(kpts0[:, 0], kpts0[:, 1], c=color, s=ps)
     ax[1].scatter(kpts1[:, 0], kpts1[:, 1], c=color, s=ps)
 
 
 def plot_matches(kpts0, kpts1, color, lw=1.5, ps=4):
+    """Plot matches."""
     fig = plt.gcf()
     ax = fig.axes
     fig.canvas.draw()
@@ -450,6 +473,7 @@ def make_matching_plot(image0, image1, kpts0, kpts1, mkpts0, mkpts1,
                        color, text, path, show_keypoints=False,
                        fast_viz=False, small_text=[]):
 
+    """Create matching plot."""
     if fast_viz:
         make_matching_plot_fast(image0, image1, kpts0, kpts1, mkpts0, mkpts1,
                                 color, text, path, show_keypoints, 10,
@@ -482,6 +506,7 @@ def make_matching_plot_fast(image0, image1, kpts0, kpts1, mkpts0,
                             show_keypoints=False, margin=10,
                             opencv_display=False, opencv_title='',
                             small_text=[]):
+    """Create matching plot fast."""
     H0, W0 = image0.shape
     H1, W1 = image1.shape
     H, W = max(H0, H1), W0 + W1 + margin
@@ -543,5 +568,6 @@ def make_matching_plot_fast(image0, image1, kpts0, kpts1, mkpts0,
 
 
 def error_colormap(x):
+    """Return the error colormap."""
     return np.clip(
         np.stack([2-x*2, x*2, np.zeros_like(x), np.ones_like(x)], -1), 0, 1)

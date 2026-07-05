@@ -45,23 +45,65 @@
 # %BANNER_END%
 
 from pathlib import Path
-import argparse
-import random
 import numpy as np
 import matplotlib.cm as cm
 import torch
-import sys
-import os
 
-sys.path.append(os.getcwd())
-from models.matching import Matching
-from models.utils import (
+from demo_v6.models.matching import Matching
+from demo_v6.models.utils import (
     make_matching_plot,
     AverageTimer,
     read_image,
 )
 
 torch.set_grad_enabled(False)
+
+_MATCHING_MODEL_CACHE = {}
+
+
+def get_matching_model(
+    *,
+    nms_radius=4,
+    keypoint_threshold=0.005,
+    max_keypoints=1024,
+    superglue="indoor",
+    sinkhorn_iterations=20,
+    match_threshold=0.2,
+    device=None,
+):
+    """Return a cached SuperPoint+SuperGlue model for the given config.
+
+    Weights and eval mode are identical to constructing the model inline; the
+    cache only lets the prewarm path load checkpoints before the first request.
+    """
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    key = (
+        nms_radius,
+        keypoint_threshold,
+        max_keypoints,
+        superglue,
+        sinkhorn_iterations,
+        match_threshold,
+        str(device),
+    )
+    model = _MATCHING_MODEL_CACHE.get(key)
+    if model is None:
+        config = {
+            "superpoint": {
+                "nms_radius": nms_radius,
+                "keypoint_threshold": keypoint_threshold,
+                "max_keypoints": max_keypoints,
+            },
+            "superglue": {
+                "weights": superglue,
+                "sinkhorn_iterations": sinkhorn_iterations,
+                "match_threshold": match_threshold,
+            },
+        }
+        model = Matching(config).eval().to(device)
+        _MATCHING_MODEL_CACHE[key] = model
+    return model
 
 
 def image_pair_matching(
@@ -85,21 +127,18 @@ def image_pair_matching(
     viz_best=True,
 ):
 
+    """Return the image pair matching."""
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print('Running inference on device "{}"'.format(device))
-    config = {
-        "superpoint": {
-            "nms_radius": nms_radius,
-            "keypoint_threshold": keypoint_threshold,
-            "max_keypoints": max_keypoints,
-        },
-        "superglue": {
-            "weights": superglue,
-            "sinkhorn_iterations": sinkhorn_iterations,
-            "match_threshold": match_threshold,
-        },
-    }
-    matching = Matching(config).eval().to(device)
+    matching = get_matching_model(
+        nms_radius=nms_radius,
+        keypoint_threshold=keypoint_threshold,
+        max_keypoints=max_keypoints,
+        superglue=superglue,
+        sinkhorn_iterations=sinkhorn_iterations,
+        match_threshold=match_threshold,
+        device=device,
+    )
 
     output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True, parents=True)

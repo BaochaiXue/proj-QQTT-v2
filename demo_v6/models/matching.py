@@ -49,6 +49,7 @@ from .superglue import SuperGlue
 class Matching(torch.nn.Module):
     """ Image Matching Frontend (SuperPoint + SuperGlue) """
     def __init__(self, config={}):
+        """Initialize Matching."""
         super().__init__()
         self.superpoint = SuperPoint(config.get('superpoint', {}))
         self.superglue = SuperGlue(config.get('superglue', {}))

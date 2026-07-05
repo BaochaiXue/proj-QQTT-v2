@@ -1,0 +1,23 @@
+name: demo_2_max
+channels:
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - cuda-nvcc=12.6
+  - cuda-libraries-dev=12.6
+  - ffmpeg
+  - libstdcxx-ng
+  - libgcc-ng
+  - pkg-config
+  - cmake
+  - ninja
+  - git
+  - git-lfs
+  - curl
+  - wget
+  - libgl
+  - libglib
+  - libusb
+  - libudev
