@@ -18,6 +18,9 @@ DATA_PROCESS_QUERY_SCHEMA_VERSION = "data_process_sam3d_realtime_query_schema_v1
 DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION = (
     "data_process_sam3d_realtime_final_data_v1"
 )
+NO_QUERY_ID = -1
+OBJECT_QUERY_SEMANTIC_LABEL = np.int8(1)
+CONTROLLER_QUERY_SEMANTIC_LABEL = np.int8(2)
 # Query schema fields are static over an online run. The hash is intentionally
 # part of both final_data and track_process_data so readers can identify the
 # query topology without scanning large arrays.
@@ -175,6 +178,115 @@ def _scalar_str(value: Any) -> str:
     return str(value)
 
 
+def _query_id_label_map(
+    query_ids: np.ndarray,
+    query_semantic_labels: np.ndarray,
+) -> dict[int, int]:
+    """Validate query id labels and return an id -> semantic-label map."""
+    ids = np.asarray(query_ids, dtype=np.int64).reshape(-1)
+    labels = np.asarray(query_semantic_labels, dtype=np.int8).reshape(-1)
+    if ids.shape[0] != labels.shape[0]:
+        raise ValueError(
+            "query_ids and query_semantic_labels must have the same length"
+        )
+    label_by_id: dict[int, int] = {}
+    for query_id, label in zip(ids.tolist(), labels.tolist()):
+        query_key = int(query_id)
+        label_value = int(label)
+        existing = label_by_id.get(query_key)
+        if existing is not None and existing != label_value:
+            raise ValueError(
+                f"query id {query_key} has conflicting semantic labels "
+                f"{existing} and {label_value}"
+            )
+        label_by_id[query_key] = label_value
+    return label_by_id
+
+
+def _missing_sample_query_ids(
+    sample_query_ids: np.ndarray,
+    *,
+    known_labels: Mapping[int, int],
+    expected_label: np.int8,
+    field_name: str,
+) -> np.ndarray:
+    """Return sample ids absent from the schema, preserving first-use order."""
+    missing: list[int] = []
+    missing_seen: set[int] = set()
+    expected = int(expected_label)
+    for value in np.asarray(sample_query_ids, dtype=np.int64).reshape(-1).tolist():
+        query_id = int(value)
+        if query_id == NO_QUERY_ID:
+            continue
+        known_label = known_labels.get(query_id)
+        if known_label is not None:
+            if int(known_label) != expected:
+                raise ValueError(
+                    f"{field_name} references query id {query_id} with semantic "
+                    f"label {known_label}, expected {expected}"
+                )
+            continue
+        if query_id in missing_seen:
+            continue
+        missing.append(query_id)
+        missing_seen.add(query_id)
+    return np.asarray(missing, dtype=np.int64)
+
+
+def _extend_query_schema_for_sample_ids(
+    query_ids: np.ndarray,
+    query_semantic_labels: np.ndarray,
+    *,
+    object_sample_query_ids: np.ndarray,
+    controller_sample_query_ids: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Append publish-only sample ids that are not tracker query ids."""
+    ids = np.ascontiguousarray(np.asarray(query_ids, dtype=np.int64).reshape(-1))
+    labels = np.ascontiguousarray(
+        np.asarray(query_semantic_labels, dtype=np.int8).reshape(-1)
+    )
+    known_labels = _query_id_label_map(ids, labels)
+
+    object_missing = _missing_sample_query_ids(
+        object_sample_query_ids,
+        known_labels=known_labels,
+        expected_label=OBJECT_QUERY_SEMANTIC_LABEL,
+        field_name="object_sample_query_ids",
+    )
+    if object_missing.size:
+        ids = np.concatenate([ids, object_missing]).astype(np.int64, copy=False)
+        object_labels = np.full(
+            (object_missing.shape[0],),
+            OBJECT_QUERY_SEMANTIC_LABEL,
+            dtype=np.int8,
+        )
+        labels = np.concatenate([labels, object_labels]).astype(np.int8, copy=False)
+        for query_id in object_missing.tolist():
+            known_labels[int(query_id)] = int(OBJECT_QUERY_SEMANTIC_LABEL)
+
+    controller_missing = _missing_sample_query_ids(
+        controller_sample_query_ids,
+        known_labels=known_labels,
+        expected_label=CONTROLLER_QUERY_SEMANTIC_LABEL,
+        field_name="controller_sample_query_ids",
+    )
+    if controller_missing.size:
+        ids = np.concatenate([ids, controller_missing]).astype(np.int64, copy=False)
+        controller_labels = np.full(
+            (controller_missing.shape[0],),
+            CONTROLLER_QUERY_SEMANTIC_LABEL,
+            dtype=np.int8,
+        )
+        labels = np.concatenate([labels, controller_labels]).astype(
+            np.int8, copy=False
+        )
+
+    return (
+        np.ascontiguousarray(ids, dtype=np.int64),
+        np.ascontiguousarray(labels, dtype=np.int8),
+    )
+
+
 def build_query_schema_payload(
     track_process_data: Mapping[str, Any],
     *,
@@ -237,8 +349,16 @@ def build_query_schema_payload(
         query_semantic_labels = np.ascontiguousarray(
             np.concatenate(
                 [
-                    np.ones((object_query_ids.shape[0],), dtype=np.int8),
-                    np.full((controller_query_ids.shape[0],), 2, dtype=np.int8),
+                    np.full(
+                        (object_query_ids.shape[0],),
+                        OBJECT_QUERY_SEMANTIC_LABEL,
+                        dtype=np.int8,
+                    ),
+                    np.full(
+                        (controller_query_ids.shape[0],),
+                        CONTROLLER_QUERY_SEMANTIC_LABEL,
+                        dtype=np.int8,
+                    ),
                 ]
             ),
             dtype=np.int8,
@@ -275,16 +395,25 @@ def build_query_schema_payload(
                 final_indices[valid]
             ]
 
+    object_sample_query_ids = np.ascontiguousarray(
+        np.asarray(object_sample_query_ids, dtype=np.int64).reshape(-1)
+    )
+    controller_sample_query_ids = np.ascontiguousarray(
+        np.asarray(controller_sample_query_ids, dtype=np.int64).reshape(-1)
+    )
+    query_ids, query_semantic_labels = _extend_query_schema_for_sample_ids(
+        query_ids,
+        query_semantic_labels,
+        object_sample_query_ids=object_sample_query_ids,
+        controller_sample_query_ids=controller_sample_query_ids,
+    )
+
     payload: dict[str, Any] = {
         "query_schema_version": DATA_PROCESS_QUERY_SCHEMA_VERSION,
         "query_ids": query_ids,
         "query_semantic_labels": query_semantic_labels,
-        "object_sample_query_ids": np.ascontiguousarray(
-            np.asarray(object_sample_query_ids, dtype=np.int64).reshape(-1)
-        ),
-        "controller_sample_query_ids": np.ascontiguousarray(
-            np.asarray(controller_sample_query_ids, dtype=np.int64).reshape(-1)
-        ),
+        "object_sample_query_ids": object_sample_query_ids,
+        "controller_sample_query_ids": controller_sample_query_ids,
     }
     payload["query_schema_hash"] = _query_schema_hash(payload)
     return payload

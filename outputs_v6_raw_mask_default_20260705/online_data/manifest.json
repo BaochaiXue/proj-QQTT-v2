@@ -1,0 +1,18 @@
+{
+  "case_name": "demo_v6",
+  "chunk_size": 35,
+  "demo_version": "demo_v6",
+  "latest_committed_chunk": -1,
+  "latest_committed_frame": 0,
+  "num_frames_total": 35,
+  "online_num_frames_total": 35,
+  "reference_pipeline": "data_process_sam3d",
+  "runtime_contract": "data_process_sam3d_realtime_final_data_v1",
+  "runtime_product_name": "demo_v6_main_data_processing",
+  "source_end_frame": 35,
+  "source_frame_step": 1,
+  "source_num_frames_total": 35,
+  "source_start_frame": 0,
+  "status": "failed",
+  "version": 1
+}

@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from demo_v6 import asap
+from demo_v6 import chunk_data_payload
 
 OBJECT_COUNT = 60
 SURFACE_COUNT = 20
@@ -372,6 +373,103 @@ class AugmentWindowTests(unittest.TestCase):
                     surface_points=fixture["surface"],
                     interior_points=fixture["interior"],
                 )
+
+
+class QuerySchemaPayloadTests(unittest.TestCase):
+    def test_augmented_prior_ids_are_added_to_query_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture = _fixture(tmpdir)
+            runtime = asap.AsapRuntime()
+            window = _window(fixture["object0"], frame_count=3)
+            controller_count = 2
+            query_count = OBJECT_COUNT + controller_count
+            window.update(
+                {
+                    "controller_mask": np.ones((controller_count,), dtype=bool),
+                    "controller_points": np.zeros(
+                        (3, controller_count, 3), dtype=np.float32
+                    ),
+                    "query_ids": np.arange(query_count, dtype=np.int64),
+                    "query_semantic_labels": np.concatenate(
+                        [
+                            np.ones((OBJECT_COUNT,), dtype=np.int8),
+                            np.full((controller_count,), 2, dtype=np.int8),
+                        ]
+                    ),
+                    "object_track_query_indices": np.arange(
+                        OBJECT_COUNT, dtype=np.int64
+                    ),
+                    "controller_track_query_indices": np.arange(
+                        OBJECT_COUNT, query_count, dtype=np.int64
+                    ),
+                }
+            )
+            augmented, _summary = runtime.augment_window(
+                window,
+                metadata=fixture["metadata"],
+                surface_points=fixture["surface"],
+                interior_points=fixture["interior"],
+            )
+            final_data, track_process, _manifest = (
+                chunk_data_payload.build_chunk_data_payload(
+                    chunk_data_payload.ChunkDataWindow(
+                        track_process_data=augmented,
+                        surface_points=fixture["surface"],
+                        interior_points=fixture["interior"],
+                    )
+                )
+            )
+
+            prior_ids = np.asarray(final_data["object_sample_query_ids"])[OBJECT_COUNT:]
+            self.assertEqual(prior_ids.shape[0], SURFACE_COUNT + INTERIOR_COUNT)
+            self.assertTrue(
+                bool(np.isin(prior_ids, final_data["query_ids"]).all())
+            )
+            label_by_id = {
+                int(query_id): int(label)
+                for query_id, label in zip(
+                    np.asarray(final_data["query_ids"]).tolist(),
+                    np.asarray(final_data["query_semantic_labels"]).tolist(),
+                )
+            }
+            self.assertTrue(
+                all(label_by_id[int(query_id)] == 1 for query_id in prior_ids)
+            )
+            self.assertEqual(
+                final_data["query_schema_hash"],
+                track_process["query_schema_hash"],
+            )
+
+    def test_query_schema_fails_on_conflicting_existing_labels(self) -> None:
+        payload = {
+            "object_points": np.zeros((1, 1, 3), dtype=np.float32),
+            "controller_points": np.zeros((1, 1, 3), dtype=np.float32),
+            "query_ids": np.asarray([7, 7], dtype=np.int64),
+            "query_semantic_labels": np.asarray([1, 2], dtype=np.int8),
+        }
+        with self.assertRaisesRegex(ValueError, "conflicting semantic labels"):
+            chunk_data_payload.build_query_schema_payload(
+                payload,
+                object_sample_query_ids=np.asarray([7], dtype=np.int64),
+                controller_sample_query_ids=np.asarray([], dtype=np.int64),
+            )
+
+    def test_query_schema_fails_on_object_controller_missing_id_conflict(
+        self,
+    ) -> None:
+        payload = {
+            "object_points": np.zeros((1, 1, 3), dtype=np.float32),
+            "controller_points": np.zeros((1, 1, 3), dtype=np.float32),
+            "query_ids": np.asarray([1], dtype=np.int64),
+            "query_semantic_labels": np.asarray([1], dtype=np.int8),
+        }
+        shared_missing_id = np.asarray([asap.SURFACE_QUERY_ID_BASE], dtype=np.int64)
+        with self.assertRaisesRegex(ValueError, "semantic label"):
+            chunk_data_payload.build_query_schema_payload(
+                payload,
+                object_sample_query_ids=shared_missing_id,
+                controller_sample_query_ids=shared_missing_id,
+            )
 
 
 if __name__ == "__main__":

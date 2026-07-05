@@ -14,7 +14,7 @@ input:
   # Input backend for the demo runner; fake-live replays prepared data as a live stream.
   input_source: "fake-live"
   # Raw data_collect case used by fake-live replay when the CLI does not override it.
-  fake_live_case: "data_collect/sloth_both_eval_3min_e70_g60_20260621_202627"
+  fake_live_case: "data_collect/sloth_both_eval_3min_e70_g60_20260705_161422"
   # Output metadata/window FPS used for replay-mode chunk math.
   replay_fps: 5.0
   # Default replay FPS used by the camera subprocess for fake-live input.

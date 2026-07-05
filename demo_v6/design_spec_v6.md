@@ -52,8 +52,11 @@ surface/interior 点估算到合理位置，并一起发布进 `object_points`�
   读，弃）；大偏移基址（可读、可排序、范围判定即成员判定，选用）。
   surface id ∈ [1e9, 2e9)，interior id ∈ [2e9, 3e9)，与会话 tracker id
   （arange，数量级 ≤1e4）不可能重合。`object_sample_query_ids` 等身份数组
-  同步扩展；`object_volume_sample_indices`/`object_sample_indices` 以 -1
-  填充；`object_track_status` 扩展为 `"prior"`。
+  同步扩展；发布层 `query_ids` / `query_semantic_labels` 也追加这些
+  synthetic id，对应 semantic label 为 object (`1`)；tracking runtime 的
+  原始 tracker schema 不回写这些发布层 id。
+  `object_volume_sample_indices`/`object_sample_indices` 以 -1 填充；
+  `object_track_status` 扩展为 `"prior"`。
 - 静态字段 `surface_points` / `interior_points` 原样保留。
 - manifest 增加 `asap_*` 遥测（mesh 路径、约束数 min/max、回退帧数、
   估算条目数、每 chunk 耗时 `asap_ms`）。manifest 的
