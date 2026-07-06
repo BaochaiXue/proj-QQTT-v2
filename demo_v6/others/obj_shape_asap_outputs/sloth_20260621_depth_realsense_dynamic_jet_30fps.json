@@ -1,0 +1,31 @@
+{
+  "colorizer": "realsense_dynamic_jet",
+  "depth_dir": "data_collect/sloth_both_eval_3min_e70_g60_20260621_202627/depth/0",
+  "depth_encoding": "uint16_millimeters_invalid_zero",
+  "first_frame_stats": {
+    "max_mm": 15858,
+    "min_mm": 377,
+    "p01_mm": 471.0,
+    "p50_mm": 720.0,
+    "p99_mm": 1682.0,
+    "valid_pixels": 352341,
+    "valid_ratio": 0.8656176297169811
+  },
+  "fps": 30.0,
+  "frame_count": 5400,
+  "frame_index_first": 117,
+  "frame_index_last": 5516,
+  "height": 480,
+  "last_frame_stats": {
+    "max_mm": 65535,
+    "min_mm": 376,
+    "p01_mm": 404.0,
+    "p50_mm": 718.0,
+    "p99_mm": 1683.0,
+    "valid_pixels": 339286,
+    "valid_ratio": 0.8335446147798742
+  },
+  "output_sheet_path": "demo_v6/others/obj_shape_asap_outputs/sloth_20260621_depth_realsense_dynamic_jet_sheet.png",
+  "output_video_path": "demo_v6/others/obj_shape_asap_outputs/sloth_20260621_depth_realsense_dynamic_jet_30fps.mp4",
+  "width": 848
+}

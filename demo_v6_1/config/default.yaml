@@ -1,0 +1,163 @@
+# Filesystem paths and external checkpoint locations.
+paths:
+  # Directory where Demo v6.1 writes online chunks and static final_data.
+  data_process_base_path: "outputs_v6_1"
+  # Optional tabletop calibration file used by capture/alignment helpers.
+  table_calibrate_path: "table_calibrate.pkl"
+  # SAM 3.1 checkpoint path passed when the env var is not set.
+  sam31_checkpoint_path: "vendor/demo_runtime/checkpoints/sam31/sam3.1_multiplex.pt"
+  # Environment variable that can override the SAM 3.1 checkpoint path.
+  sam31_checkpoint_env: "QQTT_SAM31_CHECKPOINT"
+
+# Source stream and replay pacing.
+input:
+  # Input backend for the demo runner; fake-live replays prepared data as a live stream.
+  input_source: "fake-live"
+  # Raw data_collect case used by fake-live replay when the CLI does not override it.
+  fake_live_case: "data_collect/sloth_both_eval_3min_e70_g60_20260705_161422"
+  # Output metadata/window FPS used for replay-mode chunk math.
+  replay_fps: 5.0
+  # Default replay FPS used by the camera subprocess for fake-live input.
+  camera_source_replay_fps: 5.0
+
+# Chunk publication cadence and run length.
+chunking:
+  # Duration, in seconds, represented by each realtime data_process chunk.
+  chunk_seconds: 7.0
+  # Sleep interval, in seconds, between checks for new frames.jsonl rows.
+  chunk_poll_interval_s: 0.001
+  # Optional cap on chunks to process; null means run until stopped.
+  max_chunks: null
+
+# Camera capture, depth, masks, and local model runtime.
+camera:
+  # RealSense live input FPS; replay_fps controls the 5 FPS output cadence.
+  camera_fps: 30
+  # Allowed camera FPS choices exposed by the Demo v6.1 CLI/UI.
+  camera_fps_choices: [5, 15, 30, 60]
+  # Manual RealSense color exposure used by the camera process.
+  camera_color_exposure: 45.0
+  # Manual RealSense color gain used by the camera process.
+  camera_color_gain: 45.0
+  # Prefix used when naming generated realtime cases.
+  case_prefix: "demo_v6_1"
+  # Depth source used for realtime point cloud generation.
+  depth_backend: "native-realsense"
+  # Logit threshold used to binarize EdgeTAM masks; lower values grow masks.
+  edgetam_mask_logit_threshold: 0
+  # Radius, in meters, for mask point-cloud outlier filtering.
+  mask_radius_outlier_radius_m: 0.01
+  # Minimum neighbor count for mask point-cloud radius outlier filtering.
+  mask_radius_outlier_nb_points: 40
+  # Torch device used by segmentation/depth/perception inference.
+  perception_device: "cuda"
+  # Torch device used by point tracking inference.
+  tracker_device: "cuda"
+  # Torch autocast dtype used by camera-runtime model inference.
+  inference_dtype: "bfloat16"
+
+# GPU namespaces for the cooperating subprocesses.
+gpu:
+  # Main warmup and realtime data_process stages see physical GPU 0 as cuda:0.
+  main_data_processing_cuda_visible_devices: "0"
+  # Shape-prior SAM3D stages see physical GPU 1 as cuda:0.
+  shape_prior_warmup_cuda_visible_devices: "1"
+  # Visualizer process sees physical GPU 1 as cuda:0.
+  visualizer_cuda_visible_devices: "1"
+  # Phystwin_shen train/viewer subprocesses see physical GPU 1 as cuda:0.
+  phystwin_shen_cuda_visible_devices: "1"
+
+# SAM3D shape-prior warmup.
+shape_prior:
+  # Deadline for the local shape-prior stages to report profile updates.
+  shape_prior_timeout_ms: 180000
+  # How long chunk materialization waits for surface/interior prior points.
+  shape_prior_chunk_wait_timeout_s: 300.0
+  # Formal live demo controller label.
+  shape_prior_controller_name: "hand"
+  # Optional external SAM3D checkout and pipeline config; null lets SAM3D
+  # resolution use environment/default candidates.
+  shape_prior_sam3d_root: null
+  shape_prior_config: null
+
+# Downstream consumer of the online stream. Exactly one runs per session.
+downstream:
+  # disabled | demo_visualizer | phystwin_shen
+  # demo_visualizer opens the Demo v6.1 point-cloud viewer window;
+  # phystwin_shen launches Phystwin_shen online training plus its HTML viewer
+  # on the shape-prior GPU once the shape prior is ready.
+  mode: "disabled"
+
+# Phystwin_shen online training + HTML realtime viewer
+# (downstream.mode: phystwin_shen). The two subprocesses launch together when
+# the shape prior becomes ready (points.npz written, warmup GPU freed);
+# train_online_warp.py then keeps waiting for the first committed chunk.
+phystwin_shen:
+  # Phystwin_shen checkout that provides train_online_warp.py and
+  # scripts/html_realtime_viewer.py.
+  repo_path: "/home/xinjie/Phystwin_shen"
+  # Conda environment used by both Phystwin_shen subprocesses.
+  conda_env: "demo_2_max"
+  # Case name inside base_path; online_data points both tools at the
+  # per-frame RGB-D archive (calibrate.pkl/metadata.json/color) demo v6.1
+  # publishes under base_path/online_data.
+  case_name: "online_data"
+  # HTML viewer bind address. A process already occupying the port is killed;
+  # if the kill fails the run fails fast.
+  viewer_host: "127.0.0.1"
+  viewer_port: 8765
+  # Camera index used for RGB lookup and projection in the HTML viewer.
+  viewer_cam_idx: 0
+  # Which predicted points the viewer draws: original | surface | all.
+  viewer_point_mode: "surface"
+  # Subsampling stride for viewer points.
+  viewer_point_stride: 5
+  # frame uses snapshot frame_indices; online resolves online_data color
+  # frames via online_frame_indices.
+  viewer_image_index_mode: "online"
+  # Torch device string passed to train_online_warp.py; combined with the
+  # gpu.phystwin_shen_cuda_visible_devices namespace, cuda:0 is physical GPU 1.
+  train_device: "cuda:0"
+  # Rollout windows per optimization step.
+  train_batch_size: 1
+  # Length, in frames, of each rollout training window.
+  train_segment_len: 32
+  # Hop, in frames, between rollout window starts.
+  train_segment_stride: 30
+  # Poll interval, in seconds, for new online chunks.
+  train_poll_sec: 1.0
+  # How many most-recent windows are eligible for sampling each iteration.
+  train_recent_window_count: 8
+  # Write a realtime snapshot every N iterations.
+  train_realtime_vis_every: 1
+  # Exit the trainer once the online manifest reports finished.
+  train_stop_when_finished: false
+
+# Demo v6.1 point-cloud visualizer (downstream.mode: demo_visualizer).
+visualizer:
+  # Conda environment used by the visualizer process.
+  visualizer_conda_env: "demo_2_max"
+  # Camera index displayed by the visualizer.
+  visualizer_cam_idx: 0
+  # Poll interval, in seconds, for visualizer data refresh.
+  visualizer_poll_sec: 0.1
+  # Playback FPS used by the visualizer's final_data timeline.
+  visualizer_playback_fps: 5.2
+  # Subsampling stride for object points in the viewer.
+  visualizer_object_stride: 1
+  # Render radius for object points in the viewer.
+  visualizer_object_radius: 3
+  # Render radius for controller points in the viewer.
+  visualizer_controller_radius: 6
+  # Color policy for object points in the viewer.
+  visualizer_object_color_mode: "rainbow"
+  # Viewer layout name for side-by-side input/output display.
+  visualizer_layout_side_by_side: "side-by-side"
+  # Viewer layout name for output-only display.
+  visualizer_layout_output_only: "output-only"
+  # Available visualizer layout choices.
+  visualizer_layouts: ["side-by-side", "output-only"]
+  # Default visualizer layout.
+  visualizer_layout: "side-by-side"
+  # Data/rendering mode used by the visualizer.
+  visualizer_render_mode: "sam3d-final-data"
