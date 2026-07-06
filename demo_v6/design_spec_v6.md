@@ -83,3 +83,47 @@ surface/interior 轨迹作为独立逐帧键 `asap_surface_points` /
 - 借帧（design_spec.md 的 lookahead）先于 ASAP 发生：ASAP 只处理已切片
   的发布帧，借帧数据不会进入 ASAP 状态。
 - 跨 chunk 状态仅有：基准 mesh、参考嵌入、上一帧顶点（回退用）。
+
+## online_data 逐帧 RGB-D 归档（2026-07-05）
+
+`online_data/` 在 `chunks/` + `manifest.json`（保持不变）之外，为每个已发布的
+online frame k 增加原始传感器产物，布局与离线 recording case 一致：
+
+```
+online_data/
+    color/0/{k}.png        # 该帧的原始 RGB（非分割着色）
+    depth/0/{k}.npy        # (H, W) uint16 毫米，invalid = 0
+    calibrate.pkl          # [4x4 camera-to-world]（单相机 list）
+    metadata.json          # intrinsics(1,3,3) / WH / frame_num / serial_numbers
+    enhance_metadata.json  # online frame -> source frame 映射表
+    chunks/ manifest.json  # 不变
+```
+
+- **一一对应**：只归档真正进入 chunk 并发布的帧（连续 online index
+  0..N-1），与 `capture/input_rgb`（记录所有输入帧）不同。chunk 0 的第
+  0 帧（shape-prior/warmup 锚帧）同样输出为 `color/0/0.png` +
+  `depth/0/0.npy`。
+- **深度格式统一**：canonical 格式为 uint16 毫米（invalid=0），由
+  `phystwin_strict_product.depth_m_to_mm_u16` 从流水线的 float 米深度
+  转换。RealSense 原始 uint16 units（标准 0.001 m/unit 刻度）经
+  units→米→毫米往返 bit-exact，等价于直接 copy；FFS 生成的 float 米走
+  同一转换，下游格式完全一致。`PreparedPhysTwinFrame` 新增
+  `depth_mm_u16` 字段并随 NPZ 持久化。
+- **下游契约**：对齐 `data_process_origin/data_process_pcd.py` 的读取
+  方式 —— depth `np.load(...)/1000.0`、color `cv2.imread`（BGR 落盘）、
+  `calibrate.pkl` 为可索引的 per-camera 4x4 c2w 序列、`metadata.json`
+  提供 `intrinsics`（(num_cam,3,3)）/`WH`/`frame_num`/`serial_numbers`、
+  文件名为连续整数 `0..frame_num-1`。
+- **写入顺序**：帧文件先落盘（fsync）→ commit 对应 chunk → 原子重写
+  `metadata.json` / `enhance_metadata.json` —— `frame_num` 永不指向
+  不存在的文件，也永不统计未 commit chunk 的帧；已 commit 的 chunk
+  必有归档帧。深度 > 65.535 m（FFS 远场垃圾）归为 invalid=0 而非饱和。
+  缺表标定时 c2w 回退 identity、接受 fx/fy/cx/cy intrinsics 形式，与
+  chunk stream 的容错一致。
+- **fail fast**：chunk 帧找不到对应 color/depth（prepared frame 缺失、
+  旧 NPZ 无 `depth_mm_u16`、online index 不连续、legacy sidecar 回退
+  路径）→ `OnlineFrameArchiveError` 中止流（本不应发生）。
+- **清理**：新 run 开始由 `prepare_realtime_output_for_new_run` 移除整个
+  `online_data/`；`OnlineFrameArchive` 构造时额外清理 `color/`、
+  `depth/`、`metadata.json`、`calibrate.pkl`、`enhance_metadata.json`
+  （不触碰 `chunks/`），防御性覆盖手工复用场景。

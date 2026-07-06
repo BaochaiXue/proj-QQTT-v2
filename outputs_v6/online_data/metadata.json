@@ -1,0 +1,34 @@
+{
+  "WH": [
+    848,
+    480
+  ],
+  "case_name": "demo_v6",
+  "demo_version": "demo_v6",
+  "depth_encoding": "uint16_millimeters_invalid_zero",
+  "fps": 5,
+  "frame_num": 105,
+  "intrinsics": [
+    [
+      [
+        426.33966064453125,
+        0.0,
+        433.2964782714844
+      ],
+      [
+        0.0,
+        425.90716552734375,
+        241.31455993652344
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ]
+  ],
+  "schema_version": "demo_v6_online_data_v1",
+  "serial_numbers": [
+    "239222300740"
+  ]
+}

@@ -61,6 +61,12 @@ class PreparedPhysTwinFrame:
     source_timestamp_s: float | None = None
     source_frame_index: int | None = None
     source_step: int | None = None
+    # Color-aligned raw depth, (H, W) uint16 integer millimeters, invalid = 0.
+    # Canonical online_data depth format for every backend: RealSense units at
+    # the standard 0.001 m/unit scale round-trip bit-exactly, FFS float meters
+    # quantize through the same depth_m_to_mm_u16 conversion. None only for
+    # legacy npz files written before the online_data color/depth contract.
+    depth_mm_u16: np.ndarray | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +306,29 @@ def apply_radius_outlier_to_mask_frame(
 # ---------------------------------------------------------------------------
 
 
+def depth_m_to_mm_u16(depth_m: np.ndarray) -> np.ndarray:
+    """Convert metric depth to the canonical (H, W) uint16-millimeter frame.
+
+    Non-finite, non-positive, and uint16-overflowing pixels (> 65.535 m —
+    FFS far-field garbage from near-zero disparity; unreachable for RealSense
+    raw units) all map to 0, the shared invalid sentinel; everything else
+    rounds to the nearest millimeter. RealSense uint16 units at the standard
+    0.001 m/unit scale survive the units->meters->millimeters round trip
+    bit-exactly, so archiving through this conversion equals a direct copy of
+    the aligned raw frame; FFS float meters quantize to the identical
+    downstream format.
+    """
+    depth = np.asarray(depth_m, dtype=np.float32)
+    if depth.ndim != 2:
+        raise ValueError(f"depth_m must be (H, W), got shape {depth.shape}")
+    mm = np.rint(depth.astype(np.float64) * 1000.0)
+    invalid = ~np.isfinite(mm)
+    invalid |= mm < 0.0
+    invalid |= mm > float(np.iinfo(np.uint16).max)
+    mm[invalid] = 0.0
+    return np.ascontiguousarray(mm.astype(np.uint16))
+
+
 def prepare_phystwin_frame(
     *,
     seq: int,
@@ -357,6 +386,7 @@ def prepare_phystwin_frame(
         source_timestamp_s=None if source_timestamp_s is None else float(source_timestamp_s),
         source_frame_index=None if source_frame_index is None else int(source_frame_index),
         source_step=None if source_step is None else int(source_step),
+        depth_mm_u16=depth_m_to_mm_u16(depth),
     )
 
 
@@ -392,6 +422,10 @@ def write_prepared_phystwin_frame(path: str | Path, frame: PreparedPhysTwinFrame
             dtype=np.int64,
         ),
     }
+    if frame.depth_mm_u16 is not None:
+        payload["depth_mm_u16"] = np.ascontiguousarray(
+            frame.depth_mm_u16, dtype=np.uint16
+        )
     for key in mask_keys:
         payload[f"mask_{str(key)}"] = np.ascontiguousarray(masks[str(key)], dtype=bool)
     # Write-then-rename keeps concurrent readers from ever seeing a partial npz.
@@ -427,6 +461,11 @@ def load_prepared_phystwin_frame(path: str | Path) -> PreparedPhysTwinFrame:
         source_timestamp_s=None if not np.isfinite(timestamp) else timestamp,
         source_frame_index=_none_if_negative(int(payload["source_frame_index"][0])),
         source_step=_none_if_negative(int(payload["source_step"][0])),
+        depth_mm_u16=(
+            np.ascontiguousarray(np.asarray(payload["depth_mm_u16"], dtype=np.uint16))
+            if "depth_mm_u16" in payload.files
+            else None
+        ),
     )
 
 

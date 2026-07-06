@@ -21,6 +21,7 @@ from demo_v6.chunk_data_payload import (
     build_chunk_data_payload,
 )
 from demo_v6.chunk_data_output import ChunkDataWriter
+from demo_v6.online_frame_archive import OnlineFrameArchive
 from demo_v6.utils.pcd_postprocess import detect_radius_outlier_indices
 from demo_v6 import asap
 from demo_v6 import phystwin_strict_product as strict
@@ -1087,6 +1088,7 @@ def _write_chunk_from_rows(
     prepared_frames: Sequence[strict.PreparedPhysTwinFrame | None] | None = None,
     backlog_chunks: Callable[[], int] | None = None,
     online_writer: ChunkDataWriter | None = None,
+    frame_archive: OnlineFrameArchive | None = None,
     tracking_runtime: tracking.TrackingRuntime | None = None,
     session_query_schema: dict[str, np.ndarray] | None = None,
     warmup_skipped_rows: int = 0,
@@ -1155,9 +1157,10 @@ def _write_chunk_from_rows(
         prepared_lookahead = [
             frame for frame in lookahead_prepared_list if frame is not None
         ]
+        published_frames = [frame for frame in prepared if frame is not None]
         chunk = _chunk_data_window_from_prepared_frames(
             metadata,
-            [frame for frame in prepared if frame is not None],
+            published_frames,
             surface_points=surface_points,
             interior_points=interior_points,
             fps=int(fps),
@@ -1192,6 +1195,9 @@ def _write_chunk_from_rows(
         materialization_source = "legacy_reprocess"
         legacy_reprocess_count = len(rows)
         motion_lookahead_frames = len(lookahead_row_list)
+        # The per-frame RGB-D archive needs prepared frames; archive_chunk
+        # fails fast on None when the archive contract is active.
+        published_frames = None
     track_finalize_done_wall_s = max(
         _relative_wall_s(float(wall_time_origin_s)), window_closed_wall_s
     )
@@ -1270,6 +1276,20 @@ def _write_chunk_from_rows(
     )
     manifest["final_data_written_wall_s"] = float(final_data_written_wall_s)
     if online_writer is not None:
+        if frame_archive is not None:
+            # Raw color/depth land BEFORE the chunk commit so a committed
+            # chunk always has its per-frame products; any missing frame
+            # aborts the stream through the existing failed-manifest path.
+            archive_summary = frame_archive.archive_chunk(
+                chunk_id=int(online_writer.latest_committed_chunk + 1),
+                metadata=metadata,
+                serial_number=serial_number,
+                frames=published_frames,
+                source_frame_indices=chunk_source_frame_indices,
+                source_timestamps_s=chunk_source_timestamps_s,
+                online_start_frame=int(online_writer.latest_committed_frame),
+            )
+            manifest.update(archive_summary)
         online_result = online_writer.commit_chunk_data(
             final_data,
             track_process,
@@ -1277,6 +1297,10 @@ def _write_chunk_from_rows(
             source_timestamps_s=chunk_source_timestamps_s,
             status="recording",
         )
+        if frame_archive is not None:
+            # metadata.json advances only after the chunk commit, so its
+            # frame_num never counts frames of an uncommitted chunk.
+            frame_archive.publish_metadata()
         manifest.update(
             {
                 "online_dir": online_result["online_dir"],
@@ -1352,6 +1376,7 @@ def write_chunk_data_from_headless_capture(
     rows_to_process = trim_result.rows
     warmup_skipped_rows = trim_result.skipped_count
     online_writer = None
+    frame_archive = None
     online_case = str(online_case_name or case_prefix)
     if bool(write_online_output):
         # Only complete windows are published, so the static final_data view is
@@ -1364,6 +1389,11 @@ def write_chunk_data_from_headless_capture(
             case_name=online_case,
             chunk_size=chunk_size,
             num_frames_total=full_chunks * chunk_size,
+        )
+        frame_archive = OnlineFrameArchive(
+            base_path=base_path,
+            case_name=online_case,
+            fps=int(fps),
         )
     # Keep the tracking runtime and query schema alive across chunks. Chunk 0
     # freezes identity (design_spec.md): object columns, controller anchors,
@@ -1427,6 +1457,7 @@ def write_chunk_data_from_headless_capture(
                     )
                 ),
                 online_writer=online_writer,
+                frame_archive=frame_archive,
                 tracking_runtime=tracking_runtime,
                 session_query_schema=session_query_schema,
                 warmup_skipped_rows=warmup_skipped_rows,
@@ -1527,6 +1558,7 @@ def stream_chunk_data_from_headless_capture(
     wall_time_origin_s = time.monotonic()
     warmup_start_filter = _WarmupStartFilterState()
     online_writer = None
+    frame_archive = None
     online_case = str(online_case_name or case_prefix)
     if bool(write_online_output):
         online_writer = ChunkDataWriter(
@@ -1536,6 +1568,11 @@ def stream_chunk_data_from_headless_capture(
             num_frames_total=(
                 None if max_chunks is None else int(max_chunks) * int(chunk_size)
             ),
+        )
+        frame_archive = OnlineFrameArchive(
+            base_path=base_path,
+            case_name=online_case,
+            fps=int(fps),
         )
     # Live streaming uses the same stateful tracking runtime as offline
     # conversion so chunk N+1 continues the identity frozen by chunk 0.
@@ -1613,6 +1650,7 @@ def stream_chunk_data_from_headless_capture(
                     )
                 ),
                 online_writer=online_writer,
+                frame_archive=frame_archive,
                 tracking_runtime=tracking_runtime,
                 session_query_schema=session_query_schema,
                 warmup_skipped_rows=warmup_start_filter.skipped_rows,
