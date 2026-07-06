@@ -64,9 +64,9 @@ class DownstreamConfigTests(unittest.TestCase):
             runner.DOWNSTREAM_MODES,
             ("disabled", "demo_visualizer", "phystwin_shen"),
         )
-        self.assertEqual(runner.DEFAULT_DOWNSTREAM_MODE, "disabled")
+        self.assertEqual(runner.DEFAULT_DOWNSTREAM_MODE, "phystwin_shen")
         config = runner.load_default_config()
-        self.assertEqual(config["downstream"]["mode"], "disabled")
+        self.assertEqual(config["downstream"]["mode"], "phystwin_shen")
         self.assertNotIn("visualizer_mode", config["visualizer"])
 
     def test_phystwin_shen_config_defaults(self) -> None:

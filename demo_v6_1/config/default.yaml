@@ -86,7 +86,7 @@ downstream:
   # demo_visualizer opens the Demo v6.1 point-cloud viewer window;
   # phystwin_shen launches Phystwin_shen online training plus its HTML viewer
   # on the shape-prior GPU once the shape prior is ready.
-  mode: "disabled"
+  mode: "phystwin_shen"
 
 # Phystwin_shen online training + HTML realtime viewer
 # (downstream.mode: phystwin_shen). The two subprocesses launch together when

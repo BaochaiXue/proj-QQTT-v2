@@ -132,8 +132,9 @@ online_data/
 
 原先 config 只有 visualizer 一种下游设计。现改为显式枚举
 `downstream.mode: disabled | demo_visualizer | phystwin_shen`（YAML 默认值
-绕过 argparse choices，因此 `resolve_downstream_mode` 在运行时再次校验，
-未知值 fail fast）。每个 session 只运行一种下游。
+为 `phystwin_shen`；YAML 值绕过 argparse choices，因此
+`resolve_downstream_mode` 在运行时再次校验，未知值 fail fast）。
+每个 session 只运行一种下游。
 
 - **demo_visualizer**：原 `visualizer_mode: "window"` 行为不变
   （side-by-side 随 capture 启动、output-only 等第一个 chunk）。

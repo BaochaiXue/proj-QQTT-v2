@@ -11,6 +11,8 @@ GPU is freed, as a config-selectable alternative to the demo visualizer.
 Required final behavior (user decision, 2026-07-05):
 - Config gains an explicit enum `downstream.mode: disabled | demo_visualizer
   | phystwin_shen`, replacing the visualizer-only design (`visualizer_mode`).
+- YAML default is `phystwin_shen`, so a normal Demo v6.1 run opens the
+  Phystwin_shen trainer and HTML viewer once the shape prior is ready.
 - phystwin_shen mode always launches BOTH the trainer and the HTML viewer.
 - Trigger: shape-prior ready; `train_online_warp.py` keeps waiting for the
   first chunk on its own.
