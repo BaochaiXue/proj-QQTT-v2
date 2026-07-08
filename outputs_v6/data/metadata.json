@@ -4,7 +4,7 @@
   "demo_version": "demo_v6",
   "latest_committed_frame": 490,
   "online_dir": "outputs_v6/online_data",
-  "query_schema_hash": "cf91ddcd7f5f7ceb3b8f2dd6542b766bda6d17fcb1097751418fb1fbcb8d3697",
+  "query_schema_hash": "df26168f604740e7082a80f704cabdd7900363c2007ab36e43b8bb72134f0cf5",
   "query_schema_version": "data_process_sam3d_realtime_query_schema_v1",
   "reference_pipeline": "data_process_sam3d",
   "runtime_contract": "data_process_sam3d_realtime_final_data_v1",

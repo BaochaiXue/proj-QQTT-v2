@@ -14,7 +14,7 @@ input:
   # Input backend for the demo runner; fake-live replays prepared data as a live stream.
   input_source: "fake-live"
   # Raw data_collect case used by fake-live replay when the CLI does not override it.
-  fake_live_case: "data_collect/sloth_both_eval_3min_e70_g60_20260705_161422"
+  fake_live_case: "data_collect/sloth_new_20260705_230611"
   # Output metadata/window FPS used for replay-mode chunk math.
   replay_fps: 5.0
   # Default replay FPS used by the camera subprocess for fake-live input.
@@ -119,7 +119,7 @@ phystwin_shen:
   # gpu.phystwin_shen_cuda_visible_devices namespace, cuda:0 is physical GPU 1.
   train_device: "cuda:0"
   # Rollout windows per optimization step.
-  train_batch_size: 1
+  train_batch_size: 5
   # Length, in frames, of each rollout training window.
   train_segment_len: 32
   # Hop, in frames, between rollout window starts.
@@ -127,7 +127,7 @@ phystwin_shen:
   # Poll interval, in seconds, for new online chunks.
   train_poll_sec: 1.0
   # How many most-recent windows are eligible for sampling each iteration.
-  train_recent_window_count: 8
+  train_recent_window_count: 5
   # Write a realtime snapshot every N iterations.
   train_realtime_vis_every: 1
   # Exit the trainer once the online manifest reports finished.

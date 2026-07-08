@@ -1,0 +1,31 @@
+{
+  "depth_backend": "native-realsense",
+  "depth_source_internal": "realsense",
+  "input_source": "fake-live",
+  "shape_prior_align_ms": 14963.836723996792,
+  "shape_prior_case_dir": "outputs_v6_1/shape_prior_case/shape_prior_frame0",
+  "shape_prior_controller_name": "hand",
+  "shape_prior_enabled": true,
+  "shape_prior_error": null,
+  "shape_prior_generate_ms": 28566.973556997254,
+  "shape_prior_interior_point_count": 1380,
+  "shape_prior_object_name": "stuffed animal",
+  "shape_prior_point_count": 1922,
+  "shape_prior_points_npz": "outputs_v6_1/shape_prior/points.npz",
+  "shape_prior_prewarmed_stages": [
+    "upscale",
+    "generate",
+    "align"
+  ],
+  "shape_prior_sam31_device": "cuda",
+  "shape_prior_sam31_reuse_model": true,
+  "shape_prior_sample_ms": 2912.0175959542394,
+  "shape_prior_segment_image_ms": 220.50102800130844,
+  "shape_prior_source_seq": 0,
+  "shape_prior_source_time_s": 1783307202.3486116,
+  "shape_prior_status": "ready",
+  "shape_prior_submit_ms": 58837.30125200236,
+  "shape_prior_surface_point_count": 542,
+  "shape_prior_upscale_ms": 11722.6155330427,
+  "shape_prior_warmup_cuda_visible_devices": "1"
+}
