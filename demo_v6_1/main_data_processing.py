@@ -14,10 +14,9 @@
 # 8.  Segmentation (EdgeTAM) helpers & model timing
 # 9.  World-Z diagnostics & table-Z filtering
 # 10. Tracker query classification, visibility & marker gating
-# 11. Render-side point capping
-# 12. MainDataProcessingDemo: workers for capture -> segmentation -> tracker/pcd ->
-#     filter -> pairing -> render (panel/Open3D) or headless capture
-# 13. main() entry point
+# 11. MainDataProcessingDemo: workers for capture -> segmentation -> tracker/pcd ->
+#     filter -> pairing -> headless capture
+# 12. main() entry point
 from __future__ import annotations
 
 import argparse
@@ -89,17 +88,11 @@ from demo_v6_1.utils.camera import (  # noqa: E402
     rs_translation_norm,
 )
 from demo_v6_1.utils.concurrency import (  # noqa: E402
-    CoalescedPostGate,
     LatestSlot,
     elapsed_ms as _elapsed_ms,
     packet_seq as _packet_seq,
 )
 from demo_v6_1.utils.ffs_align import FfsIrToColorAligner, validate_ffs_paths  # noqa: E402
-from demo_v6_1.utils.render import (  # noqa: E402
-    Open3DSceneTensorLayer,
-    RenderStats,
-    load_open3d_modules,
-)
 from demo_v6_1.utils.pcd_filter import (  # noqa: E402
     FilterBudgetController,
     FilterInput,
@@ -144,14 +137,6 @@ from demo_v6_1.phystwin_strict_product import (  # noqa: E402
     tracking_product_backend_is_strict,
     write_prepared_phystwin_frame,
 )
-from demo_v6_1.utils.side_by_side_panel import (  # noqa: E402
-    SideBySidePanelHud,
-    SideBySidePanelInputs,
-    format_side_by_side_fps_line,
-    render_projected_pcd_panel,
-    render_side_by_side_panel,
-    render_tracking_overlay_panel,
-)
 from qqtt.tracking.backends.point_tracker_adapter import (  # noqa: E402
     TRACKER_BACKEND_NONE,
     TRACKER_BACKEND_TAPNEXTPP,
@@ -190,23 +175,10 @@ INPUT_SOURCES = (INPUT_SOURCE_LIVE, INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_RECORDI
 DEFAULT_FAKE_LIVE_CASE = Path("data_collect/stuffed_animal_hand_both_eval_5fps_normal")
 PCD_MODES = ("masked", "none")
 DEFAULT_PCD_MODE = "masked"
-RENDER_MODE_POINTCLOUD = "pointcloud"
-RENDER_MODE_NONE = "none"
-RENDER_MODE_PANEL = "panel"
-RENDER_MODES = (RENDER_MODE_POINTCLOUD, RENDER_MODE_NONE, RENDER_MODE_PANEL)
-DEFAULT_RENDER_MODE = RENDER_MODE_POINTCLOUD
-PANEL_LAYOUT_SIDE_BY_SIDE = "side-by-side"
-PANEL_LAYOUTS = (PANEL_LAYOUT_SIDE_BY_SIDE,)
-PANEL_BACKEND_OPEN3D_MULTI_VIEWPORT = "open3d_multi_viewport"
-PANEL_SYNC_POLICY_STRICT_SAME_SEQ = "left_latest_rgb_right_strict_same_seq"
 DEMO_VISUAL_MODE_PCD = "pcd"
 DEMO_VISUAL_MODE_TRACKING = "tracking"
 DEMO_VISUAL_MODES = (DEMO_VISUAL_MODE_PCD, DEMO_VISUAL_MODE_TRACKING)
 DEFAULT_DEMO_VISUAL_MODE = DEMO_VISUAL_MODE_TRACKING
-DEFAULT_RENDER_MAX_POINTS_PER_LAYER = 5000
-DEFAULT_RENDER_CAP_GRID_BINS = 8
-VIEW_MODES = ("orbit", "camera")
-DEFAULT_VIEW_MODE = "orbit"
 PCD_FILTER_MODES = ("async", "sync", "none")
 PCD_FILTER_NONE = "none"
 PCD_FILTER_PT_FILTER = "pt-filter"
@@ -229,8 +201,6 @@ FAKE_LIVE_FRAME_SELECTION_POLICY = "drop_source_frames_preserve_recording_time"
 DEMO_PRESETS = ("none", "local-ffs-professor")
 DEFAULT_DEMO_PRESET = "none"
 LOCAL_FFS_PROFESSOR_MAX_POINTS = 20000
-LOCAL_FFS_PROFESSOR_POINT_SIZE = 2.5
-LOCAL_FFS_PROFESSOR_LATENCY_TARGET_MS = 120.0
 LOCAL_FFS_PROFESSOR_FILTER_CAP = 20000
 DEFAULT_FILTER_RADIUS_M = 0.01
 DEFAULT_FILTER_NB_POINTS = 40
@@ -308,29 +278,7 @@ DEFAULT_LOSSLESS_INPUT_FPS = 5.0
 # ---------------------------------------------------------------------------
 # Shared dataclasses & packet types flowing between pipeline stages
 # ---------------------------------------------------------------------------
-def open3d_panel_viewport_layer_plan() -> dict[str, dict[str, Any]]:
-    """Return the open3d panel viewport layer plan."""
-    return {
-        "middle": {
-            "kind": "filtered_pcd",
-            "layers": [GEOMETRY_CONTROLLER, GEOMETRY_OBJECT],
-        },
-        "right": {
-            "kind": "filtered_pcd_with_tracking",
-            "layers": [
-                GEOMETRY_CONTROLLER,
-                GEOMETRY_OBJECT,
-                GEOMETRY_TRACKER_OBJECT,
-                GEOMETRY_TRACKER_CONTROLLER,
-            ],
-        },
-    }
 DEFAULT_LOSSLESS_MAX_BACKLOG_SECONDS = 3.0
-FATAL_HUD_PREFIX = "FATAL WORKER ERROR"
-WARMUP_HUD_TEXT = (
-    "System warming up. Keep one steady pose.\n"
-    "SAM3.1 first-frame initialization and compiled EdgeTAM startup are running..."
-)
 
 
 DEFAULT_RUNTIME_ASSET_ROOT = Path("vendor") / "demo_runtime"
@@ -370,8 +318,6 @@ class PipelineTiming:
     pcd_filter_ms: float = 0.0
     object_filter_ms: float = 0.0
     controller_filter_ms: float = 0.0
-    open3d_convert_ms: float = 0.0
-    open3d_update_ms: float = 0.0
     receive_to_render_ms: float = 0.0
 
 
@@ -1239,10 +1185,6 @@ class HeadlessCaptureWriter:
         payload["saved_pcd_source"] = self.saved_pcd_source
         payload["saved_mask_source"] = "edgetam_binary_masks"
         payload["saved_rgb_source"] = "segmentation_color_bgr"
-        payload["panel_supported"] = True
-        payload["panel_backend"] = PANEL_BACKEND_OPEN3D_MULTI_VIEWPORT
-        payload["panel_sync_policy"] = PANEL_SYNC_POLICY_STRICT_SAME_SEQ
-        payload["tracking_background_default"] = "target-union"
         payload["input_rgb_timeline"] = "input_frames.jsonl"
         payload["startup_hold_s"] = float(payload.get("startup_hold_s") or 0.0)
         payload["output_dir"] = _repo_relative_path_text(self.output_dir)
@@ -1446,7 +1388,6 @@ class HeadlessCaptureWriter:
             "depth_fps": float(fps_info.get("depth_fps", 0.0)),
             "pcd_fps": float(fps_info.get("pcd_fps", 0.0)),
             "tracker_fps": float(fps_info.get("tracker_fps", 0.0)),
-            "render_fps": float(fps_info.get("render_fps", 0.0)),
             "filter_preset": self.saved_pcd_source,
             "marker_count": int(tracker_packet.marker_count) if tracker_packet is not None else 0,
             "marker_residual_checked_count": (
@@ -2021,7 +1962,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Single-D455 realtime HF EdgeTAM masked point-cloud demo. Captures live "
             "RealSense color plus FFS stereo depth by default, tracks controller/object "
-            "or object-only with one HF EdgeTAM streaming session, and renders only the masked PCD."
+            "or object-only with one HF EdgeTAM streaming session, and writes headless "
+            "masked-PCD/tracking capture products."
         )
     )
     parser.add_argument("--serial", default=None, help="Optional RealSense D400 serial. Defaults to first detected D400.")
@@ -2221,30 +2163,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Point-cloud stage mode. Use none for EdgeTAM/depth isolation profiling.",
     )
     parser.add_argument(
-        "--render-mode",
-        choices=RENDER_MODES,
-        default=DEFAULT_RENDER_MODE,
-        help="Render stage mode. Use none for headless profiling.",
-    )
-    parser.add_argument(
-        "--panel-layout",
-        choices=PANEL_LAYOUTS,
-        default=PANEL_LAYOUT_SIDE_BY_SIDE,
-        help="Runtime panel layout. side-by-side shows latest RGB, filtered PCD, and tracking overlay.",
-    )
-    parser.add_argument(
-        "--panel-video-output",
-        type=Path,
-        default=None,
-        help="Optional MP4 path for saving the runtime panel frames.",
-    )
-    parser.add_argument(
-        "--tracking-background-mask",
-        choices=("target-union", "rgb"),
-        default="target-union",
-        help="Runtime/offline tracking panel background policy.",
-    )
-    parser.add_argument(
         "--demo-visual-mode",
         choices=DEMO_VISUAL_MODES,
         default=DEFAULT_DEMO_VISUAL_MODE,
@@ -2253,12 +2171,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runtime-product-name", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--metadata-demo-version", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--metadata-reference-pipeline", default=None, help=argparse.SUPPRESS)
-    parser.add_argument(
-        "--view-mode",
-        choices=VIEW_MODES,
-        default=DEFAULT_VIEW_MODE,
-        help="Initial Open3D view. orbit starts from a third-person view; camera uses RealSense color intrinsics.",
-    )
     parser.add_argument(
         "--tracker-backend",
         choices=TRACKER_BACKENDS,
@@ -2293,7 +2205,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--tracker-marker-point-size",
         type=float,
         default=DEFAULT_TRACKER_MARKER_POINT_SIZE,
-        help="Open3D point size for TAPNext++ marker layer.",
+        help="TAPNext++ marker point size recorded in capture metadata.",
     )
     parser.add_argument(
         "--tracking-product-backend",
@@ -2411,8 +2323,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=DEMO_PRESETS,
         default=DEFAULT_DEMO_PRESET,
         help=(
-            "Optional display preset. local-ffs-professor keeps FFS-derived depth "
-            "and compiled EdgeTAM, while capping rendered points for a steadier local demo."
+            "Optional demo preset. local-ffs-professor keeps FFS-derived depth "
+            "and compiled EdgeTAM, while capping PCD/filter points for a steadier local demo."
         ),
     )
     parser.add_argument(
@@ -2499,12 +2411,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_CONTROLLER_PCD_MASK_ERODE_PIXELS,
         help="Controller-only mask erosion before RGB-D point-cloud backprojection. Defaults to --pcd-mask-erode-pixels.",
-    )
-    parser.add_argument(
-        "--render-max-points-per-layer",
-        type=int,
-        default=DEFAULT_RENDER_MAX_POINTS_PER_LAYER,
-        help="Final Open3D display cap per semantic PCD layer. 0 renders every PCD point.",
     )
     parser.add_argument(
         "--enable-pcd-filter",
@@ -2598,16 +2504,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=TABLE_Z_FILTER_CLASS_BOTH,
         help="Semantic classes affected by --enable-table-z-filter.",
     )
-    parser.add_argument("--point-size", type=float, default=2.0, help="Open3D point size.")
-    parser.add_argument("--latency-target-ms", type=float, default=80.0, help="HUD latency target.")
     parser.add_argument("--duration-s", type=float, default=0.0, help="Optional auto-stop duration. Use 0 to run until closed.")
     parser.add_argument(
         "--headless-capture-dir",
         type=Path,
         default=None,
         help=(
-            "When --render-mode none is used with fake-live replay, save the selected sync "
-            "PCD preset, color-aligned depth, and TAPNext++ query trajectory artifacts here. "
+            "Save the selected sync PCD preset, color-aligned depth, and TAPNext++ query "
+            "trajectory artifacts here. "
             "With --table-calibrate, the default demo preset uses filter none plus the 0 mm table-Z filter."
         ),
     )
@@ -2645,10 +2549,6 @@ def apply_demo_preset(args: argparse.Namespace) -> argparse.Namespace:
     if args.demo_preset == "local-ffs-professor":
         if int(args.pcd_max_points) == 60000:
             args.pcd_max_points = LOCAL_FFS_PROFESSOR_MAX_POINTS
-        if float(args.point_size) == 2.0:
-            args.point_size = LOCAL_FFS_PROFESSOR_POINT_SIZE
-        if float(args.latency_target_ms) == 80.0:
-            args.latency_target_ms = LOCAL_FFS_PROFESSOR_LATENCY_TARGET_MS
         if int(args.object_filter_cap) == 20_000:
             args.object_filter_cap = LOCAL_FFS_PROFESSOR_FILTER_CAP
         if int(args.controller_filter_cap) == 20_000:
@@ -2658,10 +2558,7 @@ def apply_demo_preset(args: argparse.Namespace) -> argparse.Namespace:
         and not bool(getattr(args, "enable_table_z_filter", False))
         and getattr(args, "table_calibrate", None) is not None
         and str(getattr(args, "demo_visual_mode", DEFAULT_DEMO_VISUAL_MODE)) in DEMO_VISUAL_MODES
-        and (
-            str(getattr(args, "render_mode", DEFAULT_RENDER_MODE)) == "pointcloud"
-            or headless_capture_enabled(args)
-        )
+        and headless_capture_enabled(args)
     ):
         args.enable_table_z_filter = True
     return args
@@ -2744,8 +2641,6 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(f"--input-source must be one of {', '.join(INPUT_SOURCES)}")
     if args.depth_source not in DEPTH_SOURCES:
         raise ValueError(f"--depth-source must be one of {', '.join(DEPTH_SOURCES)}")
-    if str(args.view_mode) not in VIEW_MODES:
-        raise ValueError(f"--view-mode must be one of {', '.join(VIEW_MODES)}")
     if float(args.replay_fps) < 0.0:
         raise ValueError("--replay-fps must be >= 0")
     if float(args.lossless_max_backlog_seconds) <= 0.0:
@@ -2797,10 +2692,6 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--edgetam-live-session-keep-frames must be >= 0")
     if not np.isfinite(float(args.edgetam_mask_logit_threshold)):
         raise ValueError("--edgetam-mask-logit-threshold must be finite")
-    if int(args.render_max_points_per_layer) < 0:
-        raise ValueError("--render-max-points-per-layer must be >= 0")
-    if args.point_size <= 0:
-        raise ValueError("--point-size must be positive")
     if float(args.table_z_filter_threshold_m) < 0:
         raise ValueError("--table-z-filter-threshold-m must be >= 0")
     if (
@@ -2884,19 +2775,6 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--track-mode none requires --pcd-mode none")
     if args.depth_source == "none" and args.pcd_mode == "masked":
         raise ValueError("--depth-source none requires --pcd-mode none")
-    if args.render_mode in {RENDER_MODE_POINTCLOUD, RENDER_MODE_PANEL} and args.pcd_mode == "none":
-        raise ValueError(f"--render-mode {args.render_mode} requires --pcd-mode masked")
-    if args.render_mode == RENDER_MODE_PANEL:
-        if args.input_source != INPUT_SOURCE_FAKE_LIVE:
-            raise ValueError("--render-mode panel requires --input-source fake-live")
-        if args.depth_source not in {"ffs", "realsense"}:
-            raise ValueError("--render-mode panel requires --depth-source ffs or realsense")
-        if args.track_mode != TRACK_MODE_CONTROLLER_OBJECT:
-            raise ValueError("--render-mode panel requires --track-mode controller-object")
-        if args.pcd_mode != "masked":
-            raise ValueError("--render-mode panel requires --pcd-mode masked")
-        if normalize_tracker_backend(str(args.tracker_backend)) != TRACKER_BACKEND_TAPNEXTPP:
-            raise ValueError("--render-mode panel requires --tracker-backend tapnextpp")
     if str(args.demo_visual_mode) not in DEMO_VISUAL_MODES:
         raise ValueError(f"--demo-visual-mode must be one of {', '.join(DEMO_VISUAL_MODES)}")
     if headless_capture_enabled(args):
@@ -2904,8 +2782,6 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("--headless-capture-dir requires --input-source live or fake-live")
         if args.depth_source not in {"ffs", "realsense"}:
             raise ValueError("--headless-capture-dir requires --depth-source ffs or realsense")
-        if args.render_mode != "none":
-            raise ValueError("--headless-capture-dir requires --render-mode none")
         if args.pcd_mode != "masked":
             raise ValueError("--headless-capture-dir requires --pcd-mode masked")
         if not pcd_filter_enabled(args):
@@ -2925,8 +2801,6 @@ def validate_args(args: argparse.Namespace) -> None:
     if tracking_product_backend_is_strict(args.tracking_product_backend):
         if str(args.input_source) not in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_LIVE}:
             raise ValueError("phystwin-strict-tracking requires --input-source live or fake-live")
-        if str(args.render_mode) != RENDER_MODE_NONE:
-            raise ValueError("phystwin-strict-tracking requires --render-mode none")
         if args.headless_capture_dir is None:
             raise ValueError("phystwin-strict-tracking requires --headless-capture-dir")
         if str(args.track_mode) != TRACK_MODE_CONTROLLER_OBJECT:
@@ -2952,8 +2826,6 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("single-camera tracker overlay currently supports only tapnextpp")
         if args.track_mode != TRACK_MODE_CONTROLLER_OBJECT:
             raise ValueError("--tracker-backend tapnextpp requires --track-mode controller-object")
-        if args.render_mode not in {RENDER_MODE_POINTCLOUD, RENDER_MODE_PANEL} and not headless_capture_enabled(args):
-            raise ValueError("--tracker-backend tapnextpp requires --render-mode pointcloud or panel")
         if args.depth_source == "none":
             raise ValueError("--tracker-backend tapnextpp requires RGB-D depth for 3D marker lift")
     if args.depth_source == "ffs":
@@ -4075,92 +3947,6 @@ def _select_visible_spread_indices(tracks_yx: np.ndarray, visibility: np.ndarray
     return visible[np.asarray(selected_local, dtype=np.int64)].astype(np.int64)
 
 
-# ---------------------------------------------------------------------------
-# Render-side point capping
-# ---------------------------------------------------------------------------
-def cap_render_points(
-    points_xyz_m: np.ndarray,
-    colors_rgb_u8: np.ndarray,
-    *,
-    max_points: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Limit render points."""
-    if int(max_points) < 0:
-        raise ValueError("max_points must be >= 0")
-    point_count = int(points_xyz_m.shape[0])
-    if int(colors_rgb_u8.shape[0]) != point_count:
-        raise ValueError("points and colors must have the same length")
-    if int(max_points) == 0 or point_count <= int(max_points):
-        return points_xyz_m, colors_rgb_u8
-    points = np.asarray(points_xyz_m, dtype=np.float32).reshape(-1, 3)
-    finite = np.isfinite(points).all(axis=1)
-    finite_indices = np.flatnonzero(finite)
-    if len(finite_indices) > 0:
-        finite_points = points[finite_indices]
-        mins = finite_points.min(axis=0)
-        spans = finite_points.max(axis=0) - mins
-        safe_spans = np.where(spans > np.float32(1e-6), spans, np.float32(1.0))
-        grid_bins = max(1, int(DEFAULT_RENDER_CAP_GRID_BINS))
-        quantized = np.floor((finite_points - mins) / safe_spans * np.float32(grid_bins - 1)).astype(np.int32)
-        quantized = np.clip(quantized, 0, grid_bins - 1)
-        keys = np.ravel_multi_index(quantized.T, (grid_bins, grid_bins, grid_bins)).astype(np.int64, copy=False)
-        order = np.argsort(keys, kind="stable")
-        sorted_keys = keys[order]
-        sorted_indices = finite_indices[order]
-        _unique_keys, bucket_starts, bucket_counts = np.unique(
-            sorted_keys,
-            return_index=True,
-            return_counts=True,
-        )
-        bucket_count = int(len(bucket_counts))
-        if bucket_count <= 0:
-            indices = np.linspace(0, point_count - 1, int(max_points), dtype=np.int64)
-        elif bucket_count >= int(max_points):
-            bucket_ids = np.linspace(0, bucket_count - 1, int(max_points), dtype=np.int64)
-            local_offsets = np.asarray(bucket_counts[bucket_ids] // 2, dtype=np.int64)
-            indices = sorted_indices[bucket_starts[bucket_ids] + local_offsets]
-        else:
-            quotas = np.ones(bucket_count, dtype=np.int64)
-            remaining = int(max_points) - bucket_count
-            extra_capacity = np.maximum(bucket_counts.astype(np.int64) - 1, 0)
-            if remaining > 0 and np.any(extra_capacity > 0):
-                weights = np.sqrt(extra_capacity.astype(np.float64))
-                raw_extra = remaining * weights / max(float(weights.sum()), 1.0)
-                extra = np.minimum(np.floor(raw_extra).astype(np.int64), extra_capacity)
-                quotas += extra
-                remaining = int(max_points) - int(quotas.sum())
-                if remaining > 0:
-                    residual = raw_extra - np.floor(raw_extra)
-                    candidate_order = np.argsort(-residual, kind="stable")
-                    for bucket_id in candidate_order:
-                        if remaining <= 0:
-                            break
-                        available = int(bucket_counts[bucket_id]) - int(quotas[bucket_id])
-                        if available <= 0:
-                            continue
-                        add = min(available, remaining)
-                        quotas[bucket_id] += add
-                        remaining -= add
-            selected: list[np.ndarray] = []
-            for start, count, quota in zip(bucket_starts, bucket_counts, quotas, strict=True):
-                take = min(int(count), int(quota))
-                if take <= 0:
-                    continue
-                local = np.linspace(0, int(count) - 1, take, dtype=np.int64)
-                selected.append(sorted_indices[int(start) + local])
-            indices = np.concatenate(selected).astype(np.int64, copy=False) if selected else np.empty((0,), dtype=np.int64)
-            if len(indices) < int(max_points):
-                extras = np.flatnonzero(~finite)
-                fill_count = int(max_points) - len(indices)
-                indices = np.concatenate([indices, extras[:fill_count]]).astype(np.int64, copy=False)
-    else:
-        indices = np.linspace(0, point_count - 1, int(max_points), dtype=np.int64)
-    return (
-        np.ascontiguousarray(points_xyz_m[indices], dtype=np.float32),
-        np.ascontiguousarray(colors_rgb_u8[indices], dtype=np.uint8),
-    )
-
-
 def _latest_tracker_arrays(result: Any) -> tuple[np.ndarray, np.ndarray]:
     """Return the latest tracker arrays."""
     tracks = np.asarray(result.tracks_yx, dtype=np.float32)
@@ -4184,7 +3970,7 @@ def _latest_tracker_arrays(result: Any) -> tuple[np.ndarray, np.ndarray]:
 
 # ---------------------------------------------------------------------------
 # Main runtime: owns the worker threads and queues for
-# capture -> segmentation -> tracker/pcd -> filter -> pairing -> render/headless
+# capture -> segmentation -> tracker/pcd -> filter -> pairing -> headless capture
 # ---------------------------------------------------------------------------
 class MainDataProcessingDemo:
     def __init__(self, args: argparse.Namespace) -> None:
@@ -4203,7 +3989,8 @@ class MainDataProcessingDemo:
         self.mask_slot: LatestSlot[MaskPacket] = LatestSlot()
         self.depth_profile_slot: LatestSlot[DepthProfilePacket] = LatestSlot()
         self.remote_quality_slot: LatestSlot[RemoteFfsQualityPacket] = LatestSlot()
-        self.render_slot: LatestSlot[MaskedPcdPacket] = LatestSlot()
+        # Latest non-strict PCD packet; consumed only by the headless debug worker.
+        self.pcd_slot: LatestSlot[MaskedPcdPacket] = LatestSlot()
         self.tracker_marker_slot: LatestSlot[TrackerMarkerPacket] = LatestSlot()
         self.paired_render_slot: LatestSlot[PairedRenderPacket] = LatestSlot()
         self.lossless_frame_queue: OrderedPacketQueue[FramePacket] = OrderedPacketQueue(
@@ -4216,10 +4003,6 @@ class MainDataProcessingDemo:
         )
         self.lossless_tracker_mask_queue: OrderedPacketQueue[MaskPacket] = OrderedPacketQueue(
             name="mask-tracker",
-            max_backlog_frames=self.lossless_max_backlog_frames,
-        )
-        self.lossless_paired_render_queue: OrderedPacketQueue[PairedRenderPacket] = OrderedPacketQueue(
-            name="paired-render",
             max_backlog_frames=self.lossless_max_backlog_frames,
         )
         self.lossless_pair_output_queue: OrderedPacketQueue[PairedBuildResult] = OrderedPacketQueue(
@@ -4237,7 +4020,6 @@ class MainDataProcessingDemo:
         self._lossless_first_pair_published = threading.Event()
         self._lossless_pipeline_active = False
         self._threads: list[threading.Thread] = []
-        self._request_render_update: Callable[[], None] = lambda: None
         self.capture_stats = StageStats()
         self.seg_stats = StageStats()
         self.depth_stats = StageStats()
@@ -4246,7 +4028,6 @@ class MainDataProcessingDemo:
         self.tracker_stats = StageStats()
         self.filter_submit_stats = StageStats()
         self.filter_output_stats = StageStats()
-        self.render_stats = RenderStats()
         self.filter_worker: Any | None = None
         self._filter_submit_skip_count = 0
         self._last_filter_output_seq_recorded = -1
@@ -4389,18 +4170,6 @@ class MainDataProcessingDemo:
         payload = self._shape_prior_profile_payload() if profile is None else dict(profile)
         output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    def _frame_hud_line(self) -> str:
-        """Return the frame hud line."""
-        if self._table_world_enabled():
-            return f"frame: {TABLE_WORLD_FRAME_KIND}  meters  table_z={TABLE_Z_M:.3f}"
-        return f"frame: {COORDINATE_FRAME}  meters  x right / y down / z forward"
-
-    def _camera_view_extrinsic(self) -> np.ndarray:
-        """Return the camera view extrinsic."""
-        if self.table_c2w is None:
-            return np.eye(4, dtype=np.float64)
-        return np.linalg.inv(np.asarray(self.table_c2w, dtype=np.float64))
-
     def _initialize_table_calibration(self) -> None:
         """Initialize table calibration."""
         if self.args.table_calibrate is None:
@@ -4433,7 +4202,6 @@ class MainDataProcessingDemo:
         self.lossless_frame_queue.reset()
         self.lossless_pcd_mask_queue.reset()
         self.lossless_tracker_mask_queue.reset()
-        self.lossless_paired_render_queue.reset()
         self.lossless_pair_output_queue.reset()
         self.same_seq_pairer.reset()
         with self._lossless_publish_condition:
@@ -4456,26 +4224,7 @@ class MainDataProcessingDemo:
         self.lossless_pcd_mask_queue.close()
         self.lossless_tracker_mask_queue.close()
         self.lossless_pair_output_queue.close()
-        self.lossless_paired_render_queue.close()
         self._lossless_pipeline_active = False
-
-    def _lossless_queue_debug_text(self) -> str:
-        """Return the lossless queue debug text."""
-        frame = self.lossless_frame_queue.stats
-        pcd = self.lossless_pcd_mask_queue.stats
-        tracker = self.lossless_tracker_mask_queue.stats
-        pair_output = self.lossless_pair_output_queue.stats
-        render = self.lossless_paired_render_queue.stats
-        pairer = self.same_seq_pairer.stats
-        return (
-            f"lossless=1 input_fps={self._lossless_input_fps():.1f} max_backlog={self.lossless_max_backlog_frames} "
-            f"q_frame={frame.size} q_pcd={pcd.size} q_tracker={tracker.size} "
-            f"q_pair_output={pair_output.size} q_render={render.size} "
-            f"pairer_expected={pairer.expected_seq} pairer_pending_pcd={pairer.pending_pcd} "
-            f"pairer_pending_tracker={pairer.pending_tracker} offered={self._lossless_offered_frames} "
-            f"segmented={self._lossless_segmented_frames} pcd_results={self._lossless_pcd_results} "
-            f"tracker_results={self._lossless_tracker_results} pairs={self._lossless_pairs_emitted}"
-        )
 
     def _wait_for_lossless_replay_startup_pair(self, on_wait_tick: Callable[[], None] | None = None) -> bool:
         """Wait for for lossless replay startup pair."""
@@ -4685,30 +4434,7 @@ class MainDataProcessingDemo:
         if should_notify:
             print(f"[FATAL] {fatal.log_message()}", flush=True)
             self.stop_event.set()
-            self._request_render_update()
         return fatal
-
-    def _format_fatal_hud(self, fatal: FatalWorkerError) -> str:
-        """Format fatal hud."""
-        return (
-            f"{FATAL_HUD_PREFIX}\n"
-            f"{fatal.stage} failed\n"
-            f"{fatal.exc_type}: {fatal.message}\n"
-            "Closing Open3D viewer; check the terminal log for details.\n"
-            + self._stage_fps_hud_line()
-        )
-
-    def _format_warmup_hud(self) -> str:
-        """Format warmup hud."""
-        return f"{WARMUP_HUD_TEXT}\n{self._stage_fps_hud_line()}"
-
-    def _stage_fps_hud_line(self) -> str:
-        """Return the stage FPS hud line."""
-        return (
-            f"capture/seg/depth/pcd/tracker/render FPS: {self.capture_stats.fps:.1f} / "
-            f"{self.seg_stats.fps:.1f} / {self.depth_stats.fps:.1f} / {self.pcd_stats.fps:.1f} / "
-            f"{self.tracker_stats.fps:.1f} / {self.render_stats.render_fps:.1f}"
-        )
 
     # ------------------------------------------------------------------
     # Lifecycle: run / stop, worker startup, headless loop
@@ -4730,14 +4456,8 @@ class MainDataProcessingDemo:
                 headless_capture_enabled=headless_capture_enabled,
                 headless_capture_writer_cls=HeadlessCaptureWriter,
             )
-            render_mode = str(self.args.render_mode)
-            if render_mode == RENDER_MODE_NONE:
-                self._run_headless()
-                self._finalize_headless_tracking_product()
-            elif render_mode == RENDER_MODE_PANEL:
-                self._run_panel_viewer()
-            else:
-                self._run_open3d_viewer()
+            self._run_headless()
+            self._finalize_headless_tracking_product()
         finally:
             self.stop()
         return 2 if self._fatal_error_snapshot() is not None else 0
@@ -4893,7 +4613,7 @@ class MainDataProcessingDemo:
             workers.append(("depth", self._depth_profile_worker))
         if self.args.enable_remote_ffs_quality:
             workers.append(("remote-quality", self._remote_ffs_quality_worker))
-        if self.args.debug and self.args.render_mode == "none":
+        if self.args.debug:
             workers.append(("debug", self._headless_debug_worker))
 
         def worker_runner(worker_name: str, worker_target: Callable[[], None]) -> Callable[[], None]:
@@ -4959,8 +4679,6 @@ class MainDataProcessingDemo:
         )
         if self.headless_capture_writer is not None and should_write_timeline:
             self.headless_capture_writer.write_input_frame(packet)
-        if str(self.args.render_mode) == RENDER_MODE_PANEL:
-            self._request_render_update()
 
     def _publish_capture_packet(
         self,
@@ -4978,8 +4696,6 @@ class MainDataProcessingDemo:
                 return
             self._lossless_offered_frames += 1
         self.capture_stats.record(packet.receive_perf_s if record_s is None else float(record_s))
-        if str(self.args.render_mode) == RENDER_MODE_PANEL:
-            self._request_render_update()
 
     def _capture_recording_worker(self) -> None:
         """Return the capture recording worker."""
@@ -5085,7 +4801,6 @@ class MainDataProcessingDemo:
                 self.lossless_frame_queue.close()
             else:
                 self.stop_event.set()
-            self._request_render_update()
             return
         if self.args.track_mode != "none":
             while not self.stop_event.is_set():
@@ -5181,7 +4896,6 @@ class MainDataProcessingDemo:
             self.lossless_frame_queue.close()
         else:
             self.stop_event.set()
-        self._request_render_update()
 
     def _capture_worker(self) -> None:
         """Return the capture worker."""
@@ -5411,7 +5125,6 @@ class MainDataProcessingDemo:
             "pcd_mask_erode_pixels": int(self.args.pcd_mask_erode_pixels),
             "object_pcd_mask_erode_pixels": object_pcd_mask_erode_pixels(self.args),
             "controller_pcd_mask_erode_pixels": controller_pcd_mask_erode_pixels(self.args),
-            "render_max_points_per_layer": int(self.args.render_max_points_per_layer),
             "pcd_filter_enabled": pcd_filter_enabled(self.args),
             "pcd_filter_mode": self.args.pcd_filter_mode if pcd_filter_enabled(self.args) else PCD_FILTER_NONE,
             "pcd_filter_preset": getattr(self.args, "pcd_filter_preset", None),
@@ -5446,8 +5159,6 @@ class MainDataProcessingDemo:
             "lossless_controller_filter_min_cap": (
                 int(self.controller_filter_budget.min_cap) if self._lossless_enabled() else None
             ),
-            "render_mode": self.args.render_mode,
-            "view_mode": str(self.args.view_mode),
             "tracker_backend": str(self.args.tracker_backend),
             "tracking_product_backend": str(
                 normalize_tracking_product_backend(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
@@ -6121,7 +5832,6 @@ class MainDataProcessingDemo:
                 if self.headless_capture_writer is not None and not self._headless_product_rows_gated():
                     self.headless_capture_writer.write_tracker(packet)
                 self.tracker_stats.record(packet.process_done_perf_s)
-                self._request_render_update()
         except Exception as exc:
             if not self.stop_event.is_set():
                 self._record_fatal_worker_error("TAPNext++ tracker worker", exc)
@@ -6260,8 +5970,6 @@ class MainDataProcessingDemo:
             tracker_packet=tracker_packet,
             mask_packet=pcd_result.mask_packet,
         )
-        if self._lossless_enabled() and self._lossless_pipeline_active and self.args.render_mode != "none":
-            self.lossless_paired_render_queue.put(pair)
         self.paired_render_slot.put(pair)
         self.pcd_stats.record(pcd_result.packet.process_done_perf_s)
         self.tracker_stats.record(tracker_packet.process_done_perf_s)
@@ -6278,7 +5986,6 @@ class MainDataProcessingDemo:
             self._write_headless_pcd_result(
                 pcd_result, tracker_packet=tracker_packet, gated=rows_gated
             )
-        self._request_render_update()
         return pair
 
     def _publish_pairer_outputs(self, pairs: list[PairedBuildResult]) -> None:
@@ -6313,16 +6020,13 @@ class MainDataProcessingDemo:
             return
         if self.same_seq_pairer.done and not self._lossless_processing_done.is_set():
             self.lossless_pair_output_queue.close()
-            self._request_render_update()
 
     def _finish_lossless_output(self) -> None:
         """Finish lossless output."""
         if not self._lossless_enabled():
             return
         if not self._lossless_processing_done.is_set():
-            self.lossless_paired_render_queue.close()
             self._lossless_processing_done.set()
-            self._request_render_update()
 
     def _lossless_pair_output_worker(self) -> None:
         """Return the lossless pair output worker."""
@@ -7107,7 +6811,6 @@ class MainDataProcessingDemo:
                 "depth_fps": float(self.depth_stats.fps),
                 "pcd_fps": float(self.pcd_stats.fps),
                 "tracker_fps": float(self.tracker_stats.fps),
-                "render_fps": float(self.render_stats.render_fps),
             },
             world_z_diagnostics=result.world_z_diagnostics,
             startup_hold_s=float(getattr(self, "_startup_hold_s", 0.0)),
@@ -7474,11 +7177,10 @@ class MainDataProcessingDemo:
                 continue
             self._maybe_start_shape_prior_from_pcd_result(result)
             result = replace(result, packet=self._packet_with_shape_prior_state(result.packet))
-            self.render_slot.put(result.packet)
+            self.pcd_slot.put(result.packet)
             self._maybe_write_shape_prior_headless_result()
             self._write_headless_pcd_result(result)
             self.pcd_stats.record(result.packet.process_done_perf_s)
-            self._request_render_update()
 
     # ------------------------------------------------------------------
     # Depth backends: profiling, local FFS, remote FFS, remote sparse quality
@@ -8000,1175 +7702,8 @@ class MainDataProcessingDemo:
                 )
 
     # ------------------------------------------------------------------
-    # Rendering: side-by-side panel viewer
+    # Debug logging
     # ------------------------------------------------------------------
-    def _build_panel_hud(
-        self,
-        *,
-        rgb_frame: FramePacket,
-        pair: PairedRenderPacket,
-        display_time_s: float,
-    ) -> SideBySidePanelHud:
-        """Build panel hud."""
-        pcd_packet = pair.pcd_packet
-        tracker_packet = pair.tracker_packet
-        pipeline_done_s = max(float(pcd_packet.process_done_perf_s), float(tracker_packet.process_done_perf_s))
-        receive_s = float(pcd_packet.receive_perf_s)
-        filter_preset = getattr(self.args, "pcd_filter_preset", None) or headless_capture_saved_pcd_source(self.args)
-        input_time_s = rgb_frame.source_timestamp_s
-        if input_time_s is None:
-            input_time_s = float(rgb_frame.receive_perf_s)
-        return SideBySidePanelHud(
-            rgb_seq=int(rgb_frame.seq),
-            paired_seq=int(pair.seq),
-            input_time_s=input_time_s,
-            pipeline_latency_ms=_elapsed_ms(receive_s, pipeline_done_s),
-            display_latency_ms=_elapsed_ms(receive_s, float(display_time_s)),
-            startup_hold_s=float(getattr(self, "_startup_hold_s", 0.0)),
-            filter_preset=str(filter_preset),
-            marker_count=int(tracker_packet.marker_count),
-            capture_fps=float(self.capture_stats.fps),
-            seg_fps=float(self.seg_stats.fps),
-            depth_fps=float(self.depth_stats.fps),
-            pcd_fps=float(self.pcd_stats.fps),
-            tracker_fps=float(self.tracker_stats.fps),
-            render_fps=float(self.render_stats.render_fps),
-            tracking_background=str(getattr(self.args, "tracking_background_mask", "target-union")),
-            object_point_count=int(pcd_packet.object_point_count),
-            controller_point_count=int(pcd_packet.controller_point_count),
-            query_count=int(tracker_packet.query_count),
-            remaining_query_count=int(tracker_packet.remaining_query_count),
-            remaining_object_query_count=int(tracker_packet.remaining_object_query_count),
-            remaining_controller_query_count=int(tracker_packet.remaining_controller_query_count),
-            remaining_hand_a_query_count=int(tracker_packet.remaining_hand_a_query_count),
-            remaining_hand_b_query_count=int(tracker_packet.remaining_hand_b_query_count),
-            shape_prior_status=str(pcd_packet.shape_prior_status),
-            shape_prior_point_count=int(pcd_packet.shape_prior_point_count),
-        )
-
-    def _latest_panel_rgb_frame_after(self, last_seq: int) -> FramePacket | None:
-        """Return the latest panel RGB frame after."""
-        preview_frame = self.input_preview_slot.get_latest_after(last_seq)
-        if preview_frame is not None:
-            return preview_frame
-        return self.capture_slot.get_latest_after(last_seq)
-
-    def _format_panel_hud_label(self, hud: SideBySidePanelHud) -> str:
-        """Format panel hud label."""
-        input_time = "none" if hud.input_time_s is None else f"{float(hud.input_time_s):.2f}s"
-        return (
-            f"rgb={int(hud.rgb_seq)} paired={int(hud.paired_seq)} ahead={hud.rgb_ahead_frames}f\n"
-            f"input={input_time} pipe={float(hud.pipeline_latency_ms):.1f}ms "
-            f"disp={float(hud.display_latency_ms):.1f}ms hold={float(hud.startup_hold_s):.2f}s\n"
-            f"filter={hud.filter_preset} markers={int(hud.marker_count)} "
-            f"obj={int(hud.object_point_count)} ctrl={int(hud.controller_point_count)}\n"
-            f"remaining={int(hud.remaining_query_count)}/{int(hud.query_count)} "
-            f"obj={int(hud.remaining_object_query_count)} ctrl={int(hud.remaining_controller_query_count)} "
-            f"hand_a={int(hud.remaining_hand_a_query_count)} hand_b={int(hud.remaining_hand_b_query_count)}\n"
-            f"{format_side_by_side_fps_line(hud)}\n"
-            f"panel={PANEL_BACKEND_OPEN3D_MULTI_VIEWPORT}"
-        )
-
-    def _render_runtime_panel_frame(self, *, rgb_frame: FramePacket, pair: PairedRenderPacket) -> np.ndarray:
-        """Render runtime panel frame."""
-        if pair.mask_packet is None:
-            raise RuntimeError("runtime panel requires paired mask_packet")
-
-        pcd_packet = pair.pcd_packet
-        tracker_packet = pair.tracker_packet
-        mask_packet = pair.mask_packet
-        height, width = rgb_frame.color_bgr.shape[:2]
-        pcd_panel, pcd_counts = render_projected_pcd_panel(
-            width=width,
-            height=height,
-            intrinsics=pcd_packet.intrinsics,
-            controller_xyz_m=pcd_packet.controller_xyz_m,
-            controller_rgb_u8=pcd_packet.controller_colors_rgb_u8,
-            object_xyz_m=pcd_packet.object_xyz_m,
-            object_rgb_u8=pcd_packet.object_colors_rgb_u8,
-            point_size=max(1, int(round(float(self.args.point_size)))),
-            max_render_points=int(self.args.render_max_points_per_layer),
-            coordinate_frame=str(pcd_packet.coordinate_frame),
-            camera_to_world_c2w=self.table_c2w,
-            shape_prior_xyz_m=pcd_packet.shape_prior_points_m,
-            shape_prior_rgb_u8=pcd_packet.shape_prior_colors_rgb_u8,
-        )
-
-        tracking_bgr = np.ascontiguousarray(mask_packet.color_bgr, dtype=np.uint8).copy()
-        tracking_background = str(getattr(self.args, "tracking_background_mask", "target-union"))
-        if tracking_background == "target-union":
-            target_union = np.logical_or(mask_packet.object_mask, mask_packet.controller_mask)
-            tracking_bgr[~target_union] = 0
-
-        track_count = int(np.asarray(tracker_packet.tracks_yx, dtype=np.float32).reshape(-1, 2).shape[0])
-        controller_instance_id = np.asarray(tracker_packet.query_controller_instance_id, dtype=np.int64).reshape(-1)
-        if controller_instance_id.shape[0] != track_count:
-            controller_instance_id = np.zeros((track_count,), dtype=np.int64)
-        tracking_panel, tracking_counts = render_tracking_overlay_panel(
-            image_bgr=tracking_bgr,
-            tracks_yx=tracker_packet.tracks_yx,
-            visibility=tracker_packet.visibility,
-            marker_rgb_u8=tracker_packet.marker_colors_rgb_u8,
-            query_is_object=tracker_packet.query_is_object,
-            query_is_controller=tracker_packet.query_is_controller,
-            query_controller_instance_id=controller_instance_id,
-            marker_radius=max(1, int(round(float(self.args.tracker_marker_point_size)))),
-        )
-
-        display_time_s = time.perf_counter()
-        hud = self._build_panel_hud(rgb_frame=rgb_frame, pair=pair, display_time_s=display_time_s)
-        hud = replace(
-            hud,
-            marker_count=int(tracking_counts.get("query_points", hud.marker_count)),
-            object_point_count=int(pcd_counts.get("object_points", hud.object_point_count)),
-            controller_point_count=int(pcd_counts.get("controller_points", hud.controller_point_count)),
-            shape_prior_status=str(pcd_packet.shape_prior_status),
-            shape_prior_point_count=int(pcd_counts.get("shape_prior_points", pcd_packet.shape_prior_point_count)),
-        )
-        return render_side_by_side_panel(
-            SideBySidePanelInputs(
-                rgb_image_bgr=rgb_frame.color_bgr,
-                pcd_panel_bgr=pcd_panel,
-                tracking_panel_bgr=tracking_panel,
-                hud=hud,
-            )
-        )
-
-    def _run_panel_viewer(self) -> None:
-        """Run panel viewer."""
-        import cv2
-
-        o3d, gui, rendering = load_open3d_modules()
-        o3c = o3d.core
-        device = o3c.Device("CPU:0")
-        app = gui.Application.instance
-        app.initialize()
-        window = app.create_window("Demo 3.2 Realtime Panel", 1680, 720)
-
-        blank_rgb = np.zeros((int(self.height), int(self.width), 3), dtype=np.uint8)
-        rgb_widget = gui.ImageWidget(o3d.geometry.Image(blank_rgb))
-        pcd_scene_widget = gui.SceneWidget()
-        pcd_scene_widget.scene = rendering.Open3DScene(window.renderer)
-        pcd_scene_widget.scene.set_background([0.02, 0.02, 0.02, 1.0])
-        tracking_scene_widget = gui.SceneWidget()
-        tracking_scene_widget.scene = rendering.Open3DScene(window.renderer)
-        tracking_scene_widget.scene.set_background([0.02, 0.02, 0.02, 1.0])
-
-        hud_label = gui.Label(f"Waiting for frames...\n{self._stage_fps_hud_line()}")
-        hud_label.text_color = gui.Color(1.0, 1.0, 1.0)
-        hud_panel = gui.Vert(0, gui.Margins(8, 8, 8, 8))
-        hud_panel.add_child(hud_label)
-        window.add_child(rgb_widget)
-        window.add_child(pcd_scene_widget)
-        window.add_child(tracking_scene_widget)
-        window.add_child(hud_panel)
-
-        def on_layout(layout_context: object) -> None:
-            """Return the on layout."""
-            rect = window.content_rect
-            column_width = max(1, int(rect.width // 3))
-            right_width = max(1, int(rect.width - column_width * 2))
-            rgb_widget.frame = gui.Rect(rect.x, rect.y, column_width, rect.height)
-            pcd_scene_widget.frame = gui.Rect(rect.x + column_width, rect.y, column_width, rect.height)
-            tracking_scene_widget.frame = gui.Rect(rect.x + column_width * 2, rect.y, right_width, rect.height)
-            em = window.theme.font_size
-            preferred = hud_panel.calc_preferred_size(layout_context, gui.Widget.Constraints())
-            hud_panel.frame = gui.Rect(
-                rect.x + 0.5 * em,
-                rect.y + 0.5 * em,
-                max(preferred.width, 780),
-                max(preferred.height, 5.5 * em),
-            )
-
-        window.set_on_layout(on_layout)
-
-        pcd_material = rendering.MaterialRecord()
-        pcd_material.shader = "defaultUnlit"
-        pcd_material.point_size = float(self.args.point_size)
-        tracker_object_material = rendering.MaterialRecord()
-        tracker_object_material.shader = "defaultUnlit"
-        tracker_object_material.point_size = max(1.0, float(self.args.tracker_marker_point_size) * 0.65)
-        tracker_controller_material = rendering.MaterialRecord()
-        tracker_controller_material.shader = "defaultUnlit"
-        tracker_controller_material.point_size = float(self.args.tracker_marker_point_size)
-
-        def make_geometry_layer(
-            scene: object,
-            name: str,
-            material: object,
-            *,
-            min_capacity: int = 0,
-        ) -> Open3DSceneTensorLayer:
-            """Create geometry layer."""
-            return Open3DSceneTensorLayer(
-                name=name,
-                o3d_module=o3d,
-                o3c_module=o3c,
-                rendering_module=rendering,
-                scene=scene,
-                material=material,
-                device=device,
-                min_capacity=max(0, int(min_capacity)),
-            )
-
-        def update_layer(
-            layer: Open3DSceneTensorLayer,
-            points_xyz_m: np.ndarray,
-            colors_rgb_u8: np.ndarray,
-            *,
-            max_points: int = 0,
-        ) -> tuple[float, float]:
-            """Update layer."""
-            cap_start_s = time.perf_counter()
-            display_points, display_colors = cap_render_points(
-                points_xyz_m,
-                colors_rgb_u8,
-                max_points=int(max_points),
-            )
-            cap_ms = _elapsed_ms(cap_start_s, time.perf_counter())
-            update = layer.update(display_points, display_colors)
-            open3d_ms = float(update.open3d_update_geometry_ms)
-            if update.points_count == 0:
-                open3d_ms += float(update.open3d_remove_geometry_ms)
-            return float(update.cpu_format_ms) + cap_ms, open3d_ms
-
-        pcd_caps = [
-            int(value)
-            for value in (self.args.pcd_max_points, self.args.render_max_points_per_layer)
-            if int(value) > 0
-        ]
-        pcd_layer_capacity = min(pcd_caps) if pcd_caps else 0
-        tracker_layer_capacity = int(self.args.tracker_overlay_max_points)
-        if tracker_layer_capacity <= 0:
-            tracker_layer_capacity = int(self.args.tracker_query_count) or PHYSTWIN_DENSE_QUERY_POINTS
-
-        middle_controller_state = make_geometry_layer(
-            pcd_scene_widget.scene,
-            GEOMETRY_CONTROLLER,
-            pcd_material,
-            min_capacity=pcd_layer_capacity,
-        )
-        middle_object_state = make_geometry_layer(
-            pcd_scene_widget.scene,
-            GEOMETRY_OBJECT,
-            pcd_material,
-            min_capacity=pcd_layer_capacity,
-        )
-        right_controller_state = make_geometry_layer(
-            tracking_scene_widget.scene,
-            GEOMETRY_CONTROLLER,
-            pcd_material,
-            min_capacity=pcd_layer_capacity,
-        )
-        right_object_state = make_geometry_layer(
-            tracking_scene_widget.scene,
-            GEOMETRY_OBJECT,
-            pcd_material,
-            min_capacity=pcd_layer_capacity,
-        )
-        right_tracker_object_state = make_geometry_layer(
-            tracking_scene_widget.scene,
-            GEOMETRY_TRACKER_OBJECT,
-            tracker_object_material,
-            min_capacity=tracker_layer_capacity,
-        )
-        right_tracker_controller_state = make_geometry_layer(
-            tracking_scene_widget.scene,
-            GEOMETRY_TRACKER_CONTROLLER,
-            tracker_controller_material,
-            min_capacity=tracker_layer_capacity,
-        )
-
-        camera_initialized = {"middle": False, "right": False}
-        window_name = "Demo 3.2 Realtime Panel"
-        last_pair_seq = -1
-        last_rgb_seq = -1
-        latest_rgb: FramePacket | None = None
-        latest_pair: PairedRenderPacket | None = None
-        writer: object | None = None
-        render_post_gate = CoalescedPostGate()
-        fatal_exit_posted = {"value": False}
-
-        def reset_scene_camera(scene_widget: object) -> None:
-            """Reset scene camera."""
-            if str(self.args.view_mode) == "camera":
-                intrinsic_matrix = np.array(
-                    [
-                        [self.intrinsics.fx, 0.0, self.intrinsics.cx],
-                        [0.0, self.intrinsics.fy, self.intrinsics.cy],
-                        [0.0, 0.0, 1.0],
-                    ],
-                    dtype=np.float64,
-                )
-                extrinsic = self._camera_view_extrinsic()
-                bounds = o3d.geometry.AxisAlignedBoundingBox([-10.0, -10.0, 0.01], [10.0, 10.0, 20.0])
-                scene_widget.setup_camera(intrinsic_matrix, extrinsic, self.width, self.height, bounds)
-                return
-            try:
-                scene_widget.look_at([0.0, 0.0, 0.8], [0.0, 0.0, -1.0], [0.0, -1.0, 0.0])
-            except Exception:
-                bounds = o3d.geometry.AxisAlignedBoundingBox([-0.5, -0.35, 0.1], [0.5, 0.35, 1.5])
-                scene_widget.setup_camera(60.0, bounds, [0.0, 0.0, 0.8])
-
-        def update_rgb_image(frame: FramePacket) -> tuple[float, float]:
-            """Update RGB image."""
-            convert_start_s = time.perf_counter()
-            rgb_u8 = np.ascontiguousarray(frame.color_bgr[:, :, ::-1], dtype=np.uint8)
-            o3d_image = o3d.geometry.Image(rgb_u8)
-            convert_ms = _elapsed_ms(convert_start_s, time.perf_counter())
-            update_start_s = time.perf_counter()
-            rgb_widget.update_image(o3d_image)
-            return convert_ms, _elapsed_ms(update_start_s, time.perf_counter())
-
-        def update_tracker_layers(marker_packet: TrackerMarkerPacket) -> tuple[float, float]:
-            """Update tracker layers."""
-            point_count = int(marker_packet.marker_xyz_m.shape[0])
-            label_count = min(
-                point_count,
-                int(marker_packet.marker_colors_rgb_u8.shape[0]),
-                int(marker_packet.query_is_object.shape[0]),
-                int(marker_packet.query_is_controller.shape[0]),
-            )
-            if label_count <= 0:
-                object_convert_ms, object_update_ms = update_layer(
-                    right_tracker_object_state,
-                    np.empty((0, 3), dtype=np.float32),
-                    np.empty((0, 3), dtype=np.uint8),
-                )
-                controller_convert_ms, controller_update_ms = update_layer(
-                    right_tracker_controller_state,
-                    np.empty((0, 3), dtype=np.float32),
-                    np.empty((0, 3), dtype=np.uint8),
-                )
-                return object_convert_ms + controller_convert_ms, object_update_ms + controller_update_ms
-            points = np.asarray(marker_packet.marker_xyz_m[:label_count], dtype=np.float32).reshape(-1, 3)
-            colors = np.asarray(marker_packet.marker_colors_rgb_u8[:label_count], dtype=np.uint8).reshape(-1, 3)
-            is_controller = np.asarray(marker_packet.query_is_controller[:label_count], dtype=bool).reshape(-1)
-            is_object = np.asarray(marker_packet.query_is_object[:label_count], dtype=bool).reshape(-1) & ~is_controller
-            unlabelled = ~(is_object | is_controller)
-            if np.any(unlabelled):
-                is_object = is_object | unlabelled
-            object_convert_ms, object_update_ms = update_layer(
-                right_tracker_object_state,
-                points[is_object],
-                colors[is_object],
-            )
-            controller_convert_ms, controller_update_ms = update_layer(
-                right_tracker_controller_state,
-                points[is_controller],
-                colors[is_controller],
-            )
-            return object_convert_ms + controller_convert_ms, object_update_ms + controller_update_ms
-
-        def maybe_write_panel_video(rgb_frame: FramePacket, pair: PairedRenderPacket) -> None:
-            """Maybe start or update write panel video."""
-            nonlocal writer
-            if self.args.panel_video_output is None:
-                return
-            panel = self._render_runtime_panel_frame(rgb_frame=rgb_frame, pair=pair)
-            if writer is None:
-                output_path = _resolve_path(self.args.panel_video_output)
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                writer = cv2.VideoWriter(
-                    str(output_path),
-                    fourcc,
-                    max(1.0, float(self._lossless_input_fps())),
-                    (panel.shape[1], panel.shape[0]),
-                )
-                if not writer.isOpened():
-                    raise RuntimeError(f"failed to open panel video writer: {output_path}")
-            writer.write(panel)
-
-        def update_pair_views(pair: PairedRenderPacket, rgb_frame: FramePacket) -> bool:
-            """Update pair views."""
-            packet = pair.pcd_packet
-            marker_packet = pair.tracker_packet
-            middle_controller_convert_ms, middle_controller_update_ms = update_layer(
-                middle_controller_state,
-                packet.controller_xyz_m,
-                packet.controller_colors_rgb_u8,
-                max_points=int(self.args.render_max_points_per_layer),
-            )
-            middle_object_convert_ms, middle_object_update_ms = update_layer(
-                middle_object_state,
-                packet.object_xyz_m,
-                packet.object_colors_rgb_u8,
-                max_points=int(self.args.render_max_points_per_layer),
-            )
-            right_controller_convert_ms, right_controller_update_ms = update_layer(
-                right_controller_state,
-                packet.controller_xyz_m,
-                packet.controller_colors_rgb_u8,
-                max_points=int(self.args.render_max_points_per_layer),
-            )
-            right_object_convert_ms, right_object_update_ms = update_layer(
-                right_object_state,
-                packet.object_xyz_m,
-                packet.object_colors_rgb_u8,
-                max_points=int(self.args.render_max_points_per_layer),
-            )
-            tracker_convert_ms, tracker_update_ms = update_tracker_layers(marker_packet)
-            if not camera_initialized["middle"] and packet.point_count > 0:
-                reset_scene_camera(pcd_scene_widget)
-                camera_initialized["middle"] = True
-            if not camera_initialized["right"] and (packet.point_count > 0 or marker_packet.marker_count > 0):
-                reset_scene_camera(tracking_scene_widget)
-                camera_initialized["right"] = True
-            render_time_s = time.perf_counter()
-            latency_ms = _elapsed_ms(packet.receive_perf_s, render_time_s)
-            open3d_convert_ms = (
-                middle_controller_convert_ms
-                + middle_object_convert_ms
-                + right_controller_convert_ms
-                + right_object_convert_ms
-                + tracker_convert_ms
-            )
-            open3d_update_ms = (
-                middle_controller_update_ms
-                + middle_object_update_ms
-                + right_controller_update_ms
-                + right_object_update_ms
-                + tracker_update_ms
-            )
-            timing = replace(
-                packet.timing,
-                open3d_convert_ms=float(open3d_convert_ms),
-                open3d_update_ms=float(open3d_update_ms),
-                receive_to_render_ms=latency_ms,
-            )
-            self.render_stats.record_render(render_time_s=render_time_s, latency_ms=latency_ms)
-            hud = self._build_panel_hud(rgb_frame=rgb_frame, pair=pair, display_time_s=render_time_s)
-            hud_label.text = self._format_panel_hud_label(hud)
-            self._maybe_log_debug(
-                packet=packet,
-                timing=timing,
-                now_s=render_time_s,
-                tracker_packet=marker_packet,
-                strict_sync=True,
-                waiting_for_pair=True,
-            )
-            maybe_write_panel_video(rgb_frame, pair)
-            return True
-
-        def render_latest() -> bool:
-            """Render latest."""
-            nonlocal last_pair_seq, last_rgb_seq, latest_rgb, latest_pair
-            rendered = False
-            rgb_frame = self._latest_panel_rgb_frame_after(last_rgb_seq)
-            if rgb_frame is not None:
-                last_rgb_seq = int(rgb_frame.seq)
-                latest_rgb = rgb_frame
-                update_rgb_image(rgb_frame)
-                rendered = True
-
-            if self._lossless_enabled() and self._lossless_pipeline_active:
-                pair = self.lossless_paired_render_queue.get_nowait()
-            else:
-                pair = self.paired_render_slot.get_latest_after(last_pair_seq)
-            if pair is not None:
-                last_pair_seq = int(pair.seq)
-                latest_pair = pair
-                if latest_rgb is None:
-                    latest_rgb = self._latest_panel_rgb_frame_after(-1)
-                    if latest_rgb is not None:
-                        last_rgb_seq = int(latest_rgb.seq)
-                        update_rgb_image(latest_rgb)
-                if latest_rgb is not None:
-                    rendered = update_pair_views(pair, latest_rgb) or rendered
-            elif latest_pair is None:
-                hud_label.text = (
-                    "Waiting for strict same-seq panel pair...\n"
-                    f"panel={PANEL_BACKEND_OPEN3D_MULTI_VIEWPORT}\n"
-                    f"startup_hold={float(getattr(self, '_startup_hold_s', 0.0)):.2f}s\n"
-                    f"{self._stage_fps_hud_line()}"
-                )
-            return rendered
-
-        def render_latest_on_main_thread() -> None:
-            """Render latest on main thread."""
-            try:
-                fatal = self._fatal_error_snapshot()
-                if fatal is not None:
-                    hud_label.text = self._format_fatal_hud(fatal)
-                    hud_label.text_color = gui.Color(1.0, 0.25, 0.20)
-                    fatal_exit_posted["value"] = True
-                    print(f"[FATAL] closing {window_name} after {fatal.log_message()}", flush=True)
-                    if hasattr(window, "post_redraw"):
-                        try:
-                            window.post_redraw()
-                        except Exception:
-                            pass
-                    try:
-                        app.quit()
-                    except Exception:
-                        pass
-                    return
-                if self.stop_event.is_set():
-                    try:
-                        app.quit()
-                    except Exception:
-                        pass
-                    return
-                rendered = render_latest()
-                if (
-                    self._lossless_enabled()
-                    and self._lossless_processing_done.is_set()
-                    and self.lossless_paired_render_queue.is_closed_and_empty()
-                ):
-                    try:
-                        app.quit()
-                    except Exception:
-                        pass
-                    return
-                if rendered and hasattr(window, "post_redraw"):
-                    try:
-                        window.post_redraw()
-                    except Exception:
-                        pass
-            finally:
-                render_post_gate.mark_done()
-                if self._fatal_error_snapshot() is not None and not fatal_exit_posted["value"]:
-                    request_render_update()
-                elif not self.stop_event.is_set() and (
-                    self.input_preview_slot.latest_seq() > last_rgb_seq
-                    or self.capture_slot.latest_seq() > last_rgb_seq
-                    or (
-                        self._lossless_enabled()
-                        and self._lossless_pipeline_active
-                        and self.lossless_paired_render_queue.pending_count() > 0
-                    )
-                    or (
-                        not (self._lossless_enabled() and self._lossless_pipeline_active)
-                        and self.paired_render_slot.latest_seq() > last_pair_seq
-                    )
-                ):
-                    request_render_update()
-
-        def request_render_update() -> None:
-            """Request render update."""
-            if not render_post_gate.try_mark_pending():
-                return
-            try:
-                app.post_to_main_thread(window, render_latest_on_main_thread)
-            except Exception:
-                render_post_gate.mark_done()
-
-        fast_exit_after_open3d = os.environ.get("QQTT_WSLG_OPEN3D_FAST_EXIT") == "1"
-
-        def stop_and_quit_open3d() -> None:
-            """Stop and quit open3d."""
-            self.stop_event.set()
-            self._request_render_update = lambda: None
-            if fast_exit_after_open3d:
-                self.stop()
-                os._exit(0)
-            try:
-                app.quit()
-            except Exception:
-                pass
-
-        def on_close() -> bool:
-            """Return the on close."""
-            stop_and_quit_open3d()
-            return True
-
-        window.set_on_close(on_close)
-        self._request_render_update = request_render_update
-        self._start_threads()
-        request_render_update()
-
-        timer: threading.Timer | None = None
-        if self.args.duration_s > 0 and not (self._lossless_enabled() and _is_replay_input_source(str(self.args.input_source))):
-            timer = threading.Timer(
-                float(self.args.duration_s),
-                lambda: app.post_to_main_thread(window, stop_and_quit_open3d),
-            )
-            timer.daemon = True
-            timer.start()
-        try:
-            app.run()
-        finally:
-            self._request_render_update = lambda: None
-            if timer is not None:
-                timer.cancel()
-            if writer is not None:
-                writer.release()
-
-    # ------------------------------------------------------------------
-    # Rendering: Open3D point-cloud viewer
-    # ------------------------------------------------------------------
-    def _run_open3d_viewer(self) -> None:
-        """Run open3d viewer."""
-        o3d, gui, rendering = load_open3d_modules()
-        o3c = o3d.core
-        device = o3c.Device("CPU:0")
-        app = gui.Application.instance
-        app.initialize()
-        window = app.create_window("Demo 2.0 Realtime EdgeTAM Masked PCD", 1280, 800)
-        scene_widget = gui.SceneWidget()
-        scene_widget.scene = rendering.Open3DScene(window.renderer)
-        scene_widget.scene.set_background([0.02, 0.02, 0.02, 1.0])
-        hud_label = gui.Label(self._format_warmup_hud())
-        hud_label.text_color = gui.Color(1.0, 1.0, 1.0)
-        hud_panel = gui.Vert(0, gui.Margins(8, 8, 8, 8))
-        hud_panel.add_child(hud_label)
-        window.add_child(scene_widget)
-        window.add_child(hud_panel)
-
-        def on_layout(layout_context: object) -> None:
-            """Return the on layout."""
-            rect = window.content_rect
-            scene_widget.frame = rect
-            em = window.theme.font_size
-            preferred = hud_panel.calc_preferred_size(layout_context, gui.Widget.Constraints())
-            hud_panel.frame = gui.Rect(
-                rect.x + 0.5 * em,
-                rect.y + 0.5 * em,
-                max(preferred.width, 660),
-                max(preferred.height, (16.0 if self.args.debug else 12.0) * em),
-            )
-
-        window.set_on_layout(on_layout)
-        pcd_material = rendering.MaterialRecord()
-        pcd_material.shader = "defaultUnlit"
-        pcd_material.point_size = float(self.args.point_size)
-        tracker_object_material = rendering.MaterialRecord()
-        tracker_object_material.shader = "defaultUnlit"
-        tracker_object_material.point_size = max(1.0, float(self.args.tracker_marker_point_size) * 0.65)
-        tracker_controller_material = rendering.MaterialRecord()
-        tracker_controller_material.shader = "defaultUnlit"
-        tracker_controller_material.point_size = float(self.args.tracker_marker_point_size)
-
-        def make_geometry_layer(name: str, material: object, *, min_capacity: int = 0) -> Open3DSceneTensorLayer:
-            """Create geometry layer."""
-            return Open3DSceneTensorLayer(
-                name=name,
-                o3d_module=o3d,
-                o3c_module=o3c,
-                rendering_module=rendering,
-                scene=scene_widget.scene,
-                material=material,
-                device=device,
-                min_capacity=max(0, int(min_capacity)),
-            )
-
-        def update_layer(
-            layer: Open3DSceneTensorLayer,
-            points_xyz_m: np.ndarray,
-            colors_rgb_u8: np.ndarray,
-            *,
-            max_points: int = 0,
-        ) -> tuple[float, float]:
-            """Update layer."""
-            cap_start_s = time.perf_counter()
-            display_points, display_colors = cap_render_points(
-                points_xyz_m,
-                colors_rgb_u8,
-                max_points=int(max_points),
-            )
-            cap_ms = _elapsed_ms(cap_start_s, time.perf_counter())
-            update = layer.update(display_points, display_colors)
-            open3d_ms = float(update.open3d_update_geometry_ms)
-            if update.points_count == 0:
-                open3d_ms += float(update.open3d_remove_geometry_ms)
-            return float(update.cpu_format_ms) + cap_ms, open3d_ms
-
-        pcd_caps = [
-            int(value)
-            for value in (self.args.pcd_max_points, self.args.render_max_points_per_layer)
-            if int(value) > 0
-        ]
-        strict_sync_enabled = tracker_enabled(self.args) and self.args.pcd_mode == "masked"
-        render_tracker_markers = str(self.args.demo_visual_mode) == DEMO_VISUAL_MODE_TRACKING
-        pcd_layer_capacity = min(pcd_caps) if pcd_caps else 0
-        tracker_layer_capacity = int(self.args.tracker_overlay_max_points)
-        if tracker_layer_capacity <= 0:
-            tracker_layer_capacity = int(self.args.tracker_query_count) or PHYSTWIN_DENSE_QUERY_POINTS
-        # Shape-prior points stay in chunk/final_data products; this internal
-        # Open3D viewer renders only live object/controller/tracker layers.
-        controller_state = make_geometry_layer(GEOMETRY_CONTROLLER, pcd_material, min_capacity=pcd_layer_capacity)
-        object_state = make_geometry_layer(GEOMETRY_OBJECT, pcd_material, min_capacity=pcd_layer_capacity)
-        tracker_object_state = make_geometry_layer(
-            GEOMETRY_TRACKER_OBJECT,
-            tracker_object_material,
-            min_capacity=tracker_layer_capacity,
-        )
-        tracker_controller_state = make_geometry_layer(
-            GEOMETRY_TRACKER_CONTROLLER,
-            tracker_controller_material,
-            min_capacity=tracker_layer_capacity,
-        )
-        camera_initialized = {"value": False}
-        render_post_gate = CoalescedPostGate()
-        last_render_seq = {"value": -1}
-        last_marker_seq = {"value": -1}
-        last_pair_seq = {"value": -1}
-        latest_render_packet: dict[str, MaskedPcdPacket | None] = {"value": None}
-        latest_marker_packet: dict[str, TrackerMarkerPacket | None] = {"value": None}
-        latest_pair_packet: dict[str, PairedRenderPacket | None] = {"value": None}
-        tracker_layers_hidden = {"value": False}
-        fatal_exit_posted = {"value": False}
-        if strict_sync_enabled:
-            hud_label.text = self._format_strict_sync_waiting_hud()
-
-        def reset_camera() -> None:
-            """Reset camera."""
-            if str(self.args.view_mode) == "camera":
-                intrinsic_matrix = np.array(
-                    [
-                        [self.intrinsics.fx, 0.0, self.intrinsics.cx],
-                        [0.0, self.intrinsics.fy, self.intrinsics.cy],
-                        [0.0, 0.0, 1.0],
-                    ],
-                    dtype=np.float64,
-                )
-                extrinsic = self._camera_view_extrinsic()
-                bounds = o3d.geometry.AxisAlignedBoundingBox([-10.0, -10.0, 0.01], [10.0, 10.0, 20.0])
-                scene_widget.setup_camera(intrinsic_matrix, extrinsic, self.width, self.height, bounds)
-                return
-            try:
-                scene_widget.look_at([0.0, 0.0, 0.8], [0.0, 0.0, -1.0], [0.0, -1.0, 0.0])
-            except Exception:
-                bounds = o3d.geometry.AxisAlignedBoundingBox([-0.5, -0.35, 0.1], [0.5, 0.35, 1.5])
-                scene_widget.setup_camera(60.0, bounds, [0.0, 0.0, 0.8])
-
-        def hide_tracker_layers_once() -> tuple[float, float]:
-            """Hide tracker layers once."""
-            if tracker_layers_hidden["value"]:
-                return 0.0, 0.0
-            tracker_layers_hidden["value"] = True
-            object_convert_ms, object_update_ms = update_layer(
-                tracker_object_state,
-                np.empty((0, 3), dtype=np.float32),
-                np.empty((0, 3), dtype=np.uint8),
-            )
-            controller_convert_ms, controller_update_ms = update_layer(
-                tracker_controller_state,
-                np.empty((0, 3), dtype=np.float32),
-                np.empty((0, 3), dtype=np.uint8),
-            )
-            return object_convert_ms + controller_convert_ms, object_update_ms + controller_update_ms
-
-        def update_tracker_layers(marker_packet: TrackerMarkerPacket) -> tuple[float, float]:
-            """Update tracker layers."""
-            tracker_layers_hidden["value"] = False
-            point_count = int(marker_packet.marker_xyz_m.shape[0])
-            label_count = min(
-                point_count,
-                int(marker_packet.marker_colors_rgb_u8.shape[0]),
-                int(marker_packet.query_is_object.shape[0]),
-                int(marker_packet.query_is_controller.shape[0]),
-            )
-            if label_count <= 0:
-                object_convert_ms, object_update_ms = update_layer(
-                    tracker_object_state,
-                    np.empty((0, 3), dtype=np.float32),
-                    np.empty((0, 3), dtype=np.uint8),
-                )
-                controller_convert_ms, controller_update_ms = update_layer(
-                    tracker_controller_state,
-                    np.empty((0, 3), dtype=np.float32),
-                    np.empty((0, 3), dtype=np.uint8),
-                )
-                return object_convert_ms + controller_convert_ms, object_update_ms + controller_update_ms
-            points = np.asarray(marker_packet.marker_xyz_m[:label_count], dtype=np.float32).reshape(-1, 3)
-            colors = np.asarray(marker_packet.marker_colors_rgb_u8[:label_count], dtype=np.uint8).reshape(-1, 3)
-            is_controller = np.asarray(marker_packet.query_is_controller[:label_count], dtype=bool).reshape(-1)
-            is_object = np.asarray(marker_packet.query_is_object[:label_count], dtype=bool).reshape(-1) & ~is_controller
-            unlabelled = ~(is_object | is_controller)
-            if np.any(unlabelled):
-                is_object = is_object | unlabelled
-            object_convert_ms, object_update_ms = update_layer(
-                tracker_object_state,
-                points[is_object],
-                colors[is_object],
-            )
-            controller_convert_ms, controller_update_ms = update_layer(
-                tracker_controller_state,
-                points[is_controller],
-                colors[is_controller],
-            )
-            return object_convert_ms + controller_convert_ms, object_update_ms + controller_update_ms
-
-        def render_latest() -> bool:
-            """Render latest."""
-            if strict_sync_enabled:
-                if self._lossless_enabled() and self._lossless_pipeline_active:
-                    pair = self.lossless_paired_render_queue.get_nowait()
-                else:
-                    pair = self.paired_render_slot.get_latest_after(last_pair_seq["value"])
-                if pair is None:
-                    if latest_pair_packet["value"] is None:
-                        hud_label.text = self._format_strict_sync_waiting_hud()
-                        return True
-                    return False
-                last_pair_seq["value"] = pair.seq
-                latest_pair_packet["value"] = pair
-                packet = pair.pcd_packet
-                marker_packet = pair.tracker_packet
-                controller_convert_ms, controller_update_ms = update_layer(
-                    controller_state,
-                    packet.controller_xyz_m,
-                    packet.controller_colors_rgb_u8,
-                    max_points=int(self.args.render_max_points_per_layer),
-                )
-                object_convert_ms, object_update_ms = update_layer(
-                    object_state,
-                    packet.object_xyz_m,
-                    packet.object_colors_rgb_u8,
-                    max_points=int(self.args.render_max_points_per_layer),
-                )
-                if render_tracker_markers:
-                    tracker_convert_ms, tracker_update_ms = update_tracker_layers(marker_packet)
-                else:
-                    tracker_convert_ms, tracker_update_ms = hide_tracker_layers_once()
-                if not camera_initialized["value"] and packet.point_count > 0:
-                    reset_camera()
-                    camera_initialized["value"] = True
-                render_time_s = time.perf_counter()
-                latency_ms = _elapsed_ms(packet.receive_perf_s, render_time_s)
-                timing = replace(
-                    packet.timing,
-                    open3d_convert_ms=float(
-                        controller_convert_ms + object_convert_ms + tracker_convert_ms
-                    ),
-                    open3d_update_ms=float(
-                        controller_update_ms + object_update_ms + tracker_update_ms
-                    ),
-                    receive_to_render_ms=latency_ms,
-                )
-                self.render_stats.record_render(render_time_s=render_time_s, latency_ms=latency_ms)
-                hud_label.text = self._format_hud(
-                    packet=packet,
-                    timing=timing,
-                    tracker_packet=marker_packet,
-                    strict_sync=True,
-                    waiting_for_pair=True,
-                )
-                self._maybe_log_debug(
-                    packet=packet,
-                    timing=timing,
-                    now_s=render_time_s,
-                    tracker_packet=marker_packet,
-                    strict_sync=True,
-                    waiting_for_pair=True,
-                )
-                return True
-
-            packet = self.render_slot.get_latest_after(last_render_seq["value"])
-            marker_packet = self.tracker_marker_slot.get_latest_after(last_marker_seq["value"])
-            if packet is None and marker_packet is None:
-                return False
-            controller_convert_ms = controller_update_ms = 0.0
-            object_convert_ms = object_update_ms = 0.0
-            tracker_convert_ms = tracker_update_ms = 0.0
-            if packet is not None:
-                last_render_seq["value"] = packet.seq
-                latest_render_packet["value"] = packet
-                controller_convert_ms, controller_update_ms = update_layer(
-                    controller_state,
-                    packet.controller_xyz_m,
-                    packet.controller_colors_rgb_u8,
-                    max_points=int(self.args.render_max_points_per_layer),
-                )
-                object_convert_ms, object_update_ms = update_layer(
-                    object_state,
-                    packet.object_xyz_m,
-                    packet.object_colors_rgb_u8,
-                    max_points=int(self.args.render_max_points_per_layer),
-                )
-            if marker_packet is not None:
-                last_marker_seq["value"] = marker_packet.seq
-                latest_marker_packet["value"] = marker_packet
-                tracker_convert_ms, tracker_update_ms = update_tracker_layers(marker_packet)
-            active_packet = latest_render_packet["value"]
-            active_marker = latest_marker_packet["value"]
-            if active_packet is None:
-                return True
-            if not camera_initialized["value"] and active_packet.point_count > 0:
-                reset_camera()
-                camera_initialized["value"] = True
-            render_time_s = time.perf_counter()
-            latency_start_s = active_packet.receive_perf_s
-            if packet is None and marker_packet is not None:
-                latency_start_s = marker_packet.receive_perf_s
-            latency_ms = _elapsed_ms(latency_start_s, render_time_s)
-            timing = replace(
-                active_packet.timing,
-                open3d_convert_ms=float(
-                    controller_convert_ms + object_convert_ms + tracker_convert_ms
-                ),
-                open3d_update_ms=float(
-                    controller_update_ms + object_update_ms + tracker_update_ms
-                ),
-                receive_to_render_ms=latency_ms,
-            )
-            self.render_stats.record_render(render_time_s=render_time_s, latency_ms=latency_ms)
-            hud_label.text = self._format_hud(packet=active_packet, timing=timing, tracker_packet=active_marker)
-            self._maybe_log_debug(packet=active_packet, timing=timing, now_s=render_time_s)
-            return True
-
-        def render_latest_on_main_thread() -> None:
-            """Render latest on main thread."""
-            try:
-                fatal = self._fatal_error_snapshot()
-                if fatal is not None:
-                    hud_label.text = self._format_fatal_hud(fatal)
-                    hud_label.text_color = gui.Color(1.0, 0.25, 0.20)
-                    fatal_exit_posted["value"] = True
-                    print(f"[FATAL] closing Open3D viewer after {fatal.log_message()}", flush=True)
-                    if hasattr(window, "post_redraw"):
-                        try:
-                            window.post_redraw()
-                        except Exception:
-                            pass
-                    try:
-                        app.quit()
-                    except Exception:
-                        pass
-                    return
-                if self.stop_event.is_set():
-                    try:
-                        app.quit()
-                    except Exception:
-                        pass
-                    return
-                rendered = render_latest()
-                if (
-                    self._lossless_enabled()
-                    and self._lossless_processing_done.is_set()
-                    and self.lossless_paired_render_queue.is_closed_and_empty()
-                ):
-                    try:
-                        app.quit()
-                    except Exception:
-                        pass
-                    return
-                if rendered and hasattr(window, "post_redraw"):
-                    try:
-                        window.post_redraw()
-                    except Exception:
-                        pass
-            finally:
-                render_post_gate.mark_done()
-                if self._fatal_error_snapshot() is not None and not fatal_exit_posted["value"]:
-                    request_render_update()
-                elif (
-                    not self.stop_event.is_set()
-                    and (
-                        (
-                            strict_sync_enabled
-                            and (
-                                (
-                                    self._lossless_enabled()
-                                    and self._lossless_pipeline_active
-                                    and self.lossless_paired_render_queue.pending_count() > 0
-                                )
-                                or (
-                                    not (self._lossless_enabled() and self._lossless_pipeline_active)
-                                    and self.paired_render_slot.latest_seq() > last_pair_seq["value"]
-                                )
-                            )
-                        )
-                        or (
-                            not strict_sync_enabled
-                            and (
-                                self.render_slot.latest_seq() > last_render_seq["value"]
-                                or self.tracker_marker_slot.latest_seq() > last_marker_seq["value"]
-                            )
-                        )
-                    )
-                ):
-                    request_render_update()
-
-        def request_render_update() -> None:
-            """Request render update."""
-            if not render_post_gate.try_mark_pending():
-                return
-            try:
-                app.post_to_main_thread(window, render_latest_on_main_thread)
-            except Exception:
-                render_post_gate.mark_done()
-
-        fast_exit_after_open3d = os.environ.get("QQTT_WSLG_OPEN3D_FAST_EXIT") == "1"
-
-        def stop_and_quit_open3d() -> None:
-            """Stop and quit open3d."""
-            self.stop_event.set()
-            self._request_render_update = lambda: None
-            if fast_exit_after_open3d:
-                self.stop()
-                os._exit(0)
-            try:
-                app.quit()
-            except Exception:
-                pass
-
-        def on_close() -> bool:
-            """Return the on close."""
-            stop_and_quit_open3d()
-            return True
-
-        window.set_on_close(on_close)
-        self._request_render_update = request_render_update
-        self._start_threads()
-
-        timer: threading.Timer | None = None
-        if self.args.duration_s > 0 and not (self._lossless_enabled() and _is_replay_input_source(str(self.args.input_source))):
-            timer = threading.Timer(
-                float(self.args.duration_s),
-                lambda: app.post_to_main_thread(window, stop_and_quit_open3d),
-            )
-            timer.daemon = True
-            timer.start()
-        try:
-            app.run()
-        finally:
-            self._request_render_update = lambda: None
-            if timer is not None:
-                timer.cancel()
-
-    # ------------------------------------------------------------------
-    # HUD formatting & debug logging
-    # ------------------------------------------------------------------
-    def _format_hud(
-        self,
-        *,
-        packet: MaskedPcdPacket,
-        timing: PipelineTiming,
-        tracker_packet: TrackerMarkerPacket | None = None,
-        strict_sync: bool = False,
-        waiting_for_pair: bool = False,
-    ) -> str:
-        """Format hud."""
-        status = "late" if timing.receive_to_render_ms > self.args.latency_target_ms else "ok"
-        max_points = "uncapped" if self.args.pcd_max_points == 0 else str(self.args.pcd_max_points)
-        render_cap = (
-            "uncapped"
-            if int(self.args.render_max_points_per_layer) == 0
-            else str(int(self.args.render_max_points_per_layer))
-        )
-        if self.args.depth_source in {"ffs", "ffs_remote"}:
-            depth_ms = float(timing.ffs_ms)
-            depth_align_ms = float(timing.ffs_align_ms)
-        else:
-            depth_ms = float(timing.depth_convert_ms)
-            depth_align_ms = float(timing.align_ms)
-        depth_line = (
-            f"depth: backend={depth_backend_label(self.args)} source={self.args.depth_source}  "
-            f"depth_ms={depth_ms:.1f} align_ms={depth_align_ms:.1f}  color={self.args.pcd_color_mode}"
-        )
-        preset_text = "" if self.args.demo_preset == "none" else f"  preset={self.args.demo_preset}"
-        if tracker_enabled(self.args):
-            if tracker_packet is None:
-                tracker_line = (
-                    f"tracker: {self.args.tracker_backend} waiting  strict_sync={int(bool(strict_sync))}  "
-                    f"waiting_for_pair={int(bool(waiting_for_pair))}  "
-                    f"queries={int(self.args.tracker_query_count) or PHYSTWIN_DENSE_QUERY_POINTS}  "
-                    f"scope={self.args.tracker_display_scope}  device={self.args.tracker_device}"
-                )
-            else:
-                marker_age_ms = _elapsed_ms(tracker_packet.process_done_perf_s, time.perf_counter())
-                sync_text = (
-                    f"  strict_sync=1  paired_seq={int(packet.seq)}  waiting_for_pair={int(bool(waiting_for_pair))}"
-                    if bool(strict_sync)
-                    else ""
-                )
-                tracker_line = (
-                    f"tracker: {tracker_packet.backend}  fps={self.tracker_stats.fps:.1f}  "
-                    f"markers={tracker_packet.marker_count}/{tracker_packet.query_count}  "
-                    f"remaining={tracker_packet.remaining_query_count}/{tracker_packet.query_count}  "
-                    f"hand_a/b/object={tracker_packet.hand_a_query_count}/{tracker_packet.hand_b_query_count}/"
-                    f"{tracker_packet.object_query_count}  "
-                    f"consistent={tracker_packet.consistent_visible_count}/{tracker_packet.query_count}  "
-                    f"seq={int(tracker_packet.seq)}"
-                    f"{sync_text}  "
-                    f"scope={tracker_packet.display_scope}  age={marker_age_ms:.0f} ms  "
-                    f"model={tracker_packet.model_ms:.0f} ms  lift={tracker_packet.lift_ms:.1f} ms  "
-                    f"e2e={tracker_packet.e2e_ms:.0f} ms"
-                )
-        else:
-            tracker_line = "tracker: off"
-        lossless_line = self._lossless_queue_debug_text() if bool(strict_sync) and self._lossless_enabled() else ""
-        filter_info = packet.filter_telemetry
-        if filter_info.enabled:
-            filter_line = (
-                f"filter: {filter_info.mode}  render={'filtered' if filter_info.render_using_filtered else 'raw'}  "
-                f"fps submit/out={filter_info.filter_submit_fps:.1f}/{filter_info.filter_output_fps:.1f}  "
-                f"age={filter_info.filter_age_frames}f/{filter_info.filter_age_ms:.0f}ms  "
-                f"busy={int(filter_info.filter_busy)} drop={filter_info.filter_queue_drop}"
-            )
-            filter_points_line = (
-                "filter pts controller raw/cap/out="
-                f"{filter_info.controller_raw_points}/{filter_info.controller_cap_points}/{filter_info.controller_output_points}  "
-                f"pre={filter_info.controller_prefallback_points} raw-r={filter_info.controller_raw_retain_ratio:.2f}  "
-                "object raw/cap/out="
-                f"{filter_info.object_raw_points}/{filter_info.object_cap_points}/{filter_info.object_output_points}  "
-                f"pre={filter_info.object_prefallback_points} raw-r={filter_info.object_raw_retain_ratio:.2f}"
-            )
-        else:
-            filter_line = "filter: off"
-            filter_points_line = ""
-        if self.args.depth_source == "ffs_remote":
-            depth_line += f"  remote={self.args.ffs_remote_endpoint}"
-        shape_profile = packet.shape_prior_profile or self._shape_prior_profile()
-        shape_line = (
-            f"shape_prior: status={packet.shape_prior_status} "
-            f"points={packet.shape_prior_point_count} "
-            f"source_seq={shape_profile.get('shape_prior_source_seq')}"
-        )
-        quality_line = ""
-        if self.args.enable_remote_ffs_quality:
-            quality_packet = self.remote_quality_slot.get_latest_after(-1)
-            if quality_packet is None:
-                quality_line = (
-                    "\nremote FFS quality: waiting  "
-                    f"return={self.args.remote_ffs_quality_return}  endpoint="
-                    f"{self.args.remote_ffs_quality_endpoint or self.args.ffs_remote_endpoint}"
-                )
-            else:
-                age_ms = _elapsed_ms(quality_packet.process_done_perf_s, time.perf_counter())
-                quality_line = (
-                    "\nremote FFS quality: "
-                    f"{self.remote_quality_stats.fps:.1f} FPS  age={age_ms:.0f} ms  "
-                    f"rtt={quality_packet.timing.remote_rtt_ms:.0f} ms  "
-                    f"resp={quality_packet.timing.remote_response_kb:.0f} KB  "
-                    f"return={quality_packet.return_type}"
-                )
-        return (
-            f"{self._stage_fps_hud_line()}\n"
-            f"latency: {timing.receive_to_render_ms:.1f} ms ({status}, target {self.args.latency_target_ms:.1f} ms)\n"
-            f"points controller/object: {packet.controller_point_count} / {packet.object_point_count}  "
-            f"pcd max/object: {max_points}  render max/layer: {render_cap}\n"
-            f"{tracker_line}\n"
-            f"{lossless_line}\n"
-            f"{filter_line}\n"
-            f"{filter_points_line}\n"
-            f"{shape_line}\n"
-            f"dropped capture/seg/pcd: {packet.dropped_capture_frames} / {packet.dropped_seg_frames} / "
-            f"{self.paired_render_slot.dropped_count if bool(strict_sync) else self.render_slot.dropped_count}\n"
-            f"EdgeTAM: {self.args.model_id}  mode={self.args.track_mode}  compile={self.args.compile_mode}  "
-            f"dtype={self.args.dtype}{preset_text}\n"
-            f"{depth_line}{quality_line}\n"
-            f"serial/profile/fps: {self.serial}  {self.args.profile}@{self.args.fps}\n"
-            + self._frame_hud_line()
-        )
-
-    def _format_strict_sync_waiting_hud(self) -> str:
-        """Format strict sync waiting hud."""
-        return (
-            f"{self._stage_fps_hud_line()}\n"
-            "strict_sync=1  waiting_for_pair=1  paired_seq=none\n"
-            f"{self._lossless_queue_debug_text() if self._lossless_enabled() else ''}\n"
-            f"tracker: {self.args.tracker_backend} waiting  "
-            f"queries={int(self.args.tracker_query_count) or PHYSTWIN_DENSE_QUERY_POINTS}  "
-            f"scope={self.args.tracker_display_scope}  device={self.args.tracker_device}\n"
-            f"depth: {self.args.depth_source}  color={self.args.pcd_color_mode}\n"
-            f"serial/profile/fps: {self.serial}  {self.args.profile}@{self.args.fps}\n"
-            + self._frame_hud_line()
-        )
-
     def _emit_debug_line(
         self,
         *,
@@ -9202,7 +7737,6 @@ class MainDataProcessingDemo:
             pcd_queue = self.lossless_pcd_mask_queue.stats
             tracker_queue = self.lossless_tracker_mask_queue.stats
             pair_output_queue = self.lossless_pair_output_queue.stats
-            render_queue = self.lossless_paired_render_queue.stats
             pairer = self.same_seq_pairer.stats
             lossless_debug = (
                 f"lossless=1 "
@@ -9212,7 +7746,6 @@ class MainDataProcessingDemo:
                 f"lossless_mask_pcd_q={pcd_queue.size} "
                 f"lossless_mask_tracker_q={tracker_queue.size} "
                 f"lossless_pair_output_q={pair_output_queue.size} "
-                f"lossless_render_q={render_queue.size} "
                 f"lossless_pairer_expected={pairer.expected_seq} "
                 f"lossless_pairer_pending_pcd={pairer.pending_pcd} "
                 f"lossless_pairer_pending_tracker={pairer.pending_tracker} "
@@ -9241,7 +7774,6 @@ class MainDataProcessingDemo:
             f"tracker_hand_a_queries={tracker_hand_a} "
             f"tracker_hand_b_queries={tracker_hand_b} "
             f"tracker_object_queries={tracker_object} "
-            f"render_fps={self.render_stats.render_fps:.1f} "
             f"profile_sync_enabled={int(bool(self.args.profile_sync))} "
             f"profile_cuda_events={int(bool(self.args.profile_cuda_events))} "
             f"mask_ms={timing.mask_ms:.2f} "
@@ -9269,7 +7801,6 @@ class MainDataProcessingDemo:
             f"object_filter_ms={timing.object_filter_ms:.2f} "
             f"controller_filter_ms={timing.controller_filter_ms:.2f} "
             f"pcd_ms={timing.pcd_ms:.2f} "
-            f"render_ms={timing.open3d_update_ms:.2f} "
             f"e2e_latency_ms={timing.receive_to_render_ms:.2f} "
             f"tracker_model_ms={tracker_model_ms:.2f} "
             f"tracker_e2e_ms={tracker_e2e_ms:.2f} "
@@ -9300,7 +7831,7 @@ class MainDataProcessingDemo:
             f"object_points={int(object_points)} "
             f"dropped_capture={int(dropped_capture_frames)} "
             f"dropped_seg={int(dropped_seg_frames)} "
-            f"dropped_pcd={self.paired_render_slot.dropped_count if bool(strict_sync) else self.render_slot.dropped_count}",
+            f"dropped_pcd={self.paired_render_slot.dropped_count if bool(strict_sync) else self.pcd_slot.dropped_count}",
             flush=True,
         )
 
@@ -9365,7 +7896,7 @@ class MainDataProcessingDemo:
                         waiting_for_pair=True,
                     )
                 continue
-            pcd_packet = self.render_slot.get_latest_after(last_logged_seq)
+            pcd_packet = self.pcd_slot.get_latest_after(last_logged_seq)
             if pcd_packet is not None:
                 last_logged_seq = pcd_packet.seq
                 timing = replace(

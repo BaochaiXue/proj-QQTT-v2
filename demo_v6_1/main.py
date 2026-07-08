@@ -1124,8 +1124,6 @@ def build_main_data_processing_command(
         str(args.depth_backend),
         "--duration-s",
         f"{duration_s:.3f}",
-        "--render-mode",
-        "none",
         "--headless-capture-dir",
         str(capture_dir),
         "--tracking-product-backend",
