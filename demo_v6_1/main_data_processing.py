@@ -118,12 +118,10 @@ from demo_v6_1.phystwin_strict_product import (  # noqa: E402
     COMPATIBILITY_TARGET_PHYSTWIN,
     DEFAULT_TRACKING_PRODUCT_BACKEND,
     PHYSTWIN_STRICT_EXECUTION_MODE,
-    TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY,
     TRACKING_PRODUCT_BACKENDS,
     finalize_headless_capture,
     normalize_tracking_product_backend,
     prepare_phystwin_frame,
-    tracking_product_backend_is_strict,
     write_prepared_phystwin_frame,
 )
 from qqtt.tracking.backends.point_tracker_adapter import (  # noqa: E402
@@ -2338,14 +2336,8 @@ def pcd_filter_preset_to_filter(preset: str | None) -> str | None:
 
 
 def tracker_query_source(args: argparse.Namespace) -> str:
-    """Return the tracker query source."""
-    if tracking_product_backend_is_strict(getattr(args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND)):
-        return TRACKER_QUERY_SOURCE_UNION_MASK
-    return (
-        TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL
-        if pcd_filter_preset_to_filter(getattr(args, "pcd_filter_preset", None)) is not None
-        else TRACKER_QUERY_SOURCE_UNION_MASK
-    )
+    """Return the tracker query source (phystwin-strict is the only backend)."""
+    return TRACKER_QUERY_SOURCE_UNION_MASK
 
 
 def tracker_marker_gate(args: argparse.Namespace) -> str:
@@ -2503,15 +2495,12 @@ def validate_args(args: argparse.Namespace) -> None:
     args.tracking_product_backend = normalize_tracking_product_backend(
         getattr(args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND)
     )
-    if tracking_product_backend_is_strict(args.tracking_product_backend):
-        if str(args.input_source) not in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_LIVE}:
-            raise ValueError("phystwin-strict-tracking requires --input-source live or fake-live")
-        if args.headless_capture_dir is None:
-            raise ValueError("phystwin-strict-tracking requires --headless-capture-dir")
-        if args.phystwin_strict_output_dir is None:
-            args.phystwin_strict_output_dir = Path(args.headless_capture_dir) / "phystwin_like"
-    elif bool(getattr(args, "headless_prepared_only", False)):
-        raise ValueError("--headless-prepared-only requires --tracking-product-backend phystwin-strict-tracking")
+    if str(args.input_source) not in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_LIVE}:
+        raise ValueError("phystwin-strict-tracking requires --input-source live or fake-live")
+    if args.headless_capture_dir is None:
+        raise ValueError("phystwin-strict-tracking requires --headless-capture-dir")
+    if args.phystwin_strict_output_dir is None:
+        args.phystwin_strict_output_dir = Path(args.headless_capture_dir) / "phystwin_like"
     if getattr(args, "color_exposure", None) is not None and float(args.color_exposure) <= 0.0:
         raise ValueError("--color-exposure must be positive")
     if getattr(args, "color_gain", None) is not None and float(args.color_gain) < 0.0:
@@ -3878,11 +3867,7 @@ class MainDataProcessingDemo:
                 if getattr(self.args, "phystwin_strict_output_dir", None) is None
                 else _repo_relative_path_text(self.args.phystwin_strict_output_dir)
             ),
-            "compatibility_target": (
-                COMPATIBILITY_TARGET_PHYSTWIN
-                if tracking_product_backend_is_strict(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
-                else None
-            ),
+            "compatibility_target": COMPATIBILITY_TARGET_PHYSTWIN,
             "mask_backend": "edgetam",
             "depth_backend": depth_backend_label(self.args),
             "shape_prior_enabled": bool(shape_profile.get("shape_prior_enabled", False)),
@@ -3925,11 +3910,7 @@ class MainDataProcessingDemo:
             "first_strict_pair_ms": float(shape_profile.get("first_strict_pair_ms", 0.0) or 0.0),
             "shape_prior_depth_backend": depth_backend_label(self.args),
             "shape_prior_depth_source_internal": str(self.args.depth_source),
-            "execution_mode": (
-                PHYSTWIN_STRICT_EXECUTION_MODE
-                if tracking_product_backend_is_strict(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
-                else TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY
-            ),
+            "execution_mode": PHYSTWIN_STRICT_EXECUTION_MODE,
             "tracker_query_count": int(DEFAULT_TRACKER_QUERY_COUNT),
             "tracker_query_source": tracker_query_source(self.args) if tracker_enabled(self.args) else None,
             "tracker_marker_gate": tracker_marker_gate(self.args) if tracker_enabled(self.args) else None,
@@ -4047,8 +4028,6 @@ class MainDataProcessingDemo:
 
     def _finalize_headless_tracking_product(self) -> None:
         """Finalize headless tracking product."""
-        if not tracking_product_backend_is_strict(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND)):
-            return
         if self._fatal_error_snapshot() is not None:
             return
         if self.headless_capture_writer is None:
@@ -4685,18 +4664,10 @@ class MainDataProcessingDemo:
                 if getattr(self.args, "phystwin_strict_output_dir", None) is None
                 else _repo_relative_path_text(self.args.phystwin_strict_output_dir)
             ),
-            "compatibility_target": (
-                COMPATIBILITY_TARGET_PHYSTWIN
-                if tracking_product_backend_is_strict(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
-                else None
-            ),
+            "compatibility_target": COMPATIBILITY_TARGET_PHYSTWIN,
             "mask_backend": "edgetam",
             "depth_backend": depth_backend_label(self.args),
-            "execution_mode": (
-                PHYSTWIN_STRICT_EXECUTION_MODE
-                if tracking_product_backend_is_strict(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
-                else TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY
-            ),
+            "execution_mode": PHYSTWIN_STRICT_EXECUTION_MODE,
             "tracker_device": str(self.args.tracker_device),
             "tracker_query_count": int(DEFAULT_TRACKER_QUERY_COUNT),
             "tracker_query_source": tracker_query_source(self.args) if tracker_enabled(self.args) else None,
