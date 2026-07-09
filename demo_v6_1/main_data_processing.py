@@ -100,23 +100,13 @@ from demo_v6_1.utils.pcd_filter import (  # noqa: E402
     voxel_cap_indices,
     voxel_density_indices,
 )
-from demo_v6_1.utils.ffs_remote_protocol import (  # noqa: E402
-    COMPRESSION_MODES,
-    RETURN_TYPES,
-    SPARSE_RETURN_TYPES,
-)
 from demo_v6_1 import main_warmup  # noqa: E402
 from demo_v6_1 import shape_prior_warmup  # noqa: E402
 from demo_v6_1.tracking import CONTROLLER_FINAL_COUNT  # noqa: E402
 from demo_v6_1.main_warmup import InitialMaskBundle  # noqa: E402
 from demo_v6_1.utils.ffs_defaults import (  # noqa: E402
-    DEFAULT_FFS_MAX_DISP,
-    DEFAULT_FFS_MODEL_NAME,
     DEFAULT_FFS_REPO,
-    DEFAULT_FFS_TRT_BUILDER_OPTIMIZATION_LEVEL,
-    DEFAULT_FFS_TRT_ENGINE_SIZE,
     DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
-    DEFAULT_FFS_VALID_ITERS,
 )
 from qqtt.env.camera.table_calibration import (  # noqa: E402
     TABLE_WORLD_FRAME_KIND,
@@ -166,7 +156,7 @@ TRACK_MODE_CONTROLLER_ONLY = "controller-only"
 TRACK_MODE_NONE = "none"
 TRACK_MODES = (TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_OBJECT_ONLY, TRACK_MODE_CONTROLLER_ONLY, TRACK_MODE_NONE)
 DEFAULT_TRACK_MODE = "controller-object"
-DEPTH_SOURCES = ("ffs", "ffs_remote", "realsense", "none")
+DEPTH_SOURCES = ("ffs", "realsense", "none")
 DEFAULT_DEPTH_SOURCE = "ffs"
 INPUT_SOURCE_LIVE = "live"
 INPUT_SOURCE_FAKE_LIVE = "fake-live"
@@ -435,7 +425,7 @@ class RecordedRgbdFrameSource:
         if self.depth_source not in DEPTH_SOURCES:
             raise ValueError(f"recording replay depth_source must be one of {DEPTH_SOURCES}")
         self.requires_depth = self.depth_source == "realsense"
-        self.requires_ir = self.depth_source in {"ffs", "ffs_remote"}
+        self.requires_ir = self.depth_source == "ffs"
         self.metadata_path = self.case_path / "metadata.json"
         if not self.metadata_path.is_file():
             raise FileNotFoundError(f"recording metadata not found: {self.metadata_path}")
@@ -1126,16 +1116,6 @@ class DepthProfilePacket:
     process_done_perf_s: float
     dropped_capture_frames: int
     timing: PipelineTiming
-
-
-@dataclass(frozen=True)
-class RemoteFfsQualityPacket:
-    seq: int
-    receive_perf_s: float
-    process_done_perf_s: float
-    timing: PipelineTiming
-    return_type: str
-    sparse_points: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -2029,10 +2009,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--depth-source",
         choices=DEPTH_SOURCES,
         default=DEFAULT_DEPTH_SOURCE,
-        help=(
-            "Depth source. ffs streams color+IR stereo and runs local TensorRT FFS; "
-            "ffs_remote streams color+IR stereo and requests color-aligned FFS depth from a remote service."
-        ),
+        help="Depth source. ffs streams color+IR stereo and runs local TensorRT FFS.",
     )
     parser.add_argument(
         "--depth-backend-label",
@@ -2059,72 +2036,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Optional TensorRT Python package/root override forwarded to the FFS runner.",
-    )
-    parser.add_argument(
-        "--ffs-remote-endpoint",
-        default=None,
-        help="ZeroMQ endpoint for --depth-source ffs_remote, for example tcp://100.x.y.z:7001.",
-    )
-    parser.add_argument(
-        "--ffs-remote-max-inflight",
-        type=int,
-        default=1,
-        help="Remote FFS request inflight cap. The first implementation supports only 1.",
-    )
-    parser.add_argument(
-        "--ffs-remote-timeout-ms",
-        type=int,
-        default=80,
-        help="Remote FFS send/receive timeout in milliseconds.",
-    )
-    parser.add_argument(
-        "--ffs-remote-return",
-        choices=RETURN_TYPES,
-        default="depth_u16",
-        help=(
-            "Remote FFS response payload type. Full-frame types work as --depth-source ffs_remote; "
-            "sparse types are for quality/protocol experiments."
-        ),
-    )
-    parser.add_argument(
-        "--ffs-remote-compress",
-        choices=COMPRESSION_MODES,
-        default="none",
-        help="Compress remote FFS IR request payloads for --depth-source ffs_remote.",
-    )
-    parser.add_argument(
-        "--enable-remote-ffs-quality",
-        action="store_true",
-        help="Run remote FFS as an asynchronous low-FPS quality side channel while main depth remains RealSense.",
-    )
-    parser.add_argument(
-        "--remote-ffs-quality-endpoint",
-        default=None,
-        help="Remote FFS quality endpoint. Defaults to --ffs-remote-endpoint when omitted.",
-    )
-    parser.add_argument(
-        "--remote-ffs-quality-return",
-        choices=RETURN_TYPES,
-        default="depth_u16",
-        help="Remote quality side-channel return type.",
-    )
-    parser.add_argument(
-        "--remote-ffs-quality-compress",
-        choices=COMPRESSION_MODES,
-        default="none",
-        help="Compress remote quality side-channel IR/mask request payloads.",
-    )
-    parser.add_argument(
-        "--remote-ffs-quality-timeout-ms",
-        type=int,
-        default=5000,
-        help="Remote quality side-channel timeout in milliseconds.",
-    )
-    parser.add_argument(
-        "--remote-ffs-quality-interval-ms",
-        type=float,
-        default=200.0,
-        help="Minimum interval between remote FFS quality requests.",
     )
     parser.add_argument(
         "--emitter",
@@ -2830,35 +2741,6 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("--tracker-backend tapnextpp requires RGB-D depth for 3D marker lift")
     if args.depth_source == "ffs":
         validate_ffs_paths(ffs_repo=Path(args.ffs_repo), model_dir=Path(args.ffs_trt_model_dir))
-    if args.depth_source == "ffs_remote":
-        if not args.ffs_remote_endpoint:
-            raise ValueError("--depth-source ffs_remote requires --ffs-remote-endpoint")
-        if int(args.ffs_remote_max_inflight) != 1:
-            raise ValueError("first ffs_remote implementation requires --ffs-remote-max-inflight 1")
-        if int(args.ffs_remote_timeout_ms) <= 0:
-            raise ValueError("--ffs-remote-timeout-ms must be positive")
-        if args.ffs_remote_return in SPARSE_RETURN_TYPES:
-            if args.track_mode == "none":
-                raise ValueError(
-                    "sparse --depth-source ffs_remote requires EdgeTAM masks; "
-                    "use --track-mode object-only, controller-only, or controller-object"
-                )
-            if args.pcd_mode != "masked":
-                raise ValueError("sparse --depth-source ffs_remote requires --pcd-mode masked")
-    if args.enable_remote_ffs_quality:
-        if args.depth_source != "realsense":
-            raise ValueError("--enable-remote-ffs-quality requires --depth-source realsense")
-        if not (args.remote_ffs_quality_endpoint or args.ffs_remote_endpoint):
-            raise ValueError("--enable-remote-ffs-quality requires --remote-ffs-quality-endpoint or --ffs-remote-endpoint")
-        if int(args.remote_ffs_quality_timeout_ms) <= 0:
-            raise ValueError("--remote-ffs-quality-timeout-ms must be positive")
-        if float(args.remote_ffs_quality_interval_ms) <= 0:
-            raise ValueError("--remote-ffs-quality-interval-ms must be positive")
-        if args.remote_ffs_quality_return in SPARSE_RETURN_TYPES and args.track_mode == "none":
-            raise ValueError(
-                "sparse remote quality returns require EdgeTAM masks; "
-                "use --track-mode object-only, controller-only, or controller-object"
-            )
     if args.track_mode not in TRACK_MODES:
         raise ValueError(f"--track-mode must be one of {', '.join(TRACK_MODES)}")
     if args.init_mode == "saved-masks":
@@ -2890,7 +2772,7 @@ def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime
     config = rs.config()
     config.enable_device(serial)
     config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, int(args.fps))
-    if args.depth_source in {"ffs", "ffs_remote"} or bool(getattr(args, "enable_remote_ffs_quality", False)):
+    if args.depth_source == "ffs":
         config.enable_stream(rs.stream.infrared, 1, width, height, rs.format.y8, int(args.fps))
         config.enable_stream(rs.stream.infrared, 2, width, height, rs.format.y8, int(args.fps))
     if args.depth_source == "realsense":
@@ -2918,7 +2800,7 @@ def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime
         color_stream = profile.get_stream(rs.stream.color).as_video_stream_profile()
         intrinsics = camera_intrinsics_from_rs(color_stream.get_intrinsics())
         k_color = rs_intrinsics_to_matrix(color_stream.get_intrinsics())
-        if args.depth_source in {"ffs", "ffs_remote"} or bool(getattr(args, "enable_remote_ffs_quality", False)):
+        if args.depth_source == "ffs":
             ir_left_profile = profile.get_stream(rs.stream.infrared, 1).as_video_stream_profile()
             ir_right_profile = profile.get_stream(rs.stream.infrared, 2).as_video_stream_profile()
             ir_left_to_right = ir_left_profile.get_extrinsics_to(ir_right_profile)
@@ -3988,7 +3870,6 @@ class MainDataProcessingDemo:
         self.capture_slot: LatestSlot[FramePacket] = LatestSlot()
         self.mask_slot: LatestSlot[MaskPacket] = LatestSlot()
         self.depth_profile_slot: LatestSlot[DepthProfilePacket] = LatestSlot()
-        self.remote_quality_slot: LatestSlot[RemoteFfsQualityPacket] = LatestSlot()
         # Latest non-strict PCD packet; consumed only by the headless debug worker.
         self.pcd_slot: LatestSlot[MaskedPcdPacket] = LatestSlot()
         self.tracker_marker_slot: LatestSlot[TrackerMarkerPacket] = LatestSlot()
@@ -4023,7 +3904,6 @@ class MainDataProcessingDemo:
         self.capture_stats = StageStats()
         self.seg_stats = StageStats()
         self.depth_stats = StageStats()
-        self.remote_quality_stats = StageStats()
         self.pcd_stats = StageStats()
         self.tracker_stats = StageStats()
         self.filter_submit_stats = StageStats()
@@ -4058,8 +3938,6 @@ class MainDataProcessingDemo:
             tuple[float, ...],
             tuple[float, ...],
         ] | None = None
-        self.ffs_remote_client: Any | None = None
-        self.remote_quality_client: Any | None = None
         self.recording_source: RecordedRgbdFrameSource | None = None
         self.headless_capture_writer: HeadlessCaptureWriter | None = None
         self.shape_prior_manager = self._create_shape_prior_manager()
@@ -4086,7 +3964,6 @@ class MainDataProcessingDemo:
         self._tracker_consistent_visible: np.ndarray | None = None
         self._tracker_query_alive_mask: np.ndarray | None = None
         self._tracker_query_initial_seq: int | None = None
-        self._warned_remote_engine_contract = False
         self._fatal_error_lock = threading.Lock()
         self._fatal_error: FatalWorkerError | None = None
 
@@ -4507,12 +4384,6 @@ class MainDataProcessingDemo:
                 pass
             self.runtime = None
         self.recording_source = None
-        if self.ffs_remote_client is not None:
-            self.ffs_remote_client.close()
-            self.ffs_remote_client = None
-        if self.remote_quality_client is not None:
-            self.remote_quality_client.close()
-        self.remote_quality_client = None
         self._run_deferred_shape_prior_after_teardown()
         self._write_shape_prior_profile_json()
         if (
@@ -4611,10 +4482,8 @@ class MainDataProcessingDemo:
         if self.args.pcd_mode == "masked":
             if not tracker_enabled(self.args):
                 workers.append(("pcd", self._pcd_worker))
-        elif self.args.depth_source in {"ffs", "ffs_remote"}:
+        elif self.args.depth_source == "ffs":
             workers.append(("depth", self._depth_profile_worker))
-        if self.args.enable_remote_ffs_quality:
-            workers.append(("remote-quality", self._remote_ffs_quality_worker))
         if self.args.debug:
             workers.append(("debug", self._headless_debug_worker))
 
@@ -4939,7 +4808,7 @@ class MainDataProcessingDemo:
                     publish_output_packet(due_packet, record_s=sample_s)
                     published_sample_before_current = True
             align_start_s = receive_perf_s
-            if self.args.depth_source in {"ffs", "ffs_remote"}:
+            if self.args.depth_source == "ffs":
                 align_done_s = receive_perf_s
                 color_frame = frames.get_color_frame()
                 ir_left_frame = frames.get_infrared_frame(1)
@@ -4963,17 +4832,11 @@ class MainDataProcessingDemo:
                 depth_frame = aligned.get_depth_frame()
                 if not color_frame or not depth_frame:
                     continue
-                if self.args.enable_remote_ffs_quality:
-                    ir_left_frame = frames.get_infrared_frame(1)
-                    ir_right_frame = frames.get_infrared_frame(2)
-                    if not ir_left_frame or not ir_right_frame:
-                        continue
-                else:
-                    ir_left_frame = None
-                    ir_right_frame = None
+                ir_left_frame = None
+                ir_right_frame = None
             copy_start_s = time.perf_counter()
             color_bgr = np.ascontiguousarray(np.asanyarray(color_frame.get_data()).copy())
-            if self.args.depth_source in {"ffs", "ffs_remote"}:
+            if self.args.depth_source == "ffs":
                 assert ir_left_frame is not None and ir_right_frame is not None
                 depth_u16 = None
                 ir_left_u8 = np.ascontiguousarray(np.asanyarray(ir_left_frame.get_data()).copy())
@@ -4985,13 +4848,8 @@ class MainDataProcessingDemo:
             else:
                 assert depth_frame is not None
                 depth_u16 = np.ascontiguousarray(np.asanyarray(depth_frame.get_data()).copy())
-                if self.args.enable_remote_ffs_quality:
-                    assert ir_left_frame is not None and ir_right_frame is not None
-                    ir_left_u8 = np.ascontiguousarray(np.asanyarray(ir_left_frame.get_data()).copy())
-                    ir_right_u8 = np.ascontiguousarray(np.asanyarray(ir_right_frame.get_data()).copy())
-                else:
-                    ir_left_u8 = None
-                    ir_right_u8 = None
+                ir_left_u8 = None
+                ir_right_u8 = None
             copy_done_s = time.perf_counter()
             packet = FramePacket(
                 seq=raw_seq,
@@ -5094,21 +4952,6 @@ class MainDataProcessingDemo:
             "depth_alignment_target": "color",
             "local_ffs_depth_cache_frames": (
                 DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES if self.args.depth_source == "ffs" else None
-            ),
-            "ffs_remote_endpoint": self.args.ffs_remote_endpoint if self.args.depth_source == "ffs_remote" else None,
-            "ffs_remote_return": self.args.ffs_remote_return if self.args.depth_source == "ffs_remote" else None,
-            "ffs_remote_compress": self.args.ffs_remote_compress if self.args.depth_source == "ffs_remote" else None,
-            "remote_ffs_quality_enabled": bool(self.args.enable_remote_ffs_quality),
-            "remote_ffs_quality_endpoint": (
-                self.args.remote_ffs_quality_endpoint or self.args.ffs_remote_endpoint
-                if self.args.enable_remote_ffs_quality
-                else None
-            ),
-            "remote_ffs_quality_return": (
-                self.args.remote_ffs_quality_return if self.args.enable_remote_ffs_quality else None
-            ),
-            "remote_ffs_quality_compress": (
-                self.args.remote_ffs_quality_compress if self.args.enable_remote_ffs_quality else None
             ),
             "pcd_mode": self.args.pcd_mode,
             "pcd_coordinate_frame": self._pcd_coordinate_frame(),
@@ -5404,7 +5247,7 @@ class MainDataProcessingDemo:
         """Return the tracker depth for lift."""
         if mask_packet.depth_u16 is not None:
             return mask_packet.depth_u16, float(mask_packet.depth_scale_m_per_unit)
-        if mask_packet.depth_source in {"ffs", "ffs_remote"}:
+        if mask_packet.depth_source == "ffs":
             depth_m, _ffs_ms, _ffs_align_ms, _remote_rtt_ms, _server_total_ms, _request_kb, _response_kb = (
                 self._compute_external_ffs_depth_color_m(mask_packet)
             )
@@ -5436,7 +5279,7 @@ class MainDataProcessingDemo:
         if self.ray_x is None or self.ray_y is None:
             raise RuntimeError("pcd_filter_residual query source requires initialized projection grids")
 
-        if mask_packet.depth_source in {"ffs", "ffs_remote"}:
+        if mask_packet.depth_source == "ffs":
             depth_m, _ffs_ms, _ffs_align_ms, _remote_rtt_ms, _server_total_ms, _request_kb, _response_kb = (
                 self._compute_external_ffs_depth_color_m(mask_packet)
             )
@@ -6830,15 +6673,7 @@ class MainDataProcessingDemo:
         assert self.ray_x is not None and self.ray_y is not None
         ray_x = self.ray_x
         ray_y = self.ray_y
-        if mask_packet.depth_source in {"ffs", "ffs_remote"}:
-            if mask_packet.depth_source == "ffs_remote" and self.args.ffs_remote_return in SPARSE_RETURN_TYPES:
-                packet = self._compute_remote_sparse_pcd_packet(
-                    mask_packet=mask_packet,
-                    start_s=start_s,
-                    rng=rng,
-                    require_filter_seq=require_filter_seq,
-                )
-                return PcdBuildResult(packet=packet, depth_m=None, mask_packet=mask_packet)
+        if mask_packet.depth_source == "ffs":
             ffs_ms = 0.0
             ffs_align_ms = 0.0
             remote_rtt_ms = 0.0
@@ -7196,7 +7031,7 @@ class MainDataProcessingDemo:
                 time.sleep(0.001)
                 continue
             last_seq = frame.seq
-            if frame.depth_source not in {"ffs", "ffs_remote"}:
+            if frame.depth_source != "ffs":
                 continue
             try:
                 (
@@ -7236,8 +7071,6 @@ class MainDataProcessingDemo:
         packet: MaskPacket | FramePacket,
     ) -> tuple[np.ndarray, float, float, float, float, float, float]:
         """Compute external FFS depth color m."""
-        if packet.depth_source == "ffs_remote":
-            return self._compute_remote_ffs_depth_color_m(packet)
         depth_color_m, ffs_ms, ffs_align_ms = self._compute_ffs_depth_color_m(packet)
         return depth_color_m, ffs_ms, ffs_align_ms, 0.0, 0.0, 0.0, 0.0
 
@@ -7303,405 +7136,6 @@ class MainDataProcessingDemo:
             )
             self._put_cached_local_ffs_depth(int(packet.seq), result)
             return result
-
-    def _compute_remote_ffs_depth_color_m(
-        self,
-        packet: MaskPacket | FramePacket,
-    ) -> tuple[np.ndarray, float, float, float, float, float, float]:
-        """Compute remote FFS depth color m."""
-        if self.args.ffs_remote_return in SPARSE_RETURN_TYPES:
-            raise RuntimeError("sparse ffs_remote returns must be consumed by the sparse PCD path")
-        result = self._request_remote_ffs_result(packet, mask_u8=None)
-        self._warn_if_remote_engine_contract_missing(result)
-        return (
-            result.depth_color_m,
-            result.server_ffs_ms,
-            result.server_align_ms,
-            result.rtt_ms,
-            result.server_total_ms,
-            float(result.request_bytes) / 1024.0,
-            float(result.response_bytes) / 1024.0,
-        )
-
-    def _request_remote_ffs_result(
-        self,
-        packet: MaskPacket | FramePacket,
-        *,
-        mask_u8: np.ndarray | None,
-    ) -> Any:
-        """Request remote FFS result."""
-        client = self.ffs_remote_client
-        if client is None:
-            raise RuntimeError("remote FFS client is not initialized")
-        if (
-            packet.ir_left_u8 is None
-            or packet.ir_right_u8 is None
-            or packet.k_ir_left is None
-            or packet.t_ir_left_to_color is None
-            or packet.k_color is None
-            or packet.ir_baseline_m <= 0
-        ):
-            raise RuntimeError("remote FFS packet is missing IR stereo calibration/data")
-        result = client.request_depth_color_m(
-            frame_id=int(packet.seq),
-            ir_left_u8=packet.ir_left_u8,
-            ir_right_u8=packet.ir_right_u8,
-            color_shape=tuple(packet.color_bgr.shape[:2]),
-            k_ir_left=packet.k_ir_left,
-            k_color=packet.k_color,
-            t_ir_left_to_color=packet.t_ir_left_to_color,
-            baseline_m=float(packet.ir_baseline_m),
-            depth_scale_m_per_unit=float(packet.depth_scale_m_per_unit),
-            mask_u8=mask_u8,
-        )
-        return result
-
-    def _warn_if_remote_engine_contract_missing(self, result: Any) -> None:
-        """Return the warn if remote engine contract missing."""
-        if self._warned_remote_engine_contract:
-            return
-        metadata = getattr(result, "metadata", None) or {}
-        expected = {
-            "ffs_contract_model": DEFAULT_FFS_MODEL_NAME,
-            "ffs_contract_valid_iters": DEFAULT_FFS_VALID_ITERS,
-            "ffs_contract_engine_height": DEFAULT_FFS_TRT_ENGINE_SIZE[0],
-            "ffs_contract_engine_width": DEFAULT_FFS_TRT_ENGINE_SIZE[1],
-            "ffs_contract_builder_optimization_level": DEFAULT_FFS_TRT_BUILDER_OPTIMIZATION_LEVEL,
-            "ffs_contract_max_disp": DEFAULT_FFS_MAX_DISP,
-        }
-        missing = [key for key in expected if key not in metadata]
-        mismatched = [
-            key
-            for key, value in expected.items()
-            if key in metadata and str(metadata[key]) != str(value)
-        ]
-        if missing or mismatched:
-            print(
-                "[WARN] remote FFS server did not prove required Demo 2 engine identity: "
-                f"missing={missing} mismatched={mismatched}",
-                flush=True,
-            )
-        self._warned_remote_engine_contract = True
-
-    def _split_sparse_remote_pcd(
-        self,
-        *,
-        payload: np.ndarray,
-        return_type: str,
-        color_bgr: np.ndarray,
-        ray_x: np.ndarray,
-        ray_y: np.ndarray,
-        rng: np.random.Generator,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, float]]:
-        """Return the split sparse remote PCD."""
-        timing: dict[str, float] = {
-            "pcd_mask_intersection_ms": 0.0,
-            "pcd_select_ms": 0.0,
-            "pcd_point_cap_ms": 0.0,
-            "pcd_backproject_ms": 0.0,
-            "pcd_color_gather_ms": 0.0,
-        }
-        sparse = np.asarray(payload, dtype=np.float32)
-        if sparse.ndim != 2 or sparse.shape[1] < 4:
-            raise RuntimeError(f"expected sparse payload Nx4+, got {sparse.shape}")
-        if sparse.shape[0] == 0:
-            return (
-                np.empty((0, 3), dtype=np.float32),
-                np.empty((0, 3), dtype=np.uint8),
-                np.empty((0, 3), dtype=np.float32),
-                np.empty((0, 3), dtype=np.uint8),
-                timing,
-            )
-
-        select_start_s = time.perf_counter()
-        if return_type == "masked_uv_depth":
-            cols = np.rint(sparse[:, 0]).astype(np.int64)
-            rows = np.rint(sparse[:, 1]).astype(np.int64)
-            z = sparse[:, 2].astype(np.float32, copy=False)
-            labels = np.rint(sparse[:, 3]).astype(np.int64)
-            in_bounds = (rows >= 0) & (rows < color_bgr.shape[0]) & (cols >= 0) & (cols < color_bgr.shape[1])
-            valid = in_bounds & np.isfinite(z) & (z > np.float32(self.args.depth_min_m))
-            if float(self.args.depth_max_m) > 0:
-                valid &= z < np.float32(self.args.depth_max_m)
-            rows = rows[valid]
-            cols = cols[valid]
-            z = z[valid]
-            labels = labels[valid]
-            timing["pcd_select_ms"] = _elapsed_ms(select_start_s, time.perf_counter())
-
-            backproject_start_s = time.perf_counter()
-            points = np.ascontiguousarray(
-                np.stack([ray_x[rows, cols] * z, ray_y[rows, cols] * z, z], axis=1),
-                dtype=np.float32,
-            )
-            timing["pcd_backproject_ms"] = _elapsed_ms(backproject_start_s, time.perf_counter())
-        elif return_type == "masked_xyz":
-            if sparse.shape[1] < 6:
-                raise RuntimeError("masked_xyz payload must be Nx6 [x,y,z,label,u,v]")
-            points = np.ascontiguousarray(sparse[:, :3], dtype=np.float32)
-            labels = np.rint(sparse[:, 3]).astype(np.int64)
-            cols = np.rint(sparse[:, 4]).astype(np.int64)
-            rows = np.rint(sparse[:, 5]).astype(np.int64)
-            z = points[:, 2]
-            in_bounds = (rows >= 0) & (rows < color_bgr.shape[0]) & (cols >= 0) & (cols < color_bgr.shape[1])
-            valid = in_bounds & np.isfinite(z) & (z > np.float32(self.args.depth_min_m))
-            if float(self.args.depth_max_m) > 0:
-                valid &= z < np.float32(self.args.depth_max_m)
-            points = points[valid]
-            labels = labels[valid]
-            rows = rows[valid]
-            cols = cols[valid]
-            timing["pcd_select_ms"] = _elapsed_ms(select_start_s, time.perf_counter())
-        else:
-            raise RuntimeError(f"unsupported sparse return type: {return_type}")
-
-        def build_for_label(label: int, class_rgb: tuple[int, int, int]) -> tuple[np.ndarray, np.ndarray]:
-            """Build for label."""
-            label_indices = np.nonzero(labels == int(label))[0]
-            cap_start_s = time.perf_counter()
-            max_points = int(self.args.pcd_max_points)
-            if max_points > 0 and label_indices.shape[0] > max_points:
-                label_indices = rng.choice(label_indices, max_points, replace=False)
-            timing["pcd_point_cap_ms"] += _elapsed_ms(cap_start_s, time.perf_counter())
-            xyz = np.ascontiguousarray(points[label_indices], dtype=np.float32)
-            color_start_s = time.perf_counter()
-            if str(self.args.pcd_color_mode) == "rgb":
-                colors = np.ascontiguousarray(color_bgr[rows[label_indices], cols[label_indices], ::-1], dtype=np.uint8)
-            else:
-                colors = make_solid_colors(xyz.shape[0], class_rgb)
-            timing["pcd_color_gather_ms"] += _elapsed_ms(color_start_s, time.perf_counter())
-            return xyz, colors
-
-        controller_xyz, controller_colors = build_for_label(CONTROLLER_ID, tuple(self.args.controller_color))
-        object_xyz, object_colors = build_for_label(OBJECT_ID, tuple(self.args.object_color))
-        return controller_xyz, controller_colors, object_xyz, object_colors, timing
-
-    def _compute_remote_sparse_pcd_packet(
-        self,
-        *,
-        mask_packet: MaskPacket,
-        start_s: float,
-        rng: np.random.Generator,
-        require_filter_seq: bool = False,
-    ) -> MaskedPcdPacket:
-        """Compute remote sparse PCD packet."""
-        assert self.ray_x is not None and self.ray_y is not None
-        mask_u8 = self._remote_quality_mask_u8(mask_packet)
-        result = self._request_remote_ffs_result(mask_packet, mask_u8=mask_u8)
-        self._warn_if_remote_engine_contract_missing(result)
-        if result.sparse_payload is None:
-            raise RuntimeError("remote sparse FFS response did not include sparse payload")
-        controller_xyz, controller_colors, object_xyz, object_colors, sparse_timing = self._split_sparse_remote_pcd(
-            payload=result.sparse_payload,
-            return_type=str(result.return_type),
-            color_bgr=mask_packet.color_bgr,
-            ray_x=self.ray_x,
-            ray_y=self.ray_y,
-            rng=rng,
-        )
-        render_controller_xyz = controller_xyz
-        render_controller_colors = controller_colors
-        render_object_xyz = object_xyz
-        render_object_colors = object_colors
-        filter_output: FilterOutput | None = None
-        using_filtered = False
-        if pcd_filter_enabled(self.args):
-            if str(self.args.pcd_filter_mode) == "sync":
-                filter_input = self._make_filter_input(
-                    seq=mask_packet.seq,
-                    object_xyz=object_xyz,
-                    object_colors=object_colors,
-                    controller_xyz=controller_xyz,
-                    controller_colors=controller_colors,
-                )
-                self.filter_submit_stats.record()
-                filter_output = self._filter_pcd_input(filter_input)
-                self.filter_output_stats.record(filter_output.output_perf_s)
-                render_controller_xyz = filter_output.controller_xyz
-                render_controller_colors = filter_output.controller_rgb
-                render_object_xyz = filter_output.object_xyz
-                render_object_colors = filter_output.object_rgb
-                using_filtered = True
-            elif str(self.args.pcd_filter_mode) == "async" and self.filter_worker is not None:
-                latest = self.filter_worker.latest_output()
-                if latest is not None:
-                    filter_output = latest
-                    filter_matches = int(latest.seq) == int(mask_packet.seq)
-                    if filter_matches or (
-                        not bool(require_filter_seq)
-                        and self._filter_output_is_fresh(packet_seq=mask_packet.seq, output=latest)
-                    ):
-                        render_controller_xyz = latest.controller_xyz
-                        render_controller_colors = latest.controller_rgb
-                        render_object_xyz = latest.object_xyz
-                        render_object_colors = latest.object_rgb
-                        using_filtered = True
-                if mask_packet.seq % int(self.args.filter_every_n) == 0:
-                    if not self.filter_worker.is_busy():
-                        self.filter_worker.submit_latest(
-                            self._make_filter_input(
-                                seq=mask_packet.seq,
-                                object_xyz=object_xyz,
-                                object_colors=object_colors,
-                                controller_xyz=controller_xyz,
-                                controller_colors=controller_colors,
-                            )
-                        )
-                        self.filter_submit_stats.record()
-                    else:
-                        self._filter_submit_skip_count += 1
-        filter_telemetry = self._filter_telemetry_from_output(
-            packet_seq=mask_packet.seq,
-            output=filter_output,
-            using_filtered=using_filtered,
-            object_raw_points=int(len(object_xyz)),
-            object_cap_points=int(len(object_xyz)),
-            controller_raw_points=int(len(controller_xyz)),
-            controller_cap_points=int(len(controller_xyz)),
-        )
-        render_controller_xyz = _transform_points_c2w(render_controller_xyz, self.table_c2w)
-        render_object_xyz = _transform_points_c2w(render_object_xyz, self.table_c2w)
-        done_s = time.perf_counter()
-        timing = replace(
-            mask_packet.timing,
-            ffs_ms=float(result.server_ffs_ms),
-            ffs_align_ms=float(result.server_align_ms),
-            remote_rtt_ms=float(result.rtt_ms),
-            remote_server_total_ms=float(result.server_total_ms),
-            remote_request_kb=float(result.request_bytes) / 1024.0,
-            remote_response_kb=float(result.response_bytes) / 1024.0,
-            pcd_mask_intersection_ms=float(sparse_timing["pcd_mask_intersection_ms"]),
-            pcd_select_ms=float(sparse_timing["pcd_select_ms"]),
-            pcd_point_cap_ms=float(sparse_timing["pcd_point_cap_ms"]),
-            pcd_backproject_ms=float(sparse_timing["pcd_backproject_ms"]),
-            pcd_color_gather_ms=float(sparse_timing["pcd_color_gather_ms"]),
-            pcd_filter_ms=float(filter_telemetry.filter_ms),
-            object_filter_ms=float(filter_telemetry.object_filter_ms),
-            controller_filter_ms=float(filter_telemetry.controller_filter_ms),
-            pcd_ms=_elapsed_ms(start_s, done_s),
-        )
-        return MaskedPcdPacket(
-            seq=mask_packet.seq,
-            controller_xyz_m=render_controller_xyz,
-            controller_colors_rgb_u8=render_controller_colors,
-            object_xyz_m=render_object_xyz,
-            object_colors_rgb_u8=render_object_colors,
-            intrinsics=mask_packet.intrinsics,
-            receive_perf_s=mask_packet.receive_perf_s,
-            process_done_perf_s=done_s,
-            dropped_capture_frames=mask_packet.dropped_capture_frames,
-            dropped_seg_frames=self.mask_slot.dropped_count,
-            timing=timing,
-            filter_telemetry=filter_telemetry,
-            coordinate_frame=self._pcd_coordinate_frame(),
-            source_timestamp_s=mask_packet.source_timestamp_s,
-            source_frame_index=mask_packet.source_frame_index,
-            source_step=mask_packet.source_step,
-        )
-
-    def _remote_quality_mask_u8(self, packet: MaskPacket) -> np.ndarray:
-        """Convert a boolean quality mask to uint8 image form."""
-        mask = np.zeros(tuple(packet.object_mask.shape), dtype=np.uint8)
-        if controller_tracking_enabled(self.args):
-            mask[np.asarray(packet.controller_mask, dtype=bool)] = CONTROLLER_ID
-        if object_tracking_enabled(self.args):
-            mask[np.asarray(packet.object_mask, dtype=bool)] = OBJECT_ID
-        return np.ascontiguousarray(mask)
-
-    def _request_remote_quality(self, packet: MaskPacket | FramePacket, *, mask_u8: np.ndarray | None) -> RemoteFfsQualityPacket:
-        """Request remote quality."""
-        client = self.remote_quality_client
-        if client is None:
-            raise RuntimeError("remote FFS quality client is not initialized")
-        if (
-            packet.ir_left_u8 is None
-            or packet.ir_right_u8 is None
-            or packet.k_ir_left is None
-            or packet.t_ir_left_to_color is None
-            or packet.k_color is None
-            or packet.ir_baseline_m <= 0
-        ):
-            raise RuntimeError("remote FFS quality packet is missing IR stereo calibration/data")
-        result = client.request_depth_color_m(
-            frame_id=int(packet.seq),
-            ir_left_u8=packet.ir_left_u8,
-            ir_right_u8=packet.ir_right_u8,
-            color_shape=tuple(packet.color_bgr.shape[:2]),
-            k_ir_left=packet.k_ir_left,
-            k_color=packet.k_color,
-            t_ir_left_to_color=packet.t_ir_left_to_color,
-            baseline_m=float(packet.ir_baseline_m),
-            depth_scale_m_per_unit=float(packet.depth_scale_m_per_unit),
-            mask_u8=mask_u8,
-        )
-        self._warn_if_remote_engine_contract_missing(result)
-        done_s = time.perf_counter()
-        timing = replace(
-            packet.timing,
-            ffs_ms=float(result.server_ffs_ms),
-            ffs_align_ms=float(result.server_align_ms),
-            remote_rtt_ms=float(result.rtt_ms),
-            remote_server_total_ms=float(result.server_total_ms),
-            remote_request_kb=float(result.request_bytes) / 1024.0,
-            remote_response_kb=float(result.response_bytes) / 1024.0,
-        )
-        sparse_points = 0
-        if result.sparse_payload is not None:
-            sparse_points = int(result.sparse_payload.shape[0])
-        return RemoteFfsQualityPacket(
-            seq=int(packet.seq),
-            receive_perf_s=float(packet.receive_perf_s),
-            process_done_perf_s=done_s,
-            timing=timing,
-            return_type=str(result.return_type),
-            sparse_points=sparse_points,
-        )
-
-    def _remote_ffs_quality_worker(self) -> None:
-        """Return the remote FFS quality worker."""
-        last_seq = -1
-        next_request_s = 0.0
-        sparse = str(self.args.remote_ffs_quality_return) in SPARSE_RETURN_TYPES
-        interval_s = float(self.args.remote_ffs_quality_interval_ms) / 1000.0
-        while not self.stop_event.is_set():
-            now_s = time.perf_counter()
-            if now_s < next_request_s:
-                time.sleep(min(0.01, next_request_s - now_s))
-                continue
-            if sparse:
-                source = self.mask_slot.get_latest_after(last_seq)
-                if source is None:
-                    time.sleep(0.002)
-                    continue
-                mask_u8 = self._remote_quality_mask_u8(source)
-            else:
-                source = self.capture_slot.get_latest_after(last_seq)
-                if source is None:
-                    time.sleep(0.002)
-                    continue
-                mask_u8 = None
-            last_seq = source.seq
-            next_request_s = time.perf_counter() + interval_s
-            try:
-                packet = self._request_remote_quality(source, mask_u8=mask_u8)
-            except Exception as exc:
-                if not self.stop_event.is_set() and self.args.debug:
-                    print(f"[remote-ffs-quality] seq={source.seq} status=error error={type(exc).__name__}: {exc}", flush=True)
-                continue
-            self.remote_quality_slot.put(packet)
-            self.remote_quality_stats.record(packet.process_done_perf_s)
-            if self.args.debug:
-                age_ms = _elapsed_ms(packet.receive_perf_s, packet.process_done_perf_s)
-                print(
-                    "[remote-ffs-quality] "
-                    f"seq={packet.seq} fps={self.remote_quality_stats.fps:.2f} "
-                    f"return={packet.return_type} sparse_points={packet.sparse_points} "
-                    f"age_ms={age_ms:.1f} rtt_ms={packet.timing.remote_rtt_ms:.1f} "
-                    f"server_total_ms={packet.timing.remote_server_total_ms:.1f} "
-                    f"request_kb={packet.timing.remote_request_kb:.1f} "
-                    f"response_kb={packet.timing.remote_response_kb:.1f}",
-                    flush=True,
-                )
 
     # ------------------------------------------------------------------
     # Debug logging
@@ -7770,7 +7204,6 @@ class MainDataProcessingDemo:
             f"capture_fps={self.capture_stats.fps:.1f} "
             f"seg_fps={self.seg_stats.fps:.1f} "
             f"depth_fps={self.depth_stats.fps:.1f} "
-            f"remote_quality_fps={self.remote_quality_stats.fps:.1f} "
             f"pcd_fps={self.pcd_stats.fps:.1f} "
             f"tracker_fps={self.tracker_stats.fps:.1f} "
             f"tracker_hand_a_queries={tracker_hand_a} "

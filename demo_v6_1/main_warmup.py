@@ -15,7 +15,6 @@ from demo_v6_1.utils.ffs_align import warm_up_numba_ffs_align
 from demo_v6_1.utils.pcd_filter import AsyncPcdFilterWorker
 from demo_v6_1.utils.projection import build_projection_grid
 from demo_v6_1.utils.render import apply_wslg_open3d_env_defaults
-from demo_v6_1.utils.ffs_remote_client import FfsRemoteDepthClient
 
 TRACK_MODE_CONTROLLER_OBJECT = "controller-object"
 TRACK_MODE_OBJECT_ONLY = "object-only"
@@ -504,23 +503,6 @@ def prepare_runtime_services_and_source(
     if args.depth_source == "ffs":
         demo.ffs_runner = demo._create_ffs_runner()
         warm_up_numba_ffs_align()
-    elif args.depth_source == "ffs_remote":
-        demo.ffs_remote_client = FfsRemoteDepthClient(
-            endpoint=str(args.ffs_remote_endpoint),
-            timeout_ms=int(args.ffs_remote_timeout_ms),
-            return_type=str(args.ffs_remote_return),
-            compression=str(args.ffs_remote_compress),
-            max_inflight=int(args.ffs_remote_max_inflight),
-        )
-    if args.enable_remote_ffs_quality:
-        endpoint = str(args.remote_ffs_quality_endpoint or args.ffs_remote_endpoint)
-        demo.remote_quality_client = FfsRemoteDepthClient(
-            endpoint=endpoint,
-            timeout_ms=int(args.remote_ffs_quality_timeout_ms),
-            return_type=str(args.remote_ffs_quality_return),
-            compression=str(args.remote_ffs_quality_compress),
-            max_inflight=1,
-        )
     if pcd_filter_enabled(args) and str(args.pcd_filter_mode) == "async":
         demo.filter_worker = AsyncPcdFilterWorker(demo._filter_pcd_input)
         demo.filter_worker.start()

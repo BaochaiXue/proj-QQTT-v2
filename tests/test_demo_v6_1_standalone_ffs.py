@@ -1,9 +1,9 @@
 """Demo v6.1 must not import the repo-level services/data_process packages.
 
-The FFS remote client/protocol and the data_process depth-backend helpers are
-vendored under demo_v6_1/utils so demo_v6_1 can be published standalone. These
-tests guard that decoupling (static import scan) and that the vendored modules
-are functionally faithful to the originals.
+The data_process depth-backend helpers (geometry, ffs_defaults) are vendored
+under demo_v6_1/utils so demo_v6_1 can be published standalone. These tests
+guard that decoupling (static import scan) and that the vendored modules are
+functionally faithful to the originals.
 """
 
 from __future__ import annotations
@@ -76,62 +76,7 @@ class StandaloneImportGuardTests(unittest.TestCase):
         self.assertIn("clean", result.stdout)
 
 
-class VendoredProtocolTests(unittest.TestCase):
-    def test_constants_match_original_contract(self) -> None:
-        from demo_v6_1.utils import ffs_remote_protocol as proto
-
-        self.assertEqual(
-            proto.RETURN_TYPES,
-            ("depth_u16", "depth_float_m", "masked_uv_depth", "masked_xyz"),
-        )
-        self.assertEqual(proto.SPARSE_RETURN_TYPES, ("masked_uv_depth", "masked_xyz"))
-        self.assertEqual(proto.COMPRESSION_MODES, ("none", "zstd", "lz4", "png"))
-
-    def test_request_and_response_round_trip(self) -> None:
-        from demo_v6_1.utils import ffs_remote_protocol as proto
-
-        rng = np.random.default_rng(1)
-        ir_left = rng.integers(0, 256, size=(48, 64), dtype=np.uint8)
-        ir_right = rng.integers(0, 256, size=(48, 64), dtype=np.uint8)
-        parts = proto.build_depth_request_parts(
-            frame_id=11,
-            ir_left_u8=ir_left,
-            ir_right_u8=ir_right,
-            color_shape=(48, 64),
-            k_ir_left=np.eye(3, dtype=np.float32),
-            k_color=np.eye(3, dtype=np.float32),
-            t_ir_left_to_color=np.eye(4, dtype=np.float32),
-            baseline_m=0.05,
-            depth_scale_m_per_unit=0.001,
-            return_type="depth_u16",
-        )
-        request = proto.parse_depth_request_parts(parts)
-        self.assertEqual(int(request.metadata["frame_id"]), 11)
-        np.testing.assert_array_equal(request.ir_left_u8, ir_left)
-        np.testing.assert_array_equal(request.ir_right_u8, ir_right)
-
-        depth = rng.integers(0, 2000, size=(48, 64), dtype=np.uint16)
-        response_parts = proto.build_depth_response_parts(
-            frame_id=11, depth=depth, depth_dtype="uint16", depth_scale_m_per_unit=0.001
-        )
-        response = proto.parse_depth_response_parts(response_parts)
-        self.assertEqual(int(response.metadata["frame_id"]), 11)
-        np.testing.assert_array_equal(response.depth, depth)
-
-
-class VendoredClientAndGeometryTests(unittest.TestCase):
-    def test_client_validates_without_network(self) -> None:
-        from demo_v6_1.utils.ffs_remote_client import FfsRemoteDepthClient
-
-        client = FfsRemoteDepthClient(endpoint="tcp://127.0.0.1:7001", timeout_ms=100)
-        client.close()
-        with self.assertRaises(ValueError):
-            FfsRemoteDepthClient(endpoint="", timeout_ms=100)
-        with self.assertRaises(ValueError):
-            FfsRemoteDepthClient(endpoint="tcp://x", timeout_ms=0)
-        with self.assertRaises(ValueError):
-            FfsRemoteDepthClient(endpoint="tcp://x", timeout_ms=1, max_inflight=2)
-
+class VendoredGeometryAndDefaultsTests(unittest.TestCase):
     def test_transform_points_matches_manual_math(self) -> None:
         from demo_v6_1.utils.depth_geometry import transform_points
 
