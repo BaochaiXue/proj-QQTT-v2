@@ -1,0 +1,22 @@
+{
+  "chunk_count": 14,
+  "controller_point_count": 30,
+  "controller_sphere_radius_m": 0.01,
+  "fps": 5.0,
+  "frame_count": 490,
+  "height": 900,
+  "object_motion_valid_ratio": 0.9301723147016103,
+  "object_point_count": 1953,
+  "object_rendered_valid_ratio": 0.9301723147016103,
+  "object_visibility_ratio": 0.9598399113869819,
+  "output_path": "demo_v6_1/others/obj_shape_asap_outputs/enhanced_object_controller_large_displacement_tracking_5fps.mp4",
+  "query_schema_hash": "c36fc52c23ec2fccfb1e2dd62c52bd68186920a3ad1ba66b0dd6f08620ca0558",
+  "source_frame_first": 0,
+  "source_frame_last": 5333,
+  "style_reference": "data_process_origin/data_process_sample.py::visualize_track",
+  "track_status_counts": {
+    "degraded": 13,
+    "normal": 1
+  },
+  "width": 1280
+}
