@@ -1939,8 +1939,6 @@ def build_parser() -> argparse.ArgumentParser:
             "masked-PCD/tracking capture products."
         )
     )
-    parser.add_argument("--serial", default=None, help="Optional RealSense D400 serial. Defaults to first detected D400.")
-    parser.add_argument("--profile", choices=SUPPORTED_PROFILES, default=DEFAULT_PROFILE, help="Capture profile.")
     parser.add_argument("--fps", choices=SUPPORTED_CAPTURE_FPS, type=int, default=DEFAULT_FPS, help="Capture FPS.")
     parser.add_argument(
         "--input-source",
@@ -2081,29 +2079,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Device for the point-tracker backend. Use cuda:1 on the dual-4090 demo machine.",
     )
     parser.add_argument(
-        "--tracker-query-count",
-        type=int,
-        default=DEFAULT_TRACKER_QUERY_COUNT,
-        help="TAPNext++ query points sampled from object/controller union mask. Use 0 for PhysTwin dense auto.",
-    )
-    parser.add_argument("--tracker-seed", type=int, default=DEFAULT_TRACKER_SEED)
-    parser.add_argument(
-        "--tracker-display-scope",
-        choices=TRACKER_DISPLAY_SCOPES,
-        default=DEFAULT_TRACKER_DISPLAY_SCOPE,
-        help="Which query labels are rendered as 3D markers.",
-    )
-    parser.add_argument(
         "--tracker-overlay-max-points",
         type=int,
         default=512,
         help="Maximum visible tracker markers rendered per frame. 0 renders all visible selected points.",
-    )
-    parser.add_argument(
-        "--tracker-marker-point-size",
-        type=float,
-        default=DEFAULT_TRACKER_MARKER_POINT_SIZE,
-        help="TAPNext++ marker point size recorded in capture metadata.",
     )
     parser.add_argument(
         "--tracking-product-backend",
@@ -2199,42 +2178,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use the default per-frame marker gate; filtered markers may reappear later.",
     )
     parser.set_defaults(tracker_retire_filtered_markers=False)
-    parser.add_argument(
-        "--tapnet-repo-dir",
-        type=Path,
-        default=DEFAULT_TAPNET_REPO_DIR,
-        help="External tapnet repo containing tapnet/tapnext/tapnext_torch.py.",
-    )
-    parser.add_argument(
-        "--tapnextpp-checkpoint",
-        type=Path,
-        default=DEFAULT_TAPNEXTPP_CHECKPOINT,
-        help="External TAPNext++ checkpoint.",
-    )
-    parser.add_argument("--tapnextpp-image-size", default="256,256")
-    parser.add_argument("--tapnextpp-autocast-dtype", choices=("fp16", "bf16", "fp32"), default="fp16")
-    parser.add_argument("--tapnextpp-compile", action="store_true")
-    parser.add_argument("--no-tapnextpp-fast-postprocess", dest="tapnextpp_fast_postprocess", action="store_false")
     parser.set_defaults(tapnextpp_fast_postprocess=True)
-    parser.add_argument(
-        "--controller-prompt",
-        default="hand",
-        help="SAM3.1 prompt label to union as controller in sam31-first-frame mode.",
-    )
-    parser.add_argument(
-        "--object-prompt",
-        default="stuffed animal",
-        help="SAM3.1 prompt label to use as object in sam31-first-frame mode.",
-    )
-    parser.add_argument("--model-id", default=DEFAULT_MODEL_ID, help="HF EdgeTAM model id.")
     parser.add_argument("--device", default=DEFAULT_DEVICE, help="Inference device, usually cuda.")
     parser.add_argument("--dtype", choices=("bfloat16", "float16", "float32"), default=DEFAULT_DTYPE, help="Inference dtype.")
-    parser.add_argument(
-        "--edgetam-live-session-keep-frames",
-        type=int,
-        default=DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES,
-        help="Keep this many recent streamed EdgeTAM frames/outputs in live session state; 0 disables pruning.",
-    )
     parser.add_argument(
         "--edgetam-mask-logit-threshold",
         type=float,
@@ -2245,39 +2191,10 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--compile-mode",
-        choices=COMPILE_MODES,
-        default=DEFAULT_COMPILE_MODE,
-        help="Required EdgeTAM compile mode. Compiles only vision_encoder with reduce-overhead.",
-    )
-    parser.add_argument("--depth-min-m", type=float, default=0.2, help="Minimum valid depth in meters.")
-    parser.add_argument("--depth-max-m", type=float, default=1.5, help="Maximum valid depth in meters. Use <=0 to disable.")
-    parser.add_argument(
-        "--pcd-max-points",
-        type=int,
-        default=60000,
-        help="Max masked points per object. Use 0 to keep every masked valid depth pixel.",
-    )
-    parser.add_argument(
-        "--pcd-stride",
-        type=int,
-        default=1,
-        help="Optional masked PCD pixel stride. Use 2 for a faster lower-density profiling path.",
-    )
-    parser.add_argument(
         "--pcd-color-mode",
         choices=("rgb", "class"),
         default="rgb",
         help="Point-cloud colors. rgb uses the live color frame; class uses fixed controller/object colors.",
-    )
-    parser.add_argument(
-        "--pcd-mask-erode-pixels",
-        type=int,
-        default=DEFAULT_PCD_MASK_ERODE_PIXELS,
-        help=(
-            "Legacy common erosion for controller/object masks before RGB-D point-cloud backprojection. "
-            "Per-class erosion options override this value."
-        ),
     )
     parser.add_argument(
         "--object-pcd-mask-erode-pixels",
@@ -2342,13 +2259,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum async filtered-output age in frames before rendering raw current PCD instead.",
     )
     parser.add_argument(
-        "--filter-budget-ms",
-        type=float,
-        default=12.0,
-        help="Soft async filter budget. Caps are reduced conservatively when the worker exceeds this budget.",
-    )
-    parser.add_argument("--filter-min-cap", type=int, default=5_000)
-    parser.add_argument(
         "--voxel-density-min-points",
         type=int,
         default=2,
@@ -2370,18 +2280,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--disable-table-z-filter",
         action="store_true",
         help="Disable the table-world Z filter when a demo visual preset would enable it by default.",
-    )
-    parser.add_argument(
-        "--table-z-filter-threshold-m",
-        type=float,
-        default=DEFAULT_TABLE_Z_FILTER_THRESHOLD_M,
-        help="World-Z clearance threshold above table_z for --enable-table-z-filter.",
-    )
-    parser.add_argument(
-        "--table-z-filter-classes",
-        choices=TABLE_Z_FILTER_CLASSES,
-        default=TABLE_Z_FILTER_CLASS_BOTH,
-        help="Semantic classes affected by --enable-table-z-filter.",
     )
     parser.add_argument("--duration-s", type=float, default=0.0, help="Optional auto-stop duration. Use 0 to run until closed.")
     parser.add_argument(
@@ -2497,7 +2395,7 @@ def headless_capture_saved_pcd_source(args: argparse.Namespace) -> str:
 
 def validate_args(args: argparse.Namespace) -> None:
     """Validate args."""
-    parse_profile(args.profile)
+    parse_profile(DEFAULT_PROFILE)
     if args.input_source not in INPUT_SOURCES:
         raise ValueError(f"--input-source must be one of {', '.join(INPUT_SOURCES)}")
     if args.depth_source not in DEPTH_SOURCES:
@@ -2533,25 +2431,25 @@ def validate_args(args: argparse.Namespace) -> None:
             "--shape-prior-controller-name is required when --shape-prior-warmup "
             "is enabled"
         )
-    if args.depth_min_m < 0:
+    if 0.2 < 0:
         raise ValueError("--depth-min-m must be >= 0")
-    if args.depth_max_m > 0 and args.depth_max_m <= args.depth_min_m:
+    if 1.5 > 0 and 1.5 <= 0.2:
         raise ValueError("--depth-max-m must be <=0 or greater than --depth-min-m")
-    if args.pcd_max_points < 0:
+    if 60000 < 0:
         raise ValueError("--pcd-max-points must be >= 0")
-    if args.pcd_stride < 1:
+    if 1 < 1:
         raise ValueError("--pcd-stride must be >= 1")
-    if int(args.pcd_mask_erode_pixels) < 0:
+    if int(DEFAULT_PCD_MASK_ERODE_PIXELS) < 0:
         raise ValueError("--pcd-mask-erode-pixels must be >= 0")
     if args.object_pcd_mask_erode_pixels is not None and int(args.object_pcd_mask_erode_pixels) < 0:
         raise ValueError("--object-pcd-mask-erode-pixels must be >= 0")
     if args.controller_pcd_mask_erode_pixels is not None and int(args.controller_pcd_mask_erode_pixels) < 0:
         raise ValueError("--controller-pcd-mask-erode-pixels must be >= 0")
-    if int(args.edgetam_live_session_keep_frames) < 0:
+    if int(DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES) < 0:
         raise ValueError("--edgetam-live-session-keep-frames must be >= 0")
     if not np.isfinite(float(args.edgetam_mask_logit_threshold)):
         raise ValueError("--edgetam-mask-logit-threshold must be finite")
-    if float(args.table_z_filter_threshold_m) < 0:
+    if float(DEFAULT_TABLE_Z_FILTER_THRESHOLD_M) < 0:
         raise ValueError("--table-z-filter-threshold-m must be >= 0")
     if (
         int(
@@ -2575,7 +2473,7 @@ def validate_args(args: argparse.Namespace) -> None:
         getattr(args, "disable_table_z_filter", False)
     ):
         raise ValueError("--enable-table-z-filter conflicts with --disable-table-z-filter")
-    if str(args.table_z_filter_classes) not in TABLE_Z_FILTER_CLASSES:
+    if str(TABLE_Z_FILTER_CLASS_BOTH) not in TABLE_Z_FILTER_CLASSES:
         raise ValueError(
             f"--table-z-filter-classes must be one of {', '.join(TABLE_Z_FILTER_CLASSES)}"
         )
@@ -2593,7 +2491,6 @@ def validate_args(args: argparse.Namespace) -> None:
     for flag in (
         "object_filter_cap",
         "controller_filter_cap",
-        "filter_min_cap",
         "object_filter_keep_components",
         "controller_filter_keep_components",
         "filter_max_age_frames",
@@ -2604,9 +2501,9 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--object-filter-keep-components must be >= 1")
     if int(args.controller_filter_keep_components) < 1:
         raise ValueError("--controller-filter-keep-components must be >= 1")
-    if int(args.object_filter_cap) > 0 and int(args.filter_min_cap) > int(args.object_filter_cap):
+    if int(args.object_filter_cap) > 0 and int(5000) > int(args.object_filter_cap):
         raise ValueError("--filter-min-cap must be <= --object-filter-cap when object cap is enabled")
-    if int(args.controller_filter_cap) > 0 and int(args.filter_min_cap) > int(args.controller_filter_cap):
+    if int(args.controller_filter_cap) > 0 and int(5000) > int(args.controller_filter_cap):
         raise ValueError("--filter-min-cap must be <= --controller-filter-cap when controller cap is enabled")
     if float(args.object_filter_voxel_m) <= 0:
         raise ValueError("--object-filter-voxel-m must be positive")
@@ -2614,7 +2511,7 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--controller-filter-voxel-m must be positive")
     if int(args.filter_every_n) < 1:
         raise ValueError("--filter-every-n must be >= 1")
-    if float(args.filter_budget_ms) < 0:
+    if float(12.0) < 0:
         raise ValueError("--filter-budget-ms must be >= 0")
     if int(args.voxel_density_min_points) < 1:
         raise ValueError("--voxel-density-min-points must be >= 1")
@@ -2628,7 +2525,7 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--enhanced-keep-near-main-gap-m must be >= 0")
     if pcd_filter_enabled(args) and args.pcd_mode != "masked":
         raise ValueError("--enable-pcd-filter requires --pcd-mode masked")
-    if args.compile_mode != DEFAULT_COMPILE_MODE:
+    if DEFAULT_COMPILE_MODE != DEFAULT_COMPILE_MODE:
         raise ValueError("Demo 2.0 requires compiled EdgeTAM: --compile-mode vision-reduce-overhead")
     if args.track_mode == "none" and args.pcd_mode == "masked":
         raise ValueError("--track-mode none requires --pcd-mode none")
@@ -2670,11 +2567,11 @@ def validate_args(args: argparse.Namespace) -> None:
             args.phystwin_strict_output_dir = Path(args.headless_capture_dir) / "phystwin_like"
     elif bool(getattr(args, "headless_prepared_only", False)):
         raise ValueError("--headless-prepared-only requires --tracking-product-backend phystwin-strict-tracking")
-    if int(args.tracker_query_count) < 0:
+    if int(DEFAULT_TRACKER_QUERY_COUNT) < 0:
         raise ValueError("--tracker-query-count must be >= 0")
     if int(args.tracker_overlay_max_points) < 0:
         raise ValueError("--tracker-overlay-max-points must be >= 0")
-    if float(args.tracker_marker_point_size) <= 0:
+    if float(DEFAULT_TRACKER_MARKER_POINT_SIZE) <= 0:
         raise ValueError("--tracker-marker-point-size must be positive")
     if getattr(args, "color_exposure", None) is not None and float(args.color_exposure) <= 0.0:
         raise ValueError("--color-exposure must be positive")
@@ -2699,8 +2596,8 @@ def validate_args(args: argparse.Namespace) -> None:
 def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime:
     """Start realsense pipeline."""
     rs = load_realsense_module()
-    width, height = parse_profile(args.profile)
-    serial = resolve_serial(rs, args.serial)
+    width, height = parse_profile(DEFAULT_PROFILE)
+    serial = resolve_serial(rs, None)
 
     pipeline = rs.pipeline()
     config = rs.config()
@@ -3746,7 +3643,7 @@ class MainDataProcessingDemo:
     def __init__(self, args: argparse.Namespace) -> None:
         """Initialize MainDataProcessingDemo."""
         self.args = args
-        self.width, self.height = parse_profile(args.profile)
+        self.width, self.height = parse_profile(DEFAULT_PROFILE)
         self.lossless_max_backlog_frames = max(
             1,
             int(round(self._lossless_input_fps() * float(args.lossless_max_backlog_seconds))),
@@ -3799,17 +3696,17 @@ class MainDataProcessingDemo:
         self.filter_worker: Any | None = None
         self._filter_submit_skip_count = 0
         self._last_filter_output_seq_recorded = -1
-        controller_filter_min_cap = int(args.filter_min_cap)
+        controller_filter_min_cap = int(5000)
         if self._lossless_enabled():
             controller_filter_min_cap = min(controller_filter_min_cap, DEFAULT_LOSSLESS_CONTROLLER_FILTER_MIN_CAP)
         self.object_filter_budget = FilterBudgetController(
-            target_ms=max(0.0, float(args.filter_budget_ms)) * 0.5,
-            min_cap=int(args.filter_min_cap),
-            max_cap=max(int(args.filter_min_cap), int(args.object_filter_cap) if int(args.object_filter_cap) > 0 else 200_000),
+            target_ms=max(0.0, float(12.0)) * 0.5,
+            min_cap=int(5000),
+            max_cap=max(int(5000), int(args.object_filter_cap) if int(args.object_filter_cap) > 0 else 200_000),
             init_cap=int(args.object_filter_cap) if int(args.object_filter_cap) > 0 else 200_000,
         )
         self.controller_filter_budget = FilterBudgetController(
-            target_ms=max(0.0, float(args.filter_budget_ms)) * 0.5,
+            target_ms=max(0.0, float(12.0)) * 0.5,
             min_cap=int(controller_filter_min_cap),
             max_cap=max(int(controller_filter_min_cap), int(args.controller_filter_cap) if int(args.controller_filter_cap) > 0 else 200_000),
             init_cap=int(args.controller_filter_cap) if int(args.controller_filter_cap) > 0 else 200_000,
@@ -3890,7 +3787,7 @@ class MainDataProcessingDemo:
                         shape_prior_warmup.DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
                     )
                 ),
-                object_name=str(self.args.object_prompt),
+                object_name=str("stuffed animal"),
                 controller_name=str(self.args.shape_prior_controller_name),
                 points_npz=Path(self.args.shape_prior_points_npz),
                 sam3d_root=getattr(self.args, "shape_prior_sam3d_root", None),
@@ -4111,7 +4008,7 @@ class MainDataProcessingDemo:
                 if tracking_product_backend_is_strict(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
                 else TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY
             ),
-            "tracker_query_count": int(self.args.tracker_query_count),
+            "tracker_query_count": int(DEFAULT_TRACKER_QUERY_COUNT),
             "tracker_query_source": tracker_query_source(self.args) if tracker_enabled(self.args) else None,
             "tracker_marker_gate": tracker_marker_gate(self.args) if tracker_enabled(self.args) else None,
             "tracker_retire_filtered_markers": (
@@ -4120,7 +4017,7 @@ class MainDataProcessingDemo:
             "tracker_marker_retirement_policy": (
                 tracker_marker_retirement_policy(self.args) if tracker_enabled(self.args) else None
             ),
-            "tracker_display_scope": str(self.args.tracker_display_scope),
+            "tracker_display_scope": str(DEFAULT_TRACKER_DISPLAY_SCOPE),
             "tracker_sync_policy": (
                 "strict_same_seq_lossless_5fps" if self._lossless_enabled() else "none"
             ),
@@ -4138,18 +4035,18 @@ class MainDataProcessingDemo:
             "controller_filter_keep_components": int(self.args.controller_filter_keep_components),
             "filter_radius_m": float(self.args.filter_radius_m),
             "filter_nb_points": int(self.args.filter_nb_points),
-            "filter_min_cap": int(self.args.filter_min_cap),
+            "filter_min_cap": int(5000),
             "lossless_controller_filter_min_cap": (
                 int(self.controller_filter_budget.min_cap) if self._lossless_enabled() else None
             ),
             "enhanced_component_voxel_size_m": float(self.args.enhanced_component_voxel_size_m),
-            "pcd_max_points": int(self.args.pcd_max_points),
-            "pcd_stride": int(self.args.pcd_stride),
-            "pcd_mask_erode_pixels": int(self.args.pcd_mask_erode_pixels),
+            "pcd_max_points": int(60000),
+            "pcd_stride": int(1),
+            "pcd_mask_erode_pixels": int(DEFAULT_PCD_MASK_ERODE_PIXELS),
             "object_pcd_mask_erode_pixels": object_pcd_mask_erode_pixels(self.args),
             "controller_pcd_mask_erode_pixels": controller_pcd_mask_erode_pixels(self.args),
-            "depth_min_m": float(self.args.depth_min_m),
-            "depth_max_m": float(self.args.depth_max_m),
+            "depth_min_m": float(0.2),
+            "depth_max_m": float(1.5),
             "serial": str(self.runtime.serial),
             "width": int(self.width),
             "height": int(self.height),
@@ -4169,8 +4066,8 @@ class MainDataProcessingDemo:
                 float(value) for value in DEFAULT_TABLE_Z_DIAGNOSTIC_THRESHOLDS_M
             ],
             "table_z_filter_enabled": bool(self.args.enable_table_z_filter),
-            "table_z_filter_threshold_m": float(self.args.table_z_filter_threshold_m),
-            "table_z_filter_classes": str(self.args.table_z_filter_classes),
+            "table_z_filter_threshold_m": float(DEFAULT_TABLE_Z_FILTER_THRESHOLD_M),
+            "table_z_filter_classes": str(TABLE_Z_FILTER_CLASS_BOTH),
             "intrinsics": {
                 "fx": float(self.runtime.intrinsics.fx),
                 "fy": float(self.runtime.intrinsics.fy),
@@ -4790,25 +4687,25 @@ class MainDataProcessingDemo:
         if str(self.args.device).startswith("cuda") and not torch_module.cuda.is_available():
             raise RuntimeError("CUDA device requested but torch.cuda.is_available() is false")
         dtype = hf_stream._dtype_from_name(self.args.dtype)
-        model = hf_stream.EdgeTamVideoModel.from_pretrained(self.args.model_id).to(
+        model = hf_stream.EdgeTamVideoModel.from_pretrained(DEFAULT_MODEL_ID).to(
             self.args.device,
             dtype=dtype,
         )
         model.eval()
-        model, compile_metadata = hf_stream._apply_compile_mode(model, self.args.compile_mode)
-        processor = hf_stream.Sam2VideoProcessor.from_pretrained(self.args.model_id)
+        model, compile_metadata = hf_stream._apply_compile_mode(model, DEFAULT_COMPILE_MODE)
+        processor = hf_stream.Sam2VideoProcessor.from_pretrained(DEFAULT_MODEL_ID)
         metadata = {
             **runtime_metadata_identity(self.args),
-            "edge_model": self.args.model_id,
+            "edge_model": DEFAULT_MODEL_ID,
             "demo_preset": "none",
-            "compile_mode": self.args.compile_mode,
+            "compile_mode": DEFAULT_COMPILE_MODE,
             "applied_targets": compile_metadata.get("applied_targets", []),
             "dtype": self.args.dtype,
             "inference_device": self.args.device,
             "inference_state_device": self.args.device,
             "video_storage_device": self.args.device,
             "frame_by_frame_streaming": True,
-            "edgetam_live_session_keep_frames": int(self.args.edgetam_live_session_keep_frames),
+            "edgetam_live_session_keep_frames": int(DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES),
             "offline_video_input_used": _is_replay_input_source(str(self.args.input_source)),
             "input_source": self.args.input_source,
             "demo_visual_mode": str(self.args.demo_visual_mode),
@@ -4850,9 +4747,9 @@ class MainDataProcessingDemo:
                 if self.table_c2w is None
                 else np.asarray(self.table_c2w, dtype=np.float32).reshape(4, 4).tolist()
             ),
-            "pcd_max_points": int(self.args.pcd_max_points),
-            "pcd_stride": int(self.args.pcd_stride),
-            "pcd_mask_erode_pixels": int(self.args.pcd_mask_erode_pixels),
+            "pcd_max_points": int(60000),
+            "pcd_stride": int(1),
+            "pcd_mask_erode_pixels": int(DEFAULT_PCD_MASK_ERODE_PIXELS),
             "object_pcd_mask_erode_pixels": object_pcd_mask_erode_pixels(self.args),
             "controller_pcd_mask_erode_pixels": controller_pcd_mask_erode_pixels(self.args),
             "pcd_filter_enabled": pcd_filter_enabled(self.args),
@@ -4862,8 +4759,8 @@ class MainDataProcessingDemo:
                 float(value) for value in DEFAULT_TABLE_Z_DIAGNOSTIC_THRESHOLDS_M
             ],
             "table_z_filter_enabled": bool(self.args.enable_table_z_filter),
-            "table_z_filter_threshold_m": float(self.args.table_z_filter_threshold_m),
-            "table_z_filter_classes": str(self.args.table_z_filter_classes),
+            "table_z_filter_threshold_m": float(DEFAULT_TABLE_Z_FILTER_THRESHOLD_M),
+            "table_z_filter_classes": str(TABLE_Z_FILTER_CLASS_BOTH),
             "headless_capture_enabled": headless_capture_enabled(self.args),
             "headless_prepared_only": bool(getattr(self.args, "headless_prepared_only", False)),
             "headless_capture_dir": (
@@ -4884,8 +4781,8 @@ class MainDataProcessingDemo:
             "controller_filter_min_raw_retain_ratio": float(DEFAULT_CONTROLLER_FILTER_MIN_RAW_RETAIN_RATIO),
             "filter_every_n": int(self.args.filter_every_n),
             "filter_max_age_frames": int(self.args.filter_max_age_frames),
-            "filter_budget_ms": float(self.args.filter_budget_ms),
-            "filter_min_cap": int(self.args.filter_min_cap),
+            "filter_budget_ms": float(12.0),
+            "filter_min_cap": int(5000),
             "lossless_controller_filter_min_cap": (
                 int(self.controller_filter_budget.min_cap) if self._lossless_enabled() else None
             ),
@@ -4911,7 +4808,7 @@ class MainDataProcessingDemo:
                 else TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY
             ),
             "tracker_device": str(self.args.tracker_device),
-            "tracker_query_count": int(self.args.tracker_query_count),
+            "tracker_query_count": int(DEFAULT_TRACKER_QUERY_COUNT),
             "tracker_query_source": tracker_query_source(self.args) if tracker_enabled(self.args) else None,
             "tracker_marker_gate": tracker_marker_gate(self.args) if tracker_enabled(self.args) else None,
             "tracker_retire_filtered_markers": (
@@ -4920,9 +4817,9 @@ class MainDataProcessingDemo:
             "tracker_marker_retirement_policy": (
                 tracker_marker_retirement_policy(self.args) if tracker_enabled(self.args) else None
             ),
-            "tracker_display_scope": str(self.args.tracker_display_scope),
+            "tracker_display_scope": str(DEFAULT_TRACKER_DISPLAY_SCOPE),
             "tracker_overlay_max_points": int(self.args.tracker_overlay_max_points),
-            "tracker_marker_point_size": float(self.args.tracker_marker_point_size),
+            "tracker_marker_point_size": float(DEFAULT_TRACKER_MARKER_POINT_SIZE),
             "tracker_strict_same_seq_render": bool(tracker_enabled(self.args) and self.args.pcd_mode == "masked"),
             "tracker_visualization_mode": (
                 "phystwin_rainbow_identity_3d_lift" if tracker_enabled(self.args) else "none"
@@ -4942,17 +4839,17 @@ class MainDataProcessingDemo:
                 object_pcd_mask_erode_pixels(self.args),
                 controller_pcd_mask_erode_pixels(self.args),
             ),
-            "tapnet_repo_dir": str(self.args.tapnet_repo_dir),
-            "tapnextpp_checkpoint": str(self.args.tapnextpp_checkpoint),
-            "tapnextpp_image_size": str(self.args.tapnextpp_image_size),
-            "tapnextpp_autocast_dtype": str(self.args.tapnextpp_autocast_dtype),
-            "tapnextpp_compile": bool(self.args.tapnextpp_compile),
-            "tapnextpp_fast_postprocess": bool(self.args.tapnextpp_fast_postprocess),
+            "tapnet_repo_dir": str(DEFAULT_TAPNET_REPO_DIR),
+            "tapnextpp_checkpoint": str(DEFAULT_TAPNEXTPP_CHECKPOINT),
+            "tapnextpp_image_size": str("256,256"),
+            "tapnextpp_autocast_dtype": str("fp16"),
+            "tapnextpp_compile": bool(False),
+            "tapnextpp_fast_postprocess": bool(True),
         }
         print(
             "[edgetam] "
-            f"model={self.args.model_id} device={self.args.device} dtype={self.args.dtype} "
-            f"track_mode={self.args.track_mode} compile_mode={self.args.compile_mode} "
+            f"model={DEFAULT_MODEL_ID} device={self.args.device} dtype={self.args.dtype} "
+            f"track_mode={self.args.track_mode} compile_mode={DEFAULT_COMPILE_MODE} "
             f"applied={compile_metadata.get('applied_targets', [])}",
             flush=True,
         )
@@ -5044,12 +4941,12 @@ class MainDataProcessingDemo:
         config = PointTrackerAdapterConfig(
             backend=str(self.args.tracker_backend),
             device=str(self.args.tracker_device),
-            tapnet_repo_dir=str(self.args.tapnet_repo_dir),
-            tapnextpp_checkpoint=str(self.args.tapnextpp_checkpoint),
-            tapnextpp_image_size=str(self.args.tapnextpp_image_size),
-            tapnextpp_autocast_dtype=str(self.args.tapnextpp_autocast_dtype),
-            tapnextpp_compile=bool(self.args.tapnextpp_compile),
-            tapnextpp_fast_postprocess=bool(self.args.tapnextpp_fast_postprocess),
+            tapnet_repo_dir=str(DEFAULT_TAPNET_REPO_DIR),
+            tapnextpp_checkpoint=str(DEFAULT_TAPNEXTPP_CHECKPOINT),
+            tapnextpp_image_size=str("256,256"),
+            tapnextpp_autocast_dtype=str("fp16"),
+            tapnextpp_compile=bool(False),
+            tapnextpp_fast_postprocess=bool(True),
         )
         adapter = build_point_tracker_adapter_factory(config)(0)
         availability = adapter.availability()
@@ -5072,7 +4969,7 @@ class MainDataProcessingDemo:
         object_pixels = int(np.count_nonzero(object_query_mask))
         controller_pixels = int(np.count_nonzero(controller_query_mask))
         union_pixels = int(np.count_nonzero(union_mask))
-        requested = int(self.args.tracker_query_count)
+        requested = int(DEFAULT_TRACKER_QUERY_COUNT)
         if query_source == TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL:
             if union_pixels <= 0:
                 raise RuntimeError(
@@ -5088,7 +4985,7 @@ class MainDataProcessingDemo:
             return None
         query_points = sample_phystwin_dense(
             union_mask,
-            seed=int(self.args.tracker_seed),
+            seed=int(DEFAULT_TRACKER_SEED),
             camera_idx=0,
             torch_device="cpu",
         )
@@ -5123,7 +5020,7 @@ class MainDataProcessingDemo:
             f"union_pixels={union_pixels} object_pixels={object_pixels} controller_pixels={controller_pixels} "
             f"hand_a_queries={int(np.count_nonzero(query_controller_instance_id == QUERY_CONTROLLER_INSTANCE_HAND_A))} "
             f"hand_b_queries={int(np.count_nonzero(query_controller_instance_id == QUERY_CONTROLLER_INSTANCE_HAND_B))} "
-            f"query_source={query_source} display_scope={self.args.tracker_display_scope} device={self.args.tracker_device}",
+            f"query_source={query_source} display_scope={DEFAULT_TRACKER_DISPLAY_SCOPE} device={self.args.tracker_device}",
             flush=True,
         )
         return self._tracker_query_points_yx
@@ -5141,7 +5038,7 @@ class MainDataProcessingDemo:
 
     def _tracker_lift_mask(self, mask_packet: MaskPacket) -> np.ndarray | None:
         """Return the tracker lift mask."""
-        scope = str(self.args.tracker_display_scope)
+        scope = str(DEFAULT_TRACKER_DISPLAY_SCOPE)
         if scope == TRACKER_DISPLAY_SCOPE_CONTROLLER:
             mask = np.asarray(mask_packet.controller_mask, dtype=bool)
             erode_pixels = controller_pcd_mask_erode_pixels(self.args)
@@ -5175,7 +5072,7 @@ class MainDataProcessingDemo:
                 mask_packet.depth_u16.astype(np.float32) * np.float32(mask_packet.depth_scale_m_per_unit)
             )
 
-        stride = int(self.args.pcd_stride)
+        stride = int(1)
         if stride > 1:
             color_bgr = mask_packet.color_bgr[::stride, ::stride]
             depth_for_pcd = depth_m[::stride, ::stride]
@@ -5204,9 +5101,9 @@ class MainDataProcessingDemo:
             mask=controller_mask,
             ray_x=ray_x_for_pcd,
             ray_y=ray_y_for_pcd,
-            depth_min_m=float(self.args.depth_min_m),
-            depth_max_m=float(self.args.depth_max_m),
-            max_points=int(self.args.pcd_max_points),
+            depth_min_m=float(0.2),
+            depth_max_m=float(1.5),
+            max_points=int(60000),
             color_mode=str(self.args.pcd_color_mode),
             class_rgb=tuple(self.args.controller_color),
             rng=np.random.default_rng(int(mask_packet.seq) * 2 + 31),
@@ -5218,9 +5115,9 @@ class MainDataProcessingDemo:
             mask=object_mask,
             ray_x=ray_x_for_pcd,
             ray_y=ray_y_for_pcd,
-            depth_min_m=float(self.args.depth_min_m),
-            depth_max_m=float(self.args.depth_max_m),
-            max_points=int(self.args.pcd_max_points),
+            depth_min_m=float(0.2),
+            depth_max_m=float(1.5),
+            max_points=int(60000),
             color_mode=str(self.args.pcd_color_mode),
             class_rgb=tuple(self.args.object_color),
             rng=np.random.default_rng(int(mask_packet.seq) * 2 + 29),
@@ -5245,7 +5142,7 @@ class MainDataProcessingDemo:
         object_yx = filter_output.object_yx
         controller_yx = filter_output.controller_yx
         if bool(self.args.enable_table_z_filter):
-            classes = str(self.args.table_z_filter_classes)
+            classes = str(TABLE_Z_FILTER_CLASS_BOTH)
             if classes in {TABLE_Z_FILTER_CLASS_OBJECT, TABLE_Z_FILTER_CLASS_BOTH}:
                 (
                     _object_xyz,
@@ -5257,7 +5154,7 @@ class MainDataProcessingDemo:
                     filter_output.object_rgb,
                     object_yx,
                     enabled=True,
-                    threshold_m=float(self.args.table_z_filter_threshold_m),
+                    threshold_m=float(DEFAULT_TABLE_Z_FILTER_THRESHOLD_M),
                     table_z_m=TABLE_Z_M,
                 )
             if classes in {TABLE_Z_FILTER_CLASS_CONTROLLER, TABLE_Z_FILTER_CLASS_BOTH}:
@@ -5271,7 +5168,7 @@ class MainDataProcessingDemo:
                     filter_output.controller_rgb,
                     controller_yx,
                     enabled=True,
-                    threshold_m=float(self.args.table_z_filter_threshold_m),
+                    threshold_m=float(DEFAULT_TABLE_Z_FILTER_THRESHOLD_M),
                     table_z_m=TABLE_Z_M,
                 )
         shape = tuple(mask_packet.object_mask.shape[:2])
@@ -5360,7 +5257,7 @@ class MainDataProcessingDemo:
             target_visibility,
             query_is_object=query_is_object,
             query_is_controller=query_is_controller,
-            display_scope=str(self.args.tracker_display_scope),
+            display_scope=str(DEFAULT_TRACKER_DISPLAY_SCOPE),
         )
         lift_mask = self._tracker_lift_mask(mask_packet)
         object_residual_mask: np.ndarray | None = None
@@ -5398,14 +5295,14 @@ class MainDataProcessingDemo:
 
         lift_start_s = time.perf_counter()
         depth_for_lift, depth_scale = self._tracker_depth_for_lift(mask_packet)
-        depth_max_m = float("inf") if float(self.args.depth_max_m) <= 0.0 else float(self.args.depth_max_m)
+        depth_max_m = float("inf") if float(1.5) <= 0.0 else float(1.5)
         current_lift_valid = _tracker_lift_valid_mask(
             tracks_yx=tracks_latest,
             visibility=display_visibility,
             depth=depth_for_lift,
             depth_scale_m_per_unit=float(depth_scale),
             mask=lift_mask,
-            depth_min_m=float(self.args.depth_min_m),
+            depth_min_m=float(0.2),
             depth_max_m=depth_max_m,
         )
         if self._tracker_consistent_visible is None or len(self._tracker_consistent_visible) != len(query_points):
@@ -5423,7 +5320,7 @@ class MainDataProcessingDemo:
             c2w=self.table_c2w if self.table_c2w is not None else np.eye(4, dtype=np.float32),
             depth_scale_m_per_unit=float(depth_scale),
             mask=lift_mask,
-            depth_min_m=float(self.args.depth_min_m),
+            depth_min_m=float(0.2),
             depth_max_m=depth_max_m,
         )
         lift_ms = _elapsed_ms(lift_start_s, time.perf_counter())
@@ -5490,7 +5387,7 @@ class MainDataProcessingDemo:
             lift_ms=float(lift_ms),
             e2e_ms=_elapsed_ms(started_s, done_s),
             backend=str(getattr(result, "backend", None) or adapter.name),
-            display_scope=str(self.args.tracker_display_scope),
+            display_scope=str(DEFAULT_TRACKER_DISPLAY_SCOPE),
             query_indices=np.ascontiguousarray(lifted_query_indices, dtype=np.int64),
             query_target_id=np.ascontiguousarray(lifted_query_target_id, dtype=np.int64),
             query_controller_instance_id=np.ascontiguousarray(lifted_query_controller_instance_id, dtype=np.int64),
@@ -5525,8 +5422,8 @@ class MainDataProcessingDemo:
             print(
                 "[tapnextpp-tracker] "
                 f"backend={adapter.name} device={self.args.tracker_device} "
-                f"repo={self.args.tapnet_repo_dir} checkpoint={self.args.tapnextpp_checkpoint} "
-                f"image_size={self.args.tapnextpp_image_size} overlay_max={int(self.args.tracker_overlay_max_points)}",
+                f"repo={DEFAULT_TAPNET_REPO_DIR} checkpoint={DEFAULT_TAPNEXTPP_CHECKPOINT} "
+                f"image_size={"256,256"} overlay_max={int(self.args.tracker_overlay_max_points)}",
                 flush=True,
             )
             last_seq = -1
@@ -5787,8 +5684,8 @@ class MainDataProcessingDemo:
             print(
                 "[tapnextpp-tracker] "
                 f"backend={adapter.name} device={self.args.tracker_device} "
-                f"repo={self.args.tapnet_repo_dir} checkpoint={self.args.tapnextpp_checkpoint} "
-                f"image_size={self.args.tapnextpp_image_size} overlay_max={int(self.args.tracker_overlay_max_points)} "
+                f"repo={DEFAULT_TAPNET_REPO_DIR} checkpoint={DEFAULT_TAPNEXTPP_CHECKPOINT} "
+                f"image_size={"256,256"} overlay_max={int(self.args.tracker_overlay_max_points)} "
                 "strict_sync=1 lossless=1",
                 flush=True,
             )
@@ -5820,8 +5717,8 @@ class MainDataProcessingDemo:
             print(
                 "[tapnextpp-tracker] "
                 f"backend={adapter.name} device={self.args.tracker_device} "
-                f"repo={self.args.tapnet_repo_dir} checkpoint={self.args.tapnextpp_checkpoint} "
-                f"image_size={self.args.tapnextpp_image_size} overlay_max={int(self.args.tracker_overlay_max_points)} "
+                f"repo={DEFAULT_TAPNET_REPO_DIR} checkpoint={DEFAULT_TAPNEXTPP_CHECKPOINT} "
+                f"image_size={"256,256"} overlay_max={int(self.args.tracker_overlay_max_points)} "
                 "strict_sync=1",
                 flush=True,
             )
@@ -5887,7 +5784,7 @@ class MainDataProcessingDemo:
 
     def _prune_edgetam_live_session(self, session: Any, *, current_frame_idx: int) -> None:
         """Prune edgetam live session."""
-        keep_frames = int(self.args.edgetam_live_session_keep_frames)
+        keep_frames = int(DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES)
         if keep_frames <= 0:
             return
         min_frame_idx = int(current_frame_idx) - keep_frames + 1
@@ -6293,7 +6190,7 @@ class MainDataProcessingDemo:
         )
         done_s = time.perf_counter()
         filter_ms = _elapsed_ms(started_s, done_s)
-        if float(self.args.filter_budget_ms) > 0:
+        if float(12.0) > 0:
             self.object_filter_budget.update(float(object_stats["filter_ms"] + object_stats["cap_ms"]))
             self.controller_filter_budget.update(float(controller_stats["filter_ms"] + controller_stats["cap_ms"]))
         return FilterOutput(
@@ -6558,7 +6455,7 @@ class MainDataProcessingDemo:
             )
             depth_convert_ms = _elapsed_ms(depth_convert_start_s, time.perf_counter())
 
-        stride = int(self.args.pcd_stride)
+        stride = int(1)
         if stride > 1:
             color_bgr = mask_packet.color_bgr[::stride, ::stride]
             depth_for_pcd = depth_m[::stride, ::stride]
@@ -6573,7 +6470,7 @@ class MainDataProcessingDemo:
             object_mask = mask_packet.object_mask
             ray_x_for_pcd = ray_x
             ray_y_for_pcd = ray_y
-        pcd_mask_erode_pixels = int(self.args.pcd_mask_erode_pixels)
+        pcd_mask_erode_pixels = int(DEFAULT_PCD_MASK_ERODE_PIXELS)
         controller_erode_pixels = controller_pcd_mask_erode_pixels(self.args)
         object_erode_pixels = object_pcd_mask_erode_pixels(self.args)
         if controller_erode_pixels > 0:
@@ -6596,9 +6493,9 @@ class MainDataProcessingDemo:
                 mask=controller_mask,
                 ray_x=ray_x_for_pcd,
                 ray_y=ray_y_for_pcd,
-                depth_min_m=float(self.args.depth_min_m),
-                depth_max_m=float(self.args.depth_max_m),
-                max_points=int(self.args.pcd_max_points),
+                depth_min_m=float(0.2),
+                depth_max_m=float(1.5),
+                max_points=int(60000),
                 color_mode=str(self.args.pcd_color_mode),
                 class_rgb=tuple(self.args.controller_color),
                 rng=rng,
@@ -6618,9 +6515,9 @@ class MainDataProcessingDemo:
                 mask=object_mask,
                 ray_x=ray_x_for_pcd,
                 ray_y=ray_y_for_pcd,
-                depth_min_m=float(self.args.depth_min_m),
-                depth_max_m=float(self.args.depth_max_m),
-                max_points=int(self.args.pcd_max_points),
+                depth_min_m=float(0.2),
+                depth_max_m=float(1.5),
+                max_points=int(60000),
                 color_mode=str(self.args.pcd_color_mode),
                 class_rgb=tuple(self.args.object_color),
                 rng=rng,
@@ -6746,14 +6643,14 @@ class MainDataProcessingDemo:
         )
         table_z_filter_stats: dict[str, Any] = {
             "enabled": bool(self.args.enable_table_z_filter),
-            "threshold_m": float(self.args.table_z_filter_threshold_m),
+            "threshold_m": float(DEFAULT_TABLE_Z_FILTER_THRESHOLD_M),
             "table_z_above_direction": TABLE_Z_ABOVE_DIRECTION,
-            "classes": str(self.args.table_z_filter_classes),
+            "classes": str(TABLE_Z_FILTER_CLASS_BOTH),
             "object": None,
             "controller": None,
         }
         if bool(self.args.enable_table_z_filter):
-            classes = str(self.args.table_z_filter_classes)
+            classes = str(TABLE_Z_FILTER_CLASS_BOTH)
             if classes in {TABLE_Z_FILTER_CLASS_OBJECT, TABLE_Z_FILTER_CLASS_BOTH}:
                 (
                     render_object_xyz,
@@ -6765,7 +6662,7 @@ class MainDataProcessingDemo:
                     render_object_colors,
                     render_object_yx,
                     enabled=True,
-                    threshold_m=float(self.args.table_z_filter_threshold_m),
+                    threshold_m=float(DEFAULT_TABLE_Z_FILTER_THRESHOLD_M),
                     table_z_m=TABLE_Z_M,
                 )
                 table_z_filter_stats["object"] = object_table_z_stats
@@ -6780,7 +6677,7 @@ class MainDataProcessingDemo:
                     render_controller_colors,
                     render_controller_yx,
                     enabled=True,
-                    threshold_m=float(self.args.table_z_filter_threshold_m),
+                    threshold_m=float(DEFAULT_TABLE_Z_FILTER_THRESHOLD_M),
                     table_z_m=TABLE_Z_M,
                 )
                 table_z_filter_stats["controller"] = controller_table_z_stats

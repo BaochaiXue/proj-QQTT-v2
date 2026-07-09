@@ -278,9 +278,9 @@ def run_sam31_first_frame_mask_bundle(
     # (one object mask, both hand instances preserved).
     prompt_labels = []
     if object_tracking_enabled(args):
-        prompt_labels.append(str(args.object_prompt))
+        prompt_labels.append(str("stuffed animal"))
     if controller_tracking_enabled(args):
-        prompt_labels.append(str(args.controller_prompt))
+        prompt_labels.append(str("hand"))
     if not prompt_labels:
         empty = np.zeros(tuple(color_bgr.shape[:2]), dtype=bool)
         return InitialMaskBundle(controller_mask=empty, object_mask=empty)
@@ -321,17 +321,17 @@ def run_sam31_first_frame_mask_bundle(
     controller_mask: np.ndarray | None = None
     controller_masks: list[np.ndarray] = []
     if object_tracking_enabled(args):
-        object_label = parse_text_prompts(str(args.object_prompt))[0]
+        object_label = parse_text_prompts(str("stuffed animal"))[0]
         object_mask = _union_masks(
             list(masks_by_label.get(object_label, [])),
-            label=args.object_prompt,
+            label="stuffed animal",
         )
     if controller_tracking_enabled(args):
-        controller_label = parse_text_prompts(str(args.controller_prompt))[0]
+        controller_label = parse_text_prompts(str("hand"))[0]
         controller_masks = list(masks_by_label.get(controller_label, []))
         controller_mask = _union_masks(
             controller_masks,
-            label=args.controller_prompt,
+            label="hand",
         )
     # Disabled identities get all-false masks of the enabled identity's shape;
     # object-only mode returns early because there are no hands to split.
@@ -350,7 +350,7 @@ def run_sam31_first_frame_mask_bundle(
     # it stays consistent with hand_a/hand_b even if SAM3.1 returned extras.
     hand_a_mask, hand_b_mask = split_controller_hand_instances(
         controller_masks,
-        label=str(args.controller_prompt),
+        label=str("hand"),
     )
     controller_mask = np.logical_or(hand_a_mask, hand_b_mask)
     return InitialMaskBundle(
