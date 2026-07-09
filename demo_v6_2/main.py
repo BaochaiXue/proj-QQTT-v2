@@ -62,6 +62,7 @@ from demo_v6_2.main_config import (
     DEFAULT_CAMERA_COLOR_EXPOSURE,
     DEFAULT_CAMERA_COLOR_GAIN,
     DEFAULT_CAMERA_FPS,
+    DEFAULT_CAMERA_SERIALS,
     DEFAULT_CAMERA_SOURCE_REPLAY_FPS,
     DEFAULT_CASE_PREFIX,
     DEFAULT_CHUNK_POLL_INTERVAL_S,
@@ -118,7 +119,6 @@ from demo_v6_2.main_config import (
     PHYSTWIN_SHEN_TRAIN_SEGMENT_STRIDE,
     PHYSTWIN_SHEN_TRAIN_STOP_WHEN_FINISHED,
     PHYSTWIN_SHEN_VIEWER_CAM_IDX,
-    PHYSTWIN_SHEN_VIEWER_IMAGE_INDEX_MODE,
     PHYSTWIN_SHEN_VIEWER_POINT_MODE,
     PHYSTWIN_SHEN_VIEWER_POINT_STRIDE,
     REPO_ROOT,
@@ -144,6 +144,7 @@ from demo_v6_2.main_options import (
     _python_command_prefix,
     demo_visualizer_enabled,
     phystwin_shen_enabled,
+    resolve_camera_serials,
     resolve_camera_source_replay_fps,
     resolve_chunk_frame_count,
     resolve_downstream_mode,
@@ -484,6 +485,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "camera_lossless_max_backlog_seconds": args.camera_lossless_max_backlog_seconds,
         "camera_headless_prepared_only": bool(args.camera_headless_prepared_only),
         "write_input_rgb_timeline": resolve_write_input_rgb_timeline(args),
+        "camera_serials": resolve_camera_serials(args),
         "camera_source_replay_fps": resolve_camera_source_replay_fps(args),
         "camera_source_replay_fps_override": (
             None

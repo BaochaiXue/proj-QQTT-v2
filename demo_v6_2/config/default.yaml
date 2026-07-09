@@ -43,6 +43,13 @@ camera:
   # Options: one integer from camera_fps_choices; RealSense live input FPS.
   # replay_fps still controls the output cadence.
   camera_fps: 30
+  # Options: list of RealSense serial strings. The schema is a list so future
+  # multi-camera runtimes can extend it, but the current single-camera runtime
+  # requires exactly one entry and fails fast otherwise. The default is the
+  # table-calibration camera (table_calibrate.pkl was made with it); the
+  # sorted-first auto-pick it replaces could select a device without the
+  # requested RGB profile (e.g. a D405) when several cameras are connected.
+  camera_serials: ["239222300740"]
   # Options: list of positive integer FPS values accepted by --camera-fps.
   camera_fps_choices: [5, 15, 30, 60]
   # Options: non-negative finite float; manual RealSense RGB exposure.
@@ -112,43 +119,38 @@ phystwin_shen:
   repo_path: "/home/xinjie/Phystwin_shen"
   # Options: non-empty conda environment name; used by both subprocesses.
   conda_env: "demo_2_max"
-  # Options: non-empty case directory name under base_path.
-  # online_data points both tools at the per-frame RGB-D archive published
-  # under base_path/online_data.
+  # Viewer --case_name. The trainer --online_dir and viewer --rgb_dir are
+  # derived from the same directory under base_path.
   case_name: "online_data"
-  # Options: bind host string, usually 127.0.0.1 or 0.0.0.0.
-  viewer_host: "127.0.0.1"
+  # Viewer --host. Usually 127.0.0.1 or 0.0.0.0.
+  host: "127.0.0.1"
   # Options: integer TCP port in 1..65535. A process already occupying the
   # port is killed; if the kill fails the run fails fast.
-  viewer_port: 8765
-  # Options: non-negative integer camera index for RGB lookup/projection.
-  viewer_cam_idx: 0
-  # Options: original | surface | all.
-  viewer_point_mode: "surface"
-  # Options: positive integer point subsampling stride.
-  viewer_point_stride: 5
-  # Options: frame | online.
-  # frame uses snapshot frame_indices; online resolves online_data color frames
-  # through online_frame_indices.
-  viewer_image_index_mode: "online"
-  # Options: torch device string, usually cuda:0 or cpu. Combined with
+  port: 8765
+  # Viewer --cam_idx. Options: non-negative integer camera index.
+  cam_idx: 0
+  # Viewer --point_mode. Options: original | surface | all.
+  point_mode: "surface"
+  # Viewer --point_stride. Options: positive integer.
+  point_stride: 5
+  # Trainer --device. Usually cuda:0 or cpu. Combined with
   # gpu.phystwin_shen_cuda_visible_devices, cuda:0 maps inside that namespace.
-  train_device: "cuda:0"
-  # Options: positive integer rollout windows per optimization step.
-  train_batch_size: 5
-  # Options: positive integer frames per rollout training window.
-  train_segment_len: 32
-  # Options: positive integer frame hop between rollout window starts.
-  train_segment_stride: 30
-  # Options: positive finite float seconds between online chunk polls.
-  train_poll_sec: 1.0
-  # Options: positive integer count of recent windows eligible for sampling.
-  train_recent_window_count: 5
-  # Options: positive integer iteration interval for realtime snapshots.
-  train_realtime_vis_every: 1
-  # Options: true | false.
+  device: "cuda:0"
+  # Trainer --batch_size. Positive rollout-window count per optimization step.
+  batch_size: 5
+  # Trainer --segment_len. Positive frame count per rollout window.
+  segment_len: 32
+  # Trainer --segment_stride. Positive frame hop between rollout windows.
+  segment_stride: 30
+  # Trainer --poll_sec. Positive finite seconds between online chunk polls.
+  poll_sec: 1.0
+  # Trainer --recent_window_count. Positive recent-window sampling count.
+  recent_window_count: 5
+  # Trainer --realtime_vis_every. Positive snapshot iteration interval.
+  realtime_vis_every: 1
+  # Trainer --stop_when_finished. Options: true | false.
   # true exits when the online manifest reports finished.
-  train_stop_when_finished: true
+  stop_when_finished: true
 
 # Demo v6.1 point-cloud visualizer (downstream.mode: demo_visualizer).
 visualizer:

@@ -57,6 +57,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--fps", choices=SUPPORTED_CAPTURE_FPS, type=int, default=DEFAULT_FPS, help="Capture FPS.")
     parser.add_argument(
+        "--serial",
+        default=None,
+        help=(
+            "RealSense serial for live capture. The default picks the first "
+            "sorted D400-series device, which with several cameras connected "
+            "can select one without the requested RGB profile (e.g. a D405) "
+            "or one that does not match table_calibrate.pkl."
+        ),
+    )
+    parser.add_argument(
         "--input-source",
         choices=INPUT_SOURCES,
         default=INPUT_SOURCE_LIVE,

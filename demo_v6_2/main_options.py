@@ -11,6 +11,7 @@ import sys
 import numpy as np
 
 from demo_v6_2.main_config import (
+    DEFAULT_CAMERA_SERIALS,
     DEFAULT_DOWNSTREAM_MODE,
     DEFAULT_PHYSTWIN_SHEN_CASE_NAME,
     DEFAULT_PHYSTWIN_SHEN_CUDA_VISIBLE_DEVICES,
@@ -28,7 +29,6 @@ from demo_v6_2.main_config import (
     PHYSTWIN_SHEN_TRAIN_SEGMENT_STRIDE,
     PHYSTWIN_SHEN_TRAIN_STOP_WHEN_FINISHED,
     PHYSTWIN_SHEN_VIEWER_CAM_IDX,
-    PHYSTWIN_SHEN_VIEWER_IMAGE_INDEX_MODE,
     PHYSTWIN_SHEN_VIEWER_POINT_MODE,
     PHYSTWIN_SHEN_VIEWER_POINT_STRIDE,
     VISUALIZER_LAYOUT_SIDE_BY_SIDE,
@@ -55,6 +55,26 @@ def resolve_chunk_frame_count(args: argparse.Namespace) -> int:
     if value <= 0:
         raise ValueError("chunk frame count must be positive")
     return value
+
+
+def resolve_camera_serials(args: argparse.Namespace) -> list[str]:
+    """Resolve the configured camera serial list and enforce single-camera use.
+
+    The config schema (camera.camera_serials) and the repeatable
+    ``--camera-serial`` flag are lists so a future multi-camera runtime can
+    extend them, but this runtime drives exactly one RealSense: any other
+    count fails fast here, before subprocesses launch.
+    """
+    cli_serials = args.camera_serials
+    serials = [
+        str(item).strip()
+        for item in (DEFAULT_CAMERA_SERIALS if cli_serials is None else cli_serials)
+    ]
+    if len(serials) != 1 or not serials[0]:
+        raise ValueError(
+            f"single-camera runtime requires exactly one serial; got {serials!r}"
+        )
+    return serials
 
 
 def resolve_camera_source_replay_fps(args: argparse.Namespace) -> float:
@@ -171,7 +191,6 @@ def resolve_phystwin_shen_settings(args: argparse.Namespace) -> PhystwinShenSett
         viewer_cam_idx=PHYSTWIN_SHEN_VIEWER_CAM_IDX,
         viewer_point_mode=PHYSTWIN_SHEN_VIEWER_POINT_MODE,
         viewer_point_stride=PHYSTWIN_SHEN_VIEWER_POINT_STRIDE,
-        viewer_image_index_mode=PHYSTWIN_SHEN_VIEWER_IMAGE_INDEX_MODE,
         train_device=PHYSTWIN_SHEN_TRAIN_DEVICE,
         train_batch_size=PHYSTWIN_SHEN_TRAIN_BATCH_SIZE,
         train_segment_len=PHYSTWIN_SHEN_TRAIN_SEGMENT_LEN,

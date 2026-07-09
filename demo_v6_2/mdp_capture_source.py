@@ -382,7 +382,7 @@ def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime
     """Start realsense pipeline."""
     rs = load_realsense_module()
     width, height = parse_profile(DEFAULT_PROFILE)
-    serial = resolve_serial(rs, None)
+    serial = resolve_serial(rs, args.serial)
 
     pipeline = rs.pipeline()
     config = rs.config()

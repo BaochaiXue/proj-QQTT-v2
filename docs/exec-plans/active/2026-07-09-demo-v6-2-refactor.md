@@ -86,6 +86,37 @@ that depend on removed legacy paths now fail explicitly.
   byte-identical to the frozen reference; needs a comparator carve-out + a
   downstream check before flipping. Code structure is fully self-contained v6_2.
 
+- [x] Live-camera verification (2026-07-09 evening) — first live run failed at
+  startup: `resolve_serial` picks the sorted-first D400 device; with 4 cameras
+  connected that is the D405 (no 848x480 BGR8 color sensor → "Could not find
+  requested sensor type!"). Pre-existing behavior (identical in frozen v6_1), not
+  a refactor regression (confirmed by per-device minimal repro: D405 fails,
+  D455 starts). Fix: `--camera-serial` passthrough (main_cli → main_subprocess →
+  mdp_cli `--serial` → `_start_realsense_pipeline`), default None keeps old
+  selection; 3 new tests. Also closed a Phase-D gap: camera startup errors now
+  emit a `fatal_error` status event (previously only worker-thread failures did).
+  Verified live on the table-calibration camera (`--camera-serial 239222300740`):
+  capture starts (metadata.json written), frame-0 SAM3.1 runs, and with nobody at
+  the table the run fail-fasts exactly at the design_spec two-hand gate
+  ("SAM3.1 did not produce two separable controller masks for 'hand'"), with the
+  red fatal_error visible in pipeline_status.jsonl. That failure is the EXPECTED
+  no-operator outcome; the live path is healthy.
+- [x] Camera-serials config (2026-07-09 evening, user request) — replaced the
+  single-value `--camera-serial` default with a config list
+  `camera.camera_serials: ["239222300740"]` (multi-camera-extensible schema).
+  `main_options.resolve_camera_serials` enforces the single-camera invariant:
+  any count != 1 fails fast with "single-camera runtime requires exactly one
+  serial" (wired into validate_runtime_args, the subprocess command builder —
+  which now always forwards `--serial <resolved>` —, the dry-run contract, and
+  the run summary). CLI `--camera-serial` is now repeatable (append) and
+  overrides the config list. 6 serial tests (27 total green), exact-message CLI
+  check, offline PARITY OK, fake-live smoke green. demo_v6_2 only.
+- NOTE (parity fixture): the P3 session curated `outputs_v6_1/capture/frames.jsonl`
+  (549→539 rows; removed the 10 startup rows lacking prepared frames, src
+  2376..2430, mtime 16:55). Golden refs generated before that are stale — always
+  regenerate the golden ref from frozen demo_v6_1 against the CURRENT fixture
+  before diffing (done: PARITY OK on the current fixture; no code regression).
+
 ## Final state (2026-07-09)
 
 Every runtime `.py` in demo_v6_2 is <1000 lines (was one 6773-line file). Both

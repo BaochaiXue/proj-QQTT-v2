@@ -188,6 +188,19 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--camera-serial",
+        dest="camera_serials",
+        action="append",
+        default=None,
+        help=(
+            "RealSense serial for the live camera subprocess; repeatable so the "
+            "schema extends to future multi-camera runtimes. Defaults to "
+            "camera.camera_serials from config/default.yaml (the "
+            "table_calibrate.pkl camera). The current single-camera runtime "
+            "requires exactly one serial and fails fast otherwise."
+        ),
+    )
+    parser.add_argument(
         "--camera-color-exposure",
         type=float,
         default=DEFAULT_CAMERA_COLOR_EXPOSURE,

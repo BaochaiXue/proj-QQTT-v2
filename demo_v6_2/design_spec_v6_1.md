@@ -154,15 +154,24 @@ online_data/
     `--device cuda:0`，即进程内 cuda:0 = 物理 GPU 1。
   - **repo/env 进 YAML**：`phystwin_shen.repo_path`（默认
     `/home/xinjie/Phystwin_shen`）与 `phystwin_shen.conda_env`（默认
-    `demo_2_max`）；viewer/train 参数同样在 `phystwin_shen:` 段。
-  - **端口**：viewer 绑定 `viewer_host:viewer_port`（默认
+    `demo_2_max`）；viewer/train 参数同样在 `phystwin_shen:` 段，YAML
+    叶子名直接使用 Shen argparse 名称（如 `host`、`port`、`device`、
+    `batch_size`、`segment_len`）。
+  - **当前 Shen CLI 契约**：trainer 只接收
+    `--online_dir <base_path>/online_data`，不再接收旧
+    `--base_path/--case_name/--static_data_path`；viewer 接收
+    `--base_path <base_path> --case_name online_data`，并显式接收必需的
+    `--rgb_dir <base_path>/online_data/color`。两者共享显式传入的
+    realtime snapshot 目录。
+  - **端口**：viewer 绑定 `host:port`（默认
     127.0.0.1:8765）。启动前若端口被占用，直接 kill 占用进程
     （SIGTERM→SIGKILL）；无法识别占用者或 kill 后端口仍被占 →
     `PhystwinShenLaunchError` fail fast。
-  - **case dir 预置**：两个工具启动时即读取
-    `base_path/online_data/{calibrate.pkl,metadata.json}`，早于第一个
-    chunk commit。因此 `OnlineFrameArchive.initialize_case` 在 capture
-    metadata 可用时立刻预置 calibrate.pkl + metadata.json
+  - **case dir 预置**：trainer 从 `online_dir`、viewer 从
+    `base_path/case_name` 读取同一份
+    `online_data/{calibrate.pkl,metadata.json}`，早于第一个 chunk commit。
+    因此 `OnlineFrameArchive.initialize_case` 在 capture metadata 可用时
+    立刻预置 calibrate.pkl + metadata.json
     （frame_num=0）+ 空 enhance_metadata.json，帧计数不变式保持不变。
   - **生命周期**：与 viewer 窗口同策略 —— demo run 结束后 train/viewer
     继续运行，run_summary 记录 `phystwin_shen_*`（命令、日志路径、

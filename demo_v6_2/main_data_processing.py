@@ -69,6 +69,16 @@ def main(argv: list[str] | None = None) -> int:
         validate_args(args)
         return MainDataProcessingDemo(args).run()
     except (RuntimeError, ValueError, FileNotFoundError) as exc:
+        # Startup errors (camera/device selection, arg validation) never reach
+        # the worker-thread fatal hook, so surface them on the live status band
+        # too (design question 23). Best-effort: a None capture dir is a no-op.
+        from demo_v6_2.pipeline_status import STAGE_FATAL, PipelineStatusWriter  # noqa: PLC0415
+
+        capture_dir = args.headless_capture_dir
+        PipelineStatusWriter(
+            Path(capture_dir).parent if capture_dir is not None else None,
+            "camera",
+        ).emit(STAGE_FATAL, f"startup: {exc}", ok=False, exc_type=type(exc).__name__)
         parser.exit(2, f"{parser.prog}: error: {exc}\n")
     return 2
 

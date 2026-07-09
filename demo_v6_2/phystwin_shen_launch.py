@@ -7,11 +7,10 @@ pinned to the shape-prior GPU namespace (``CUDA_VISIBLE_DEVICES`` from
 ``gpu.phystwin_shen_cuda_visible_devices`` with ``--device cuda:0``), while
 ``train_online_warp.py`` itself keeps waiting for the first committed chunk.
 
-Both tools read the ``base_path/<case_name>`` case dir (``calibrate.pkl``,
-``metadata.json``, ``color/``) that demo v6.1 seeds at capture start and the
-``online_data`` chunk stream. The viewer binds ``viewer_host:viewer_port``;
-a process already listening there is killed first, and a kill that does not
-free the port fails the run fast.
+The trainer reads the ``base_path/<case_name>`` online stream. The viewer reads
+that case's ``calibrate.pkl``, ``metadata.json``, and ``color/`` archive. The
+viewer binds ``viewer_host:viewer_port``; a process already listening there is
+killed first, and a kill that does not free the port fails the run fast.
 """
 
 from __future__ import annotations
@@ -189,7 +188,6 @@ class PhystwinShenSettings:
     viewer_cam_idx: int
     viewer_point_mode: str
     viewer_point_stride: int
-    viewer_image_index_mode: str
     train_device: str
     train_batch_size: int
     train_segment_len: int
@@ -198,6 +196,16 @@ class PhystwinShenSettings:
     train_recent_window_count: int
     train_realtime_vis_every: int
     train_stop_when_finished: bool
+
+    @property
+    def online_dir(self) -> Path:
+        """Online stream and camera archive consumed by Phystwin_shen."""
+        return self.base_path / self.case_name
+
+    @property
+    def rgb_dir(self) -> Path:
+        """RGB archive required by the current HTML viewer CLI."""
+        return self.online_dir / "color"
 
     @property
     def realtime_dir(self) -> Path:
@@ -222,6 +230,8 @@ def build_viewer_command(
         str(settings.case_name),
         "--realtime_dir",
         str(settings.realtime_dir),
+        "--rgb_dir",
+        str(settings.rgb_dir),
         "--host",
         str(settings.viewer_host),
         "--port",
@@ -232,8 +242,6 @@ def build_viewer_command(
         str(settings.viewer_point_mode),
         "--point_stride",
         str(int(settings.viewer_point_stride)),
-        "--image_index_mode",
-        str(settings.viewer_image_index_mode),
     ]
 
 
@@ -244,16 +252,10 @@ def build_train_command(
     command = [
         *python_prefix,
         str(TRAIN_SCRIPT_RELATIVE),
-        "--base_path",
-        str(settings.base_path),
-        "--case_name",
-        str(settings.case_name),
         "--online_dir",
-        str(settings.base_path / "online_data"),
+        str(settings.online_dir),
         "--experiments_dir",
         str(settings.repo_path / "experiments_online"),
-        "--static_data_path",
-        str(settings.base_path / "data" / "final_data.pkl"),
         "--device",
         str(settings.train_device),
         "--batch_size",

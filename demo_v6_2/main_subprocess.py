@@ -29,6 +29,7 @@ from demo_v6_2.main_options import (
     _python_command_prefix,
     demo_visualizer_enabled,
     phystwin_shen_enabled,
+    resolve_camera_serials,
     resolve_camera_source_replay_fps,
     resolve_chunk_frame_count,
     resolve_downstream_mode,
@@ -99,6 +100,7 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "demo_version": "demo_v6_1",
         "input_source": str(args.input_source),
         "replay_fps": float(args.replay_fps),
+        "camera_serials": resolve_camera_serials(args),
         "camera_source_replay_fps": resolve_camera_source_replay_fps(args),
         "camera_source_replay_fps_override": (
             None
@@ -184,6 +186,7 @@ def validate_runtime_args(args: argparse.Namespace, *, chunk_frame_count: int) -
         raise ValueError("--visualizer-playback-fps must be finite")
     if float(args.visualizer_playback_fps) <= 0.0:
         raise ValueError("--visualizer-playback-fps must be positive")
+    resolve_camera_serials(args)
     resolve_camera_source_replay_fps(args)
     if (
         bool(getattr(args, "fake_live_case_cli_override", False))
@@ -262,6 +265,10 @@ def build_main_data_processing_command(
         str(int(args.camera_fps)),
         "--color-exposure",
         str(float(args.camera_color_exposure)),
+        # resolve_camera_serials enforces the single-camera invariant; the
+        # camera subprocess receives the one resolved serial.
+        "--serial",
+        resolve_camera_serials(args)[0],
         "--color-gain",
         str(float(args.camera_color_gain)),
         "--input-source",
