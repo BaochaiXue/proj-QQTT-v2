@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from data_process.depth_backends.geometry import transform_points
+from demo_v6_1.utils.depth_geometry import transform_points
 from demo_v6_1.utils.camera import CameraIntrinsics
 
 

@@ -15,7 +15,7 @@ from demo_v6_1.utils.ffs_align import warm_up_numba_ffs_align
 from demo_v6_1.utils.pcd_filter import AsyncPcdFilterWorker
 from demo_v6_1.utils.projection import build_projection_grid
 from demo_v6_1.utils.render import apply_wslg_open3d_env_defaults
-from services.ffs_remote import FfsRemoteDepthClient
+from demo_v6_1.utils.ffs_remote_client import FfsRemoteDepthClient
 
 TRACK_MODE_CONTROLLER_OBJECT = "controller-object"
 TRACK_MODE_OBJECT_ONLY = "object-only"

@@ -18,7 +18,7 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from data_process.depth_backends.geometry import transform_points
+from demo_v6_1.utils.depth_geometry import transform_points
 from demo_v6_1.utils.pcd_postprocess import detect_radius_outlier_indices
 from demo_v6_1.utils.projection import build_projection_grid_from_matrix
 

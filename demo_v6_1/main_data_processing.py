@@ -100,7 +100,7 @@ from demo_v6_1.utils.pcd_filter import (  # noqa: E402
     voxel_cap_indices,
     voxel_density_indices,
 )
-from services.ffs_remote.protocol import (  # noqa: E402
+from demo_v6_1.utils.ffs_remote_protocol import (  # noqa: E402
     COMPRESSION_MODES,
     RETURN_TYPES,
     SPARSE_RETURN_TYPES,
@@ -109,7 +109,7 @@ from demo_v6_1 import main_warmup  # noqa: E402
 from demo_v6_1 import shape_prior_warmup  # noqa: E402
 from demo_v6_1.tracking import CONTROLLER_FINAL_COUNT  # noqa: E402
 from demo_v6_1.main_warmup import InitialMaskBundle  # noqa: E402
-from data_process.depth_backends.ffs_defaults import (  # noqa: E402
+from demo_v6_1.utils.ffs_defaults import (  # noqa: E402
     DEFAULT_FFS_MAX_DISP,
     DEFAULT_FFS_MODEL_NAME,
     DEFAULT_FFS_REPO,
@@ -4552,7 +4552,9 @@ class MainDataProcessingDemo:
     def _create_ffs_runner(self) -> object:
         """Create the configured FFS runner."""
         try:
-            from data_process.depth_backends import FastFoundationStereoTensorRTRunner
+            from demo_v6_1.utils.fast_foundation_stereo import (
+                FastFoundationStereoTensorRTRunner,
+            )
 
             return FastFoundationStereoTensorRTRunner(
                 ffs_repo=Path(self.args.ffs_repo),
