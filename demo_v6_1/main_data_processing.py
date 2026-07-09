@@ -6631,7 +6631,7 @@ class MainDataProcessingDemo:
             self.pcd_stats.record(result.packet.process_done_perf_s)
 
     # ------------------------------------------------------------------
-    # Depth backends: profiling, local FFS, remote FFS, remote sparse quality
+    # Depth backends: profiling and local FFS
     # ------------------------------------------------------------------
     def _depth_profile_worker(self) -> None:
         """Return the depth profile worker."""

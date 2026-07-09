@@ -14,12 +14,10 @@ Required final behavior (user, 2026-07-05):
 - Vendor the useful FFS parts into `demo_v6_1/utils`; drop the unused parts.
 - No `demo_v6_1` module imports `services.*` or `data_process.*`.
 
-State changes (new `demo_v6_1/utils/` modules):
-- `ffs_remote_protocol.py` — verbatim from `services/ffs_remote/protocol.py`.
-- `ffs_remote_client.py` — lean extraction of `FfsRemoteDepthResult` +
-  `FfsRemoteDepthClient` from `services/ffs_remote/ffs_depth_client.py`; the
-  ~1340 lines of CLI/benchmark/RealSense machinery (and their
-  `pyrealsense2`/`PIL`/`argparse` deps) are dropped. `zmq` stays lazy.
+Current state after the later Demo v6.1 legacy cleanup:
+- The remote FFS client/protocol vendored during the first standalone pass was
+  removed when the unused `ffs_remote` depth source and remote quality side
+  channel were deleted.
 - `depth_geometry.py` — verbatim from
   `data_process/depth_backends/geometry.py`.
 - `ffs_defaults.py` — verbatim from
@@ -30,18 +28,17 @@ State changes (new `demo_v6_1/utils/` modules):
   intra-repo import repointed to `demo_v6_1.utils.depth_geometry`; heavy
   TensorRT/Torch/FoundationStereo deps stay lazy.
 
-Repointed imports (6 sites): `main_data_processing.py` (protocol constants,
-ffs_defaults constants, lazy `FastFoundationStereoTensorRTRunner`),
-`main_warmup.py` (`FfsRemoteDepthClient`), `phystwin_strict_product.py` and
-`utils/projection.py` (`transform_points`).
+Repointed imports now kept in Demo v6.1: `main_data_processing.py`
+(`ffs_defaults` constants and lazy `FastFoundationStereoTensorRTRunner`),
+`phystwin_strict_product.py` and `utils/projection.py` (`transform_points`).
 
 Originals in `services/` and `data_process/` are untouched — `demo_v5_1`,
 `data_process_origin`, and the FFS servers keep using them.
 
 New test: `tests/test_demo_v6_1_standalone_ffs.py` — AST guard (no
 services/data_process import in any demo_v6_1 module), fresh-interpreter
-import probe, protocol round-trip, client validation, transform_points and
-ffs_defaults checks. Registered in the validation harness.
+import probe, transform_points, and ffs_defaults checks. Registered in the
+validation harness.
 
 ## Out of scope (reported, not done)
 
