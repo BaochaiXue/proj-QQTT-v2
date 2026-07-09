@@ -77,7 +77,6 @@ def _repo_relative_path_text(path: str | Path | None) -> str | None:
 from demo_v6_1.utils.camera import (  # noqa: E402
     CameraIntrinsics,
     SUPPORTED_CAPTURE_FPS,
-    SUPPORTED_PROFILES,
     apply_emitter,
     camera_intrinsics_from_rs,
     load_realsense_module,
@@ -147,7 +146,6 @@ DEFAULT_FPS = 60
 DEFAULT_DEVICE = "cuda"
 DEFAULT_DTYPE = "bfloat16"
 DEFAULT_COMPILE_MODE = "vision-reduce-overhead"
-COMPILE_MODES = ("vision-reduce-overhead",)
 TRACK_MODE_CONTROLLER_OBJECT = "controller-object"
 TRACK_MODE_OBJECT_ONLY = "object-only"
 TRACK_MODE_CONTROLLER_ONLY = "controller-only"
@@ -240,11 +238,6 @@ TABLE_Z_FILTER_CLASSES = (
 TRACKER_DISPLAY_SCOPE_CONTROLLER = "controller"
 TRACKER_DISPLAY_SCOPE_OBJECT = "object"
 TRACKER_DISPLAY_SCOPE_UNION = "union"
-TRACKER_DISPLAY_SCOPES = (
-    TRACKER_DISPLAY_SCOPE_CONTROLLER,
-    TRACKER_DISPLAY_SCOPE_OBJECT,
-    TRACKER_DISPLAY_SCOPE_UNION,
-)
 DEFAULT_TRACKER_DISPLAY_SCOPE = TRACKER_DISPLAY_SCOPE_UNION
 DEFAULT_TRACKER_BACKEND = TRACKER_BACKEND_NONE
 DEFAULT_TRACKER_QUERY_COUNT = PHYSTWIN_DENSE_QUERY_POINTS
