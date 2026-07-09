@@ -6,7 +6,7 @@ import torch
 from diffusers import StableDiffusionUpscalePipeline
 from PIL import Image
 
-from demo_v6_1.utils import stage_prewarm
+from demo_v6_2.utils import stage_prewarm
 
 MODEL_ID = "stabilityai/stable-diffusion-x4-upscaler"
 

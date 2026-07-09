@@ -6,15 +6,14 @@ import argparse
 import gc
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
 
-from demo_v6_1.utils.ffs_align import warm_up_numba_ffs_align
-from demo_v6_1.utils.pcd_filter import AsyncPcdFilterWorker
-from demo_v6_1.utils.projection import build_projection_grid
-from demo_v6_1.utils.render import apply_wslg_open3d_env_defaults
+from demo_v6_2.utils.ffs_align import warm_up_numba_ffs_align
+from demo_v6_2.utils.pcd_filter import AsyncPcdFilterWorker
+from demo_v6_2.utils.projection import build_projection_grid
+from demo_v6_2.utils.render import apply_wslg_open3d_env_defaults
 
 TRACK_MODE_CONTROLLER_OBJECT = "controller-object"
 TRACK_MODE_OBJECT_ONLY = "object-only"
@@ -112,61 +111,26 @@ def _mask_centroid_x(mask: np.ndarray) -> float:
 
 
 def _connected_components_by_area(mask: np.ndarray) -> list[np.ndarray]:
-    # Returns 8-connected components sorted largest-first. cv2 is the fast
-    # path; any failure (including cv2 being unavailable) falls back to the
-    # pure-Python flood fill below with the same connectivity and ordering.
-    """Return the connected components by area."""
+    """Return 8-connected components sorted largest-first."""
     mask_bool = np.asarray(mask, dtype=bool)
     if not np.any(mask_bool):
         return []
-    try:
-        import cv2  # noqa: PLC0415
+    import cv2  # noqa: PLC0415
 
-        count, labels, stats, _centroids = cv2.connectedComponentsWithStats(
-            mask_bool.astype(np.uint8),
-            8,
-        )
-        components: list[tuple[int, np.ndarray]] = []
-        for label_idx in range(1, int(count)):
-            area = int(stats[label_idx, cv2.CC_STAT_AREA])
-            if area > 0:
-                components.append((area, labels == label_idx))
-        components.sort(key=lambda item: item[0], reverse=True)
-        return [
-            np.ascontiguousarray(component, dtype=bool)
-            for _area, component in components
-        ]
-    except Exception:
-        height, width = mask_bool.shape[:2]
-        seen = np.zeros_like(mask_bool, dtype=bool)
-        components = []
-        for start_y, start_x in np.argwhere(mask_bool):
-            if seen[start_y, start_x]:
-                continue
-            stack = [(int(start_y), int(start_x))]
-            seen[start_y, start_x] = True
-            coords: list[tuple[int, int]] = []
-            while stack:
-                y, x = stack.pop()
-                coords.append((y, x))
-                for ny in (y - 1, y, y + 1):
-                    for nx in (x - 1, x, x + 1):
-                        if ny == y and nx == x:
-                            continue
-                        if (
-                            0 <= ny < height
-                            and 0 <= nx < width
-                            and mask_bool[ny, nx]
-                            and not seen[ny, nx]
-                        ):
-                            seen[ny, nx] = True
-                            stack.append((ny, nx))
-            component = np.zeros_like(mask_bool, dtype=bool)
-            yy, xx = np.asarray(coords, dtype=np.int64).T
-            component[yy, xx] = True
-            components.append(component)
-        components.sort(key=_mask_area, reverse=True)
-        return [np.ascontiguousarray(component, dtype=bool) for component in components]
+    count, labels, stats, _centroids = cv2.connectedComponentsWithStats(
+        mask_bool.astype(np.uint8),
+        8,
+    )
+    components: list[tuple[int, np.ndarray]] = []
+    for label_idx in range(1, int(count)):
+        area = int(stats[label_idx, cv2.CC_STAT_AREA])
+        if area > 0:
+            components.append((area, labels == label_idx))
+    components.sort(key=lambda item: item[0], reverse=True)
+    return [
+        np.ascontiguousarray(component, dtype=bool)
+        for _area, component in components
+    ]
 
 
 def split_controller_hand_instances(
@@ -209,9 +173,39 @@ def split_controller_hand_instances(
 # camera or shape-prior warmup) and only returns freed blocks to CUDA.
 
 
+def _reclaim_cuda_memory(
+    device: str,
+    *,
+    warn_context: str,
+    ipc_collect: bool = False,
+) -> float:
+    """Run gc.collect + CUDA synchronize/empty_cache, warning on failure.
+
+    ``warn_context`` names the operation in the ``[WARN] SAM3.1 <ctx> failed``
+    message; ``ipc_collect`` additionally returns inter-process CUDA blocks.
+    Returns elapsed milliseconds for this reclaim body.
+    """
+    started_s = time.perf_counter()
+    gc.collect()
+    try:
+        import torch  # noqa: PLC0415
+
+        if str(device).startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            if ipc_collect and hasattr(torch.cuda, "ipc_collect"):
+                torch.cuda.ipc_collect()
+    except Exception as exc:
+        print(
+            f"[WARN] SAM3.1 {warn_context} failed: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+    return (time.perf_counter() - started_s) * 1000.0
+
+
 def release_sam31_runtime_resources(device: str = DEFAULT_SAM31_DEVICE) -> float:
     """Return the release sam31 runtime resources."""
-    from demo_v6_1 import sam31_image_segmentation
+    from demo_v6_2 import sam31_image_segmentation
 
     started_s = time.perf_counter()
     try:
@@ -222,39 +216,13 @@ def release_sam31_runtime_resources(device: str = DEFAULT_SAM31_DEVICE) -> float
             flush=True,
         )
 
-    gc.collect()
-    try:
-        import torch  # noqa: PLC0415
-
-        if str(device).startswith("cuda") and torch.cuda.is_available():
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-            if hasattr(torch.cuda, "ipc_collect"):
-                torch.cuda.ipc_collect()
-    except Exception as exc:
-        print(
-            f"[WARN] SAM3.1 CUDA cleanup failed: {type(exc).__name__}: {exc}",
-            flush=True,
-        )
+    _reclaim_cuda_memory(device, warn_context="CUDA cleanup", ipc_collect=True)
     return (time.perf_counter() - started_s) * 1000.0
 
 
 def trim_sam31_cuda_allocator(device: str = DEFAULT_SAM31_DEVICE) -> float:
     """Return the trim sam31 CUDA allocator."""
-    started_s = time.perf_counter()
-    gc.collect()
-    try:
-        import torch  # noqa: PLC0415
-
-        if str(device).startswith("cuda") and torch.cuda.is_available():
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
-    except Exception as exc:
-        print(
-            f"[WARN] SAM3.1 CUDA trim failed: {type(exc).__name__}: {exc}",
-            flush=True,
-        )
-    return (time.perf_counter() - started_s) * 1000.0
+    return _reclaim_cuda_memory(device, warn_context="CUDA trim")
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +235,7 @@ def run_sam31_first_frame_mask_bundle(
     args: argparse.Namespace,
 ) -> InitialMaskBundle:
     """Run sam31 first frame mask bundle."""
-    from demo_v6_1.sam31_image_segmentation import (
+    from demo_v6_2.sam31_image_segmentation import (
         parse_text_prompts,
         run_image_segmentation,
     )
@@ -361,20 +329,9 @@ def run_sam31_first_frame_mask_bundle(
     )
 
 
-def run_sam31_first_frame_masks(
-    color_bgr: np.ndarray,
-    args: argparse.Namespace,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Run sam31 first frame masks."""
-    bundle = run_sam31_first_frame_mask_bundle(color_bgr, args)
-    return bundle.controller_mask, bundle.object_mask
-
-
 def resolve_initial_mask_bundle(
     frame: Any,
     args: argparse.Namespace,
-    *,
-    repo_root: Path,
 ) -> InitialMaskBundle:
     """Resolve initial mask bundle by running SAM3.1 on the live first frame."""
     expected_shape = tuple(frame.color_bgr.shape[:2])
@@ -385,17 +342,6 @@ def resolve_initial_mask_bundle(
     ):
         raise RuntimeError("SAM3.1 frame-0 masks do not match captured frame shape")
     return bundle
-
-
-def resolve_initial_masks(
-    frame: Any,
-    args: argparse.Namespace,
-    *,
-    repo_root: Path,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Resolve initial masks."""
-    bundle = resolve_initial_mask_bundle(frame, args, repo_root=repo_root)
-    return bundle.controller_mask, bundle.object_mask
 
 
 # ---------------------------------------------------------------------------
@@ -485,9 +431,7 @@ def prepare_runtime_projection_and_capture(
         )
 
 
-def prepare_segmentation_warmup(
-    demo: Any, *, repo_root: Path
-) -> SegmentationWarmupState:
+def prepare_segmentation_warmup(demo: Any) -> SegmentationWarmupState:
     """Prepare segmentation warmup."""
     hf_stream, torch_module, dtype, model, processor = demo._init_hf_model()
     first_frame = demo._wait_for_first_frame()
@@ -506,7 +450,6 @@ def prepare_segmentation_warmup(
     initial_masks = resolve_initial_mask_bundle(
         first_frame,
         demo.args,
-        repo_root=repo_root,
     )
     return SegmentationWarmupState(
         hf_stream=hf_stream,

@@ -209,7 +209,7 @@ def main(argv=None):
     """Run the command-line entry point."""
     args = build_parser().parse_args(argv)
     if args.wait_signal:
-        from demo_v6_1.utils import stage_prewarm
+        from demo_v6_2.utils import stage_prewarm
 
         # Pre-GO work is CPU-only (checkout resolution + the sam3d_objects
         # import tree). Weights go to the GPU only after GO: the upscale

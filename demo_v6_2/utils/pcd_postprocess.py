@@ -102,18 +102,22 @@ def _build_voxel_components(points: np.ndarray, *, voxel_size: float) -> list[np
     return components
 
 
-def apply_phystwin_like_radius_postprocess_with_trace(
-    *,
+def _radius_outlier_filter_stage(
     points: np.ndarray,
     colors: np.ndarray,
+    *,
     enabled: bool,
     radius_m: float,
     nb_points: int,
-) -> tuple[np.ndarray, np.ndarray, dict[str, Any], dict[str, np.ndarray]]:
-    """Radius-outlier filter returning (points, colors, stats, per-point trace masks).
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, Any], float]:
+    """Shared radius-outlier stage for both postprocess entry points.
 
-    Trace masks are indexed against the input point order so callers can map
-    removals back to source pixels/queries.
+    Returns (point_array, color_array, kept_mask, stats, radius_filter_ms):
+    ``stats`` carries the phystwin_like_radius_neighbor_filter fields (without
+    the timing key, which callers attach as needed), ``kept_mask`` is the
+    per-input-point inlier mask, and ``radius_filter_ms`` times only the
+    neighbor query (0.0 when disabled or empty). Callers build their own trace
+    dicts and slice the surviving points from ``kept_mask``.
     """
     point_array = np.asarray(points, dtype=np.float32).reshape(-1, 3)
     color_array = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
@@ -129,6 +133,46 @@ def apply_phystwin_like_radius_postprocess_with_trace(
         "outlier_point_count": 0,
         "outlier_ratio": 0.0,
     }
+    radius_filter_ms = 0.0
+    if bool(enabled) and point_count > 0:
+        radius_started_s = time.perf_counter()
+        result = detect_radius_outlier_indices(
+            point_array,
+            radius_m=float(radius_m),
+            nb_points=int(nb_points),
+        )
+        radius_filter_ms = float((time.perf_counter() - radius_started_s) * 1000.0)
+        inlier_indices = np.sort(np.asarray(result["inlier_indices"], dtype=np.int32).reshape(-1))
+        kept_mask[:] = False
+        kept_mask[inlier_indices] = True
+        outlier_count = int(point_count - len(inlier_indices))
+        stats.update(
+            {
+                "inlier_point_count": int(len(inlier_indices)),
+                "outlier_point_count": outlier_count,
+                "outlier_ratio": float(outlier_count / max(1, point_count)),
+            }
+        )
+    return point_array, color_array, kept_mask, stats, radius_filter_ms
+
+
+def apply_phystwin_like_radius_postprocess_with_trace(
+    *,
+    points: np.ndarray,
+    colors: np.ndarray,
+    enabled: bool,
+    radius_m: float,
+    nb_points: int,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any], dict[str, np.ndarray]]:
+    """Radius-outlier filter returning (points, colors, stats, per-point trace masks).
+
+    Trace masks are indexed against the input point order so callers can map
+    removals back to source pixels/queries.
+    """
+    point_array, color_array, kept_mask, stats, _radius_filter_ms = _radius_outlier_filter_stage(
+        points, colors, enabled=enabled, radius_m=radius_m, nb_points=nb_points
+    )
+    point_count = int(len(point_array))
     if not enabled or point_count == 0:
         trace = {
             "kept_mask": kept_mask.copy(),
@@ -137,28 +181,12 @@ def apply_phystwin_like_radius_postprocess_with_trace(
         }
         return point_array, color_array, stats, trace
 
-    result = detect_radius_outlier_indices(
-        point_array,
-        radius_m=float(radius_m),
-        nb_points=int(nb_points),
-    )
-    inlier_indices = np.sort(np.asarray(result["inlier_indices"], dtype=np.int32).reshape(-1))
-    kept_mask[:] = False
-    kept_mask[inlier_indices] = True
-    outlier_count = int(point_count - len(inlier_indices))
-    stats.update(
-        {
-            "inlier_point_count": int(len(inlier_indices)),
-            "outlier_point_count": outlier_count,
-            "outlier_ratio": float(outlier_count / max(1, point_count)),
-        }
-    )
     trace = {
         "kept_mask": kept_mask.copy(),
         "radius_removed_mask": ~kept_mask,
         "removed_mask": ~kept_mask,
     }
-    return point_array[inlier_indices], color_array[inlier_indices], stats, trace
+    return point_array[kept_mask], color_array[kept_mask], stats, trace
 
 
 def _bbox_gap_m(left_min: np.ndarray, left_max: np.ndarray, right_min: np.ndarray, right_max: np.ndarray) -> float:
@@ -286,42 +314,11 @@ def apply_enhanced_phystwin_like_postprocess_with_trace(
     """
     # ---- Stage 1: radius-outlier filter --------------------------------
     total_started_s = time.perf_counter()
-    point_array = np.asarray(points, dtype=np.float32).reshape(-1, 3)
-    color_array = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
+    point_array, color_array, radius_kept_mask, radius_stats, radius_filter_ms = _radius_outlier_filter_stage(
+        points, colors, enabled=enabled, radius_m=radius_m, nb_points=nb_points
+    )
+    radius_stats["radius_filter_ms"] = radius_filter_ms
     input_point_count = int(len(point_array))
-    radius_kept_mask = np.ones((input_point_count,), dtype=bool)
-    radius_stats = {
-        "enabled": bool(enabled),
-        "mode": "phystwin_like_radius_neighbor_filter",
-        "radius_m": float(radius_m),
-        "nb_points": int(nb_points),
-        "input_point_count": input_point_count,
-        "inlier_point_count": input_point_count,
-        "outlier_point_count": 0,
-        "outlier_ratio": 0.0,
-    }
-    if bool(enabled) and input_point_count > 0:
-        radius_started_s = time.perf_counter()
-        result = detect_radius_outlier_indices(
-            point_array,
-            radius_m=float(radius_m),
-            nb_points=int(nb_points),
-        )
-        radius_filter_ms = float((time.perf_counter() - radius_started_s) * 1000.0)
-        inlier_indices = np.sort(np.asarray(result["inlier_indices"], dtype=np.int32).reshape(-1))
-        radius_kept_mask[:] = False
-        radius_kept_mask[inlier_indices] = True
-        outlier_count = int(input_point_count - len(inlier_indices))
-        radius_stats.update(
-            {
-                "inlier_point_count": int(len(inlier_indices)),
-                "outlier_point_count": outlier_count,
-                "outlier_ratio": float(outlier_count / max(1, input_point_count)),
-                "radius_filter_ms": radius_filter_ms,
-            }
-        )
-    else:
-        radius_stats["radius_filter_ms"] = 0.0
     radius_indices = np.where(radius_kept_mask)[0].astype(np.int32)
     radius_points = point_array[radius_indices]
     radius_colors = color_array[radius_indices]

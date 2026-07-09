@@ -261,21 +261,25 @@ def _as_numpy_array(value: Any) -> np.ndarray:
     return np.asarray(value)
 
 
+def _normalize_mask_stack(masks: np.ndarray) -> np.ndarray:
+    """Normalize (H, W) / (N, 1, H, W) mask layouts to (N, H, W)."""
+    if masks.ndim == 2:
+        masks = masks[None, ...]
+    if masks.ndim >= 4 and masks.shape[1] == 1:
+        masks = masks[:, 0]
+    return masks
+
+
 def _select_image_output_indices(
     state: dict[str, Any],
     *,
     keep_all_instances: bool,
 ) -> list[int]:
-    # Normalize (H, W) / (N, 1, H, W) mask layouts to (N, H, W); the same
-    # normalization is repeated in _collect_image_prompt_masks.
     """Select image output indices."""
     masks = _as_numpy_array(state.get("masks", []))
     if masks.size == 0:
         return []
-    if masks.ndim == 2:
-        masks = masks[None, ...]
-    if masks.ndim >= 4 and masks.shape[1] == 1:
-        masks = masks[:, 0]
+    masks = _normalize_mask_stack(masks)
 
     object_count = int(masks.shape[0])
     if object_count == 0:
@@ -302,10 +306,7 @@ def _collect_image_prompt_masks(
     masks = _as_numpy_array(state.get("masks", []))
     if masks.size == 0:
         return []
-    if masks.ndim == 2:
-        masks = masks[None, ...]
-    if masks.ndim >= 4 and masks.shape[1] == 1:
-        masks = masks[:, 0]
+    masks = _normalize_mask_stack(masks)
 
     output: list[np.ndarray] = []
     for idx in sorted(int(item) for item in selected_indices):

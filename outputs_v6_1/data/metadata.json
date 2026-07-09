@@ -1,0 +1,12 @@
+{
+  "case_name": "demo_v6_1",
+  "chunk_size": 35,
+  "demo_version": "demo_v6_1",
+  "latest_committed_frame": 525,
+  "online_dir": "outputs_v6_1/online_data",
+  "query_schema_hash": "f9429b858d58c267fd94578f69ed1fe034bdcb81a6cc3d07aee33caf5a49faa1",
+  "query_schema_version": "data_process_sam3d_realtime_query_schema_v1",
+  "reference_pipeline": "data_process_sam3d",
+  "runtime_contract": "data_process_sam3d_realtime_final_data_v1",
+  "runtime_product_name": "demo_v6_1_main_data_processing"
+}

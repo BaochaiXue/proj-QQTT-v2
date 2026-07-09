@@ -120,9 +120,11 @@ online_data/
   必有归档帧。深度 > 65.535 m（FFS 远场垃圾）归为 invalid=0 而非饱和。
   缺表标定时 c2w 回退 identity、接受 fx/fy/cx/cy intrinsics 形式，与
   chunk stream 的容错一致。
-- **fail fast**：chunk 帧找不到对应 color/depth（prepared frame 缺失、
-  旧 NPZ 无 `depth_mm_u16`、online index 不连续、legacy sidecar 回退
-  路径）→ `OnlineFrameArchiveError` 中止流（本不应发生）。
+- **fail fast**：`frames.jsonl` 行缺少 canonical
+  `prepared_phystwin_frame_path` 或对应文件不存在时，在读取该行时立即以
+  `OnlineFrameArchiveError` 中止流；旧 prepared NPZ 无 `depth_mm_u16`或
+  online index 不连续也同样立即失败。不再从 RGB/depth/mask/trajectory
+  sidecar 重建 chunk。
 - **清理**：新 run 开始由 `prepare_realtime_output_for_new_run` 移除整个
   `online_data/`；`OnlineFrameArchive` 构造时额外清理 `color/`、
   `depth/`、`metadata.json`、`calibrate.pkl`、`enhance_metadata.json`

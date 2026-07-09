@@ -6,7 +6,7 @@
   "latest_committed_frame": 525,
   "num_frames_total": 525,
   "online_num_frames_total": 525,
-  "query_schema_hash": "809766967a3cb1286b79068c1dbcb6554c813c728a1e0ace70bea979e733dd38",
+  "query_schema_hash": "f9429b858d58c267fd94578f69ed1fe034bdcb81a6cc3d07aee33caf5a49faa1",
   "query_schema_version": "data_process_sam3d_realtime_query_schema_v1",
   "reference_pipeline": "data_process_sam3d",
   "runtime_contract": "data_process_sam3d_realtime_final_data_v1",

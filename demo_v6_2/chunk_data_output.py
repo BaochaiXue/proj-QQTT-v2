@@ -12,13 +12,13 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from demo_v6_1.data_keys import TIME_KEYS
-from demo_v6_1.chunk_data_payload import (
+from demo_v6_2.data_keys import TIME_KEYS
+from demo_v6_2.chunk_data_payload import (
     DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
     DATA_PROCESS_QUERY_SCHEMA_KEYS,
     build_query_schema_payload,
 )
-from demo_v6_1.utils.atomic_io import atomic_json_dump, atomic_pickle_dump
+from demo_v6_2.utils.atomic_io import atomic_json_dump, atomic_pickle_dump
 
 # Shape-prior point clouds do not vary per frame; the latest committed value is
 # republished with every aggregate rewrite.

@@ -1,8 +1,14 @@
 """Per-frame RGB-D archive for the published online stream.
 
-Alongside ``online_data/chunks`` (which stays byte-identical to the existing
-contract), every published online frame k also lands as raw sensor products in
-the offline PhysTwin case layout::
+Pipeline questions Q20-Q22 (see PIPELINE.md): this is the raw RGB-D side of the
+schema the training side reads. Alongside ``online_data/chunks`` (which stays
+byte-identical to the existing contract), every published online frame k also
+lands as raw sensor products in the offline PhysTwin case layout
+(``color/0/{k}.png``, ``depth/0/{k}.npy`` uint16 mm, ``calibrate.pkl``,
+``metadata.json``, ``enhance_metadata.json``); frame files are fsynced before the
+chunk commits and ``metadata.json`` is rewritten atomically afterward, so
+``frame_num`` never points at a file that does not exist and the ``phystwin_shen``
+trainer can start reading from the first committed chunk. Layout::
 
     online_data/
         color/0/{k}.png        # original RGB of the frame the chunk consumed
@@ -24,9 +30,9 @@ mirror the recording-case schema that data_process_origin/data_process_pcd.py
 reads: ``np.load(depth)/1000.0``, ``cv2.imread`` color, ``intrinsics`` shaped
 (num_cam, 3, 3), and contiguous integer filenames ``0..frame_num-1``.
 
-A chunk frame that cannot produce its color/depth pair (missing prepared
-frame, legacy npz without depth, misaligned indices) fails fast — the online
-chunk is never committed without its archived frames.
+A capture row without its prepared frame is rejected before materialization.
+Legacy prepared NPZs without depth and misaligned indices also fail fast, so an
+online chunk is never committed without its archived frames.
 """
 
 from __future__ import annotations
@@ -37,8 +43,8 @@ from typing import Any, Mapping, Sequence
 import cv2
 import numpy as np
 
-from demo_v6_1.phystwin_strict_product import PreparedPhysTwinFrame
-from demo_v6_1.utils.atomic_io import atomic_json_dump, atomic_pickle_dump
+from demo_v6_2.phystwin_strict_product import PreparedPhysTwinFrame
+from demo_v6_2.utils.atomic_io import atomic_json_dump, atomic_pickle_dump
 
 DEPTH_ENCODING = "uint16_millimeters_invalid_zero"
 CAMERA_INDEX = 0
@@ -245,7 +251,7 @@ class OnlineFrameArchive:
         chunk_id: int,
         metadata: Mapping[str, Any],
         serial_number: str,
-        frames: Sequence[PreparedPhysTwinFrame] | None,
+        frames: Sequence[PreparedPhysTwinFrame],
         source_frame_indices: Sequence[int],
         source_timestamps_s: Sequence[float] | None,
         online_start_frame: int,
@@ -258,12 +264,6 @@ class OnlineFrameArchive:
         interruption point ``frame_num`` therefore counts only frames that
         both exist on disk and belong to a committed chunk.
         """
-        if frames is None:
-            raise OnlineFrameArchiveError(
-                f"chunk {chunk_id}: online_data color/depth requires prepared "
-                "frames; the legacy sidecar reprocess path cannot satisfy the "
-                "per-frame archive contract"
-            )
         if int(online_start_frame) != int(self.frames_written):
             raise OnlineFrameArchiveError(
                 f"chunk {chunk_id}: online frame index discontinuity — "
@@ -293,10 +293,6 @@ class OnlineFrameArchive:
                 f"(online frame {online_frame_index}, "
                 f"source frame {source_frame_index})"
             )
-            if frame is None:
-                raise OnlineFrameArchiveError(
-                    f"{context}: prepared frame is missing"
-                )
             if (
                 frame.source_frame_index is not None
                 and int(frame.source_frame_index) != source_frame_index

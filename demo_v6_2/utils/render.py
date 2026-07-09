@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-from demo_v6_1.utils.concurrency import elapsed_ms
+from demo_v6_2.utils.concurrency import elapsed_ms
 
 WSLG_OPEN3D_ENV_UNSET_KEYS = (
     "VK_ICD_FILENAMES",

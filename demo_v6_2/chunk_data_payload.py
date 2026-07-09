@@ -12,7 +12,7 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from demo_v6_1.tracking import NEIGHBOR_TABLE_SIZE, RECOVERY_NEIGHBOR_COUNT
+from demo_v6_2.tracking import NEIGHBOR_TABLE_SIZE, RECOVERY_NEIGHBOR_COUNT
 
 DATA_PROCESS_QUERY_SCHEMA_VERSION = "data_process_sam3d_realtime_query_schema_v1"
 DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION = (

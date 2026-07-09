@@ -1,0 +1,24 @@
+{
+  "chunk_count": 15,
+  "controller_point_count": 30,
+  "controller_sphere_radius_m": 0.01,
+  "fps": 5.0,
+  "frame_count": 525,
+  "height": 900,
+  "object_motion_valid_ratio": 0.9283680354732986,
+  "object_point_count": 1976,
+  "object_rendered_valid_ratio": 0.9283680354732986,
+  "object_visibility_ratio": 0.9555552342394448,
+  "output_path": "demo_v6_2/others/obj_shape_asap_outputs/object_controller_tracking_5fps.mp4",
+  "query_schema_hash": "f9429b858d58c267fd94578f69ed1fe034bdcb81a6cc3d07aee33caf5a49faa1",
+  "render_policy": "visibility_and_motion_valid",
+  "source_frame_first": 0,
+  "source_frame_last": 5574,
+  "style_reference": "data_process_origin/data_process_sample.py::visualize_track",
+  "track_status_counts": {
+    "degraded": 14,
+    "normal": 1
+  },
+  "video_size_bytes": 27276236,
+  "width": 1280
+}

@@ -1,52 +1,61 @@
 #!/usr/bin/env python3
-"""Render Demo v6.1 object/controller tracking chunks as an MP4.
-
-The rendering style follows ``data_process_origin/data_process_sample.py``:
-object points use fixed rainbow colors from the first-frame y coordinate, and
-controller points are red spheres moving through the same 3D view.
-"""
+"""Render Demo v6.2 object/controller tracking chunks as one MP4."""
 
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
+from dataclasses import dataclass
 import json
 import pickle
 from pathlib import Path
 from typing import Any
 
 import cv2
-import matplotlib
+from matplotlib import colormaps
 import numpy as np
 import open3d as o3d
 
-matplotlib.use("Agg", force=True)
-import matplotlib.pyplot as plt  # noqa: E402
-
 
 DEFAULT_CHUNKS_DIR = Path("outputs_v6_1/online_data/chunks")
-DEFAULT_OUTPUT_DIR = Path("demo_v6_1/others/obj_shape_asap_outputs")
-DEFAULT_OUTPUT_PATH = (
-    DEFAULT_OUTPUT_DIR / "object_controller_tracking_all_chunks_5fps.mp4"
-)
-DEFAULT_SUMMARY_PATH = (
-    DEFAULT_OUTPUT_DIR / "object_controller_tracking_all_chunks_5fps.json"
-)
+DEFAULT_OUTPUT_DIR = Path("demo_v6_2/others/obj_shape_asap_outputs")
+DEFAULT_OUTPUT_PATH = DEFAULT_OUTPUT_DIR / "object_controller_tracking_5fps.mp4"
+DEFAULT_SUMMARY_PATH = DEFAULT_OUTPUT_DIR / "object_controller_tracking_5fps.json"
 DEFAULT_FPS = 5.0
 DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 900
 DEFAULT_CONTROLLER_RADIUS_M = 0.01
-OVERLAY_ALPHA = 0.58
-VISIBILITY_INVALID_COLOR = (1.0, 0.0, 0.0)
-MOTION_INVALID_COLOR = (0.66, 0.32, 0.10)
-OVERLAY_POINT_SIZE = 6.0
+
+
+@dataclass(frozen=True)
+class TrackingSequence:
+    """Validated tracking tensors concatenated across contiguous chunks."""
+
+    chunk_paths: tuple[Path, ...]
+    object_points: np.ndarray
+    object_visibilities: np.ndarray
+    object_motions_valid: np.ndarray
+    controller_points: np.ndarray
+    source_frame_indices: tuple[int, ...]
+    query_schema_hash: str
+    track_status_counts: dict[str, int]
+
+    @property
+    def frame_count(self) -> int:
+        """Return the number of published frames."""
+        return int(self.object_points.shape[0])
+
+    @property
+    def rendered_object_mask(self) -> np.ndarray:
+        """Return object points accepted by both tracking validity gates."""
+        return self.object_visibilities & self.object_motions_valid
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the command-line argument parser."""
+    """Build the command-line parser."""
     parser = argparse.ArgumentParser(
         description=(
-            "Visualize Demo v6.1 object/controller tracking from all online "
-            "final_data chunks."
+            "Render Demo v6.2 object/controller tracking from contiguous online chunks."
         )
     )
     parser.add_argument(
@@ -74,236 +83,262 @@ def build_parser() -> argparse.ArgumentParser:
         "--controller-radius-m",
         type=float,
         default=DEFAULT_CONTROLLER_RADIUS_M,
-        help="Open3D sphere radius used for each controller point.",
-    )
-    parser.add_argument(
-        "--object-filter",
-        choices=("visibility", "motion-valid"),
-        default="visibility",
-        help=(
-            "Per-frame object mask used for rendering. data_process_origin "
-            "final_data visualization uses visibility."
-        ),
+        help="Radius of each red controller sphere.",
     )
     return parser
 
 
-def _load_pickle(path: Path) -> Any:
-    """Load pickle."""
+def _required(
+    chunk: Mapping[str, Any],
+    key: str,
+    *,
+    chunk_path: Path,
+) -> Any:
+    """Return one required chunk field."""
+    if key not in chunk:
+        raise KeyError(f"{chunk_path} is missing required field {key!r}")
+    return chunk[key]
+
+
+def _load_chunk(path: Path) -> Mapping[str, Any]:
+    """Load one mapping-shaped chunk."""
     with path.open("rb") as handle:
-        return pickle.load(handle)
+        chunk = pickle.load(handle)
+    if not isinstance(chunk, Mapping):
+        raise TypeError(f"{path} must contain a mapping, got {type(chunk).__name__}")
+    return chunk
 
 
-def _require_track_points(value: Any, *, name: str) -> np.ndarray:
-    """Return validated track points."""
-    points = np.asarray(value, dtype=np.float64)
+def _required_integer(
+    chunk: Mapping[str, Any],
+    key: str,
+    *,
+    chunk_path: Path,
+) -> int:
+    """Return one required integer field without coercing other types."""
+    value = _required(chunk, key, chunk_path=chunk_path)
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        raise TypeError(f"{chunk_path} field {key!r} must be an integer")
+    return int(value)
+
+
+def _required_points(
+    chunk: Mapping[str, Any],
+    key: str,
+    *,
+    chunk_path: Path,
+) -> np.ndarray:
+    """Return one finite, non-empty ``(frames, points, 3)`` array."""
+    points = np.asarray(
+        _required(chunk, key, chunk_path=chunk_path),
+        dtype=np.float64,
+    )
     if points.ndim != 3 or points.shape[2] != 3:
         raise ValueError(
-            f"{name} must have shape (frames, points, 3), got {points.shape}"
+            f"{chunk_path} field {key!r} must have shape (frames, points, 3), "
+            f"got {points.shape}"
         )
     if points.shape[0] == 0 or points.shape[1] == 0:
-        raise ValueError(f"{name} must be non-empty, got {points.shape}")
+        raise ValueError(f"{chunk_path} field {key!r} must be non-empty")
     if not np.isfinite(points).all():
-        raise ValueError(f"{name} contains non-finite values")
+        raise ValueError(f"{chunk_path} field {key!r} contains non-finite values")
     return np.ascontiguousarray(points)
 
 
-def _require_mask(value: Any, *, name: str, shape: tuple[int, int]) -> np.ndarray:
-    """Return a mask array or raise when its shape is invalid."""
-    mask = np.asarray(value, dtype=bool)
+def _required_mask(
+    chunk: Mapping[str, Any],
+    key: str,
+    *,
+    shape: tuple[int, int],
+    chunk_path: Path,
+) -> np.ndarray:
+    """Return one boolean mask with the required frame/point shape."""
+    mask = np.asarray(_required(chunk, key, chunk_path=chunk_path))
+    if mask.dtype != np.bool_:
+        raise TypeError(f"{chunk_path} field {key!r} must be boolean")
     if mask.shape != shape:
-        raise ValueError(f"{name} must have shape {shape}, got {mask.shape}")
+        raise ValueError(
+            f"{chunk_path} field {key!r} must have shape {shape}, got {mask.shape}"
+        )
     return np.ascontiguousarray(mask)
 
 
-def _sorted_chunk_paths(chunks_dir: Path) -> list[Path]:
-    """Return sorted chunk paths."""
+def _required_source_indices(
+    chunk: Mapping[str, Any],
+    *,
+    frame_count: int,
+    chunk_path: Path,
+) -> tuple[int, ...]:
+    """Return one integer source-frame index per published frame."""
+    values = np.asarray(_required(chunk, "source_frame_indices", chunk_path=chunk_path))
+    if values.ndim != 1 or values.shape[0] != frame_count:
+        raise ValueError(
+            f"{chunk_path} source_frame_indices must have shape "
+            f"({frame_count},), got {values.shape}"
+        )
+    if not np.issubdtype(values.dtype, np.integer):
+        raise TypeError(f"{chunk_path} source_frame_indices must be integers")
+    return tuple(int(value) for value in values)
+
+
+def _sorted_chunk_paths(chunks_dir: Path) -> tuple[Path, ...]:
+    """Return all chunk files in publication order."""
     if not chunks_dir.is_dir():
         raise FileNotFoundError(f"chunk directory not found: {chunks_dir}")
-    chunk_paths = sorted(chunks_dir.glob("chunk_*.pkl"))
-    if not chunk_paths:
+    paths = tuple(sorted(chunks_dir.glob("chunk_*.pkl")))
+    if not paths:
         raise FileNotFoundError(f"no chunk_*.pkl files found under {chunks_dir}")
-    return chunk_paths
+    return paths
 
 
-def _require_same_count(
-    *,
-    current_count: int,
-    expected_count: int | None,
-    chunk_path: Path,
-    label: str,
-) -> int:
-    """Validate that all named arrays share the same frame count."""
-    if expected_count is None:
-        return int(current_count)
-    if int(current_count) != int(expected_count):
-        raise ValueError(
-            f"{chunk_path} {label} count changed to {current_count}; "
-            f"expected {expected_count}"
-        )
-    return int(expected_count)
-
-
-def load_tracking_chunks(chunks_dir: Path) -> dict[str, Any]:
-    """Load tracking chunks."""
+def load_tracking_sequence(chunks_dir: Path) -> TrackingSequence:
+    """Load and concatenate the current online tracking chunk contract."""
     chunk_paths = _sorted_chunk_paths(Path(chunks_dir))
     object_points_parts: list[np.ndarray] = []
-    object_visibilities_parts: list[np.ndarray] = []
-    object_motions_valid_parts: list[np.ndarray] = []
+    object_visibility_parts: list[np.ndarray] = []
+    object_motion_parts: list[np.ndarray] = []
     controller_points_parts: list[np.ndarray] = []
     source_frame_indices: list[int] = []
-    source_timestamps_s: list[float] = []
     status_counts: dict[str, int] = {}
     expected_start = 0
-    expected_schema_hash: str | None = None
-    object_count: int | None = None
-    controller_count: int | None = None
+    expected_object_count = 0
+    expected_controller_count = 0
+    expected_schema_hash = ""
 
-    for chunk_path in chunk_paths:
-        chunk = dict(_load_pickle(chunk_path))
-        start_frame = int(chunk["start_frame"])
-        end_frame = int(chunk["end_frame"])
+    for chunk_index, chunk_path in enumerate(chunk_paths):
+        chunk = _load_chunk(chunk_path)
+        start_frame = _required_integer(
+            chunk,
+            "start_frame",
+            chunk_path=chunk_path,
+        )
+        end_frame = _required_integer(
+            chunk,
+            "end_frame",
+            chunk_path=chunk_path,
+        )
         if start_frame != expected_start:
             raise ValueError(
-                f"{chunk_path} starts at {start_frame}, expected {expected_start}"
+                f"{chunk_path} starts at frame {start_frame}; expected {expected_start}"
             )
         if end_frame <= start_frame:
             raise ValueError(
                 f"{chunk_path} has invalid frame range [{start_frame}, {end_frame})"
             )
 
-        object_points = _require_track_points(
-            chunk["object_points"],
-            name=f"{chunk_path} object_points",
-        )
-        controller_points = _require_track_points(
-            chunk["controller_points"],
-            name=f"{chunk_path} controller_points",
-        )
-        chunk_frame_count = int(object_points.shape[0])
-        if chunk_frame_count != end_frame - start_frame:
-            raise ValueError(f"{chunk_path} frame range does not match tensors")
-        if int(controller_points.shape[0]) != chunk_frame_count:
-            raise ValueError(f"{chunk_path} controller frame count mismatch")
-
-        object_count = _require_same_count(
-            current_count=int(object_points.shape[1]),
-            expected_count=object_count,
+        object_points = _required_points(
+            chunk,
+            "object_points",
             chunk_path=chunk_path,
-            label="object",
         )
-        controller_count = _require_same_count(
-            current_count=int(controller_points.shape[1]),
-            expected_count=controller_count,
+        controller_points = _required_points(
+            chunk,
+            "controller_points",
             chunk_path=chunk_path,
-            label="controller",
         )
-
-        schema_hash = str(chunk.get("query_schema_hash", ""))
-        if expected_schema_hash is None:
-            expected_schema_hash = schema_hash
-        elif schema_hash != expected_schema_hash:
+        frame_count = int(object_points.shape[0])
+        if end_frame - start_frame != frame_count:
+            raise ValueError(f"{chunk_path} frame range does not match object_points")
+        if controller_points.shape[0] != frame_count:
             raise ValueError(
-                f"{chunk_path} query_schema_hash changed to {schema_hash}; "
-                f"expected {expected_schema_hash}"
+                f"{chunk_path} controller_points frame count does not match"
             )
 
-        object_visibilities = _require_mask(
-            chunk["object_visibilities"],
-            name=f"{chunk_path} object_visibilities",
+        object_count = int(object_points.shape[1])
+        controller_count = int(controller_points.shape[1])
+        schema_hash = _required(chunk, "query_schema_hash", chunk_path=chunk_path)
+        if not isinstance(schema_hash, str) or not schema_hash:
+            raise TypeError(f"{chunk_path} query_schema_hash must be a string")
+        if chunk_index == 0:
+            expected_object_count = object_count
+            expected_controller_count = controller_count
+            expected_schema_hash = schema_hash
+        else:
+            if object_count != expected_object_count:
+                raise ValueError(
+                    f"{chunk_path} object point count changed from "
+                    f"{expected_object_count} to {object_count}"
+                )
+            if controller_count != expected_controller_count:
+                raise ValueError(
+                    f"{chunk_path} controller point count changed from "
+                    f"{expected_controller_count} to {controller_count}"
+                )
+            if schema_hash != expected_schema_hash:
+                raise ValueError(f"{chunk_path} query_schema_hash changed")
+
+        object_visibilities = _required_mask(
+            chunk,
+            "object_visibilities",
             shape=object_points.shape[:2],
+            chunk_path=chunk_path,
         )
-        object_motions_valid = _require_mask(
-            chunk["object_motions_valid"],
-            name=f"{chunk_path} object_motions_valid",
+        object_motions_valid = _required_mask(
+            chunk,
+            "object_motions_valid",
             shape=object_points.shape[:2],
+            chunk_path=chunk_path,
         )
-        chunk_source_frames = [int(value) for value in chunk["source_frame_indices"]]
-        if len(chunk_source_frames) != chunk_frame_count:
-            raise ValueError(f"{chunk_path} source_frame_indices length mismatch")
-        chunk_timestamps = [
-            float(value) for value in chunk.get("source_timestamps_s", [])
-        ]
-        if chunk_timestamps and len(chunk_timestamps) != chunk_frame_count:
-            raise ValueError(f"{chunk_path} source_timestamps_s length mismatch")
+        chunk_source_indices = _required_source_indices(
+            chunk,
+            frame_count=frame_count,
+            chunk_path=chunk_path,
+        )
+        status = _required(chunk, "track_process_status", chunk_path=chunk_path)
+        if not isinstance(status, str) or not status:
+            raise TypeError(f"{chunk_path} track_process_status must be a string")
 
         object_points_parts.append(object_points)
-        object_visibilities_parts.append(object_visibilities)
-        object_motions_valid_parts.append(object_motions_valid)
+        object_visibility_parts.append(object_visibilities)
+        object_motion_parts.append(object_motions_valid)
         controller_points_parts.append(controller_points)
-        source_frame_indices.extend(chunk_source_frames)
-        source_timestamps_s.extend(chunk_timestamps)
-        status = str(chunk.get("track_process_status", ""))
+        source_frame_indices.extend(chunk_source_indices)
         status_counts[status] = status_counts.get(status, 0) + 1
         expected_start = end_frame
 
-    return {
-        "chunk_paths": chunk_paths,
-        "object_points": np.concatenate(object_points_parts, axis=0),
-        "object_visibilities": np.concatenate(object_visibilities_parts, axis=0),
-        "object_motions_valid": np.concatenate(object_motions_valid_parts, axis=0),
-        "controller_points": np.concatenate(controller_points_parts, axis=0),
-        "source_frame_indices": source_frame_indices,
-        "source_timestamps_s": source_timestamps_s,
-        "query_schema_hash": "" if expected_schema_hash is None else expected_schema_hash,
-        "track_status_counts": status_counts,
-    }
+    return TrackingSequence(
+        chunk_paths=chunk_paths,
+        object_points=np.concatenate(object_points_parts, axis=0),
+        object_visibilities=np.concatenate(object_visibility_parts, axis=0),
+        object_motions_valid=np.concatenate(object_motion_parts, axis=0),
+        controller_points=np.concatenate(controller_points_parts, axis=0),
+        source_frame_indices=tuple(source_frame_indices),
+        query_schema_hash=expected_schema_hash,
+        track_status_counts=status_counts,
+    )
 
 
-def _rainbow_colors_from_first_frame_y(object_points: np.ndarray) -> np.ndarray:
-    """Return the rainbow colors from first frame y."""
-    first_frame_y = np.asarray(object_points[0, :, 1], dtype=np.float64)
-    y_min = float(np.min(first_frame_y))
-    y_max = float(np.max(first_frame_y))
-    y_range = y_max - y_min
-    if abs(y_range) <= 1e-12:
-        normalized = np.zeros_like(first_frame_y, dtype=np.float64)
+def _rainbow_colors(object_points: np.ndarray) -> np.ndarray:
+    """Assign stable rainbow colors from the first frame's y coordinate."""
+    first_frame_y = object_points[0, :, 1]
+    y_min = float(first_frame_y.min())
+    y_range = float(first_frame_y.max()) - y_min
+    if y_range == 0.0:
+        normalized_y = np.zeros_like(first_frame_y)
     else:
-        normalized = (first_frame_y - y_min) / y_range
-    return np.ascontiguousarray(plt.cm.rainbow(normalized)[:, :3])
+        normalized_y = (first_frame_y - y_min) / y_range
+    return np.ascontiguousarray(colormaps["rainbow"](normalized_y)[:, :3])
 
 
-def _sphere_mesh(
-    center: np.ndarray,
-    *,
-    color: tuple[float, float, float],
-    radius: float,
-) -> o3d.geometry.TriangleMesh:
-    """Return the sphere mesh."""
-    mesh = o3d.geometry.TriangleMesh.create_sphere(radius=float(radius))
-    mesh.compute_vertex_normals()
-    mesh.paint_uniform_color(color)
-    mesh.translate(np.asarray(center, dtype=np.float64))
-    return mesh
-
-
-def _constant_colors(point_count: int, color: tuple[float, float, float]) -> np.ndarray:
-    """Return one RGB color repeated for each point."""
-    if int(point_count) <= 0:
-        return np.empty((0, 3), dtype=np.float64)
-    rgb = np.asarray(color, dtype=np.float64).reshape(1, 3)
-    return np.repeat(rgb, int(point_count), axis=0)
-
-
-def _point_cloud(
-    points: np.ndarray,
-    colors: np.ndarray | tuple[float, float, float],
-) -> o3d.geometry.PointCloud:
-    """Return an Open3D point cloud."""
-    points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
-    if isinstance(colors, tuple):
-        color_array = _constant_colors(int(points.shape[0]), colors)
-    else:
-        color_array = np.asarray(colors, dtype=np.float64).reshape(-1, 3)
-    if color_array.shape != points.shape:
-        raise ValueError(
-            f"point cloud colors must have shape {points.shape}, got "
-            f"{color_array.shape}"
-        )
+def _point_cloud(points: np.ndarray, colors: np.ndarray) -> o3d.geometry.PointCloud:
+    """Create an Open3D point cloud with one color per point."""
     cloud = o3d.geometry.PointCloud()
     cloud.points = o3d.utility.Vector3dVector(points)
-    cloud.colors = o3d.utility.Vector3dVector(color_array)
+    cloud.colors = o3d.utility.Vector3dVector(colors)
     return cloud
+
+
+def _controller_sphere(
+    center: np.ndarray,
+    *,
+    radius_m: float,
+) -> o3d.geometry.TriangleMesh:
+    """Create one red controller marker."""
+    mesh = o3d.geometry.TriangleMesh.create_sphere(radius=radius_m)
+    mesh.compute_vertex_normals()
+    mesh.paint_uniform_color((1.0, 0.0, 0.0))
+    mesh.translate(center)
+    return mesh
 
 
 def _capture_rgb(
@@ -312,53 +347,29 @@ def _capture_rgb(
     width: int,
     height: int,
 ) -> np.ndarray:
-    """Capture one RGB frame from an Open3D visualizer."""
+    """Capture one RGB frame at the requested output size."""
     visualizer.poll_events()
     visualizer.update_renderer()
     frame = np.asarray(visualizer.capture_screen_float_buffer(do_render=True))
     frame_u8 = np.clip(frame * 255.0, 0.0, 255.0).astype(np.uint8)
-    if frame_u8.shape[:2] != (int(height), int(width)):
+    if frame_u8.shape[:2] != (height, width):
         frame_u8 = cv2.resize(
             frame_u8,
-            (int(width), int(height)),
+            (width, height),
             interpolation=cv2.INTER_AREA,
         )
     return frame_u8
 
 
-def _blend_overlay(
-    base_rgb: np.ndarray,
-    overlay_rgb: np.ndarray,
-    *,
-    alpha: float,
-) -> np.ndarray:
-    """Blend non-black overlay pixels over a base RGB frame."""
-    if base_rgb.shape != overlay_rgb.shape:
-        raise ValueError(
-            f"overlay shape {overlay_rgb.shape} does not match base "
-            f"shape {base_rgb.shape}"
-        )
-    overlay_mask = np.any(overlay_rgb > 8, axis=2)
-    if not bool(np.any(overlay_mask)):
-        return base_rgb
-    blended = base_rgb.astype(np.float32)
-    overlay = overlay_rgb.astype(np.float32)
-    blended[overlay_mask] = (
-        (1.0 - float(alpha)) * blended[overlay_mask]
-        + float(alpha) * overlay[overlay_mask]
-    )
-    return np.clip(blended, 0.0, 255.0).astype(np.uint8)
-
-
 def _draw_frame_label(
     frame_bgr: np.ndarray,
     *,
-    frame_idx: int,
+    frame_index: int,
     frame_count: int,
-    source_frame: int,
+    source_frame_index: int,
 ) -> None:
-    """Draw the output frame label in the upper-left corner."""
-    label = f"frame {int(frame_idx)}/{int(frame_count) - 1} | source {int(source_frame)}"
+    """Draw the published and source frame indices."""
+    label = f"frame {frame_index}/{frame_count - 1} | source {source_frame_index}"
     origin = (24, 38)
     font = cv2.FONT_HERSHEY_SIMPLEX
     cv2.putText(
@@ -383,300 +394,186 @@ def _draw_frame_label(
     )
 
 
-def _object_mask_for_frame(
-    tracking: dict[str, Any],
-    frame_idx: int,
-    *,
-    object_filter: str,
-) -> np.ndarray:
-    """Return the object mask for frame."""
-    if object_filter == "visibility":
-        return np.asarray(tracking["object_visibilities"][frame_idx], dtype=bool)
-    if object_filter == "motion-valid":
-        return np.asarray(tracking["object_motions_valid"][frame_idx], dtype=bool)
-    raise ValueError(f"unsupported object_filter: {object_filter!r}")
-
-
 def render_tracking_video(
-    tracking: dict[str, Any],
+    tracking: TrackingSequence,
     *,
     output_path: Path,
     fps: float,
     width: int,
     height: int,
     controller_radius_m: float,
-    object_filter: str,
 ) -> None:
-    """Render tracking video."""
-    if float(fps) <= 0.0:
+    """Render one video from a validated tracking sequence."""
+    if fps <= 0.0:
         raise ValueError("fps must be positive")
-    if int(width) <= 0 or int(height) <= 0:
+    if width <= 0 or height <= 0:
         raise ValueError("width and height must be positive")
-    if float(controller_radius_m) <= 0.0:
+    if controller_radius_m <= 0.0:
         raise ValueError("controller_radius_m must be positive")
-
-    object_points = np.asarray(tracking["object_points"], dtype=np.float64)
-    object_visibilities = np.asarray(tracking["object_visibilities"], dtype=bool)
-    object_motions_valid = np.asarray(tracking["object_motions_valid"], dtype=bool)
-    controller_points = np.asarray(tracking["controller_points"], dtype=np.float64)
-    frame_count = int(object_points.shape[0])
-    if int(controller_points.shape[0]) != frame_count:
-        raise ValueError("object/controller frame count mismatch")
-    if object_visibilities.shape != object_points.shape[:2]:
-        raise ValueError("object_visibilities shape mismatch")
-    if object_motions_valid.shape != object_points.shape[:2]:
-        raise ValueError("object_motions_valid shape mismatch")
-    source_frame_indices = [int(value) for value in tracking["source_frame_indices"]]
-    if len(source_frame_indices) != frame_count:
-        raise ValueError("source_frame_indices length mismatch")
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    if output_path.exists():
-        output_path.unlink()
+    object_colors = _rainbow_colors(tracking.object_points)
+    rendered_mask = tracking.rendered_object_mask
 
-    rainbow_colors = _rainbow_colors_from_first_frame_y(object_points)
     visualizer = o3d.visualization.Visualizer()
-    overlay_visualizer = o3d.visualization.Visualizer()
-    window_created = visualizer.create_window(
-        window_name="Demo v6.1 object/controller tracking",
-        width=int(width),
-        height=int(height),
+    if not visualizer.create_window(
+        window_name="Demo v6.2 object/controller tracking",
+        width=width,
+        height=height,
         visible=False,
-    )
-    if not window_created:
-        raise RuntimeError("Open3D failed to create a headless visualization window")
-    overlay_window_created = overlay_visualizer.create_window(
-        window_name="Demo v6.1 object/controller tracking overlays",
-        width=int(width),
-        height=int(height),
-        visible=False,
-    )
-    if not overlay_window_created:
-        visualizer.destroy_window()
-        raise RuntimeError("Open3D failed to create a headless overlay window")
+    ):
+        raise RuntimeError("Open3D failed to create a headless window")
 
     writer: cv2.VideoWriter | None = None
     try:
-        first_mask = _object_mask_for_frame(
-            tracking,
-            0,
-            object_filter=str(object_filter),
-        )
+        first_mask = rendered_mask[0]
         object_cloud = _point_cloud(
-            object_points[0, first_mask],
-            rainbow_colors[first_mask],
+            tracking.object_points[0, first_mask],
+            object_colors[first_mask],
         )
         visualizer.add_geometry(object_cloud)
 
         controller_meshes: list[o3d.geometry.TriangleMesh] = []
-        previous_centers: list[np.ndarray] = []
-        for point in controller_points[0]:
-            mesh = _sphere_mesh(
-                point,
-                color=(1.0, 0.0, 0.0),
-                radius=float(controller_radius_m),
-            )
-            controller_meshes.append(mesh)
-            previous_centers.append(np.asarray(point, dtype=np.float64).copy())
+        controller_centers: list[np.ndarray] = []
+        for point in tracking.controller_points[0]:
+            center = np.asarray(point, dtype=np.float64)
+            mesh = _controller_sphere(center, radius_m=controller_radius_m)
             visualizer.add_geometry(mesh)
+            controller_meshes.append(mesh)
+            controller_centers.append(center.copy())
 
-        options = visualizer.get_render_option()
-        options.background_color = np.asarray([0.0, 0.0, 0.0])
-        options.point_size = 3.0
-
-        visibility_invalid = ~object_visibilities[0]
-        motion_invalid = object_visibilities[0] & ~object_motions_valid[0]
-        overlay_anchor_points = np.concatenate(
-            [object_points[0, first_mask], controller_points[0]],
-            axis=0,
-        )
-        overlay_anchor_cloud = _point_cloud(
-            overlay_anchor_points,
-            (0.0, 0.0, 0.0),
-        )
-        visibility_invalid_cloud = _point_cloud(
-            object_points[0, visibility_invalid],
-            VISIBILITY_INVALID_COLOR,
-        )
-        motion_invalid_cloud = _point_cloud(
-            object_points[0, motion_invalid],
-            MOTION_INVALID_COLOR,
-        )
-        overlay_visualizer.add_geometry(overlay_anchor_cloud)
-        overlay_visualizer.add_geometry(visibility_invalid_cloud)
-        overlay_visualizer.add_geometry(motion_invalid_cloud)
-        overlay_options = overlay_visualizer.get_render_option()
-        overlay_options.background_color = np.asarray([0.0, 0.0, 0.0])
-        overlay_options.point_size = float(OVERLAY_POINT_SIZE)
-
+        render_options = visualizer.get_render_option()
+        render_options.background_color = np.zeros(3)
+        render_options.point_size = 3.0
         view_control = visualizer.get_view_control()
-        overlay_view_control = overlay_visualizer.get_view_control()
-        for current_view_control in (view_control, overlay_view_control):
-            current_view_control.set_front([1.0, 0.0, -2.0])
-            current_view_control.set_up([0.0, 0.0, -1.0])
-            current_view_control.set_zoom(1.0)
+        view_control.set_front((1.0, 0.0, -2.0))
+        view_control.set_up((0.0, 0.0, -1.0))
+        view_control.set_zoom(1.0)
 
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(
             str(output_path),
-            fourcc,
-            float(fps),
-            (int(width), int(height)),
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            fps,
+            (width, height),
         )
         if not writer.isOpened():
             raise RuntimeError(f"could not open video writer: {output_path}")
 
-        for frame_idx in range(frame_count):
-            mask = _object_mask_for_frame(
-                tracking,
-                frame_idx,
-                object_filter=str(object_filter),
-            )
+        for frame_index in range(tracking.frame_count):
+            frame_mask = rendered_mask[frame_index]
             object_cloud.points = o3d.utility.Vector3dVector(
-                object_points[frame_idx, mask]
+                tracking.object_points[frame_index, frame_mask]
             )
-            object_cloud.colors = o3d.utility.Vector3dVector(rainbow_colors[mask])
+            object_cloud.colors = o3d.utility.Vector3dVector(object_colors[frame_mask])
             visualizer.update_geometry(object_cloud)
 
-            visibility_invalid = ~object_visibilities[frame_idx]
-            motion_invalid = (
-                object_visibilities[frame_idx]
-                & ~object_motions_valid[frame_idx]
-            )
-            visibility_invalid_cloud.points = o3d.utility.Vector3dVector(
-                object_points[frame_idx, visibility_invalid]
-            )
-            visibility_invalid_cloud.colors = o3d.utility.Vector3dVector(
-                _constant_colors(
-                    int(np.count_nonzero(visibility_invalid)),
-                    VISIBILITY_INVALID_COLOR,
+            for point_index, point in enumerate(
+                tracking.controller_points[frame_index]
+            ):
+                center = np.asarray(point, dtype=np.float64)
+                controller_meshes[point_index].translate(
+                    center - controller_centers[point_index]
                 )
-            )
-            overlay_visualizer.update_geometry(visibility_invalid_cloud)
-            motion_invalid_cloud.points = o3d.utility.Vector3dVector(
-                object_points[frame_idx, motion_invalid]
-            )
-            motion_invalid_cloud.colors = o3d.utility.Vector3dVector(
-                _constant_colors(
-                    int(np.count_nonzero(motion_invalid)),
-                    MOTION_INVALID_COLOR,
-                )
-            )
-            overlay_visualizer.update_geometry(motion_invalid_cloud)
+                visualizer.update_geometry(controller_meshes[point_index])
+                controller_centers[point_index] = center.copy()
 
-            for point_idx, point in enumerate(controller_points[frame_idx]):
-                current = np.asarray(point, dtype=np.float64)
-                controller_meshes[point_idx].translate(
-                    current - previous_centers[point_idx]
-                )
-                visualizer.update_geometry(controller_meshes[point_idx])
-                previous_centers[point_idx] = current.copy()
-
-            base_rgb = _capture_rgb(
+            frame_rgb = _capture_rgb(
                 visualizer,
-                width=int(width),
-                height=int(height),
+                width=width,
+                height=height,
             )
-            overlay_rgb = _capture_rgb(
-                overlay_visualizer,
-                width=int(width),
-                height=int(height),
-            )
-            blended_rgb = _blend_overlay(
-                base_rgb,
-                overlay_rgb,
-                alpha=float(OVERLAY_ALPHA),
-            )
-            frame_bgr = cv2.cvtColor(blended_rgb, cv2.COLOR_RGB2BGR)
+            frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
             _draw_frame_label(
                 frame_bgr,
-                frame_idx=frame_idx,
-                frame_count=frame_count,
-                source_frame=source_frame_indices[frame_idx],
+                frame_index=frame_index,
+                frame_count=tracking.frame_count,
+                source_frame_index=tracking.source_frame_indices[frame_index],
             )
             writer.write(frame_bgr)
-            if (frame_idx + 1) % 100 == 0 or frame_idx + 1 == frame_count:
-                print(f"rendered {frame_idx + 1}/{frame_count}", flush=True)
+            rendered_count = frame_index + 1
+            if rendered_count % 100 == 0 or rendered_count == tracking.frame_count:
+                print(
+                    f"rendered {rendered_count}/{tracking.frame_count}",
+                    flush=True,
+                )
     finally:
         if writer is not None:
             writer.release()
         visualizer.destroy_window()
-        overlay_visualizer.destroy_window()
 
 
 def build_summary(
-    tracking: dict[str, Any],
+    tracking: TrackingSequence,
     *,
     output_path: Path,
     fps: float,
     width: int,
     height: int,
     controller_radius_m: float,
-    object_filter: str,
 ) -> dict[str, Any]:
-    """Build summary."""
-    object_points = np.asarray(tracking["object_points"])
-    object_visibilities = np.asarray(tracking["object_visibilities"], dtype=bool)
-    object_motions_valid = np.asarray(tracking["object_motions_valid"], dtype=bool)
-    controller_points = np.asarray(tracking["controller_points"])
-    source_frames = [int(value) for value in tracking["source_frame_indices"]]
+    """Build the machine-readable render summary."""
+    rendered_mask = tracking.rendered_object_mask
     return {
-        "chunk_count": int(len(tracking["chunk_paths"])),
-        "controller_point_count": int(controller_points.shape[1]),
-        "controller_sphere_radius_m": float(controller_radius_m),
-        "fps": float(fps),
-        "frame_count": int(object_points.shape[0]),
-        "height": int(height),
-        "object_filter": str(object_filter),
-        "object_motion_valid_ratio": float(np.mean(object_motions_valid)),
-        "object_point_count": int(object_points.shape[1]),
-        "object_visibility_ratio": float(np.mean(object_visibilities)),
+        "chunk_count": len(tracking.chunk_paths),
+        "controller_point_count": int(tracking.controller_points.shape[1]),
+        "controller_sphere_radius_m": controller_radius_m,
+        "fps": fps,
+        "frame_count": tracking.frame_count,
+        "height": height,
+        "object_motion_valid_ratio": float(tracking.object_motions_valid.mean()),
+        "object_point_count": int(tracking.object_points.shape[1]),
+        "object_rendered_valid_ratio": float(rendered_mask.mean()),
+        "object_visibility_ratio": float(tracking.object_visibilities.mean()),
         "output_path": str(output_path),
-        "query_schema_hash": str(tracking["query_schema_hash"]),
-        "source_frame_first": source_frames[0] if source_frames else None,
-        "source_frame_last": source_frames[-1] if source_frames else None,
-        "style_reference": "data_process_origin/data_process_sample.py::visualize_track",
-        "track_status_counts": dict(tracking["track_status_counts"]),
-        "width": int(width),
+        "query_schema_hash": tracking.query_schema_hash,
+        "render_policy": "visibility_and_motion_valid",
+        "source_frame_first": tracking.source_frame_indices[0],
+        "source_frame_last": tracking.source_frame_indices[-1],
+        "style_reference": (
+            "data_process_origin/data_process_sample.py::visualize_track"
+        ),
+        "track_status_counts": tracking.track_status_counts,
+        "video_size_bytes": output_path.stat().st_size,
+        "width": width,
     }
 
 
-def write_summary(summary: dict[str, Any], path: Path) -> Path:
-    """Write summary."""
-    path = Path(path)
+def write_summary(summary: Mapping[str, Any], path: Path) -> None:
+    """Write the render summary as formatted JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
-    return path
+    path.write_text(
+        json.dumps(summary, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
-def main(argv: list[str] | None = None) -> None:
-    """Run the command-line entry point."""
+def main(argv: list[str] | None = None) -> int:
+    """Render the configured tracking video and summary."""
     args = build_parser().parse_args(argv)
-    tracking = load_tracking_chunks(args.chunks_dir)
+    tracking = load_tracking_sequence(args.chunks_dir)
     render_tracking_video(
         tracking,
         output_path=args.output_path,
-        fps=float(args.fps),
-        width=int(args.width),
-        height=int(args.height),
-        controller_radius_m=float(args.controller_radius_m),
-        object_filter=str(args.object_filter),
+        fps=args.fps,
+        width=args.width,
+        height=args.height,
+        controller_radius_m=args.controller_radius_m,
     )
     summary = build_summary(
         tracking,
         output_path=args.output_path,
-        fps=float(args.fps),
-        width=int(args.width),
-        height=int(args.height),
-        controller_radius_m=float(args.controller_radius_m),
-        object_filter=str(args.object_filter),
+        fps=args.fps,
+        width=args.width,
+        height=args.height,
+        controller_radius_m=args.controller_radius_m,
     )
-    summary_path = write_summary(summary, args.summary_path)
+    write_summary(summary, args.summary_path)
     print(json.dumps(summary, indent=2, sort_keys=True))
     print(f"wrote video: {args.output_path}")
-    print(f"wrote summary: {summary_path}")
+    print(f"wrote summary: {args.summary_path}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

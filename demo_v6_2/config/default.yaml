@@ -56,11 +56,6 @@ camera:
   depth_backend: "native-realsense"
   # Options: finite float logit threshold; lower values grow EdgeTAM masks.
   edgetam_mask_logit_threshold: 0
-  # Options: positive finite float meters; radius for mask point-cloud
-  # outlier filtering.
-  mask_radius_outlier_radius_m: 0.01
-  # Options: positive integer; minimum neighbors for radius outlier filtering.
-  mask_radius_outlier_nb_points: 40
   # Options: torch device string, usually cuda, cuda:N, or cpu.
   perception_device: "cuda"
   # Options: torch device string, usually cuda, cuda:N, or cpu.

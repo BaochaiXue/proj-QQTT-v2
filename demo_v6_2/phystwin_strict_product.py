@@ -18,9 +18,9 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from demo_v6_1.utils.depth_geometry import transform_points
-from demo_v6_1.utils.pcd_postprocess import detect_radius_outlier_indices
-from demo_v6_1.utils.projection import build_projection_grid_from_matrix
+from demo_v6_2.utils.depth_geometry import transform_points
+from demo_v6_2.utils.pcd_postprocess import detect_radius_outlier_indices
+from demo_v6_2.utils.projection import build_projection_grid_from_matrix
 
 
 TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY = "realtime-overlay"
@@ -859,7 +859,7 @@ def finalize_headless_capture(
     _write_tracking_npz(out, tracks_yx=tracks_yx, visibility=tracker_visibility, query_txy=query_txy)
     pcd_points, pcd_colors = _write_pcd_frames(out, rows, capture_dir=capture, metadata=metadata)
 
-    from demo_v6_1 import tracking as tracking_module  # noqa: PLC0415
+    from demo_v6_2 import tracking as tracking_module  # noqa: PLC0415
 
     normalized_masks = [normalize_processed_mask_frame(frame) for frame in mask_frames]
     track_input = tracking_module.build_window_observations(

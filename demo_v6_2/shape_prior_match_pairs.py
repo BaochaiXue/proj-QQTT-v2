@@ -49,8 +49,8 @@ import numpy as np
 import matplotlib.cm as cm
 import torch
 
-from demo_v6_1.models.matching import Matching
-from demo_v6_1.models.utils import (
+from demo_v6_2.models.matching import Matching
+from demo_v6_2.models.utils import (
     make_matching_plot,
     AverageTimer,
     read_image,

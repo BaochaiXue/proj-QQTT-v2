@@ -8,8 +8,8 @@ from typing import Any
 
 import numpy as np
 
-from demo_v6_1.utils.depth_geometry import transform_points
-from demo_v6_1.utils.camera import CameraIntrinsics
+from demo_v6_2.utils.depth_geometry import transform_points
+from demo_v6_2.utils.camera import CameraIntrinsics
 
 
 def build_pixel_grid(*, width: int, height: int, stride: int) -> tuple[np.ndarray, np.ndarray]:

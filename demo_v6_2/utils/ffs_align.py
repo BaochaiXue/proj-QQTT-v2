@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from numba import njit  # type: ignore
 
-from demo_v6_1.utils.projection import build_projection_grid_from_matrix
+from demo_v6_2.utils.projection import build_projection_grid_from_matrix
 
 
 @njit

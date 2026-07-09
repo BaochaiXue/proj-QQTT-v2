@@ -8,7 +8,7 @@ import pickle
 import numpy as np
 import trimesh
 
-from demo_v6_1.utils.align_util import as_mesh
+from demo_v6_2.utils.align_util import as_mesh
 
 
 DEFAULT_SURFACE_POINTS = 1024

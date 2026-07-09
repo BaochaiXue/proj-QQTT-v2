@@ -19,7 +19,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from demo_v6_1 import ffs
+from demo_v6_2 import ffs
 
 QUERY_SEMANTIC_NONE = np.int8(0)
 QUERY_SEMANTIC_OBJECT = np.int8(1)

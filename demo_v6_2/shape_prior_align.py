@@ -14,10 +14,10 @@ import numpy as np
 import open3d as o3d
 import torch
 import trimesh
-from demo_v6_1.shape_prior_match_pairs import image_pair_matching
+from demo_v6_2.shape_prior_match_pairs import image_pair_matching
 from scipy.optimize import minimize
 from scipy.spatial import KDTree
-from demo_v6_1.utils.align_util import (
+from demo_v6_2.utils.align_util import (
     as_mesh,
     plot_image_with_points,
     plot_mesh_with_points,
@@ -335,7 +335,7 @@ def _prewarm_models():
     """
     if torch.cuda.is_available():
         torch.zeros(1, device="cuda")
-    from demo_v6_1.shape_prior_match_pairs import get_matching_model  # noqa: PLC0415
+    from demo_v6_2.shape_prior_match_pairs import get_matching_model  # noqa: PLC0415
 
     get_matching_model()
 
@@ -351,7 +351,7 @@ def main(argv=None):
     output_dir = f"{base_path}/{case_name}/shape/matching"
 
     if args.wait_signal:
-        from demo_v6_1.utils import stage_prewarm  # noqa: PLC0415
+        from demo_v6_2.utils import stage_prewarm  # noqa: PLC0415
 
         _prewarm_models()
         if not stage_prewarm.wait_for_go("align"):

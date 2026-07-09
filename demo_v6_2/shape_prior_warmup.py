@@ -16,6 +16,10 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from demo_v6_2.phystwin_strict_product import (
+    apply_radius_outlier_to_mask_frame,
+)
+
 
 STATUS_DISABLED = "disabled"
 STATUS_PENDING = "pending"
@@ -299,15 +303,12 @@ def write_shape_prior_case(
     depth_valid = np.isfinite(depth_m) & (depth_m > 0)
     valid_object = object_mask & observation_mask & depth_valid
     valid_controller = controller_mask & depth_valid
-    from demo_v6_1.chunk_data_stream import (  # noqa: PLC0415
-        _apply_radius_outlier_to_mask_frame,
-    )
 
     # Intentional parity with data_process_origin/data_process_mask.py: original
     # PhysTwin removes unsupported 3D radius outliers by clearing pixels in
     # processed_masks.pkl, while pcd/0.npz stays as the dense point grid. The
     # align stage then filters with points[processed_mask].
-    cleaned_masks = _apply_radius_outlier_to_mask_frame(
+    cleaned_masks = apply_radius_outlier_to_mask_frame(
         frame={"object": valid_object, "controller": valid_controller},
         points_grid=points_world,
         enabled=True,
@@ -420,7 +421,7 @@ class ShapePriorLocalClient:
         # GPU via CUDA_VISIBLE_DEVICES.
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = str(self.cuda_visible_devices)
-        python_path = [str(REPO_ROOT), str(REPO_ROOT / "demo_v6_1")]
+        python_path = [str(REPO_ROOT), str(REPO_ROOT / "demo_v6_2")]
         current = env.get("PYTHONPATH")
         if current:
             python_path.append(current)
@@ -434,7 +435,7 @@ class ShapePriorLocalClient:
         upscale = [
             sys.executable,
             "-m",
-            "demo_v6_1.utils.image_upscale",
+            "demo_v6_2.utils.image_upscale",
             "--img_path",
             str(case / "color" / "0" / "0.png"),
             "--mask_path",
@@ -447,7 +448,7 @@ class ShapePriorLocalClient:
         generate = [
             sys.executable,
             "-m",
-            "demo_v6_1.shape_prior_generate",
+            "demo_v6_2.shape_prior_generate",
             "--img_path",
             str(shape_dir / "masked_image.png"),
             "--output_dir",
@@ -461,7 +462,7 @@ class ShapePriorLocalClient:
         align = [
             sys.executable,
             "-m",
-            "demo_v6_1.shape_prior_align",
+            "demo_v6_2.shape_prior_align",
             "--base_path",
             str(self.case_root),
             "--case_name",
@@ -596,7 +597,7 @@ class ShapePriorLocalClient:
         )
         _require_stage_file(high_resolution_path, stage_name="shape-prior upscale")
 
-        from demo_v6_1 import sam31_image_segmentation  # noqa: PLC0415
+        from demo_v6_2 import sam31_image_segmentation  # noqa: PLC0415
 
         segment_start_s = time.perf_counter()
         sam31_image_segmentation.segment_image_to_origin_rgba(
@@ -628,7 +629,7 @@ class ShapePriorLocalClient:
             [
                 sys.executable,
                 "-m",
-                "demo_v6_1.shape_prior_sample",
+                "demo_v6_2.shape_prior_sample",
                 "--base_path",
                 str(self.case_root),
                 "--case_name",
