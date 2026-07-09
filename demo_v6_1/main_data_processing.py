@@ -2462,10 +2462,6 @@ def validate_args(args: argparse.Namespace) -> None:
         # never be built, so the prior would sit in 'pending' forever and the
         # formal chunk timeline would never start.
         raise ValueError("--shape-prior-warmup requires --table-calibrate")
-    if bool(getattr(args, "enable_table_z_filter", False)) and bool(
-        getattr(args, "disable_table_z_filter", False)
-    ):
-        raise ValueError("--enable-table-z-filter conflicts with --disable-table-z-filter")
     if str(TABLE_Z_FILTER_CLASS_BOTH) not in TABLE_Z_FILTER_CLASSES:
         raise ValueError(
             f"--table-z-filter-classes must be one of {', '.join(TABLE_Z_FILTER_CLASSES)}"
@@ -2490,53 +2486,13 @@ def validate_args(args: argparse.Namespace) -> None:
     ):
         if int(getattr(args, flag)) < 0:
             raise ValueError(f"--{flag.replace('_', '-')} must be >= 0")
-    if int(args.object_filter_keep_components) < 1:
-        raise ValueError("--object-filter-keep-components must be >= 1")
-    if int(args.controller_filter_keep_components) < 1:
-        raise ValueError("--controller-filter-keep-components must be >= 1")
-    if int(args.object_filter_cap) > 0 and int(5000) > int(args.object_filter_cap):
-        raise ValueError("--filter-min-cap must be <= --object-filter-cap when object cap is enabled")
-    if int(args.controller_filter_cap) > 0 and int(5000) > int(args.controller_filter_cap):
-        raise ValueError("--filter-min-cap must be <= --controller-filter-cap when controller cap is enabled")
-    if float(args.object_filter_voxel_m) <= 0:
-        raise ValueError("--object-filter-voxel-m must be positive")
-    if float(args.controller_filter_voxel_m) <= 0:
-        raise ValueError("--controller-filter-voxel-m must be positive")
-    if int(args.filter_every_n) < 1:
-        raise ValueError("--filter-every-n must be >= 1")
-    if float(12.0) < 0:
-        raise ValueError("--filter-budget-ms must be >= 0")
-    if int(args.voxel_density_min_points) < 1:
-        raise ValueError("--voxel-density-min-points must be >= 1")
-    if float(args.filter_radius_m) <= 0:
-        raise ValueError("--filter-radius-m must be positive")
-    if int(args.filter_nb_points) < 1:
-        raise ValueError("--filter-nb-points must be >= 1")
-    if float(args.enhanced_component_voxel_size_m) <= 0:
-        raise ValueError("--enhanced-component-voxel-size-m must be positive")
-    if float(args.enhanced_keep_near_main_gap_m) < 0:
-        raise ValueError("--enhanced-keep-near-main-gap-m must be >= 0")
-    if pcd_filter_enabled(args) and args.pcd_mode != "masked":
-        raise ValueError("--enable-pcd-filter requires --pcd-mode masked")
-    if DEFAULT_COMPILE_MODE != DEFAULT_COMPILE_MODE:
-        raise ValueError("Demo 2.0 requires compiled EdgeTAM: --compile-mode vision-reduce-overhead")
-    if args.track_mode == "none" and args.pcd_mode == "masked":
-        raise ValueError("--track-mode none requires --pcd-mode none")
     if args.depth_source == "none" and args.pcd_mode == "masked":
         raise ValueError("--depth-source none requires --pcd-mode none")
-    if str(args.demo_visual_mode) not in DEMO_VISUAL_MODES:
-        raise ValueError(f"--demo-visual-mode must be one of {', '.join(DEMO_VISUAL_MODES)}")
     if headless_capture_enabled(args):
         if args.input_source not in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_LIVE}:
             raise ValueError("--headless-capture-dir requires --input-source live or fake-live")
         if args.depth_source not in {"ffs", "realsense"}:
             raise ValueError("--headless-capture-dir requires --depth-source ffs or realsense")
-        if args.pcd_mode != "masked":
-            raise ValueError("--headless-capture-dir requires --pcd-mode masked")
-        if not pcd_filter_enabled(args):
-            raise ValueError("--headless-capture-dir requires --enable-pcd-filter")
-        if args.pcd_filter_mode != "sync":
-            raise ValueError("--headless-capture-dir requires --pcd-filter-mode sync")
         if args.object_filter not in HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS:
             allowed = ", ".join(HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS)
             raise ValueError(f"--headless-capture-dir requires --object-filter one of {allowed}")
@@ -2552,35 +2508,19 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("phystwin-strict-tracking requires --input-source live or fake-live")
         if args.headless_capture_dir is None:
             raise ValueError("phystwin-strict-tracking requires --headless-capture-dir")
-        if str(args.track_mode) != TRACK_MODE_CONTROLLER_OBJECT:
-            raise ValueError("phystwin-strict-tracking requires --track-mode controller-object")
-        if str(args.tracker_backend) != TRACKER_BACKEND_TAPNEXTPP:
-            raise ValueError("phystwin-strict-tracking requires --tracker-backend tapnextpp")
         if args.phystwin_strict_output_dir is None:
             args.phystwin_strict_output_dir = Path(args.headless_capture_dir) / "phystwin_like"
     elif bool(getattr(args, "headless_prepared_only", False)):
         raise ValueError("--headless-prepared-only requires --tracking-product-backend phystwin-strict-tracking")
-    if int(DEFAULT_TRACKER_QUERY_COUNT) < 0:
-        raise ValueError("--tracker-query-count must be >= 0")
-    if int(args.tracker_overlay_max_points) < 0:
-        raise ValueError("--tracker-overlay-max-points must be >= 0")
-    if float(DEFAULT_TRACKER_MARKER_POINT_SIZE) <= 0:
-        raise ValueError("--tracker-marker-point-size must be positive")
     if getattr(args, "color_exposure", None) is not None and float(args.color_exposure) <= 0.0:
         raise ValueError("--color-exposure must be positive")
     if getattr(args, "color_gain", None) is not None and float(args.color_gain) < 0.0:
         raise ValueError("--color-gain must be >= 0")
     if tracker_enabled(args):
-        if args.tracker_backend != TRACKER_BACKEND_TAPNEXTPP:
-            raise ValueError("single-camera tracker overlay currently supports only tapnextpp")
-        if args.track_mode != TRACK_MODE_CONTROLLER_OBJECT:
-            raise ValueError("--tracker-backend tapnextpp requires --track-mode controller-object")
         if args.depth_source == "none":
             raise ValueError("--tracker-backend tapnextpp requires RGB-D depth for 3D marker lift")
     if args.depth_source == "ffs":
         validate_ffs_paths(ffs_repo=Path(args.ffs_repo), model_dir=Path(args.ffs_trt_model_dir))
-    if args.track_mode not in TRACK_MODES:
-        raise ValueError(f"--track-mode must be one of {', '.join(TRACK_MODES)}")
 
 
 # ---------------------------------------------------------------------------
@@ -3591,20 +3531,9 @@ def _select_visible_spread_indices(tracks_yx: np.ndarray, visibility: np.ndarray
     visible = np.flatnonzero(np.asarray(visibility, dtype=np.float32).reshape(-1) > 0.0)
     if len(visible) > 0:
         visible = visible[np.isfinite(tracks[visible]).all(axis=1)]
-    cap = int(max_points)
-    if cap <= 0 or len(visible) <= cap:
-        return visible.astype(np.int64)
-    pts = tracks[visible]
-    if len(pts) == 0:
-        return np.empty((0,), dtype=np.int64)
-    selected_local = [0]
-    min_dist2 = np.sum((pts - pts[0]) ** 2, axis=1)
-    for _ in range(1, min(cap, len(pts))):
-        next_local = int(np.argmax(min_dist2))
-        selected_local.append(next_local)
-        dist2 = np.sum((pts - pts[next_local]) ** 2, axis=1)
-        min_dist2 = np.minimum(min_dist2, dist2)
-    return visible[np.asarray(selected_local, dtype=np.int64)].astype(np.int64)
+    # overlay cap is fixed to 0 (draw all visible markers); the former
+    # farthest-point subsampling for cap > 0 was unreachable and removed.
+    return visible.astype(np.int64)
 
 
 def _latest_tracker_arrays(result: Any) -> tuple[np.ndarray, np.ndarray]:
@@ -4282,7 +4211,6 @@ class MainDataProcessingDemo:
     def _run_headless(self) -> None:
         """Run headless."""
         self._start_threads()
-        started_s: float | None = None
         try:
             while not self.stop_event.is_set():
                 if self._lossless_enabled():
@@ -4291,25 +4219,6 @@ class MainDataProcessingDemo:
                         break
                     time.sleep(0.05)
                     continue
-                if self.args.duration_s > 0:
-                    now_s = time.perf_counter()
-                    if self.headless_capture_writer is not None:
-                        # --duration-s budgets the FORMAL capture: don't start
-                        # the clock before the first row, nor while rows are
-                        # gated on the shape-prior wait.
-                        if (
-                            self.headless_capture_writer.saved_pcd_count <= 0
-                            or self._headless_product_rows_gated()
-                        ):
-                            time.sleep(0.05)
-                            continue
-                        if started_s is None:
-                            started_s = now_s
-                    elif started_s is None:
-                        started_s = now_s
-                    if started_s is not None and now_s - started_s >= float(self.args.duration_s):
-                        self.stop_event.set()
-                        break
                 time.sleep(0.05)
         except KeyboardInterrupt:
             self.stop_event.set()
@@ -4471,12 +4380,6 @@ class MainDataProcessingDemo:
             last_source_index = max(0, int(last_preview_source_index))
             while not self.stop_event.is_set():
                 source_elapsed_s = float(output_tick) * frame_period_s
-                if (
-                    self._lossless_enabled()
-                    and float(self.args.duration_s) > 0.0
-                    and source_elapsed_s >= float(self.args.duration_s)
-                ):
-                    break
                 source_index = source.source_index_for_recording_elapsed_s(source_elapsed_s)
                 output_tick += 1
                 if source_index <= last_source_index:
@@ -4512,12 +4415,6 @@ class MainDataProcessingDemo:
         else:
             for source_index in range(1, source.frame_count):
                 if self.stop_event.is_set():
-                    break
-                if (
-                    self._lossless_enabled()
-                    and float(self.args.duration_s) > 0.0
-                    and float(runtime_seq) * frame_period_s >= float(self.args.duration_s)
-                ):
                     break
                 wait_start_s = time.perf_counter()
                 target_s = replay_start_s + (float(runtime_seq) * frame_period_s)
