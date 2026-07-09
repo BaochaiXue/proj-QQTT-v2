@@ -261,7 +261,6 @@ QUERY_CONTROLLER_INSTANCE_HAND_A = 1
 QUERY_CONTROLLER_INSTANCE_HAND_B = 2
 HEADLESS_CAPTURE_SAVED_PCD_SOURCE = "none_filtered"
 HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS = (PCD_FILTER_ENHANCED_PT, PCD_FILTER_PT_FILTER, PCD_FILTER_NONE)
-DEBUG_LOG_INTERVAL_S = 1.0
 DEFAULT_LOSSLESS_INPUT_FPS = 5.0
 
 
@@ -2441,17 +2440,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--controller-color", type=_parse_rgb_triplet, default=CONTROLLER_COLOR_RGB, help="Controller RGB color.")
     parser.add_argument("--object-color", type=_parse_rgb_triplet, default=OBJECT_COLOR_RGB, help="Object RGB color.")
-    parser.add_argument(
-        "--profile-sync",
-        action="store_true",
-        help="Enable device-wide CUDA synchronizes around timed stages. Off by default for live hot path.",
-    )
-    parser.add_argument(
-        "--profile-cuda-events",
-        action="store_true",
-        help="Record CUDA-event EdgeTAM model timing. Profiling-only; synchronizes the model end event.",
-    )
-    parser.add_argument("--debug", action="store_true", help="Print once-per-second timing/debug stats.")
     return parser
 
 
@@ -3166,77 +3154,31 @@ def _load_hf_streaming_runtime() -> Any:
     return hf_stream
 
 
-def _sync_if_needed(torch_module: Any, device: str) -> None:
-    """Synchronize if needed."""
-    if str(device).startswith("cuda") and torch_module.cuda.is_available():
-        torch_module.cuda.synchronize()
-
-
 def _time_runtime_ms(
-    torch_module: Any,
-    device: str,
     fn: Callable[[], Any],
-    *,
-    sync_enabled: bool = False,
 ) -> tuple[Any, float, float, float]:
-    """Measure runtime ms."""
-    pre_sync_ms = 0.0
-    post_sync_ms = 0.0
-    if sync_enabled:
-        sync_start_s = time.perf_counter()
-        _sync_if_needed(torch_module, device)
-        pre_sync_ms = _elapsed_ms(sync_start_s, time.perf_counter())
+    """Measure the wall time of ``fn`` in milliseconds.
+
+    Returns ``(value, elapsed_ms, pre_sync_ms, post_sync_ms)``; the sync fields
+    stay 0.0 (the optional CUDA-sync profiling was CLI-gated and unreachable).
+    """
     started = time.perf_counter()
     value = fn()
     elapsed_ms = _elapsed_ms(started, time.perf_counter())
-    if sync_enabled:
-        sync_start_s = time.perf_counter()
-        _sync_if_needed(torch_module, device)
-        post_sync_ms = _elapsed_ms(sync_start_s, time.perf_counter())
-    return value, elapsed_ms, pre_sync_ms, post_sync_ms
+    return value, elapsed_ms, 0.0, 0.0
 
 
-# Like _time_runtime_ms, but additionally brackets fn() with CUDA events so GPU time can be
-# separated from wall time on async launches. Returns (value, wall_ms, cuda_event_ms,
-# pre_sync_ms, post_sync_ms); cuda_event_ms is 0.0 when events are disabled or CUDA is absent.
-def _time_model_forward(
-    *,
-    torch_module: Any,
-    device: str,
-    profile_sync: bool,
-    profile_cuda_events: bool,
-    fn: Callable[[], Any],
-) -> tuple[Any, float, float, float, float]:
-    """Measure model forward."""
-    pre_sync_ms = 0.0
-    post_sync_ms = 0.0
-    if profile_sync:
-        sync_start_s = time.perf_counter()
-        _sync_if_needed(torch_module, device)
-        pre_sync_ms = _elapsed_ms(sync_start_s, time.perf_counter())
+def _time_model_forward(fn: Callable[[], Any]) -> tuple[Any, float, float, float, float]:
+    """Measure the wall time of a model forward in milliseconds.
 
-    start_event = None
-    end_event = None
-    if profile_cuda_events and str(device).startswith("cuda") and torch_module.cuda.is_available():
-        start_event = torch_module.cuda.Event(enable_timing=True)
-        end_event = torch_module.cuda.Event(enable_timing=True)
-        start_event.record()
-
+    Returns ``(value, wall_ms, cuda_event_ms, pre_sync_ms, post_sync_ms)``; the
+    cuda-event and sync fields stay 0.0 (their profiling was CLI-gated and
+    unreachable).
+    """
     started_s = time.perf_counter()
     value = fn()
     wall_ms = _elapsed_ms(started_s, time.perf_counter())
-
-    cuda_event_ms = 0.0
-    if end_event is not None and start_event is not None:
-        end_event.record()
-        end_event.synchronize()
-        cuda_event_ms = float(start_event.elapsed_time(end_event))
-
-    if profile_sync:
-        sync_start_s = time.perf_counter()
-        _sync_if_needed(torch_module, device)
-        post_sync_ms = _elapsed_ms(sync_start_s, time.perf_counter())
-    return value, wall_ms, cuda_event_ms, pre_sync_ms, post_sync_ms
+    return value, wall_ms, 0.0, 0.0, 0.0
 
 
 def tracker_enabled(args: argparse.Namespace) -> bool:
@@ -3926,7 +3868,6 @@ class MainDataProcessingDemo:
             max_cap=max(int(controller_filter_min_cap), int(args.controller_filter_cap) if int(args.controller_filter_cap) > 0 else 200_000),
             init_cap=int(args.controller_filter_cap) if int(args.controller_filter_cap) > 0 else 200_000,
         )
-        self._last_debug_log_s = 0.0
         self.ffs_runner: object | None = None
         self._local_ffs_lock = threading.Lock()
         self._local_ffs_depth_cache: OrderedDict[int, tuple[np.ndarray, float, float]] = OrderedDict()
@@ -4484,8 +4425,6 @@ class MainDataProcessingDemo:
                 workers.append(("pcd", self._pcd_worker))
         elif self.args.depth_source == "ffs":
             workers.append(("depth", self._depth_profile_worker))
-        if self.args.debug:
-            workers.append(("debug", self._headless_debug_worker))
 
         def worker_runner(worker_name: str, worker_target: Callable[[], None]) -> Callable[[], None]:
             """Return the worker runner."""
@@ -5430,12 +5369,6 @@ class MainDataProcessingDemo:
         """Build tracker marker packet."""
         query_points = self._ensure_tracker_queries(mask_packet, adapter)
         if query_points is None:
-            if self.args.debug:
-                print(
-                    "[tapnextpp-tracker] waiting_for_non_empty_object_and_controller_masks "
-                    f"seq={mask_packet.seq}",
-                    flush=True,
-                )
             return None
         assert self._tracker_query_is_object is not None
         assert self._tracker_query_is_controller is not None
@@ -5637,19 +5570,6 @@ class MainDataProcessingDemo:
             all_tracker_visibility=np.ascontiguousarray(visibility_latest, dtype=np.float32).reshape(-1),
             coordinate_frame=self._pcd_coordinate_frame(),
         )
-        if self.args.debug:
-            print(
-                "[tapnextpp-tracker] "
-                f"seq={packet.seq} markers={packet.marker_count}/{len(selected_tracks)} "
-                f"residual_violations={packet.marker_residual_violation_count}/{packet.marker_residual_checked_count} "
-                f"consistent={packet.consistent_visible_count}/{packet.query_count} "
-                f"remaining={packet.remaining_query_count}/{packet.query_count} retired={packet.retired_query_count} "
-                f"hand_a={packet.hand_a_query_count} hand_b={packet.hand_b_query_count} object={packet.object_query_count} "
-                f"queries={packet.query_count} model_ms={packet.model_ms:.1f} "
-                f"lift_ms={packet.lift_ms:.1f} e2e_ms={packet.e2e_ms:.1f} "
-                f"fps={self.tracker_stats.fps:.1f}",
-                flush=True,
-            )
         return packet
 
     def _tracker_worker(self) -> None:
@@ -6068,10 +5988,7 @@ class MainDataProcessingDemo:
         """Run segmentation frame."""
         image = main_warmup.bgr_to_pil_rgb(frame.color_bgr)
         inputs, preprocess_ms, preprocess_pre_sync_ms, preprocess_post_sync_ms = _time_runtime_ms(
-            torch_module,
-            self.args.device,
             lambda: processor(images=image, device=self.args.device, return_tensors="pt"),
-            sync_enabled=bool(self.args.profile_sync),
         )
         pixel_values = inputs.pixel_values[0].to(device=self.args.device, dtype=dtype)
         prompt_ms = 0.0
@@ -6095,35 +6012,25 @@ class MainDataProcessingDemo:
                         np.asarray(initial_masks.hand_b_mask, dtype=bool)
                     )
                 _unused, prompt_ms, prompt_pre_sync_ms, prompt_post_sync_ms = _time_runtime_ms(
-                    torch_module,
-                    self.args.device,
                     lambda: processor.add_inputs_to_inference_session(
                         inference_session=session,
                         frame_idx=int(frame.seq),
                         obj_ids=prompt_obj_ids,
                         input_masks=prompt_masks,
                     ),
-                    sync_enabled=bool(self.args.profile_sync),
                 )
             else:
                 prompt_pre_sync_ms = 0.0
                 prompt_post_sync_ms = 0.0
             output, wall_model_ms, cuda_event_model_ms, model_pre_sync_ms, model_post_sync_ms = _time_model_forward(
-                torch_module=torch_module,
-                device=self.args.device,
-                profile_sync=bool(self.args.profile_sync),
-                profile_cuda_events=bool(self.args.profile_cuda_events),
-                fn=lambda: model(inference_session=session, frame=pixel_values, frame_idx=int(frame.seq)),
+                lambda: model(inference_session=session, frame=pixel_values, frame_idx=int(frame.seq)),
             )
             post_masks, postprocess_ms, postprocess_pre_sync_ms, postprocess_post_sync_ms = _time_runtime_ms(
-                torch_module,
-                self.args.device,
                 lambda: processor.post_process_masks(
                     [output.pred_masks],
                     original_sizes=inputs.original_sizes,
                     binarize=False,
                 )[0],
-                sync_enabled=bool(self.args.profile_sync),
             )
         masks_by_id = extract_object_masks_from_hf_output(
             output,
@@ -7140,282 +7047,6 @@ class MainDataProcessingDemo:
     # ------------------------------------------------------------------
     # Debug logging
     # ------------------------------------------------------------------
-    def _emit_debug_line(
-        self,
-        *,
-        seq: int,
-        timing: PipelineTiming,
-        controller_points: int = 0,
-        object_points: int = 0,
-        dropped_capture_frames: int = 0,
-        dropped_seg_frames: int = 0,
-        filter_telemetry: PcdFilterTelemetry | None = None,
-        tracker_packet: TrackerMarkerPacket | None = None,
-        strict_sync: bool = False,
-        waiting_for_pair: bool = False,
-    ) -> None:
-        """Return the emit debug line."""
-        filter_info = filter_telemetry or PcdFilterTelemetry()
-        if bool(strict_sync):
-            paired_seq = str(int(seq)) if tracker_packet is not None else "none"
-            tracker_seq = str(int(tracker_packet.seq)) if tracker_packet is not None else "none"
-        else:
-            paired_seq = "-1"
-            tracker_seq = str(int(tracker_packet.seq)) if tracker_packet is not None else "-1"
-        tracker_model_ms = float(tracker_packet.model_ms) if tracker_packet is not None else 0.0
-        tracker_e2e_ms = float(tracker_packet.e2e_ms) if tracker_packet is not None else 0.0
-        tracker_hand_a = int(tracker_packet.hand_a_query_count) if tracker_packet is not None else 0
-        tracker_hand_b = int(tracker_packet.hand_b_query_count) if tracker_packet is not None else 0
-        tracker_object = int(tracker_packet.object_query_count) if tracker_packet is not None else 0
-        lossless_enabled = bool(strict_sync) and self._lossless_enabled()
-        if lossless_enabled:
-            frame_queue = self.lossless_frame_queue.stats
-            pcd_queue = self.lossless_pcd_mask_queue.stats
-            tracker_queue = self.lossless_tracker_mask_queue.stats
-            pair_output_queue = self.lossless_pair_output_queue.stats
-            pairer = self.same_seq_pairer.stats
-            lossless_debug = (
-                f"lossless=1 "
-                f"lossless_input_fps={self._lossless_input_fps():.1f} "
-                f"lossless_max_backlog={self.lossless_max_backlog_frames} "
-                f"lossless_frame_q={frame_queue.size} "
-                f"lossless_mask_pcd_q={pcd_queue.size} "
-                f"lossless_mask_tracker_q={tracker_queue.size} "
-                f"lossless_pair_output_q={pair_output_queue.size} "
-                f"lossless_pairer_expected={pairer.expected_seq} "
-                f"lossless_pairer_pending_pcd={pairer.pending_pcd} "
-                f"lossless_pairer_pending_tracker={pairer.pending_tracker} "
-                f"lossless_offered={self._lossless_offered_frames} "
-                f"lossless_segmented={self._lossless_segmented_frames} "
-                f"lossless_pcd_results={self._lossless_pcd_results} "
-                f"lossless_tracker_results={self._lossless_tracker_results} "
-                f"lossless_pairs={self._lossless_pairs_emitted} "
-            )
-        else:
-            lossless_debug = "lossless=0 "
-        print(
-            "[masked-edgetam-debug] "
-            f"seq={int(seq)} "
-            f"strict_sync={int(bool(strict_sync))} "
-            f"paired_seq={paired_seq} "
-            f"tracker_seq={tracker_seq} "
-            f"waiting_for_pair={int(bool(waiting_for_pair))} "
-            f"{lossless_debug}"
-            f"capture_fps={self.capture_stats.fps:.1f} "
-            f"seg_fps={self.seg_stats.fps:.1f} "
-            f"depth_fps={self.depth_stats.fps:.1f} "
-            f"pcd_fps={self.pcd_stats.fps:.1f} "
-            f"tracker_fps={self.tracker_stats.fps:.1f} "
-            f"tracker_hand_a_queries={tracker_hand_a} "
-            f"tracker_hand_b_queries={tracker_hand_b} "
-            f"tracker_object_queries={tracker_object} "
-            f"profile_sync_enabled={int(bool(self.args.profile_sync))} "
-            f"profile_cuda_events={int(bool(self.args.profile_cuda_events))} "
-            f"mask_ms={timing.mask_ms:.2f} "
-            f"preprocess_ms={timing.preprocess_ms:.2f} "
-            f"prompt_ms={timing.prompt_ms:.2f} "
-            f"model_ms={timing.model_ms:.2f} "
-            f"wall_model_ms={timing.wall_model_ms:.2f} "
-            f"cuda_event_model_ms={timing.cuda_event_model_ms:.2f} "
-            f"pre_sync_wait_ms={timing.pre_sync_wait_ms:.2f} "
-            f"post_sync_wait_ms={timing.post_sync_wait_ms:.2f} "
-            f"postprocess_ms={timing.postprocess_ms:.2f} "
-            f"ffs_ms={timing.ffs_ms:.2f} "
-            f"ffs_align_ms={timing.ffs_align_ms:.2f} "
-            f"remote_rtt_ms={timing.remote_rtt_ms:.2f} "
-            f"remote_server_total_ms={timing.remote_server_total_ms:.2f} "
-            f"remote_request_kb={timing.remote_request_kb:.1f} "
-            f"remote_response_kb={timing.remote_response_kb:.1f} "
-            f"depth_convert_ms={timing.depth_convert_ms:.2f} "
-            f"pcd_mask_intersection_ms={timing.pcd_mask_intersection_ms:.2f} "
-            f"pcd_select_ms={timing.pcd_select_ms:.2f} "
-            f"pcd_point_cap_ms={timing.pcd_point_cap_ms:.2f} "
-            f"pcd_backproject_ms={timing.pcd_backproject_ms:.2f} "
-            f"pcd_color_gather_ms={timing.pcd_color_gather_ms:.2f} "
-            f"pcd_filter_ms={timing.pcd_filter_ms:.2f} "
-            f"object_filter_ms={timing.object_filter_ms:.2f} "
-            f"controller_filter_ms={timing.controller_filter_ms:.2f} "
-            f"pcd_ms={timing.pcd_ms:.2f} "
-            f"e2e_latency_ms={timing.receive_to_render_ms:.2f} "
-            f"tracker_model_ms={tracker_model_ms:.2f} "
-            f"tracker_e2e_ms={tracker_e2e_ms:.2f} "
-            f"filter_enabled={int(filter_info.enabled)} "
-            f"filter_mode={filter_info.mode} "
-            f"render_using_filtered={int(filter_info.render_using_filtered)} "
-            f"filter_submit_fps={filter_info.filter_submit_fps:.1f} "
-            f"filter_output_fps={filter_info.filter_output_fps:.1f} "
-            f"filter_queue_drop={int(filter_info.filter_queue_drop)} "
-            f"filter_busy={int(filter_info.filter_busy)} "
-            f"filter_age_frames={int(filter_info.filter_age_frames)} "
-            f"filter_age_ms={filter_info.filter_age_ms:.1f} "
-            f"object_filter_input_points={int(filter_info.object_raw_points)} "
-            f"object_filter_cap_limit={int(filter_info.object_filter_cap)} "
-            f"object_filter_cap_points={int(filter_info.object_cap_points)} "
-            f"object_filter_prefallback_points={int(filter_info.object_prefallback_points)} "
-            f"object_filter_output_points={int(filter_info.object_output_points)} "
-            f"object_filter_raw_retain_ratio={filter_info.object_raw_retain_ratio:.3f} "
-            f"object_filter_fallback_reason={filter_info.object_fallback_reason or 'none'} "
-            f"controller_filter_input_points={int(filter_info.controller_raw_points)} "
-            f"controller_filter_cap_limit={int(filter_info.controller_filter_cap)} "
-            f"controller_filter_cap_points={int(filter_info.controller_cap_points)} "
-            f"controller_filter_prefallback_points={int(filter_info.controller_prefallback_points)} "
-            f"controller_filter_output_points={int(filter_info.controller_output_points)} "
-            f"controller_filter_raw_retain_ratio={filter_info.controller_raw_retain_ratio:.3f} "
-            f"controller_filter_fallback_reason={filter_info.controller_fallback_reason or 'none'} "
-            f"controller_points={int(controller_points)} "
-            f"object_points={int(object_points)} "
-            f"dropped_capture={int(dropped_capture_frames)} "
-            f"dropped_seg={int(dropped_seg_frames)} "
-            f"dropped_pcd={self.paired_render_slot.dropped_count if bool(strict_sync) else self.pcd_slot.dropped_count}",
-            flush=True,
-        )
-
-    def _headless_debug_worker(self) -> None:
-        """Return the headless debug worker."""
-        last_logged_seq = -1
-        last_logged_pair_seq = -1
-        last_logged_waiting_seq = -1
-        while not self.stop_event.is_set():
-            now_s = time.perf_counter()
-            if now_s - self._last_debug_log_s < DEBUG_LOG_INTERVAL_S:
-                time.sleep(0.05)
-                continue
-            self._last_debug_log_s = now_s
-            if tracker_enabled(self.args):
-                pair = self.paired_render_slot.get_latest_after(last_logged_pair_seq)
-                if pair is not None:
-                    last_logged_pair_seq = pair.seq
-                    pcd_packet = pair.pcd_packet
-                    timing = replace(
-                        pcd_packet.timing,
-                        receive_to_render_ms=_elapsed_ms(pcd_packet.receive_perf_s, pair.tracker_packet.process_done_perf_s),
-                    )
-                    self._emit_debug_line(
-                        seq=pcd_packet.seq,
-                        timing=timing,
-                        controller_points=pcd_packet.controller_point_count,
-                        object_points=pcd_packet.object_point_count,
-                        dropped_capture_frames=pcd_packet.dropped_capture_frames,
-                        dropped_seg_frames=pcd_packet.dropped_seg_frames,
-                        filter_telemetry=pcd_packet.filter_telemetry,
-                        tracker_packet=pair.tracker_packet,
-                        strict_sync=True,
-                        waiting_for_pair=True,
-                    )
-                    continue
-                mask_packet = self.mask_slot.get_latest_after(last_logged_waiting_seq)
-                if mask_packet is not None:
-                    last_logged_waiting_seq = mask_packet.seq
-                    timing = replace(
-                        mask_packet.timing,
-                        receive_to_render_ms=_elapsed_ms(mask_packet.receive_perf_s, now_s),
-                    )
-                    self._emit_debug_line(
-                        seq=mask_packet.seq,
-                        timing=timing,
-                        dropped_capture_frames=mask_packet.dropped_capture_frames,
-                        dropped_seg_frames=self.mask_slot.dropped_count,
-                        strict_sync=True,
-                        waiting_for_pair=True,
-                    )
-                    continue
-                frame = self.capture_slot.get_latest_after(last_logged_waiting_seq)
-                if frame is not None:
-                    last_logged_waiting_seq = frame.seq
-                    timing = replace(frame.timing, receive_to_render_ms=_elapsed_ms(frame.receive_perf_s, now_s))
-                    self._emit_debug_line(
-                        seq=frame.seq,
-                        timing=timing,
-                        dropped_capture_frames=self.capture_slot.dropped_count,
-                        strict_sync=True,
-                        waiting_for_pair=True,
-                    )
-                continue
-            pcd_packet = self.pcd_slot.get_latest_after(last_logged_seq)
-            if pcd_packet is not None:
-                last_logged_seq = pcd_packet.seq
-                timing = replace(
-                    pcd_packet.timing,
-                    receive_to_render_ms=_elapsed_ms(pcd_packet.receive_perf_s, pcd_packet.process_done_perf_s),
-                )
-                self._emit_debug_line(
-                    seq=pcd_packet.seq,
-                    timing=timing,
-                    controller_points=pcd_packet.controller_point_count,
-                    object_points=pcd_packet.object_point_count,
-                    dropped_capture_frames=pcd_packet.dropped_capture_frames,
-                    dropped_seg_frames=pcd_packet.dropped_seg_frames,
-                    filter_telemetry=pcd_packet.filter_telemetry,
-                )
-                continue
-
-            mask_packet = self.mask_slot.get_latest_after(last_logged_seq)
-            if mask_packet is not None:
-                last_logged_seq = mask_packet.seq
-                timing = replace(
-                    mask_packet.timing,
-                    receive_to_render_ms=_elapsed_ms(mask_packet.receive_perf_s, mask_packet.process_done_perf_s),
-                )
-                self._emit_debug_line(
-                    seq=mask_packet.seq,
-                    timing=timing,
-                    controller_points=int(np.count_nonzero(mask_packet.controller_mask)),
-                    object_points=int(np.count_nonzero(mask_packet.object_mask)),
-                    dropped_capture_frames=mask_packet.dropped_capture_frames,
-                    dropped_seg_frames=self.mask_slot.dropped_count,
-                )
-                continue
-
-            depth_packet = self.depth_profile_slot.get_latest_after(last_logged_seq)
-            if depth_packet is not None:
-                last_logged_seq = depth_packet.seq
-                timing = replace(
-                    depth_packet.timing,
-                    receive_to_render_ms=_elapsed_ms(depth_packet.receive_perf_s, depth_packet.process_done_perf_s),
-                )
-                self._emit_debug_line(
-                    seq=depth_packet.seq,
-                    timing=timing,
-                    dropped_capture_frames=depth_packet.dropped_capture_frames,
-                )
-                continue
-
-            frame = self.capture_slot.get_latest_after(last_logged_seq)
-            if frame is not None:
-                last_logged_seq = frame.seq
-                timing = replace(frame.timing, receive_to_render_ms=_elapsed_ms(frame.receive_perf_s, now_s))
-                self._emit_debug_line(
-                    seq=frame.seq,
-                    timing=timing,
-                    dropped_capture_frames=self.capture_slot.dropped_count,
-                )
-
-    def _maybe_log_debug(
-        self,
-        *,
-        packet: MaskedPcdPacket,
-        timing: PipelineTiming,
-        now_s: float,
-        tracker_packet: TrackerMarkerPacket | None = None,
-        strict_sync: bool = False,
-        waiting_for_pair: bool = False,
-    ) -> None:
-        """Maybe start or update log debug."""
-        if not self.args.debug or now_s - self._last_debug_log_s < DEBUG_LOG_INTERVAL_S:
-            return
-        self._last_debug_log_s = now_s
-        self._emit_debug_line(
-            seq=packet.seq,
-            timing=timing,
-            controller_points=packet.controller_point_count,
-            object_points=packet.object_point_count,
-            dropped_capture_frames=packet.dropped_capture_frames,
-            dropped_seg_frames=packet.dropped_seg_frames,
-            filter_telemetry=packet.filter_telemetry,
-            tracker_packet=tracker_packet,
-            strict_sync=strict_sync,
-            waiting_for_pair=waiting_for_pair,
-        )
 
 
 # ---------------------------------------------------------------------------
