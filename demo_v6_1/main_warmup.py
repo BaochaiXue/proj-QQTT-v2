@@ -19,8 +19,6 @@ from demo_v6_1.utils.render import apply_wslg_open3d_env_defaults
 TRACK_MODE_CONTROLLER_OBJECT = "controller-object"
 TRACK_MODE_OBJECT_ONLY = "object-only"
 TRACK_MODE_CONTROLLER_ONLY = "controller-only"
-INIT_MODE_SAM31_FIRST_FRAME = "sam31-first-frame"
-INIT_MODE_SAVED_MASKS = "saved-masks"
 DEFAULT_SAM31_DEVICE = "cuda"
 
 
@@ -41,41 +39,6 @@ class SegmentationWarmupState:
     processor: Any
     first_frame: Any | None
     initial_masks: InitialMaskBundle | None
-
-
-# ---------------------------------------------------------------------------
-# Frame-0 mask loading (saved-masks init mode)
-# ---------------------------------------------------------------------------
-
-
-def load_binary_mask(
-    path: str | Path,
-    *,
-    expected_shape: tuple[int, int],
-    repo_root: Path,
-) -> np.ndarray:
-    # Relative CLI mask paths are anchored at the repo root so saved-masks init
-    # behaves the same regardless of the launch directory.
-    """Load a binary mask image as a boolean array."""
-    mask_path = Path(path).expanduser()
-    if not mask_path.is_absolute():
-        mask_path = Path(repo_root) / mask_path
-    mask_path = mask_path.resolve()
-    try:
-        from PIL import Image
-
-        image = np.asarray(Image.open(mask_path).convert("L"))
-    except Exception as exc:
-        raise ValueError(f"failed to load mask image {mask_path}: {exc}") from exc
-    if image.ndim != 2:
-        raise ValueError(f"mask must be a 2D image: {mask_path}")
-    if tuple(image.shape) != tuple(expected_shape):
-        raise ValueError(
-            f"mask shape {tuple(image.shape)} does not match frame shape "
-            f"{tuple(expected_shape)}: {mask_path}"
-        )
-    # Any nonzero gray value counts as foreground.
-    return np.ascontiguousarray(image > 0)
 
 
 # ---------------------------------------------------------------------------
@@ -413,60 +376,15 @@ def resolve_initial_mask_bundle(
     *,
     repo_root: Path,
 ) -> InitialMaskBundle:
-    """Resolve initial mask bundle."""
+    """Resolve initial mask bundle by running SAM3.1 on the live first frame."""
     expected_shape = tuple(frame.color_bgr.shape[:2])
-    if args.init_mode == INIT_MODE_SAVED_MASKS:
-        object_mask = (
-            load_binary_mask(
-                args.object_init_mask,
-                expected_shape=expected_shape,
-                repo_root=repo_root,
-            )
-            if object_tracking_enabled(args)
-            else None
-        )
-        controller_mask = (
-            load_binary_mask(
-                args.controller_init_mask,
-                expected_shape=expected_shape,
-                repo_root=repo_root,
-            )
-            if controller_tracking_enabled(args)
-            else None
-        )
-        if object_mask is None and controller_mask is None:
-            empty = np.zeros(expected_shape, dtype=bool)
-            return InitialMaskBundle(controller_mask=empty, object_mask=empty)
-        if object_mask is None:
-            object_mask = np.zeros_like(controller_mask, dtype=bool)
-        if controller_mask is None:
-            controller_mask = np.zeros_like(object_mask, dtype=bool)
-        if controller_tracking_enabled(args):
-            # A saved controller mask stores both hands in one image; split it
-            # into per-hand instances the same way as the SAM3.1 path.
-            hand_a_mask, hand_b_mask = split_controller_hand_instances(
-                [controller_mask],
-                label=str(args.controller_prompt),
-            )
-            controller_mask = np.logical_or(hand_a_mask, hand_b_mask)
-        else:
-            hand_a_mask = np.zeros_like(controller_mask, dtype=bool)
-            hand_b_mask = np.zeros_like(controller_mask, dtype=bool)
-        return InitialMaskBundle(
-            controller_mask=np.ascontiguousarray(controller_mask, dtype=bool),
-            object_mask=np.ascontiguousarray(object_mask, dtype=bool),
-            hand_a_mask=np.ascontiguousarray(hand_a_mask, dtype=bool),
-            hand_b_mask=np.ascontiguousarray(hand_b_mask, dtype=bool),
-        )
-    if args.init_mode == INIT_MODE_SAM31_FIRST_FRAME:
-        bundle = run_sam31_first_frame_mask_bundle(frame.color_bgr, args)
-        if (
-            bundle.controller_mask.shape != expected_shape
-            or bundle.object_mask.shape != expected_shape
-        ):
-            raise RuntimeError("SAM3.1 frame-0 masks do not match captured frame shape")
-        return bundle
-    raise ValueError(f"unsupported init mode: {args.init_mode}")
+    bundle = run_sam31_first_frame_mask_bundle(frame.color_bgr, args)
+    if (
+        bundle.controller_mask.shape != expected_shape
+        or bundle.object_mask.shape != expected_shape
+    ):
+        raise RuntimeError("SAM3.1 frame-0 masks do not match captured frame shape")
+    return bundle
 
 
 def resolve_initial_masks(

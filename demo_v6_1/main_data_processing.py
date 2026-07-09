@@ -148,8 +148,6 @@ DEFAULT_DEVICE = "cuda"
 DEFAULT_DTYPE = "bfloat16"
 DEFAULT_COMPILE_MODE = "vision-reduce-overhead"
 COMPILE_MODES = ("vision-reduce-overhead",)
-INIT_MODES = ("sam31-first-frame", "saved-masks")
-DEFAULT_INIT_MODE = "sam31-first-frame"
 TRACK_MODE_CONTROLLER_OBJECT = "controller-object"
 TRACK_MODE_OBJECT_ONLY = "object-only"
 TRACK_MODE_CONTROLLER_ONLY = "controller-only"
@@ -188,10 +186,6 @@ TRACKER_MARKER_RETIREMENT_POLICY_PCD_FILTER_RESIDUAL_TABLE_Z_ONCE_FALSE = (
     "pcd_filter_residual_table_z_once_false"
 )
 FAKE_LIVE_FRAME_SELECTION_POLICY = "drop_source_frames_preserve_recording_time"
-DEMO_PRESETS = ("none", "local-ffs-professor")
-DEFAULT_DEMO_PRESET = "none"
-LOCAL_FFS_PROFESSOR_MAX_POINTS = 20000
-LOCAL_FFS_PROFESSOR_FILTER_CAP = 20000
 DEFAULT_FILTER_RADIUS_M = 0.01
 DEFAULT_FILTER_NB_POINTS = 40
 DEFAULT_PCD_MASK_ERODE_PIXELS = 0
@@ -2055,12 +2049,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional manual RealSense RGB gain. When set, RGB auto exposure is disabled.",
     )
     parser.add_argument(
-        "--init-mode",
-        choices=INIT_MODES,
-        default=DEFAULT_INIT_MODE,
-        help="Frame-0 initialization mode. Default runs SAM3.1 once on the live first frame.",
-    )
-    parser.add_argument(
         "--track-mode",
         choices=TRACK_MODES,
         default=DEFAULT_TRACK_MODE,
@@ -2228,25 +2216,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tapnextpp-compile", action="store_true")
     parser.add_argument("--no-tapnextpp-fast-postprocess", dest="tapnextpp_fast_postprocess", action="store_false")
     parser.set_defaults(tapnextpp_fast_postprocess=True)
-    parser.add_argument(
-        "--demo-preset",
-        choices=DEMO_PRESETS,
-        default=DEFAULT_DEMO_PRESET,
-        help=(
-            "Optional demo preset. local-ffs-professor keeps FFS-derived depth "
-            "and compiled EdgeTAM, while capping PCD/filter points for a steadier local demo."
-        ),
-    )
-    parser.add_argument(
-        "--controller-init-mask",
-        default=None,
-        help="Binary frame-0 controller mask PNG for explicit saved-masks debugging mode.",
-    )
-    parser.add_argument(
-        "--object-init-mask",
-        default=None,
-        help="Binary frame-0 object mask PNG for explicit saved-masks debugging mode.",
-    )
     parser.add_argument(
         "--controller-prompt",
         default="hand",
@@ -2445,13 +2414,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def apply_demo_preset(args: argparse.Namespace) -> argparse.Namespace:
     """Apply demo preset."""
-    if args.demo_preset == "local-ffs-professor":
-        if int(args.pcd_max_points) == 60000:
-            args.pcd_max_points = LOCAL_FFS_PROFESSOR_MAX_POINTS
-        if int(args.object_filter_cap) == 20_000:
-            args.object_filter_cap = LOCAL_FFS_PROFESSOR_FILTER_CAP
-        if int(args.controller_filter_cap) == 20_000:
-            args.controller_filter_cap = LOCAL_FFS_PROFESSOR_FILTER_CAP
     if (
         not bool(getattr(args, "disable_table_z_filter", False))
         and not bool(getattr(args, "enable_table_z_filter", False))
@@ -2566,8 +2528,6 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError(f"--input-source {args.input_source} requires --recording-case or --fake-live-case")
     elif args.recording_case is not None:
         raise ValueError("--recording-case/--fake-live-case requires --input-source recording or fake-live")
-    if args.demo_preset == "local-ffs-professor" and args.depth_source != "ffs":
-        raise ValueError("--demo-preset local-ffs-professor requires --depth-source ffs")
     if bool(args.shape_prior_warmup) and not str(args.shape_prior_controller_name or "").strip():
         raise ValueError(
             "--shape-prior-controller-name is required when --shape-prior-warmup "
@@ -2731,20 +2691,6 @@ def validate_args(args: argparse.Namespace) -> None:
         validate_ffs_paths(ffs_repo=Path(args.ffs_repo), model_dir=Path(args.ffs_trt_model_dir))
     if args.track_mode not in TRACK_MODES:
         raise ValueError(f"--track-mode must be one of {', '.join(TRACK_MODES)}")
-    if args.init_mode == "saved-masks":
-        if object_tracking_enabled(args) and not args.object_init_mask:
-            raise ValueError("saved-masks object tracking requires --object-init-mask")
-        if controller_tracking_enabled(args) and not args.controller_init_mask:
-            raise ValueError("saved-masks controller tracking requires --controller-init-mask")
-        required_masks = []
-        if object_tracking_enabled(args):
-            required_masks.append(("--object-init-mask", args.object_init_mask))
-        if controller_tracking_enabled(args):
-            required_masks.append(("--controller-init-mask", args.controller_init_mask))
-        for flag, value in required_masks:
-            path = _resolve_path(value)
-            if not path.is_file():
-                raise ValueError(f"{flag} does not exist: {path}")
 
 
 # ---------------------------------------------------------------------------
@@ -4854,7 +4800,7 @@ class MainDataProcessingDemo:
         metadata = {
             **runtime_metadata_identity(self.args),
             "edge_model": self.args.model_id,
-            "demo_preset": self.args.demo_preset,
+            "demo_preset": "none",
             "compile_mode": self.args.compile_mode,
             "applied_targets": compile_metadata.get("applied_targets", []),
             "dtype": self.args.dtype,
