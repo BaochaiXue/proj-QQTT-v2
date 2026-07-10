@@ -51,6 +51,14 @@ def _cfg_optional_path(section: str, key: str) -> Path | None:
     return Path(str(value))
 
 
+def _cfg_mapping(section: str, key: str) -> dict[str, object]:
+    """Read one required nested mapping from the default config."""
+    value = _cfg(section, key)
+    if not isinstance(value, dict):
+        raise ValueError(f"default config {section}.{key} must be a mapping")
+    return dict(value)
+
+
 # Defaults below describe the current Demo v6.1 realtime path.
 DEFAULT_DATA_PROCESS_BASE_PATH = Path(str(_cfg("paths", "data_process_base_path")))
 DEFAULT_INPUT_SOURCE = str(_cfg("input", "input_source"))
@@ -112,26 +120,22 @@ DOWNSTREAM_MODES = (
 DEFAULT_DOWNSTREAM_MODE = str(_cfg("downstream", "mode"))
 DEFAULT_PHYSTWIN_SHEN_REPO_PATH = Path(str(_cfg("phystwin_shen", "repo_path")))
 DEFAULT_PHYSTWIN_SHEN_CONDA_ENV = str(_cfg("phystwin_shen", "conda_env"))
-DEFAULT_PHYSTWIN_SHEN_CASE_NAME = str(_cfg("phystwin_shen", "case_name"))
-DEFAULT_PHYSTWIN_SHEN_VIEWER_HOST = str(_cfg("phystwin_shen", "host"))
-DEFAULT_PHYSTWIN_SHEN_VIEWER_PORT = int(_cfg("phystwin_shen", "port"))
-PHYSTWIN_SHEN_VIEWER_CAM_IDX = int(_cfg("phystwin_shen", "cam_idx"))
-PHYSTWIN_SHEN_VIEWER_POINT_MODE = str(_cfg("phystwin_shen", "point_mode"))
-PHYSTWIN_SHEN_VIEWER_POINT_STRIDE = int(_cfg("phystwin_shen", "point_stride"))
-PHYSTWIN_SHEN_TRAIN_DEVICE = str(_cfg("phystwin_shen", "device"))
-PHYSTWIN_SHEN_TRAIN_BATCH_SIZE = int(_cfg("phystwin_shen", "batch_size"))
-PHYSTWIN_SHEN_TRAIN_SEGMENT_LEN = int(_cfg("phystwin_shen", "segment_len"))
-PHYSTWIN_SHEN_TRAIN_SEGMENT_STRIDE = int(_cfg("phystwin_shen", "segment_stride"))
-PHYSTWIN_SHEN_TRAIN_POLL_SEC = float(_cfg("phystwin_shen", "poll_sec"))
-PHYSTWIN_SHEN_TRAIN_RECENT_WINDOW_COUNT = int(
-    _cfg("phystwin_shen", "recent_window_count")
+DEFAULT_PHYSTWIN_SHEN_PIPELINE_CONFIG_PATH = Path(
+    str(_cfg("phystwin_shen", "pipeline_config"))
 )
-PHYSTWIN_SHEN_TRAIN_REALTIME_VIS_EVERY = int(
-    _cfg("phystwin_shen", "realtime_vis_every")
-)
-PHYSTWIN_SHEN_TRAIN_STOP_WHEN_FINISHED = bool(
-    _cfg("phystwin_shen", "stop_when_finished")
-)
+# ``online_dir``, ``cuda_visible_devices``, and the demo_2_max Python path are
+# resolved at launch. Everything else consumed by the external full-pipeline
+# YAML is owned here and passed as one explicit runtime mapping.
+DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG: dict[str, object] = {
+    "wandb_mode": str(_cfg("phystwin_shen", "wandb_mode")),
+    "phys_config": str(_cfg("phystwin_shen", "phys_config")),
+    "common": _cfg_mapping("phystwin_shen", "common"),
+    "stage1": _cfg_mapping("phystwin_shen", "stage1"),
+    "stage2": _cfg_mapping("phystwin_shen", "stage2"),
+    "train": _cfg_mapping("phystwin_shen", "train"),
+    "cma_viewer": _cfg_mapping("phystwin_shen", "cma_viewer"),
+    "train_viewer": _cfg_mapping("phystwin_shen", "train_viewer"),
+}
 DEFAULT_PHYSTWIN_SHEN_CUDA_VISIBLE_DEVICES = str(
     _cfg("gpu", "phystwin_shen_cuda_visible_devices")
 )

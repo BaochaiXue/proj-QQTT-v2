@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import time
 
 import numpy as np
 
@@ -35,13 +36,18 @@ from demo_v6_2.main_options import (
     resolve_downstream_mode,
     resolve_main_data_processing_cuda_visible_devices,
     resolve_phystwin_shen_cuda_visible_devices,
+    resolve_phystwin_shen_settings,
     resolve_shape_prior_warmup_cuda_visible_devices,
     resolve_visualizer_cuda_visible_devices,
     resolve_visualizer_layout,
     resolve_write_input_rgb_timeline,
     visualizer_start_policy,
 )
-from demo_v6_2.phystwin_shen_launch import validate_phystwin_shen_repo
+from demo_v6_2.phystwin_shen_launch import (
+    build_full_pipeline_command,
+    validate_phystwin_shen_repo,
+    validate_phystwin_shen_settings,
+)
 
 
 def build_visualizer_command(
@@ -96,6 +102,9 @@ def build_visualizer_command(
 def _contract(args: argparse.Namespace) -> dict[str, object]:
     """Return the dry-run/runtime summary without launching subprocesses."""
     chunk_frame_count = int(resolve_chunk_frame_count(args))
+    phystwin_settings = (
+        resolve_phystwin_shen_settings(args) if phystwin_shen_enabled(args) else None
+    )
     return {
         "demo_version": "demo_v6_1",
         "input_source": str(args.input_source),
@@ -168,12 +177,20 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "visualizer_object_color_mode": str(args.visualizer_object_color_mode),
         "phystwin_shen_repo_path": str(args.phystwin_shen_repo),
         "phystwin_shen_conda_env": str(args.phystwin_shen_conda_env),
+        "phystwin_shen_pipeline_config": str(args.phystwin_shen_pipeline_config),
         "phystwin_shen_cuda_visible_devices": (
             resolve_phystwin_shen_cuda_visible_devices(args)
         ),
-        "phystwin_shen_viewer_url": (
-            f"http://{args.phystwin_shen_viewer_host}:"
-            f"{int(args.phystwin_shen_viewer_port)}/"
+        "phystwin_shen_viewer_urls": (
+            {} if phystwin_settings is None else phystwin_settings.viewer_urls
+        ),
+        "phystwin_shen_pipeline_command": (
+            None
+            if phystwin_settings is None
+            else build_full_pipeline_command(
+                phystwin_settings,
+                python_prefix=_python_command_prefix(args.phystwin_shen_conda_env),
+            )
         ),
     }
 
@@ -195,6 +212,8 @@ def validate_runtime_args(args: argparse.Namespace, *, chunk_frame_count: int) -
         raise ValueError("--fake-live-case requires --input-source fake-live")
     if int(chunk_frame_count) <= 0:
         raise ValueError("chunk frame count must be positive")
+    if args.max_chunks is not None and int(args.max_chunks) <= 0:
+        raise ValueError("--max-chunks must be positive when provided")
     if not np.isfinite(float(args.edgetam_mask_logit_threshold)):
         raise ValueError("--edgetam-mask-logit-threshold must be finite")
     resolve_main_data_processing_cuda_visible_devices(args)
@@ -204,12 +223,20 @@ def validate_runtime_args(args: argparse.Namespace, *, chunk_frame_count: int) -
     if phystwin_shen_enabled(args):
         # Fail fast before launching subprocesses: a bad checkout/port/GPU
         # config should not surface only at shape-prior-ready time.
-        validate_phystwin_shen_repo(args.phystwin_shen_repo)
+        if not bool(args.asap_augment):
+            raise ValueError("--downstream-mode phystwin_shen requires --asap-augment")
+        settings = resolve_phystwin_shen_settings(args)
+        validate_phystwin_shen_repo(
+            settings.repo_path,
+            settings.pipeline_config,
+        )
+        validate_phystwin_shen_settings(
+            settings,
+            python_prefix=_python_command_prefix(args.phystwin_shen_conda_env),
+        )
         resolve_phystwin_shen_cuda_visible_devices(args)
         if not str(args.phystwin_shen_conda_env).strip():
             raise ValueError("--phystwin-shen-conda-env must be non-empty")
-        if not (0 < int(args.phystwin_shen_viewer_port) < 65536):
-            raise ValueError("--phystwin-shen-viewer-port must be 1..65535")
     if demo_visualizer_enabled(args):
         resolve_visualizer_layout(args)
         if int(args.visualizer_cam_idx) < 0:
@@ -377,34 +404,96 @@ def _default_capture_dir(args: argparse.Namespace, base_path: Path) -> Path:
     return base_path / CAPTURE_DIR_NAME
 
 
-def _stop_process(process: subprocess.Popen[bytes]) -> int | None:
-    """Stop a child, escalating SIGTERM -> SIGKILL with a 10 s grace each.
-
-    Children are launched with ``start_new_session=True``, so signalling the
-    whole process group also reaps grandchildren (conda run wrappers, CUDA
-    workers). When the group signal fails we fall back to plain
-    terminate/kill on the direct child.
-    """
-    if process.poll() is not None:
-        return process.returncode
-    used_process_group = False
-    pid = getattr(process, "pid", None)
+def _process_group_alive(process_group_id: int) -> bool:
+    """Return whether a saved process group still has any live members."""
     try:
-        if pid is not None:
-            os.killpg(os.getpgid(int(pid)), signal.SIGTERM)
-            used_process_group = True
-        else:
-            process.terminate()
-        return process.wait(timeout=10)
-    except Exception:
+        os.killpg(int(process_group_id), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _wait_for_process_group_exit(
+    process_group_id: int,
+    timeout_s: float,
+    *,
+    process: subprocess.Popen[bytes] | None = None,
+) -> bool:
+    """Wait until a saved process group has no members.
+
+    Polling the direct child while waiting is essential: an exited but
+    unreaped supervisor remains a zombie in its old process group, which would
+    otherwise make every normal cleanup wait through both timeout windows.
+    """
+    deadline = time.monotonic() + float(timeout_s)
+    while True:
+        if process is not None:
+            process.poll()
+        if not _process_group_alive(process_group_id):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
+def _stop_process(
+    process: subprocess.Popen[bytes],
+    *,
+    process_group_id: int | None = None,
+) -> int | None:
+    """Stop a saved child process group, escalating SIGTERM to SIGKILL.
+
+    Every caller launches its child with ``start_new_session=True``, so the
+    direct child's PID is also the process-group ID. The explicit group ID is
+    retained because a supervisor can exit before one of its viewer/training
+    descendants; cleanup must still kill that surviving group.
+    """
+    group_id = int(
+        process_group_id if process_group_id is not None else getattr(process, "pid")
+    )
+    group_alive = _process_group_alive(group_id)
+    if group_alive:
         try:
-            if pid is not None and used_process_group:
-                os.killpg(os.getpgid(int(pid)), signal.SIGKILL)
-            else:
-                process.kill()
-            return process.wait(timeout=10)
-        except Exception:
-            return process.poll()
+            os.killpg(group_id, signal.SIGTERM)
+        except ProcessLookupError:
+            group_alive = False
+        except PermissionError:
+            if process.poll() is None:
+                process.terminate()
+        if group_alive and not _wait_for_process_group_exit(
+            group_id,
+            10.0,
+            process=process,
+        ):
+            try:
+                os.killpg(group_id, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                if process.poll() is None:
+                    process.kill()
+            if not _wait_for_process_group_exit(
+                group_id,
+                10.0,
+                process=process,
+            ):
+                raise RuntimeError(
+                    f"process group is still alive after SIGKILL: pgid={group_id}"
+                )
+    elif process.poll() is None:
+        process.terminate()
+    if process.poll() is None:
+        try:
+            return process.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:
+                return process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                return process.poll()
+    return process.returncode
 
 
 def _start_visualizer(

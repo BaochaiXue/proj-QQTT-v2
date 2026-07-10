@@ -10,7 +10,10 @@
 摄像头、分割、跟踪和 warm-up。总控进程持续读取摄像头进程写出的
 `frames.jsonl`，通过 `chunk_*` 模块生成在线 chunk，同时通过
 `shape_prior_*` 模块生成 SAM3D shape prior，最后启动一个下游消费者：
-`visualize_track.py` 或 `phystwin_shen`。生命周期事件写入
+`visualize_track.py`，或 Phystwin_shen 的
+`scripts/run_online_full_pipeline.py` supervisor。Demo 只直接管理这个
+supervisor；Stage 1、可选 Stage 2、train 和两个 HTML viewer 由外部 wrapper
+创建并继承同一个进程组。生命周期事件写入
 `pipeline_status.jsonl`；Q23 会区分“已经实现的状态写入”和“默认 viewer
 尚未显示的部分”。
 
@@ -82,8 +85,10 @@
 
 3. **进程和线程如何协作？**
    外层是多进程：总控进程启动 camera 子进程；可选 visualizer、
-   Phystwin_shen trainer 和 HTML viewer 也是子进程。shape-prior 不是一条
-   与 camera 并列、常驻的单一进程：camera 进程先启动 warm-up thread，
+   Phystwin_shen full-pipeline supervisor 也是总控的直接子进程。supervisor
+   再按配置启动两个 HTML viewer、Stage 1、可选 Stage 2 和 train；这些 child
+   不创建新 session，因此继承 supervisor 的进程组。shape-prior 不是一条与
+   camera 并列、常驻的单一进程：camera 进程先启动 warm-up thread，
    `ShapePriorLocalClient.request_shape_prior` 再顺序调用各阶段子进程。
 
    camera 进程内部的 strict 数据流是：capture 同时写 `capture_slot` 和
@@ -97,9 +102,10 @@
    **源码证据：**
 
    - [`main.main`](main.py#L254)、
-     [`launch_phystwin_shen`](phystwin_shen_launch.py#L326) 和
+     [`launch_phystwin_shen`](phystwin_shen_launch.py) 和
      [`ShapePriorLocalClient.request_shape_prior`](shape_prior_warmup.py#L575)
-     给出进程边界；阶段冷启动由
+     给出 Demo 侧进程边界；full-pipeline wrapper 的 child 顺序由外部
+     `scripts/run_online_full_pipeline.py` 定义；shape-prior 阶段冷启动由
      [`_run_stage`](shape_prior_warmup.py#L170) 调用 `subprocess.run`。
    - [`_publish_capture_packet`](mdp_demo_capture.py#L21)、
      [`OrderedPacketQueue`](mdp_pipeline_plumbing.py#L52)、
@@ -123,6 +129,12 @@
    `replay_fps` 分开。采样器每隔 `1/fps` 发布当时的最新帧。直接运行
    `main_data_processing.py` 的内层 `--fps` 默认仍是 60，因此 30 FPS 结论应
    限定为正式 `main.py` 编排默认。
+
+   这层采集频率不等于发布/物理频率。Demo 的 `replay_fps` 固定输出 **5 FPS**
+   均匀时间步；Phystwin_shen `configs/real.yaml` 同样使用 `FPS: 5`、
+   `dt: 5e-5`、`num_substeps: 4000`，即每个数据帧模拟
+   `5e-5 × 4000 = 0.2 s = 1/5 s`。因此不存在原先 30 FPS 物理时间比 Demo
+   快 6 倍的问题；RealSense 仍可在 30 FPS 获取最新输入。
 
    **源码证据：**
 
@@ -610,32 +622,38 @@
 22. **训练侧从什么时候开始读取？**
     `main.main` 内嵌的 `_maybe_start_phystwin_shen` 在 warm-up 启用时等待
     `shape_prior/points.npz` 出现后启动；warm-up 禁用时以
-    `warmup_disabled_immediate` 立即启动。`build_train_command` 只向 trainer
-    传 `--online_dir <base_path>/online_data`，不再传旧的
-    `--base_path/--case_name/--static_data_path`；`build_viewer_command` 仍按其
-    自己的 CLI 传 `--base_path`、`--case_name`，并补上必需的
-    `--rgb_dir <base_path>/online_data/color`。
+    `warmup_disabled_immediate` 立即启动。Demo 只启动一个
+    `scripts/run_online_full_pipeline.py` supervisor，并显式传入
+    `--online_dir <base_path>/online_data` 以及本地
+    `config/default.yaml::phystwin_shen` 的每个 runtime 叶子。外部 pipeline
+    YAML 不再是 Demo 参数的维护源。
+
+    supervisor 在 `demo_2_max` 中运行；外部 YAML 的 `python: null` 令 Stage 1、
+    Stage 2、train 和 viewer 继承 supervisor 的同一个 Python。wrapper 先启动
+    启用的 CMA/train viewer，再顺序运行 Stage 1、可选 Stage 2 和 train。
+    Demo 在启动 supervisor 前先清理两个启用 viewer 的 endpoint，默认是
+    `127.0.0.1:8765` 和 `127.0.0.1:8766`。
 
     顺序读取逻辑位于外部 Phystwin_shen checkout：
     `OnlineChunkReader.load_new_chunks` 从 `last_loaded_chunk + 1` 顺序读到
     manifest 的 `latest_committed_chunk`；`wait_for_initial_frames` 会先等到至少
-    `segment_len` 帧才创建 trainer；`train_online_batched` 在
-    `stop_when_finished` 且 manifest status 为 `finished` 时停止。当前默认
-    `segment_len=32`、chunk=35，因此首个完整 chunk 恰好足够开始训练，但这不是
-    “任何配置都在 chunk 0 一提交就训练”的通用保证。
+    `segment_len` 帧才创建 trainer。当前本地配置是 `segment_len=30`、
+    chunk=35，因此首个完整 chunk 足够开始，但这不是任意配置的通用保证。
+    `train.stop_when_finished: true` 时，trainer 以 manifest 的 `finished` 为停止
+    条件，完成并保存观察到 finished 的 terminal iteration；设为 false 时严格
+    跑 `iterations`。无论是哪一种，Demo 正常路径最终都会等待 supervisor
+    返回，只有 return code 0 才算完整 pipeline 成功。
 
     **源码证据：**
 
-    - [`main.main::_maybe_start_phystwin_shen`](main.py#L363) 给出
+    - [`main.main::_maybe_start_phystwin_shen`](main.py) 给出
       points-ready/disabled 两个 trigger；
-      [`launch_phystwin_shen`](phystwin_shen_launch.py#L326) 启动两个子进程。
-    - [`build_train_command`](phystwin_shen_launch.py#L248) 与
-      [`build_viewer_command`](phystwin_shen_launch.py#L220) 给出准确 CLI。
-    - 外部 checkout `5b8c071` 的
-      [`wait_for_initial_frames`](https://github.com/shenchris/Phystwin_shen/blob/5b8c071/train_online_warp.py#L52)、
-      [`OnlineChunkReader.load_new_chunks`](https://github.com/shenchris/Phystwin_shen/blob/5b8c071/qqtt/data/online_stream.py#L75) 和
-      [`InvPhyTrainerWarp.train_online_batched`](https://github.com/shenchris/Phystwin_shen/blob/5b8c071/qqtt/engine/trainer_warp.py#L1257)
-      给出等待、顺序读取和 stop-when-finished 行为。
+      [`launch_phystwin_shen`](phystwin_shen_launch.py) 只执行一次 `Popen`，
+      [`build_full_pipeline_command`](phystwin_shen_launch.py) 给出完整显式 CLI。
+    - 外部 checkout 的 `train_online_warp.py::wait_for_initial_frames`、
+      `qqtt/data/online_stream.py::OnlineChunkReader.load_new_chunks` 和
+      `qqtt/engine/trainer_warp.py::InvPhyTrainerWarp.train_online_batched`
+      给出等待、顺序读取、terminal save 和 stop-when-finished 行为。
 
 ## 在线流水线状态可视化（Q23）
 
@@ -657,11 +675,14 @@
     会进入 OpenCV `run_side_by_side` 的 `rgb-overlay` 路径；不能声称默认正式
     viewer 已经显示该状态条。
 
-    还有一个错误边界：`ShapePriorWarmupManager._run` 捕获 stage 异常后只写
-    failed profile；chunk bridge 随后抛错，而 `main.main` 没有包住整段 stream
-    的外层 `except` 来保证发出 terminal `STAGE_FATAL`。所以 startup/worker
-    fatal 能可靠变红，但“任何 shape-prior/materialization 异常一定变红”尚不受
-    当前源码保证。
+    `main.main` 的外层 `try/except/finally` 覆盖 camera 启动、stream、
+    supervisor launch 和最终 wait。shape-prior/materialization、camera、
+    supervisor 非零退出或 Ctrl+C 任一失败都会写 terminal `STAGE_FATAL`，并以
+    保存的 PGID 对整个 Phystwin_shen 进程组执行 SIGTERM，超时后 SIGKILL。
+    即使 supervisor leader 已退出，遗留的 train/viewer child 仍按保存 PGID
+    清理。reader 仍只把 `manifest.status=finished` 当完成；若 producer 写
+    `failed`，Demo 不等待 reader 自己理解 failed，而是由上述异常路径终止整个
+    downstream group。
 
     **源码证据：**
 
@@ -678,7 +699,7 @@
       [`use_interactive_side_by_side`](viz_playback.py#L131) 与
       [`run_interactive_side_by_side`](viz_playback.py#L140) 证明默认
       SAM3D viewer 绕过该绘制逻辑。
-    - [`config/default.yaml`](config/default.yaml#L180) 定义默认
+    - [`config/default.yaml`](config/default.yaml) 定义默认
       `side-by-side + sam3d-final-data`；
       [`ShapePriorWarmupManager._run`](shape_prior_warmup.py#L734) 与
-      [`main.main`](main.py#L254) 给出 terminal-status 不能覆盖全部异常的边界。
+      [`main.main`](main.py) 给出 terminal fatal 与 downstream PGID 清理边界。

@@ -1,5 +1,10 @@
 # Demo v6.2 Phystwin_shen CLI contract sync
 
+> Historical plan: superseded by
+> `2026-07-09-demo-v6-2-full-pipeline-integration.md`. The current Demo no
+> longer launches trainer/viewer directly; it launches one full-pipeline
+> supervisor with explicit local-config overrides.
+
 ## Requirement
 
 Problem:

@@ -285,10 +285,12 @@ is not imported by the runtime; quarantine/exclude, do NOT delete unilaterally
     is guaranteed the data is durable: on each commit — atomic_pickle_dump chunk
     (`chunk_data_output.py:308`) → fsync archive frame → rewrite manifest/metadata
     (`:411`); manifest `status` goes `recording` → `finished`/`failed` (`:353`).
-22. **Training-side start** — phystwin_shen `train_online_warp.py` (launched when
-    `shape_prior/points.npz` appears, `main.py:1447`) polls
-    `online_data/manifest.json` and streams from the first committed chunk
-    (chunk_000000) forward, stopping when status=finished if configured.
+22. **Training-side start** — when `shape_prior/points.npz` appears, Demo starts
+    one phystwin_shen `scripts/run_online_full_pipeline.py` supervisor. The
+    wrapper starts both configured viewers and runs Stage 1 → optional Stage 2
+    → train. Its readers poll `online_data/manifest.json` from the first
+    committed chunk forward; trainer finish behavior comes from the local
+    `train.stop_when_finished` value passed explicitly by Demo.
 23. **Real-time viz today** — a separate `visualize_track.py` subprocess
     (`main.py:810`) shows side-by-side live input RGB vs `final_data` output chunks
     (render modes rgb-overlay / sam3d-final-data). NEW: a live pipeline-status
@@ -299,7 +301,8 @@ is not imported by the runtime; quarantine/exclude, do NOT delete unilaterally
 ## Live pipeline-status visualization (Phase D design)
 
 Status source: append-only `<base_path>/pipeline_status.jsonl`, written by the
-orchestrator (`main.py`: run start, warmup gate, chunk commits, phystwin launch),
+orchestrator (`main.py`: run start, warmup gate, chunk commits, phystwin
+supervisor launch),
 the camera process (`main_data_processing.py`: capturing, frame-0 seed, warmup
 stage, fatal error), and shape-prior stages (per-stage start/done/fail). Each
 line: `{t, source, stage, detail, frame_index?, ok?}`. Renderer: the visualizer

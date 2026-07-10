@@ -140,41 +140,52 @@ online_data/
 
 - **demo_visualizer**：原 `visualizer_mode: "window"` 行为不变
   （side-by-side 随 capture 启动、output-only 等第一个 chunk）。
-- **phystwin_shen**：自动化原手动流程 —— 在 shape prior ready 后直接在
-  第二块 GPU 上启动 Phystwin_shen 的 `train_online_warp.py` + HTML
-  viewer（`scripts/html_realtime_viewer.py`，phystwin_shen 模式总是带
-  viewer）。
+- **phystwin_shen**：在 shape prior ready 后，只启动一个 Phystwin_shen
+  `scripts/run_online_full_pipeline.py` supervisor。外部 wrapper 负责两个 HTML
+  viewer、Stage 1、可选 Stage 2 和 train；Demo 负责 runtime 参数、端口和完整
+  进程组生命周期。
   - **触发点**：`shape_prior/points.npz` 出现（warmup 完成的落盘产物，
     此时 SAM3D stage 子进程已退出、GPU 1 已清空）；由
     `stream_chunk_data_from_headless_capture` 的 `before_poll` 每轮轮询，
-    只触发一次。warmup 关闭时首轮立即启动。`train_online_warp.py` 自身
-    继续等待第一个 committed chunk（轮询 `online_data/manifest.json`）。
+    只触发一次。warmup 关闭时首轮立即启动。Stage/train reader 自身继续等待
+    committed chunk（轮询 `online_data/manifest.json`）。
   - **GPU**：子进程 `CUDA_VISIBLE_DEVICES` 取
     `gpu.phystwin_shen_cuda_visible_devices`（默认 "1"），同时传
     `--device cuda:0`，即进程内 cuda:0 = 物理 GPU 1。
-  - **repo/env 进 YAML**：`phystwin_shen.repo_path`（默认
+  - **唯一参数维护源**：`phystwin_shen.repo_path`（默认
     `/home/xinjie/Phystwin_shen`）与 `phystwin_shen.conda_env`（默认
-    `demo_2_max`）；viewer/train 参数同样在 `phystwin_shen:` 段，YAML
-    叶子名直接使用 Shen argparse 名称（如 `host`、`port`、`device`、
-    `batch_size`、`segment_len`）。
-  - **当前 Shen CLI 契约**：trainer 只接收
-    `--online_dir <base_path>/online_data`，不再接收旧
-    `--base_path/--case_name/--static_data_path`；viewer 接收
-    `--base_path <base_path> --case_name online_data`，并显式接收必需的
-    `--rgb_dir <base_path>/online_data/color`。两者共享显式传入的
-    realtime snapshot 目录。
-  - **端口**：viewer 绑定 `host:port`（默认
-    127.0.0.1:8765）。启动前若端口被占用，直接 kill 占用进程
-    （SIGTERM→SIGKILL）；无法识别占用者或 kill 后端口仍被占 →
-    `PhystwinShenLaunchError` fail fast。
+    `demo_2_max`）；`common/stage1/stage2/train/cma_viewer/train_viewer` 的每个
+    runtime 叶子都保存在本地 `config/default.yaml`。Demo 把这些值作为固定、
+    强类型 CLI override 全部传给 wrapper；外部
+    `configs/online_full_pipeline.yaml` 不是 Demo 参数的维护源。
+  - **Python 环境**：Demo 用 `demo_2_max` 启动 supervisor；外部 pipeline
+    YAML 的 `python: null` 让所有 stage/train/viewer child 继承 supervisor 的
+    Python，而不是继承操作者当前 `(base)` 的 Python。
+  - **执行顺序**：wrapper 先启动启用的两个 viewer，再顺序执行 Stage 1、
+    可选 Stage 2、train。当前本地配置是 Stage 1 enabled、Stage 2 disabled、
+    train enabled，`segment_len=30`、`batch_size=4`。
+  - **端口**：CMA viewer 默认绑定 `127.0.0.1:8765`，train viewer 默认绑定
+    `127.0.0.1:8766`。启动 supervisor 前，Demo 对两个启用 endpoint 都清理
+    旧 listener（SIGTERM→SIGKILL）；endpoint 重叠、无法识别占用者或 kill 后
+    仍被占用都以 `PhystwinShenLaunchError` fail fast。
   - **case dir 预置**：trainer 从 `online_dir`、viewer 从
     `base_path/case_name` 读取同一份
     `online_data/{calibrate.pkl,metadata.json}`，早于第一个 chunk commit。
     因此 `OnlineFrameArchive.initialize_case` 在 capture metadata 可用时
     立刻预置 calibrate.pkl + metadata.json
     （frame_num=0）+ 空 enhance_metadata.json，帧计数不变式保持不变。
-  - **生命周期**：与 viewer 窗口同策略 —— demo run 结束后 train/viewer
-    继续运行，run_summary 记录 `phystwin_shen_*`（命令、日志路径、
-    viewer URL、端口接管、return code / left_running）。退出码策略：
-    phystwin_shen 模式下未启动 → 1；任一子进程非零退出 → 透传。
-    日志写入 `base_path/phystwin_shen/*.log`。
+  - **时间尺度**：Demo 均匀发布 5 FPS；外部 `configs/real.yaml` 全局使用
+    `FPS: 5`、`dt: 5e-5`、`num_substeps: 4000`，每帧物理时间是 0.2 秒。
+    RealSense 仍默认 30 FPS 采集并按 5 FPS 取最新输入。
+  - **正常结束**：Demo 发布 `manifest.status=finished` 后停止 camera，并等待
+    supervisor。`train.stop_when_finished: true` 让 trainer 继续到观察到
+    finished 的 terminal iteration 后保存并退出；设为 false 时只跑固定
+    `iterations`。supervisor return code 0 才代表完整 pipeline 成功。
+  - **异常结束**：shape prior、materialization、camera、supervisor 或 Ctrl+C
+    任一异常都写 `STAGE_FATAL`，并按 supervisor 启动时保存的 PGID 清理
+    wrapper、active stage/train 和两个 viewer（SIGTERM→SIGKILL）。reader 仍只
+    识别 `finished`；producer 写 `failed` 时不靠 reader 退出，而由 Demo 异常
+    路径强制结束整个 PhysTwin group。
+  - **summary/log**：run summary 记录 supervisor command/config/log、PGID、
+    两个 viewer URL、端口接管结果和 return code；组合日志写入
+    `base_path/phystwin_shen/online_full_pipeline.log`。

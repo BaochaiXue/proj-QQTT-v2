@@ -82,7 +82,7 @@ gpu:
   # Visualizer process uses this namespace.
   visualizer_cuda_visible_devices: "1"
   # Options: non-empty CUDA_VISIBLE_DEVICES string, e.g. "0", "1", or "0,1".
-  # Phystwin_shen train/viewer subprocesses use this namespace.
+  # Phystwin_shen supervisor and all stage/train/viewer children use it.
   phystwin_shen_cuda_visible_devices: "1"
 
 # SAM3D shape-prior warmup.
@@ -105,52 +105,115 @@ shape_prior:
 # Downstream consumer of the online stream. Exactly one runs per session.
 downstream:
   # Options: disabled | demo_visualizer | phystwin_shen.
-  # demo_visualizer opens the point-cloud viewer; phystwin_shen launches
-  # online training plus its HTML viewer once shape prior is ready.
+  # demo_visualizer opens the point-cloud viewer; phystwin_shen launches the
+  # full Stage 1 / optional Stage 2 / train / two-viewer online pipeline.
   mode: "phystwin_shen"
 
-# Phystwin_shen online training + HTML realtime viewer
-# (downstream.mode: phystwin_shen). The two subprocesses launch together when
-# the shape prior becomes ready (points.npz written, warmup GPU freed);
-# train_online_warp.py then keeps waiting for the first committed chunk.
+# Phystwin_shen full online pipeline (downstream.mode: phystwin_shen).
+# This local section is the authoritative runtime configuration. The Demo
+# passes it to scripts/run_online_full_pipeline.py instead of relying on the
+# values stored in the external pipeline YAML.
 phystwin_shen:
-  # Options: relative or absolute Phystwin_shen checkout directory containing
-  # train_online_warp.py and scripts/html_realtime_viewer.py.
+  # Options: relative or absolute Phystwin_shen checkout directory.
   repo_path: "/home/xinjie/Phystwin_shen"
-  # Options: non-empty conda environment name; used by both subprocesses.
+  # Options: non-empty conda environment name; used by the full pipeline and
+  # all of its child processes.
   conda_env: "demo_2_max"
-  # Viewer --case_name. The trainer --online_dir and viewer --rgb_dir are
-  # derived from the same directory under base_path.
-  case_name: "online_data"
-  # Viewer --host. Usually 127.0.0.1 or 0.0.0.0.
-  host: "127.0.0.1"
-  # Options: integer TCP port in 1..65535. A process already occupying the
-  # port is killed; if the kill fails the run fails fast.
-  port: 8765
-  # Viewer --cam_idx. Options: non-negative integer camera index.
-  cam_idx: 0
-  # Viewer --point_mode. Options: original | surface | all.
-  point_mode: "surface"
-  # Viewer --point_stride. Options: positive integer.
-  point_stride: 5
-  # Trainer --device. Usually cuda:0 or cpu. Combined with
-  # gpu.phystwin_shen_cuda_visible_devices, cuda:0 maps inside that namespace.
-  device: "cuda:0"
-  # Trainer --batch_size. Positive rollout-window count per optimization step.
-  batch_size: 5
-  # Trainer --segment_len. Positive frame count per rollout window.
-  segment_len: 32
-  # Trainer --segment_stride. Positive frame hop between rollout windows.
-  segment_stride: 30
-  # Trainer --poll_sec. Positive finite seconds between online chunk polls.
-  poll_sec: 1.0
-  # Trainer --recent_window_count. Positive recent-window sampling count.
-  recent_window_count: 5
-  # Trainer --realtime_vis_every. Positive snapshot iteration interval.
-  realtime_vis_every: 1
-  # Trainer --stop_when_finished. Options: true | false.
-  # true exits when the online manifest reports finished.
-  stop_when_finished: true
+  # Options: path relative to repo_path or an absolute YAML path.
+  pipeline_config: "configs/online_full_pipeline.yaml"
+  # Options: disabled | offline | online.
+  wandb_mode: "disabled"
+  # Options: path relative to repo_path or an absolute physics config path.
+  phys_config: "configs/real.yaml"
+
+  # Shared by CMA Stage 1, CMA Stage 2, and first-order training.
+  common:
+    device: "cuda:0"
+    batch_size: 4
+    segment_len: 30
+    segment_stride: 30
+    recent_window_count: 4
+    poll_sec: 1.0
+    no_sample_recent: true
+    max_online_chunks: null
+    seed: 42
+
+  # Zero-order CMA over topology and physical parameters.
+  stage1:
+    enabled: true
+    script: "optimize_online_cma.py"
+    experiments_dir: "experiments_online_cma"
+    max_iter: 3
+    cma_timing: false
+    realtime_vis: true
+    realtime_vis_dir: null
+    realtime_vis_every: 1
+    no_realtime_iteration_history: false
+
+  # Optional fixed-topology zero-order refinement.
+  stage2:
+    enabled: false
+    script: "optimize_online_cma_fixed_topology.py"
+    experiments_dir: "experiments_online_cma_fixed_topology"
+    max_iter: 3
+    cma_timing: false
+    realtime_vis: true
+    realtime_vis_dir: null
+    realtime_vis_every: 1
+    no_realtime_iteration_history: false
+    stage1_params: null
+
+  # First-order differentiable online training.
+  train:
+    enabled: true
+    script: "train_online_warp.py"
+    experiments_dir: "experiments_online_train"
+    iterations: 20
+    train_frame: null
+    checkpoint_interval: 10
+    # The Demo intentionally delegates normal-finish behavior to this value.
+    stop_when_finished: true
+    realtime_vis: true
+    realtime_vis_every: 10
+    no_realtime_iteration_history: false
+    realtime_vis_dir: null
+    zero_order_source: "stage1"
+    optimal_params_path: null
+
+  # HTML viewer for the selected CMA output.
+  cma_viewer:
+    enabled: true
+    script: "scripts/html_realtime_viewer.py"
+    source: "stage1"
+    host: "127.0.0.1"
+    port: 8765
+    cam_idx: 0
+    point_mode: "surface"
+    point_stride: 5
+    npz_cache_size: 96
+    quiet: true
+    keep_running: false
+    base_path: null
+    case_name: null
+    realtime_dir: null
+    rgb_dir: null
+
+  # HTML viewer for first-order training output.
+  train_viewer:
+    enabled: true
+    script: "scripts/html_realtime_viewer.py"
+    host: "127.0.0.1"
+    port: 8766
+    cam_idx: 0
+    point_mode: "surface"
+    point_stride: 5
+    npz_cache_size: 96
+    quiet: true
+    keep_running: false
+    base_path: null
+    case_name: null
+    realtime_dir: null
+    rgb_dir: null
 
 # Demo v6.1 point-cloud visualizer (downstream.mode: demo_visualizer).
 visualizer:

@@ -1,61 +1,155 @@
-"""Launch Phystwin_shen online training + HTML viewer as demo subprocesses.
+"""Launch the Phystwin_shen online full-pipeline supervisor.
 
-``downstream.mode: phystwin_shen`` replaces the manual post-run launch of
-``train_online_warp.py`` and ``scripts/html_realtime_viewer.py``: both start
-automatically once the shape prior is ready (warmup finished, its GPU freed),
-pinned to the shape-prior GPU namespace (``CUDA_VISIBLE_DEVICES`` from
-``gpu.phystwin_shen_cuda_visible_devices`` with ``--device cuda:0``), while
-``train_online_warp.py`` itself keeps waiting for the first committed chunk.
-
-The trainer reads the ``base_path/<case_name>`` online stream. The viewer reads
-that case's ``calibrate.pkl``, ``metadata.json``, and ``color/`` archive. The
-viewer binds ``viewer_host:viewer_port``; a process already listening there is
-killed first, and a kill that does not free the port fails the run fast.
+Demo v6.2 owns the online stream, runtime parameters, GPU namespace, viewer
+ports, and supervisor lifetime. The external wrapper owns the ordered
+Stage-1/Stage-2/train execution and its two HTML viewer children.
 """
 
 from __future__ import annotations
 
+import math
 import os
 import socket
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
-VIEWER_SCRIPT_RELATIVE = Path("scripts") / "html_realtime_viewer.py"
-TRAIN_SCRIPT_RELATIVE = Path("train_online_warp.py")
+FULL_PIPELINE_SCRIPT_RELATIVE = Path("scripts") / "run_online_full_pipeline.py"
 PORT_KILL_TERM_TIMEOUT_S = 5.0
 PORT_KILL_KILL_TIMEOUT_S = 3.0
 WILDCARD_LISTENER_HOSTS = frozenset({"", "0.0.0.0", "::"})
 
+TOP_LEVEL_OVERRIDE_KEYS = (
+    "wandb_mode",
+    "phys_config",
+)
+SECTION_OVERRIDE_KEYS = {
+    "common": (
+        "device",
+        "batch_size",
+        "segment_len",
+        "segment_stride",
+        "recent_window_count",
+        "poll_sec",
+        "no_sample_recent",
+        "max_online_chunks",
+        "seed",
+    ),
+    "stage1": (
+        "enabled",
+        "script",
+        "experiments_dir",
+        "max_iter",
+        "cma_timing",
+        "realtime_vis",
+        "realtime_vis_dir",
+        "realtime_vis_every",
+        "no_realtime_iteration_history",
+    ),
+    "stage2": (
+        "enabled",
+        "script",
+        "experiments_dir",
+        "max_iter",
+        "cma_timing",
+        "realtime_vis",
+        "realtime_vis_dir",
+        "realtime_vis_every",
+        "no_realtime_iteration_history",
+        "stage1_params",
+    ),
+    "train": (
+        "enabled",
+        "script",
+        "experiments_dir",
+        "iterations",
+        "train_frame",
+        "checkpoint_interval",
+        "stop_when_finished",
+        "realtime_vis",
+        "realtime_vis_every",
+        "no_realtime_iteration_history",
+        "realtime_vis_dir",
+        "zero_order_source",
+        "optimal_params_path",
+    ),
+    "cma_viewer": (
+        "enabled",
+        "script",
+        "source",
+        "host",
+        "port",
+        "cam_idx",
+        "point_mode",
+        "point_stride",
+        "npz_cache_size",
+        "quiet",
+        "keep_running",
+        "base_path",
+        "case_name",
+        "realtime_dir",
+        "rgb_dir",
+    ),
+    "train_viewer": (
+        "enabled",
+        "script",
+        "host",
+        "port",
+        "cam_idx",
+        "point_mode",
+        "point_stride",
+        "npz_cache_size",
+        "quiet",
+        "keep_running",
+        "base_path",
+        "case_name",
+        "realtime_dir",
+        "rgb_dir",
+    ),
+}
+
 
 class PhystwinShenLaunchError(RuntimeError):
-    """Phystwin_shen could not be validated or launched."""
+    """Phystwin_shen could not be validated, launched, or kept healthy."""
 
 
-def validate_phystwin_shen_repo(repo_path: str | Path) -> Path:
-    """Fail fast unless the checkout provides both entry scripts."""
-    repo = Path(repo_path).expanduser()
+def _resolve_repo_file(repo: Path, value: str | Path, *, label: str) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = repo / path
+    path = path.resolve()
+    if not path.is_file():
+        raise PhystwinShenLaunchError(f"{label} is not a file: {path}")
+    return path
+
+
+def validate_phystwin_shen_repo(
+    repo_path: str | Path,
+    pipeline_config: str | Path,
+) -> tuple[Path, Path]:
+    """Return the validated checkout and full-pipeline config paths."""
+    repo = Path(repo_path).expanduser().resolve()
     if not repo.is_dir():
         raise PhystwinShenLaunchError(
             f"phystwin_shen repo_path is not a directory: {repo}"
         )
-    for script in (TRAIN_SCRIPT_RELATIVE, VIEWER_SCRIPT_RELATIVE):
-        if not (repo / script).is_file():
-            raise PhystwinShenLaunchError(
-                f"phystwin_shen repo_path {repo} is missing {script}"
-            )
-    return repo
+    _resolve_repo_file(
+        repo,
+        FULL_PIPELINE_SCRIPT_RELATIVE,
+        label="phystwin_shen full-pipeline script",
+    )
+    config = _resolve_repo_file(
+        repo,
+        pipeline_config,
+        label="phystwin_shen full-pipeline config",
+    )
+    return repo, config
 
 
 def _resolved_bind_hosts(host: str) -> tuple[set[str], bool]:
-    """Resolve a requested bind host into concrete addresses.
-
-    A wildcard bind target is special: any existing listener on the same port
-    blocks it. For concrete bind targets, wildcard listeners still block that
-    target, but listeners on unrelated concrete addresses do not.
-    """
+    """Resolve a requested bind host into concrete addresses."""
     bind_host = str(host).strip()
     if bind_host in WILDCARD_LISTENER_HOSTS:
         return {bind_host}, True
@@ -93,16 +187,13 @@ def _listener_blocks_bind_host(
     bind_hosts: set[str],
     bind_is_wildcard: bool,
 ) -> bool:
-    """Return whether an existing listener blocks the requested viewer bind."""
-    if bind_is_wildcard:
-        return True
-    if listener_host in WILDCARD_LISTENER_HOSTS:
+    if bind_is_wildcard or listener_host in WILDCARD_LISTENER_HOSTS:
         return True
     return listener_host in bind_hosts
 
 
 def _listening_pids(host: str, port: int) -> list[int | None]:
-    """PIDs of listeners blocking ``host:port`` (None when unreadable)."""
+    """Return PIDs of listeners that block ``host:port``."""
     import psutil  # noqa: PLC0415
 
     bind_hosts, bind_is_wildcard = _resolved_bind_hosts(host)
@@ -126,22 +217,20 @@ def _listening_pids(host: str, port: int) -> list[int | None]:
 
 
 def ensure_port_free(host: str, port: int) -> dict[str, Any]:
-    """Free ``port`` for the HTML viewer, killing any current listener.
-
-    The occupying process gets SIGTERM then SIGKILL; if the listener cannot
-    be identified (other user) or the port is still bound afterwards, the
-    launch fails fast instead of starting a viewer that would crash with
-    EADDRINUSE (html_realtime_viewer.py binds without retry).
-    """
+    """Kill listeners blocking one configured HTML viewer endpoint."""
     import psutil  # noqa: PLC0415
 
     pids = _listening_pids(host, port)
     if not pids:
-        return {"port": int(port), "status": "free", "killed_pids": []}
+        return {
+            "host": str(host),
+            "port": int(port),
+            "status": "free",
+            "killed_pids": [],
+        }
     if any(pid is None for pid in pids):
         raise PhystwinShenLaunchError(
-            f"port {port} is in use by a process this user cannot identify "
-            "or kill; free the port and retry"
+            f"port {port} is in use by a process this user cannot identify or kill"
         )
     killed: list[dict[str, Any]] = []
     for pid in pids:
@@ -161,8 +250,6 @@ def ensure_port_free(host: str, port: int) -> dict[str, Any]:
             raise PhystwinShenLaunchError(
                 f"failed to kill pid {pid} occupying port {port}: {error}"
             ) from error
-    # The socket should close with the process; verify before handing the
-    # port to the viewer.
     deadline = time.monotonic() + PORT_KILL_KILL_TIMEOUT_S
     while _listening_pids(host, port):
         if time.monotonic() >= deadline:
@@ -171,154 +258,238 @@ def ensure_port_free(host: str, port: int) -> dict[str, Any]:
                 f"{[entry['pid'] for entry in killed]}"
             )
         time.sleep(0.05)
-    return {"port": int(port), "status": "killed_occupant", "killed_pids": killed}
+    return {
+        "host": str(host),
+        "port": int(port),
+        "status": "killed_occupant",
+        "killed_pids": killed,
+    }
+
+
+def _runtime_section(
+    runtime_config: Mapping[str, Any], section: str
+) -> Mapping[str, Any]:
+    value = runtime_config.get(section)
+    if not isinstance(value, Mapping):
+        raise PhystwinShenLaunchError(
+            f"phystwin_shen runtime config {section!r} must be a mapping"
+        )
+    return value
+
+
+def _override_text(value: Any) -> str:
+    if value is None:
+        return "none"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 @dataclass(frozen=True)
 class PhystwinShenSettings:
-    """Everything needed to launch the two Phystwin_shen subprocesses."""
+    """Validated inputs for one external full-pipeline supervisor."""
 
     repo_path: Path
+    pipeline_config: Path
     conda_env: str
-    case_name: str
     base_path: Path
     cuda_visible_devices: str
-    viewer_host: str
-    viewer_port: int
-    viewer_cam_idx: int
-    viewer_point_mode: str
-    viewer_point_stride: int
-    train_device: str
-    train_batch_size: int
-    train_segment_len: int
-    train_segment_stride: int
-    train_poll_sec: float
-    train_recent_window_count: int
-    train_realtime_vis_every: int
-    train_stop_when_finished: bool
+    runtime_config: Mapping[str, Any]
 
     @property
     def online_dir(self) -> Path:
-        """Online stream and camera archive consumed by Phystwin_shen."""
-        return self.base_path / self.case_name
+        return self.base_path / "online_data"
+
+    def viewer_endpoint(self, section: str) -> tuple[str, int] | None:
+        viewer = _runtime_section(self.runtime_config, section)
+        if not bool(viewer["enabled"]):
+            return None
+        return str(viewer["host"]), int(viewer["port"])
 
     @property
-    def rgb_dir(self) -> Path:
-        """RGB archive required by the current HTML viewer CLI."""
-        return self.online_dir / "color"
-
-    @property
-    def realtime_dir(self) -> Path:
-        """Snapshot dir shared by the trainer (writer) and viewer (reader)."""
-        return self.repo_path / "experiments_online" / self.case_name / "realtime"
-
-    @property
-    def viewer_url(self) -> str:
-        return f"http://{self.viewer_host}:{int(self.viewer_port)}/"
+    def viewer_urls(self) -> dict[str, str]:
+        urls: dict[str, str] = {}
+        for section in ("cma_viewer", "train_viewer"):
+            endpoint = self.viewer_endpoint(section)
+            if endpoint is not None:
+                host, port = endpoint
+                urls[section] = f"http://{host}:{port}/"
+        return urls
 
 
-def build_viewer_command(
-    settings: PhystwinShenSettings, *, python_prefix: Sequence[str]
+def build_full_pipeline_command(
+    settings: PhystwinShenSettings,
+    *,
+    python_prefix: Sequence[str],
 ) -> list[str]:
-    """HTML viewer command, mirroring the manual launch script."""
-    return [
-        *python_prefix,
-        str(VIEWER_SCRIPT_RELATIVE),
-        "--base_path",
-        str(settings.base_path),
-        "--case_name",
-        str(settings.case_name),
-        "--realtime_dir",
-        str(settings.realtime_dir),
-        "--rgb_dir",
-        str(settings.rgb_dir),
-        "--host",
-        str(settings.viewer_host),
-        "--port",
-        str(int(settings.viewer_port)),
-        "--cam_idx",
-        str(int(settings.viewer_cam_idx)),
-        "--point_mode",
-        str(settings.viewer_point_mode),
-        "--point_stride",
-        str(int(settings.viewer_point_stride)),
-    ]
-
-
-def build_train_command(
-    settings: PhystwinShenSettings, *, python_prefix: Sequence[str]
-) -> list[str]:
-    """train_online_warp.py command, mirroring the manual launch script."""
+    """Build one command with every locally owned value passed explicitly."""
+    repo, config = validate_phystwin_shen_repo(
+        settings.repo_path,
+        settings.pipeline_config,
+    )
     command = [
         *python_prefix,
-        str(TRAIN_SCRIPT_RELATIVE),
+        str(FULL_PIPELINE_SCRIPT_RELATIVE),
+        "--config",
+        str(config),
         "--online_dir",
         str(settings.online_dir),
-        "--experiments_dir",
-        str(settings.repo_path / "experiments_online"),
-        "--device",
-        str(settings.train_device),
-        "--batch_size",
-        str(int(settings.train_batch_size)),
-        "--segment_len",
-        str(int(settings.train_segment_len)),
-        "--segment_stride",
-        str(int(settings.train_segment_stride)),
-        "--poll_sec",
-        str(float(settings.train_poll_sec)),
-        "--recent_window_count",
-        str(int(settings.train_recent_window_count)),
-        "--realtime_vis",
-        "--realtime_vis_dir",
-        str(settings.realtime_dir),
-        "--realtime_vis_every",
-        str(int(settings.train_realtime_vis_every)),
+        "--cuda_visible_devices",
+        str(settings.cuda_visible_devices),
     ]
-    if bool(settings.train_stop_when_finished):
-        command.append("--stop_when_finished")
+    for key in TOP_LEVEL_OVERRIDE_KEYS:
+        if key not in settings.runtime_config:
+            raise PhystwinShenLaunchError(
+                f"phystwin_shen runtime config is missing {key!r}"
+            )
+        command.extend([f"--{key}", _override_text(settings.runtime_config[key])])
+    for section, keys in SECTION_OVERRIDE_KEYS.items():
+        values = _runtime_section(settings.runtime_config, section)
+        missing = [key for key in keys if key not in values]
+        if missing:
+            raise PhystwinShenLaunchError(
+                f"phystwin_shen runtime config {section!r} is missing {missing}"
+            )
+        for key in keys:
+            command.extend([f"--{section}_{key}", _override_text(values[key])])
+    if repo != settings.repo_path.resolve():
+        raise AssertionError("validated repo path changed unexpectedly")
     return command
+
+
+def _viewer_endpoints(
+    settings: PhystwinShenSettings,
+) -> list[tuple[str, str, int]]:
+    validated: list[tuple[str, str, int]] = []
+    for section in ("cma_viewer", "train_viewer"):
+        endpoint = settings.viewer_endpoint(section)
+        if endpoint is None:
+            continue
+        host, port = endpoint
+        if not (0 < int(port) < 65536):
+            raise PhystwinShenLaunchError(f"{section}.port must be 1..65535")
+        bind_hosts, bind_is_wildcard = _resolved_bind_hosts(host)
+        for prior_section, prior_host, prior_port in validated:
+            if prior_port != port:
+                continue
+            prior_hosts, prior_is_wildcard = _resolved_bind_hosts(prior_host)
+            if bind_is_wildcard or prior_is_wildcard or bool(bind_hosts & prior_hosts):
+                raise PhystwinShenLaunchError(
+                    f"{section} and {prior_section} cannot share port {port} "
+                    f"on overlapping hosts {host!r} and {prior_host!r}"
+                )
+        validated.append((section, host, port))
+    return validated
+
+
+def validate_phystwin_shen_settings(
+    settings: PhystwinShenSettings,
+    *,
+    python_prefix: Sequence[str],
+) -> list[str]:
+    """Validate local runtime values before starting the camera process."""
+    if not str(settings.conda_env).strip():
+        raise PhystwinShenLaunchError("phystwin_shen conda_env must be non-empty")
+    if not python_prefix or any(not str(item).strip() for item in python_prefix):
+        raise PhystwinShenLaunchError(
+            "phystwin_shen Python command prefix must be non-empty"
+        )
+    command = build_full_pipeline_command(
+        settings,
+        python_prefix=python_prefix,
+    )
+    common = _runtime_section(settings.runtime_config, "common")
+    for key in (
+        "batch_size",
+        "segment_len",
+        "segment_stride",
+        "recent_window_count",
+    ):
+        if int(common[key]) <= 0:
+            raise PhystwinShenLaunchError(
+                f"phystwin_shen common.{key} must be positive"
+            )
+    poll_sec = float(common["poll_sec"])
+    if not math.isfinite(poll_sec) or poll_sec <= 0.0:
+        raise PhystwinShenLaunchError(
+            "phystwin_shen common.poll_sec must be finite and positive"
+        )
+    max_online_chunks = common["max_online_chunks"]
+    if max_online_chunks is not None and int(max_online_chunks) <= 0:
+        raise PhystwinShenLaunchError(
+            "phystwin_shen common.max_online_chunks must be positive or null"
+        )
+    for section in ("stage1", "stage2"):
+        values = _runtime_section(settings.runtime_config, section)
+        if bool(values["enabled"]) and int(values["max_iter"]) <= 0:
+            raise PhystwinShenLaunchError(
+                f"phystwin_shen {section}.max_iter must be positive"
+            )
+        if bool(values["enabled"]) and int(values["realtime_vis_every"]) <= 0:
+            raise PhystwinShenLaunchError(
+                f"phystwin_shen {section}.realtime_vis_every must be positive"
+            )
+    train = _runtime_section(settings.runtime_config, "train")
+    if bool(train["enabled"]) and int(train["iterations"]) <= 0:
+        raise PhystwinShenLaunchError("phystwin_shen train.iterations must be positive")
+    if bool(train["enabled"]) and int(train["realtime_vis_every"]) <= 0:
+        raise PhystwinShenLaunchError(
+            "phystwin_shen train.realtime_vis_every must be positive"
+        )
+    for section, _, _ in _viewer_endpoints(settings):
+        viewer = _runtime_section(settings.runtime_config, section)
+        if int(viewer["cam_idx"]) < 0:
+            raise PhystwinShenLaunchError(
+                f"phystwin_shen {section}.cam_idx must be non-negative"
+            )
+        for key in ("point_stride", "npz_cache_size"):
+            if int(viewer[key]) <= 0:
+                raise PhystwinShenLaunchError(
+                    f"phystwin_shen {section}.{key} must be positive"
+                )
+    return command
+
+
+def _free_viewer_ports(settings: PhystwinShenSettings) -> dict[str, Any]:
+    takeover: dict[str, Any] = {}
+    for section, host, port in _viewer_endpoints(settings):
+        takeover[section] = ensure_port_free(host, port)
+    return takeover
 
 
 @dataclass
 class PhystwinShenLaunch:
-    """Handles and provenance for the two launched subprocesses."""
+    """Handle and provenance for one full-pipeline supervisor."""
 
     settings: PhystwinShenSettings
-    viewer_process: subprocess.Popen[bytes]
-    train_process: subprocess.Popen[bytes]
-    viewer_command: list[str]
-    train_command: list[str]
-    viewer_log_path: Path
-    train_log_path: Path
+    pipeline_process: subprocess.Popen[bytes]
+    process_group_id: int
+    pipeline_command: list[str]
+    pipeline_log_path: Path
     port_takeover: dict[str, Any]
     start_wall_s: float
     trigger: str
     summary_extra: dict[str, Any] = field(default_factory=dict)
 
     def summary(self) -> dict[str, Any]:
-        """run_summary.json fields for this launch."""
-        viewer_return = self.viewer_process.poll()
-        train_return = self.train_process.poll()
+        return_code = self.pipeline_process.poll()
         return {
             "phystwin_shen_started": True,
             "phystwin_shen_trigger": self.trigger,
             "phystwin_shen_repo_path": str(self.settings.repo_path),
+            "phystwin_shen_pipeline_config": str(self.settings.pipeline_config),
             "phystwin_shen_conda_env": str(self.settings.conda_env),
             "phystwin_shen_cuda_visible_devices": str(
                 self.settings.cuda_visible_devices
             ),
-            "phystwin_shen_viewer_url": self.settings.viewer_url,
-            "phystwin_shen_viewer_command": list(self.viewer_command),
-            "phystwin_shen_train_command": list(self.train_command),
-            "phystwin_shen_viewer_log": str(self.viewer_log_path),
-            "phystwin_shen_train_log": str(self.train_log_path),
-            "phystwin_shen_realtime_dir": str(self.settings.realtime_dir),
+            "phystwin_shen_pipeline_command": list(self.pipeline_command),
+            "phystwin_shen_pipeline_log": str(self.pipeline_log_path),
+            "phystwin_shen_pipeline_return_code": return_code,
+            "phystwin_shen_pipeline_left_running": return_code is None,
+            "phystwin_shen_process_group_id": int(self.process_group_id),
+            "phystwin_shen_viewer_urls": self.settings.viewer_urls,
             "phystwin_shen_port_takeover": dict(self.port_takeover),
             "phystwin_shen_start_wall_s": float(self.start_wall_s),
-            "phystwin_shen_viewer_return_code": viewer_return,
-            "phystwin_shen_train_return_code": train_return,
-            "phystwin_shen_viewer_left_running": viewer_return is None,
-            "phystwin_shen_train_left_running": train_return is None,
             **self.summary_extra,
         }
 
@@ -331,54 +502,36 @@ def launch_phystwin_shen(
     trigger: str,
     wall_time_origin_s: float,
 ) -> PhystwinShenLaunch:
-    """Free the viewer port, then start the viewer and trainer subprocesses.
-
-    Both children run with cwd at the Phystwin_shen repo root (their configs
-    and imports are repo-relative) inside the configured GPU namespace; logs
-    stream to ``log_dir`` under the demo's base path so each run's downstream
-    output lives next to its chunks.
-    """
-    repo = validate_phystwin_shen_repo(settings.repo_path)
-    port_takeover = ensure_port_free(settings.viewer_host, settings.viewer_port)
-    settings.realtime_dir.mkdir(parents=True, exist_ok=True)
+    """Free both viewer ports and start one external supervisor process."""
+    repo, _ = validate_phystwin_shen_repo(
+        settings.repo_path,
+        settings.pipeline_config,
+    )
+    port_takeover = _free_viewer_ports(settings)
     logs = Path(log_dir)
     logs.mkdir(parents=True, exist_ok=True)
-    viewer_log_path = logs / "html_realtime_viewer.log"
-    train_log_path = logs / "train_online_warp.log"
+    pipeline_log_path = logs / "online_full_pipeline.log"
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(settings.cuda_visible_devices)
-    viewer_command = build_viewer_command(settings, python_prefix=python_prefix)
-    train_command = build_train_command(settings, python_prefix=python_prefix)
-    with viewer_log_path.open("wb") as viewer_log:
-        viewer_process = subprocess.Popen(
-            viewer_command,
+    pipeline_command = validate_phystwin_shen_settings(
+        settings,
+        python_prefix=python_prefix,
+    )
+    with pipeline_log_path.open("wb") as pipeline_log:
+        pipeline_process = subprocess.Popen(
+            pipeline_command,
             cwd=repo,
             env=env,
-            stdout=viewer_log,
+            stdout=pipeline_log,
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-    try:
-        with train_log_path.open("wb") as train_log:
-            train_process = subprocess.Popen(
-                train_command,
-                cwd=repo,
-                env=env,
-                stdout=train_log,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-    except Exception:
-        viewer_process.terminate()
-        raise
     return PhystwinShenLaunch(
         settings=settings,
-        viewer_process=viewer_process,
-        train_process=train_process,
-        viewer_command=viewer_command,
-        train_command=train_command,
-        viewer_log_path=viewer_log_path,
-        train_log_path=train_log_path,
+        pipeline_process=pipeline_process,
+        process_group_id=int(pipeline_process.pid),
+        pipeline_command=pipeline_command,
+        pipeline_log_path=pipeline_log_path,
         port_takeover=port_takeover,
         start_wall_s=time.monotonic() - float(wall_time_origin_s),
         trigger=str(trigger),
@@ -389,9 +542,9 @@ __all__ = [
     "PhystwinShenLaunch",
     "PhystwinShenLaunchError",
     "PhystwinShenSettings",
-    "build_train_command",
-    "build_viewer_command",
+    "build_full_pipeline_command",
     "ensure_port_free",
     "launch_phystwin_shen",
     "validate_phystwin_shen_repo",
+    "validate_phystwin_shen_settings",
 ]

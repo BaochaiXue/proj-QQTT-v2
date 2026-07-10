@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import math
 import os
 from pathlib import Path
@@ -13,24 +14,13 @@ import numpy as np
 from demo_v6_2.main_config import (
     DEFAULT_CAMERA_SERIALS,
     DEFAULT_DOWNSTREAM_MODE,
-    DEFAULT_PHYSTWIN_SHEN_CASE_NAME,
     DEFAULT_PHYSTWIN_SHEN_CUDA_VISIBLE_DEVICES,
+    DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG,
     DEFAULT_VISUALIZER_CUDA_VISIBLE_DEVICES,
     DEFAULT_VISUALIZER_LAYOUT,
     DOWNSTREAM_MODE_DEMO_VISUALIZER,
     DOWNSTREAM_MODE_PHYSTWIN_SHEN,
     DOWNSTREAM_MODES,
-    PHYSTWIN_SHEN_TRAIN_BATCH_SIZE,
-    PHYSTWIN_SHEN_TRAIN_DEVICE,
-    PHYSTWIN_SHEN_TRAIN_POLL_SEC,
-    PHYSTWIN_SHEN_TRAIN_REALTIME_VIS_EVERY,
-    PHYSTWIN_SHEN_TRAIN_RECENT_WINDOW_COUNT,
-    PHYSTWIN_SHEN_TRAIN_SEGMENT_LEN,
-    PHYSTWIN_SHEN_TRAIN_SEGMENT_STRIDE,
-    PHYSTWIN_SHEN_TRAIN_STOP_WHEN_FINISHED,
-    PHYSTWIN_SHEN_VIEWER_CAM_IDX,
-    PHYSTWIN_SHEN_VIEWER_POINT_MODE,
-    PHYSTWIN_SHEN_VIEWER_POINT_STRIDE,
     VISUALIZER_LAYOUT_SIDE_BY_SIDE,
     VISUALIZER_LAYOUTS,
 )
@@ -182,23 +172,11 @@ def resolve_phystwin_shen_settings(args: argparse.Namespace) -> PhystwinShenSett
     """Assemble the Phystwin_shen launch settings from config/CLI."""
     return PhystwinShenSettings(
         repo_path=Path(args.phystwin_shen_repo).expanduser().resolve(),
+        pipeline_config=Path(args.phystwin_shen_pipeline_config).expanduser(),
         conda_env=str(args.phystwin_shen_conda_env),
-        case_name=DEFAULT_PHYSTWIN_SHEN_CASE_NAME,
         base_path=Path(args.base_path).expanduser().resolve(),
         cuda_visible_devices=resolve_phystwin_shen_cuda_visible_devices(args),
-        viewer_host=str(args.phystwin_shen_viewer_host),
-        viewer_port=int(args.phystwin_shen_viewer_port),
-        viewer_cam_idx=PHYSTWIN_SHEN_VIEWER_CAM_IDX,
-        viewer_point_mode=PHYSTWIN_SHEN_VIEWER_POINT_MODE,
-        viewer_point_stride=PHYSTWIN_SHEN_VIEWER_POINT_STRIDE,
-        train_device=PHYSTWIN_SHEN_TRAIN_DEVICE,
-        train_batch_size=PHYSTWIN_SHEN_TRAIN_BATCH_SIZE,
-        train_segment_len=PHYSTWIN_SHEN_TRAIN_SEGMENT_LEN,
-        train_segment_stride=PHYSTWIN_SHEN_TRAIN_SEGMENT_STRIDE,
-        train_poll_sec=PHYSTWIN_SHEN_TRAIN_POLL_SEC,
-        train_recent_window_count=PHYSTWIN_SHEN_TRAIN_RECENT_WINDOW_COUNT,
-        train_realtime_vis_every=PHYSTWIN_SHEN_TRAIN_REALTIME_VIS_EVERY,
-        train_stop_when_finished=PHYSTWIN_SHEN_TRAIN_STOP_WHEN_FINISHED,
+        runtime_config=copy.deepcopy(DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG),
     )
 
 

@@ -26,9 +26,8 @@ from demo_v6_2.main_config import (
     DEFAULT_PERCEPTION_DEVICE,
     DEFAULT_PHYSTWIN_SHEN_CONDA_ENV,
     DEFAULT_PHYSTWIN_SHEN_CUDA_VISIBLE_DEVICES,
+    DEFAULT_PHYSTWIN_SHEN_PIPELINE_CONFIG_PATH,
     DEFAULT_PHYSTWIN_SHEN_REPO_PATH,
-    DEFAULT_PHYSTWIN_SHEN_VIEWER_HOST,
-    DEFAULT_PHYSTWIN_SHEN_VIEWER_PORT,
     DEFAULT_REPLAY_FPS,
     DEFAULT_SHAPE_PRIOR_CHUNK_WAIT_TIMEOUT_S,
     DEFAULT_SHAPE_PRIOR_CONFIG,
@@ -365,14 +364,14 @@ def build_parser() -> argparse.ArgumentParser:
     # Exactly one downstream consumer runs per session. demo_visualizer keeps
     # the historical viewer policies (side-by-side starts immediately,
     # output-only waits for the first committed chunk); phystwin_shen starts
-    # Phystwin_shen training + HTML viewer when the shape prior is ready.
+    # the external CMA/train/two-viewer full pipeline when shape prior is ready.
     parser.add_argument(
         "--downstream-mode",
         choices=DOWNSTREAM_MODES,
         default=DEFAULT_DOWNSTREAM_MODE,
         help=(
             "Downstream consumer of the online stream: disabled, the Demo "
-            "v6.1 viewer window, or Phystwin_shen train + HTML viewer."
+            "v6.1 viewer window, or the Phystwin_shen full online pipeline."
         ),
     )
     parser.add_argument(
@@ -386,17 +385,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_PHYSTWIN_SHEN_CONDA_ENV,
     )
     parser.add_argument(
+        "--phystwin-shen-pipeline-config",
+        type=Path,
+        default=DEFAULT_PHYSTWIN_SHEN_PIPELINE_CONFIG_PATH,
+        help=(
+            "Full-pipeline YAML relative to --phystwin-shen-repo or an "
+            "absolute path. Demo config values override its runtime options."
+        ),
+    )
+    parser.add_argument(
         "--phystwin-shen-cuda-visible-devices",
         default=DEFAULT_PHYSTWIN_SHEN_CUDA_VISIBLE_DEVICES,
-    )
-    parser.add_argument(
-        "--phystwin-shen-viewer-host",
-        default=DEFAULT_PHYSTWIN_SHEN_VIEWER_HOST,
-    )
-    parser.add_argument(
-        "--phystwin-shen-viewer-port",
-        type=int,
-        default=DEFAULT_PHYSTWIN_SHEN_VIEWER_PORT,
     )
     parser.add_argument(
         "--visualizer-layout",
