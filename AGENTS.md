@@ -2,12 +2,11 @@
 
 ## Repo Charter
 
-This `single-camera` branch handles single-camera RealSense preview,
+The `main` branch handles single-camera RealSense preview,
 calibration, synchronized recording, aligned case generation, native-vs-FFS
 comparison visualization for aligned cases, and sanctioned single-camera
-realtime demo/proxy diagnostics built on that camera stream. The `main` branch
-remains the protected 3-camera baseline until the user explicitly changes the
-repo-wide default.
+realtime demo/proxy diagnostics built on that camera stream. The
+`multiple-camera` branch preserves the former 3-camera baseline.
 
 ## Current Experiment Convention
 
@@ -98,18 +97,20 @@ repo-wide default.
 - Keep formatting scoped to touched files or snippets; do not run broad
   autoformatting across unrelated files.
 
-## Single-Camera Branch Policy
+## Branch Policy
 
-- All single-camera-specific modifications must be made, committed, and pushed on the `single-camera` branch.
-- Before any single-camera change, run `git branch --show-current` and confirm it prints `single-camera`; if it does not, switch with `git switch single-camera` before editing.
-- Do not commit or push single-camera changes directly to `main`, and do not merge `single-camera` into `main` unless the user explicitly asks for that merge.
-- For single-camera work, the post-validation push target is `git push origin single-camera`, not `git push origin main`.
-- Keep `main` protected as the existing 3-camera baseline until the user explicitly changes the repo-wide default.
+- `main` is the canonical single-camera development branch.
+- Before any single-camera change, run `git branch --show-current` and confirm
+  it prints `main`; if it does not, switch with `git switch main` before editing.
+- `multiple-camera` preserves the former 3-camera baseline. Change or merge
+  into it only when the user explicitly requests multiple-camera work.
+- For single-camera work, the post-validation push target is
+  `git push origin main`.
 
 ## Required Workflow For Future Changes
 
 1. Before modifying files, run `git pull --ff-only origin main` and confirm the local branch is up to date with GitHub.
-2. For single-camera-specific work, confirm the current branch is `single-camera` before editing.
+2. For single-camera work, confirm the current branch is `main` before editing.
 3. Start with an exec plan under `docs/exec-plans/active/` for any non-trivial change.
 4. Keep changes inside the documented camera preview / calibration / recording / alignment core or the sanctioned single-camera demo / proxy diagnostic scope.
 5. Update docs and tests in the same change when behavior changes.
@@ -119,7 +120,9 @@ repo-wide default.
 7. For external dependency proof-of-life work, record exact commands and outcomes under `docs/generated/`.
 8. For FFS changes, keep weights external and validate both deterministic tests and manual hardware outcomes.
 9. For comparison visualization changes, validate the calibration loader and non-interactive render path.
-10. After committing validated modifications, push them to GitHub with `git push origin single-camera` for single-camera work, otherwise `git push origin main`, unless the user explicitly says not to push.
+10. After committing validated single-camera modifications, push them with
+    `git push origin main`. Push to `multiple-camera` only for explicitly
+    requested multiple-camera work, unless the user explicitly says not to push.
 
 ## Autonomous Goal Execution Policy
 

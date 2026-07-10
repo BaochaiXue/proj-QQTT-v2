@@ -115,17 +115,16 @@ ENV_INSTALL_BANNED_FRAGMENTS = [
 
 BRANCH_POLICY_REQUIRED_TEXT = {
     "AGENTS.md": [
-        "Single-Camera Branch Policy",
-        "single-camera-specific modifications must be made, committed, "
-        "and pushed on the `single-camera` branch",
-        "Do not commit or push single-camera changes directly to `main`",
-        "git push origin single-camera",
+        "Branch Policy",
+        "`main` is the canonical single-camera development branch",
+        "`multiple-camera` preserves the former 3-camera baseline",
+        "git push origin main",
     ],
     "scripts/harness/README.md": [
-        "Single-Camera Branch Safety",
-        "Single-camera-specific modifications belong on the `single-camera` branch",
-        "Do not commit or push single-camera changes directly to `main`",
-        "git push origin single-camera",
+        "Branch Safety",
+        "Single-camera-specific modifications belong on the `main` branch",
+        "`multiple-camera` branch preserves the former",
+        "git push origin main",
     ],
 }
 
@@ -200,7 +199,7 @@ def check_env_install(errors: list[str]) -> None:
             )
 
 
-def check_single_camera_branch_policy(errors: list[str]) -> None:
+def check_branch_policy(errors: list[str]) -> None:
     for relpath, fragments in BRANCH_POLICY_REQUIRED_TEXT.items():
         path = ROOT / relpath
         if not path.exists():
@@ -209,7 +208,7 @@ def check_single_camera_branch_policy(errors: list[str]) -> None:
         text = path.read_text(encoding="utf-8")
         for fragment in fragments:
             if fragment not in text:
-                errors.append(f"{relpath} missing single-camera branch-policy fragment: {fragment}")
+                errors.append(f"{relpath} missing branch-policy fragment: {fragment}")
 
 
 def main() -> int:
@@ -222,7 +221,7 @@ def main() -> int:
     check_qqtt_exports(errors)
     check_readme_scope(errors)
     check_env_install(errors)
-    check_single_camera_branch_policy(errors)
+    check_branch_policy(errors)
 
     if errors:
         print("Scope check failed:")

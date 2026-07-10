@@ -2,7 +2,7 @@
 
 `scripts/harness/` is the repo's agent-legible control surface: thin CLIs,
 deterministic guards, probes, benchmarks, and bounded diagnostics for the
-single-camera branch.
+single-camera workflow on `main`.
 
 ## Source-Of-Truth Ladder
 
@@ -16,13 +16,14 @@ single-camera branch.
 | Harness guards | `scripts/harness/guards/check_*.py` | Mechanical enforcement for scope, catalog coverage, visual architecture, and experiment boundaries. |
 | Active plans | `docs/exec-plans/active/` | Current intent, decisions, validation, and follow-up state for non-trivial changes. |
 
-## Single-Camera Branch Safety
+## Branch Safety
 
-Single-camera-specific modifications belong on the `single-camera` branch.
-Before editing single-camera behavior, confirm `git branch --show-current`
-prints `single-camera`; if it does not, switch with `git switch single-camera`.
-Do not commit or push single-camera changes directly to `main`. The validated
-push target for that work is `git push origin single-camera`.
+Single-camera-specific modifications belong on the `main` branch. Before
+editing single-camera behavior, confirm `git branch --show-current` prints
+`main`; if it does not, switch with `git switch main`. The validated push target
+is `git push origin main`. The `multiple-camera` branch preserves the former
+3-camera baseline and changes only for explicitly requested multiple-camera
+work.
 
 ## Harness Contract
 

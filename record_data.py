@@ -58,7 +58,7 @@ def _positive_int(value: str) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Record RealSense raw data. The single-camera branch defaults to "
+            "Record RealSense raw data. The main branch defaults to "
             "one camera; pass --num-cam or --serials for explicit multi-camera runs."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

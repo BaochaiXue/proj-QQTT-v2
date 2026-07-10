@@ -444,7 +444,7 @@ def _effective_stats_log_interval_s(
 def _validate_ffs_batch_mode_args(*, worker_mode: str, batch_mode: str) -> None:
     del worker_mode
     if str(batch_mode) != "off":
-        raise ValueError("--ffs_batch_mode only supports off on the single-camera branch.")
+        raise ValueError("--ffs_batch_mode only supports off on the main branch.")
 
 
 def _validate_ffs_batch_mode_active_camera_count(
@@ -452,7 +452,7 @@ def _validate_ffs_batch_mode_active_camera_count(
 ) -> None:
     del active_camera_count
     if str(batch_mode) != "off":
-        raise ValueError("--ffs_batch_mode only supports off on the single-camera branch.")
+        raise ValueError("--ffs_batch_mode only supports off on the main branch.")
 
 
 def _build_ffs_runner(

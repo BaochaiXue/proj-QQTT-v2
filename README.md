@@ -1,6 +1,6 @@
 # proj-QQTT-v2 Single-Camera Demo v4
 
-This `single-camera` branch is currently organized around Demo v4: a
+The `main` branch is currently organized around Demo v4: a
 single-camera realtime preprocessing bridge that publishes FuturePhysTwin-ready
 chunk cases. Demo v4 launches the sanctioned Demo 3.2 headless runtime, collects
 RGB-D, masks, strict TAPNext++ tracks, and optional SAM3D single-view shape
@@ -9,7 +9,8 @@ prior, then writes complete chunk folders for FuturePhysTwin.
 The older camera preview, calibration, recording, alignment, and visualization
 tools still live in this repo. They are secondary in this README; see
 `docs/WORKFLOWS.md`, `docs/ARCHITECTURE.md`, and `docs/SCOPE.md` for the full
-single-camera branch map.
+single-camera repository map. The former multi-camera baseline is preserved on
+the `multiple-camera` branch.
 
 ## What Demo v4 Produces
 
@@ -65,7 +66,7 @@ vendor/demo_runtime/sam-3d-objects
 
 ## Quick Start
 
-Run all commands from the repo root on branch `single-camera`.
+Run all commands from the repo root on branch `main`.
 
 Terminal 1: start the shape-prior worker on GPU1. The worker process sees GPU1
 as `cuda:0` because of `CUDA_VISIBLE_DEVICES=1`.
