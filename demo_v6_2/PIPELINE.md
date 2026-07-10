@@ -692,6 +692,20 @@ supervisor；Stage 1、可选 Stage 2、train 和两个 HTML viewer 由外部 wr
     supervisor launch 和最终 wait。shape-prior/materialization、camera、
     supervisor 非零退出或 Ctrl+C 任一失败都会写 terminal `STAGE_FATAL`，并以
     保存的 PGID 对整个 Phystwin_shen 进程组执行 SIGTERM，超时后 SIGKILL。
+
+    显式 `--max-chunks N` 达标时，stream 已经提交完第 N 个 chunk 并持久化
+    terminal `manifest.status=finished`。编排器会在等待 Phystwin_shen 继续训练
+    之前立即、只打印一次：
+
+    ```text
+    ##################
+    collect finish
+    ##################
+    ```
+
+    这个 banner 只表示采集完成，不表示整个 Demo 进程已经退出；Phystwin_shen
+    尚未训练完时，主进程会继续等待它。
+
     即使 supervisor leader 已退出，遗留的 train/viewer child 仍按保存 PGID
     清理。reader 仍只把 `manifest.status=finished` 当完成；若 producer 写
     `failed`，Demo 不等待 reader 自己理解 failed，而是由上述异常路径终止整个

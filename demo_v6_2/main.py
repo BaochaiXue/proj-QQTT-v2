@@ -174,6 +174,9 @@ from demo_v6_2.main_subprocess import (
 # ---------------------------------------------------------------------------
 
 
+COLLECT_FINISH_BANNER = "##################\ncollect finish\n##################"
+
+
 def _runtime_chunk_summary(manifests: Sequence[dict[str, object]]) -> dict[str, object]:
     """Aggregate per-chunk manifests into run-level publish/quality stats."""
     # publish_wall_s values are wall-clock seconds; consecutive differences
@@ -483,6 +486,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             asap_augment=bool(args.asap_augment),
             asap_mesh_path=args.asap_mesh_path,
         )
+        if args.max_chunks is not None and len(manifests) >= int(args.max_chunks):
+            print(COLLECT_FINISH_BANNER, flush=True)
         camera_return_before_stop = main_data_processing.poll()
         main_data_processing_return_code = _stop_process(main_data_processing)
         camera_stopped = True

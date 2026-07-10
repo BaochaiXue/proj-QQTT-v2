@@ -491,6 +491,88 @@ class PhystwinLifecycleTests(unittest.TestCase):
                         ]
                     )
 
+    def test_collect_finish_banner_precedes_phystwin_wait(self) -> None:
+        camera = mock.Mock(pid=1111)
+        camera.poll.return_value = None
+        pipeline_process = mock.Mock(pid=2222)
+        pipeline_process.poll.return_value = None
+        launch = mock.Mock(
+            pipeline_process=pipeline_process,
+            process_group_id=2222,
+            settings=SimpleNamespace(viewer_urls={}),
+        )
+        launch.summary.return_value = {}
+        manifests = [{"chunk_index": index} for index in range(5)]
+
+        def finish_collection(*args, **kwargs):
+            del args
+            kwargs["before_poll"]()
+            return manifests
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(runner, "validate_runtime_args"),
+                mock.patch.object(
+                    runner,
+                    "build_main_data_processing_command",
+                    return_value=["camera"],
+                ),
+                mock.patch.object(
+                    runner.subprocess,
+                    "Popen",
+                    return_value=camera,
+                ),
+                mock.patch.object(
+                    runner,
+                    "launch_phystwin_shen",
+                    return_value=launch,
+                ),
+                mock.patch.object(
+                    runner,
+                    "stream_chunk_data_from_headless_capture",
+                    side_effect=finish_collection,
+                ),
+                mock.patch.object(
+                    runner,
+                    "_stop_process",
+                    return_value=-signal.SIGTERM,
+                ),
+                mock.patch("builtins.print") as print_output,
+            ):
+
+                def finish_phystwin(_launch):
+                    print_output.assert_any_call(
+                        runner.COLLECT_FINISH_BANNER,
+                        flush=True,
+                    )
+                    return 0
+
+                with mock.patch.object(
+                    runner,
+                    "_wait_for_phystwin_launch",
+                    side_effect=finish_phystwin,
+                ) as wait_for_phystwin:
+                    return_code = runner.main(
+                        [
+                            "--base-path",
+                            tmp,
+                            "--downstream-mode",
+                            "phystwin_shen",
+                            "--no-shape-prior-warmup",
+                            "--max-chunks",
+                            "5",
+                        ]
+                    )
+
+        self.assertEqual(return_code, 0)
+        wait_for_phystwin.assert_called_once_with(launch)
+        self.assertEqual(
+            print_output.call_args_list.count(
+                mock.call(runner.COLLECT_FINISH_BANNER, flush=True)
+            ),
+            1,
+        )
+
 
 class ProcessGroupCleanupTests(unittest.TestCase):
     def test_normal_group_cleanup_reaps_leader_without_timeout_delay(self) -> None:
