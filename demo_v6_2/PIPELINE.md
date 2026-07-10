@@ -293,6 +293,12 @@
     align 区分 input/render candidates/SuperGlue/PnP+scale/两段 ARAP/mesh
     export；sample 区分 mesh load/surface+volume sample/voxel dedup/pickle。
 
+    generate 的 SAM3D 调用固定关闭 `with_layout_postprocess`：Demo v6.2 只消费
+    GLB mesh 和 Gaussian，不使用 SAM3D 返回的 layout/pose 字段；随后独立的
+    `shape_prior_align` 才负责把 mesh 配准到 frame-0 观测。因而 layout pose
+    后处理不会决定最终对齐，只会增加 warm-up 关键路径。mesh postprocess 与
+    texture baking 仍保持启用，分别服务后续 mesh 对齐/采样和带纹理 GLB 导出。
+
     修改前保存的一轮基线中，submit 后总计约 59.23 s：generate 29.44 s
     （49.7%）、align 14.26 s（24.1%）、upscale 12.27 s（20.7%）；三者合计
     94.5%。camera start 到 submit 另约 15.94 s。因此下一轮详细 profile 应先

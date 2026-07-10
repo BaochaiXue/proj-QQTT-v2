@@ -12,6 +12,18 @@
 - warmup frame 0 的锚位只能由 chunk-ready 的行占据（controller ≥ 30 点、object > 0 点，与 bridge 的 `_row_ready_for_realtime_chunk_start` 一致）；实况相机在对齐 PCD 就绪前吐出的无效首帧照常写行、由 bridge 修剪，不触发闸门。
 - run 在闸门期内结束（prior 未就绪、正式时间线从未开始）时，收尾必须响亮报错并在 metadata 标记 `formal_timeline_incomplete`，绝不能以"成功零 chunk"收场。`--duration-s` 只计正式采集时段，不含闸门等待。
 
+## SAM3D generate 输出契约
+
+- Demo v6.2 调用 SAM3D pipeline 时固定使用
+  `with_layout_postprocess=False`。本流水线只消费生成的 GLB mesh 和 Gaussian；
+  SAM3D 返回的 layout/pose 字段没有下游消费者。
+- 生成后的 mesh 会由独立 `shape_prior_align` 阶段对齐到 frame-0 观测，因此在
+  generate 内再次执行 layout pose 后处理既不决定最终配准，又会增加 warm-up
+  关键路径。
+- `with_mesh_postprocess=True` 和 `with_texture_baking=True` 保持启用；前者服务
+  后续 mesh 对齐与采样，后者保留 GLB 的纹理产物。禁用范围仅限 layout pose
+  后处理。
+
 ## warmup 时间分析契约
 
 - `capture/shape_prior_profile.json` 是 warmup 性能分析的权威快照；

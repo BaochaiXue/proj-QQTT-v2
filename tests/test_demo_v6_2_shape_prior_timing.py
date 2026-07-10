@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import pickle
 import time
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -13,6 +14,7 @@ import numpy as np
 from PIL import Image
 
 from demo_v6_2 import sam31_image_segmentation
+from demo_v6_2 import shape_prior_generate
 from demo_v6_2 import shape_prior_timing
 from demo_v6_2 import shape_prior_warmup
 
@@ -196,6 +198,44 @@ class Sam31ExportTimingTests(unittest.TestCase):
         np.testing.assert_array_equal(written_rgba[0, :, :3], raw_bgr[0])
         np.testing.assert_array_equal(written_rgba[0, :, 3], [255, 255])
         np.testing.assert_array_equal(written_rgba[1, :, :], 0)
+
+
+class Sam3dGenerateContractTests(unittest.TestCase):
+    def test_pipeline_disables_layout_postprocess_and_preserves_mesh_options(
+        self,
+    ) -> None:
+        rgba = np.zeros((2, 2, 4), dtype=np.uint8)
+        rgba[0, 0, 3] = 255
+        pipeline = mock.Mock()
+        pipeline.run.return_value = {"glb": [mock.Mock()]}
+        inference = SimpleNamespace(_pipeline=pipeline)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            input_path = root / "masked.png"
+            Image.fromarray(rgba).save(input_path)
+            args = SimpleNamespace(
+                img_path=str(input_path),
+                output_dir=str(root / "shape"),
+                seed=42,
+                skip_visualization=True,
+            )
+
+            shape_prior_generate.run_sam3d_shape_prior(
+                args,
+                infer=inference,
+                timing_ms={},
+            )
+
+        pipeline.run.assert_called_once_with(
+            mock.ANY,
+            mock.ANY,
+            seed=42,
+            with_mesh_postprocess=True,
+            with_texture_baking=True,
+            with_layout_postprocess=False,
+            use_vertex_color=False,
+        )
 
 
 class ShapePriorClientTimingTests(unittest.TestCase):

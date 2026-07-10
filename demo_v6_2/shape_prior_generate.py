@@ -212,7 +212,9 @@ def run_sam3d_shape_prior(args, infer=None, *, timing_ms=None):
             seed=int(args.seed),
             with_mesh_postprocess=True,
             with_texture_baking=True,
-            with_layout_postprocess=True,
+            # Demo v6.2 aligns the exported mesh in the following stage and
+            # does not consume SAM3D's independently optimized layout pose.
+            with_layout_postprocess=False,
             use_vertex_color=False,
         )
     else:
