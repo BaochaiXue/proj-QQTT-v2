@@ -23,6 +23,7 @@ import numpy as np
 from demo_v6_2 import main as runner
 from demo_v6_2 import main_subprocess
 from demo_v6_2 import phystwin_shen_launch
+from demo_v6_2 import shape_prior_warmup
 from demo_v6_2.online_frame_archive import (
     OnlineFrameArchive,
     OnlineFrameArchiveError,
@@ -177,7 +178,37 @@ class DownstreamConfigTests(unittest.TestCase):
         self.assertEqual(section["cma_viewer"]["port"], 8765)
         self.assertFalse(section["train_viewer"]["enabled"])
         self.assertEqual(section["train_viewer"]["port"], 8766)
-        self.assertEqual(str(config["gpu"]["phystwin_shen_cuda_visible_devices"]), "1")
+
+    def test_gpu_defaults_assign_main_to_one_and_consumers_to_zero(self) -> None:
+        expected = {
+            "main_data_processing_cuda_visible_devices": "1",
+            "shape_prior_warmup_cuda_visible_devices": "0",
+            "visualizer_cuda_visible_devices": "0",
+            "phystwin_shen_cuda_visible_devices": "0",
+        }
+        config = runner.load_default_config()
+        actual = {key: str(config["gpu"][key]) for key in expected}
+        self.assertEqual(actual, expected)
+
+        args = runner.build_parser().parse_args([])
+        for key, value in expected.items():
+            self.assertEqual(str(getattr(args, key)), value)
+
+        camera_command = main_subprocess.build_main_data_processing_command(
+            args,
+            capture_dir=Path("capture"),
+            profile_json=Path("profile.json"),
+            chunk_frame_count=35,
+        )
+        shape_prior_flag = "--shape-prior-warmup-cuda-visible-devices"
+        self.assertEqual(
+            camera_command[camera_command.index(shape_prior_flag) + 1],
+            "0",
+        )
+        self.assertEqual(
+            shape_prior_warmup.DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
+            "0",
+        )
 
     def test_every_local_runtime_leaf_has_an_explicit_cli_override(self) -> None:
         runtime = runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG

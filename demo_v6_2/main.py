@@ -383,11 +383,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     def _maybe_start_phystwin_shen() -> None:
         """Launch once at shape-prior readiness and enforce live health.
 
-        The warmup completion artifact (points.npz) doubles as the "GPU 1 is
-        free" signal: the SAM3D stage subprocesses have exited by the time it
-        is written. train_online_warp.py then keeps waiting for the first
-        committed chunk on its own. Without warmup there is nothing to wait
-        for, so the launch happens on the first poll.
+        The warmup completion artifact (points.npz) doubles as the
+        "shape-prior GPU is free" signal: the SAM3D stage subprocesses have
+        exited by the time it is written. train_online_warp.py then keeps
+        waiting for the first committed chunk on its own. Without warmup there
+        is nothing to wait for, so the launch happens on the first poll.
         """
         nonlocal phystwin_launch
         if not phystwin_shen_enabled(args):

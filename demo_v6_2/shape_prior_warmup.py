@@ -35,7 +35,7 @@ STATUS_READY = "ready"
 STATUS_FAILED = "failed"
 
 DEFAULT_SHAPE_PRIOR_TIMEOUT_MS = 180_000
-DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES = "1"
+DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES = "0"
 CASE_NAME = "shape_prior_frame0"
 # Surface/interior sampling counts follow the original PhysTwin offline
 # pipeline (data_process_origin/data_process_sample.py defaults).

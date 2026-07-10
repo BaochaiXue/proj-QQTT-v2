@@ -70,20 +70,21 @@ camera:
   # Options: bfloat16 | float16 | float32.
   inference_dtype: "bfloat16"
 
-# GPU namespaces for the cooperating subprocesses.
+# GPU namespaces: the main data-processing process uses physical GPU 1;
+# dedicated shape-prior stages, visualizer, and Phystwin_shen use GPU 0.
 gpu:
   # Options: non-empty CUDA_VISIBLE_DEVICES string, e.g. "0", "1", or "0,1".
   # Main warmup and realtime data_process stages use this namespace.
-  main_data_processing_cuda_visible_devices: "0"
+  main_data_processing_cuda_visible_devices: "1"
   # Options: non-empty CUDA_VISIBLE_DEVICES string, e.g. "0", "1", or "0,1".
   # Shape-prior SAM3D stages use this namespace.
-  shape_prior_warmup_cuda_visible_devices: "1"
+  shape_prior_warmup_cuda_visible_devices: "0"
   # Options: non-empty CUDA_VISIBLE_DEVICES string, e.g. "0", "1", or "0,1".
   # Visualizer process uses this namespace.
-  visualizer_cuda_visible_devices: "1"
+  visualizer_cuda_visible_devices: "0"
   # Options: non-empty CUDA_VISIBLE_DEVICES string, e.g. "0", "1", or "0,1".
   # Phystwin_shen supervisor and all stage/train/viewer children use it.
-  phystwin_shen_cuda_visible_devices: "1"
+  phystwin_shen_cuda_visible_devices: "0"
 
 # SAM3D shape-prior warmup.
 shape_prior:

@@ -145,13 +145,13 @@ online_data/
   HTML viewer、Stage 1、可选 Stage 2 和 train；Demo 负责 runtime 参数、端口
   和完整进程组生命周期。
   - **触发点**：`shape_prior/points.npz` 出现（warmup 完成的落盘产物，
-    此时 SAM3D stage 子进程已退出、GPU 1 已清空）；由
+    此时 SAM3D stage 子进程已退出、GPU 0 已清空）；由
     `stream_chunk_data_from_headless_capture` 的 `before_poll` 每轮轮询，
     只触发一次。warmup 关闭时首轮立即启动。Stage/train reader 自身继续等待
     committed chunk（轮询 `online_data/manifest.json`）。
   - **GPU**：子进程 `CUDA_VISIBLE_DEVICES` 取
-    `gpu.phystwin_shen_cuda_visible_devices`（默认 "1"），同时传
-    `--device cuda:0`，即进程内 cuda:0 = 物理 GPU 1。
+    `gpu.phystwin_shen_cuda_visible_devices`（默认 "0"），同时传
+    `--device cuda:0`，即进程内 cuda:0 = 物理 GPU 0。
   - **唯一参数维护源**：`phystwin_shen.repo_path`（默认
     `/home/xinjie/Phystwin_shen`）与 `phystwin_shen.conda_env`（默认
     `demo_2_max`）；`common/stage1/stage2/train/cma_viewer/train_viewer` 的每个
