@@ -404,6 +404,12 @@ def stream_chunk_data_from_headless_capture(
             # source pacing remains tied to the camera/fake-camera stream.
             row_buffer.append(row)
             prepared_buffer.append(prepared_row)
+            if frame_archive is not None:
+                # Real-time RGB-D publication: this frame's color/depth land
+                # on disk NOW (frame cadence), not at chunk commit. frame_num
+                # in metadata.json still advances only after the owning chunk
+                # commits (archive_chunk verifies these streamed files then).
+                frame_archive.stream_frame(prepared_row)
             next_row_idx += 1
             if len(row_buffer) < chunk_size:
                 continue
@@ -431,6 +437,16 @@ def stream_chunk_data_from_headless_capture(
                 chunk_index += 1
             break
         time.sleep(max(0.0, float(poll_interval_s)))
+    if frame_archive is not None:
+        # Streamed frames past the last committed chunk (partial tail window /
+        # max_chunks stop) have no owning chunk; drop them so the final tree
+        # matches the batch conversion path and frame_num's contract.
+        discarded = frame_archive.discard_streamed_tail()
+        if discarded:
+            print(
+                f"[demo_v6_1] online_data: discarded {discarded} streamed "
+                "frames past the last committed chunk"
+            )
     if online_writer is not None:
         online_writer.finish()
     return manifests

@@ -21,7 +21,11 @@ import numpy as np
 
 from demo_v6_2 import main as runner
 from demo_v6_2 import main_subprocess
-from demo_v6_2.online_frame_archive import OnlineFrameArchive
+from demo_v6_2.online_frame_archive import (
+    OnlineFrameArchive,
+    OnlineFrameArchiveError,
+)
+from demo_v6_2.phystwin_strict_product import PreparedPhysTwinFrame
 from demo_v6_2.phystwin_shen_launch import (
     PhystwinShenLaunchError,
     PhystwinShenSettings,
@@ -133,7 +137,7 @@ class DownstreamConfigTests(unittest.TestCase):
         self.assertTrue(section["stage1"]["enabled"])
         self.assertFalse(section["stage2"]["enabled"])
         self.assertEqual(section["train"]["iterations"], 20)
-        self.assertTrue(section["train"]["stop_when_finished"])
+        self.assertFalse(section["train"]["stop_when_finished"])
         self.assertEqual(section["cma_viewer"]["port"], 8765)
         self.assertEqual(section["train_viewer"]["port"], 8766)
         self.assertEqual(str(config["gpu"]["phystwin_shen_cuda_visible_devices"]), "1")
@@ -272,21 +276,21 @@ class LauncherCommandTests(unittest.TestCase):
         self.assertEqual(value("--common_segment_len"), "30")
         self.assertEqual(value("--stage1_enabled"), "true")
         self.assertEqual(value("--stage2_enabled"), "false")
-        self.assertEqual(value("--train_stop_when_finished"), "true")
+        self.assertEqual(value("--train_stop_when_finished"), "false")
         self.assertEqual(value("--train_train_frame"), "none")
         self.assertEqual(value("--cma_viewer_port"), "8765")
         self.assertEqual(value("--train_viewer_port"), "8766")
 
     def test_stop_when_finished_is_controlled_by_local_config(self) -> None:
         runtime = copy.deepcopy(runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
-        runtime["train"]["stop_when_finished"] = False
+        runtime["train"]["stop_when_finished"] = True
         settings = _settings(self.repo, self.base, runtime_config=runtime)
         command = build_full_pipeline_command(
             settings,
             python_prefix=["python"],
         )
         index = command.index("--train_stop_when_finished")
-        self.assertEqual(command[index + 1], "false")
+        self.assertEqual(command[index + 1], "true")
 
     def test_duplicate_viewer_endpoint_fails_before_launch(self) -> None:
         runtime = copy.deepcopy(runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
@@ -684,6 +688,155 @@ class InitializeCaseTests(unittest.TestCase):
             archive.initialize_case(metadata, serial_number="fallback")
             seeded = json.loads((online_dir / "metadata.json").read_text())
             self.assertEqual(seeded["frame_num"], 0)
+
+
+class StreamingArchiveTests(unittest.TestCase):
+    """color/depth stream in real time; frame_num stays commit-gated."""
+
+    WIDTH = 8
+    HEIGHT = 6
+
+    def _metadata(self) -> dict:
+        return {
+            "k_color": [[100.0, 0.0, 4.0], [0.0, 100.0, 3.0], [0.0, 0.0, 1.0]],
+            "camera_to_world_c2w": None,
+            "width": self.WIDTH,
+            "height": self.HEIGHT,
+            "serial": "stream-serial",
+        }
+
+    def _frame(self, seq: int) -> PreparedPhysTwinFrame:
+        return PreparedPhysTwinFrame(
+            seq=seq,
+            rgb_frame=np.full(
+                (self.HEIGHT, self.WIDTH, 3), seq % 255, dtype=np.uint8
+            ),
+            processed_mask_frame={
+                "object": np.ones((self.HEIGHT, self.WIDTH), dtype=bool),
+                "controller": np.zeros((self.HEIGHT, self.WIDTH), dtype=bool),
+            },
+            pcd_points=np.zeros((1, self.HEIGHT, self.WIDTH, 3), dtype=np.float32),
+            pcd_colors=np.zeros((1, self.HEIGHT, self.WIDTH, 3), dtype=np.uint8),
+            tracks_yx=np.zeros((4, 2), dtype=np.float32),
+            visibility=np.ones((4,), dtype=bool),
+            query_points_yx=np.zeros((4, 2), dtype=np.float32),
+            source_timestamp_s=100.0 + seq,
+            source_frame_index=seq,
+            depth_mm_u16=np.full(
+                (self.HEIGHT, self.WIDTH), 1000 + seq, dtype=np.uint16
+            ),
+        )
+
+    def _archive(self, base: Path) -> OnlineFrameArchive:
+        archive = OnlineFrameArchive(base_path=base, case_name="online_data", fps=5)
+        archive.initialize_case(self._metadata(), serial_number="fallback")
+        return archive
+
+    def test_stream_frame_writes_files_before_any_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            archive = self._archive(base)
+            for seq in range(3):
+                self.assertEqual(archive.stream_frame(self._frame(seq)), seq)
+            online = base / "online_data"
+            for index in range(3):
+                self.assertTrue((online / "color" / "0" / f"{index}.png").is_file())
+                self.assertTrue((online / "depth" / "0" / f"{index}.npy").is_file())
+            # No chunk committed yet: frame_num must still read 0.
+            self.assertEqual(
+                json.loads((online / "metadata.json").read_text())["frame_num"], 0
+            )
+
+    def test_archive_chunk_verifies_streamed_frames_and_publish_advances(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            archive = self._archive(base)
+            frames = [self._frame(seq) for seq in range(2)]
+            for frame in frames:
+                archive.stream_frame(frame)
+            archive.archive_chunk(
+                chunk_id=0,
+                metadata=self._metadata(),
+                serial_number="fallback",
+                frames=frames,
+                source_frame_indices=[0, 1],
+                source_timestamps_s=None,
+                online_start_frame=0,
+            )
+            archive.publish_metadata()
+            online = base / "online_data"
+            self.assertEqual(
+                json.loads((online / "metadata.json").read_text())["frame_num"], 2
+            )
+            mapping = json.loads(
+                (online / "enhance_metadata.json").read_text()
+            )["frame_mapping"]
+            self.assertEqual([m["online_frame_index"] for m in mapping], [0, 1])
+
+    def test_archive_chunk_rejects_streamed_identity_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = self._archive(Path(tmp))
+            archive.stream_frame(self._frame(5))
+            with self.assertRaisesRegex(OnlineFrameArchiveError, "streamed file"):
+                archive.archive_chunk(
+                    chunk_id=0,
+                    metadata=self._metadata(),
+                    serial_number="fallback",
+                    frames=[self._frame(6)],
+                    source_frame_indices=[6],
+                    source_timestamps_s=None,
+                    online_start_frame=0,
+                )
+
+    def test_discard_streamed_tail_removes_only_uncommitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            archive = self._archive(base)
+            frames = [self._frame(seq) for seq in range(3)]
+            for frame in frames:
+                archive.stream_frame(frame)
+            archive.archive_chunk(
+                chunk_id=0,
+                metadata=self._metadata(),
+                serial_number="fallback",
+                frames=frames[:2],
+                source_frame_indices=[0, 1],
+                source_timestamps_s=None,
+                online_start_frame=0,
+            )
+            archive.publish_metadata()
+            self.assertEqual(archive.discard_streamed_tail(), 1)
+            online = base / "online_data"
+            self.assertTrue((online / "color" / "0" / "1.png").is_file())
+            self.assertFalse((online / "color" / "0" / "2.png").exists())
+            self.assertFalse((online / "depth" / "0" / "2.npy").exists())
+            self.assertEqual(archive.frames_streamed, 2)
+            self.assertEqual(
+                json.loads((online / "metadata.json").read_text())["frame_num"], 2
+            )
+
+    def test_batch_path_without_streaming_still_writes_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            archive = self._archive(base)
+            frames = [self._frame(seq) for seq in range(2)]
+            archive.archive_chunk(
+                chunk_id=0,
+                metadata=self._metadata(),
+                serial_number="fallback",
+                frames=frames,
+                source_frame_indices=[0, 1],
+                source_timestamps_s=None,
+                online_start_frame=0,
+            )
+            online = base / "online_data"
+            for index in range(2):
+                self.assertTrue((online / "color" / "0" / f"{index}.png").is_file())
+                self.assertTrue((online / "depth" / "0" / f"{index}.npy").is_file())
+            self.assertEqual(archive.frames_written, 2)
+            self.assertEqual(archive.frames_streamed, 2)
 
 
 if __name__ == "__main__":

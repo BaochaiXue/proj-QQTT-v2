@@ -111,6 +111,23 @@ that depend on removed legacy paths now fail explicitly.
   the run summary). CLI `--camera-serial` is now repeatable (append) and
   overrides the config list. 6 serial tests (27 total green), exact-message CLI
   check, offline PARITY OK, fake-live smoke green. demo_v6_2 only.
+- [x] Real-time online_data color/depth streaming (2026-07-09 night, user request) —
+  `OnlineFrameArchive.stream_frame` writes each frame's `color/0/{k}.png` +
+  `depth/0/{k}.npy` the moment the stream bridge accepts the capture row (frame
+  cadence), instead of waiting for chunk materialization. `archive_chunk` now
+  VERIFIES already-streamed frames (seq identity) instead of rewriting; the
+  batch conversion path is byte-identical (safe-fixture parity: frozen v6_1 vs
+  v6_2 → PARITY OK). `metadata.json` `frame_num` stays commit-gated (strict
+  readers unchanged; live consumers watch the dirs). `discard_streamed_tail`
+  removes never-committed tail frames at stream end so the final tree matches
+  batch. 5 new StreamingArchiveTests. Controlled one-chunk fake-live proof:
+  frames 0..34 landed over 6.60 s at 5 FPS; the chunk committed 5.04 s after
+  frame 34, and metadata then advanced to `frame_num=35`.
+- [x] Trainer finish policy reconciliation (2026-07-09 night) — local config
+  intentionally sets `train.stop_when_finished: false`, so Trainer runs exactly
+  `iterations` total steps instead of stopping on manifest `finished`. Default
+  config and explicit-command tests now assert the same policy; the override
+  test proves `true` still passes through when selected.
 - NOTE (parity fixture): the P3 session curated `outputs_v6_1/capture/frames.jsonl`
   (549→539 rows; removed the 10 startup rows lacking prepared frames, src
   2376..2430, mtime 16:55). Golden refs generated before that are stale — always

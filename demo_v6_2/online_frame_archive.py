@@ -5,10 +5,17 @@ schema the training side reads. Alongside ``online_data/chunks`` (which stays
 byte-identical to the existing contract), every published online frame k also
 lands as raw sensor products in the offline PhysTwin case layout
 (``color/0/{k}.png``, ``depth/0/{k}.npy`` uint16 mm, ``calibrate.pkl``,
-``metadata.json``, ``enhance_metadata.json``); frame files are fsynced before the
-chunk commits and ``metadata.json`` is rewritten atomically afterward, so
-``frame_num`` never points at a file that does not exist and the ``phystwin_shen``
-trainer can start reading from the first committed chunk. Layout::
+``metadata.json``, ``enhance_metadata.json``). In the live stream path the
+color/depth files are written in REAL TIME (``stream_frame``: one fsynced pair
+the moment each capture row is accepted, at frame cadence) — they do not wait
+for chunk materialization. ``metadata.json`` is still rewritten atomically only
+after the owning chunk commits, so ``frame_num`` never points at a file that
+does not exist, never counts an uncommitted frame, and the ``phystwin_shen``
+trainer can start reading from the first committed chunk; live consumers that
+want the sub-chunk latency watch the color/depth directories directly. When the
+stream ends, streamed frames whose chunk never committed are deleted
+(``discard_streamed_tail``), so the final tree matches the batch conversion
+path exactly. Layout::
 
     online_data/
         color/0/{k}.png        # original RGB of the frame the chunk consumed
@@ -137,6 +144,14 @@ class OnlineFrameArchive:
         self.color_dir.mkdir(parents=True, exist_ok=True)
         self.depth_dir.mkdir(parents=True, exist_ok=True)
         self.frames_written = 0
+        # Real-time streaming state: ``frames_streamed`` counts frames whose
+        # color/depth files are already on disk (written per frame as capture
+        # rows are accepted), while ``frames_written`` still counts only frames
+        # whose owning chunk committed — metadata.json's frame_num contract is
+        # unchanged. ``_streamed_info[i]`` records the identity of streamed
+        # online frame i so archive_chunk can verify instead of rewriting.
+        self.frames_streamed = 0
+        self._streamed_info: list[dict[str, Any]] = []
         self._frame_mapping: list[dict[str, Any]] = []
         self._calibration: dict[str, Any] | None = None
 
@@ -245,6 +260,69 @@ class OnlineFrameArchive:
             np.save(handle, depth)
         tmp.replace(depth_path)
 
+    def stream_frame(self, frame: PreparedPhysTwinFrame) -> int:
+        """Write one frame's color/depth immediately, without waiting for a chunk.
+
+        The stream bridge calls this the moment a capture row is accepted, so
+        ``color/0/{k}.png`` + ``depth/0/{k}.npy`` appear at frame cadence
+        instead of chunk-commit cadence. ``metadata.json``'s ``frame_num``
+        still advances only in ``publish_metadata`` after the owning chunk
+        commits: strict case readers keep the committed-only contract, while
+        live consumers may watch the color/depth directories directly.
+        ``archive_chunk`` later verifies the streamed files' identity instead
+        of rewriting them, and ``discard_streamed_tail`` removes frames whose
+        chunk never committed when the stream ends.
+        """
+        if self._calibration is None:
+            raise OnlineFrameArchiveError(
+                "stream_frame requires initialize_case to have published the "
+                "camera calibration first"
+            )
+        online_frame_index = int(self.frames_streamed)
+        self._archive_one_frame(
+            online_frame_index=online_frame_index,
+            frame=frame,
+            calibration=self._calibration,
+            context=f"streamed frame (online frame {online_frame_index})",
+        )
+        self._record_streamed_frame(frame)
+        return online_frame_index
+
+    def _record_streamed_frame(self, frame: PreparedPhysTwinFrame) -> None:
+        """Advance the streamed counter with the frame's identity record."""
+        self._streamed_info.append(
+            {
+                "seq": int(frame.seq),
+                "source_frame_index": (
+                    None
+                    if frame.source_frame_index is None
+                    else int(frame.source_frame_index)
+                ),
+            }
+        )
+        self.frames_streamed += 1
+
+    def discard_streamed_tail(self) -> int:
+        """Delete streamed frames whose chunk never committed; return the count.
+
+        Called when the stream ends. Keeps the final tree identical to the
+        batch conversion path: color/depth files exist exactly for frames of
+        committed chunks, and ``frame_num`` keeps pointing only at files that
+        exist.
+        """
+        discarded = 0
+        for index in range(int(self.frames_written), int(self.frames_streamed)):
+            for path in (
+                self.color_dir / f"{index}.png",
+                self.depth_dir / f"{index}.npy",
+            ):
+                if path.exists():
+                    path.unlink()
+            discarded += 1
+        del self._streamed_info[int(self.frames_written) :]
+        self.frames_streamed = int(self.frames_written)
+        return discarded
+
     def archive_chunk(
         self,
         *,
@@ -301,12 +379,27 @@ class OnlineFrameArchive:
                     f"{context}: prepared frame carries source_frame_index "
                     f"{frame.source_frame_index}, chunk says {source_frame_index}"
                 )
-            self._archive_one_frame(
-                online_frame_index=online_frame_index,
-                frame=frame,
-                calibration=calibration,
-                context=context,
-            )
+            if online_frame_index < self.frames_streamed:
+                # Real-time path: the file already landed in stream_frame;
+                # verify the streamed identity instead of rewriting it.
+                streamed = self._streamed_info[online_frame_index]
+                if int(streamed["seq"]) != int(frame.seq):
+                    raise OnlineFrameArchiveError(
+                        f"{context}: streamed file was written for seq "
+                        f"{streamed['seq']} but the committed chunk carries "
+                        f"seq {frame.seq}"
+                    )
+            else:
+                # Batch conversion path (no real-time streaming): write the
+                # file here, keeping the streamed counter in lockstep so both
+                # paths share one continuity ledger.
+                self._archive_one_frame(
+                    online_frame_index=online_frame_index,
+                    frame=frame,
+                    calibration=calibration,
+                    context=context,
+                )
+                self._record_streamed_frame(frame)
             self._frame_mapping.append(
                 {
                     "online_frame_index": online_frame_index,

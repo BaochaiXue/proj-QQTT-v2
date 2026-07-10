@@ -171,8 +171,9 @@ phystwin_shen:
     iterations: 20
     train_frame: null
     checkpoint_interval: 10
-    # The Demo intentionally delegates normal-finish behavior to this value.
-    stop_when_finished: true
+    # true exits after the terminal iteration that observes manifest finished;
+    # false ignores finished and runs exactly `iterations` total steps.
+    stop_when_finished: false
     realtime_vis: true
     realtime_vis_every: 10
     no_realtime_iteration_history: false
