@@ -66,6 +66,13 @@ supervisor；Stage 1、可选 Stage 2、train 和两个 HTML viewer 由外部 wr
    `_LifecycleMixin._start_threads` 组装 worker 列表，并统一创建
    `daemon=True` 的 `threading.Thread`。正式 strict 路径包含 capture、seg、
    lossless PCD、lossless tracker 和 pair-output worker。
+
+   seg 和 lossless tracker 会在同一个进程、同一个 CUDA device 上并发执行。
+   EdgeTAM 的 `reduce-overhead` 会在第 2 次 model call 录制 CUDA graph；
+   TAPNext++ 第一次拿到 mask 时才构造 CUDA model，并在参数初始化时使用 RNG。
+   为避免两者重叠，live 与 replay 都会在发布 frame 0 后等待完整的首个
+   PCD/tracker pair，再释放 frame 1。这个启动 handshake 保留后续并发与 compile
+   性能，同时满足 CUDA graph capture 期间不能有其他线程 CUDA 工作的约束。
    `_capture_recording_worker` **不是另一条线程**；replay 模式下，capture
    线程进入 `_capture_worker` 后同步调用它。
 
@@ -230,7 +237,8 @@ supervisor；Stage 1、可选 Stage 2、train 和两个 HTML viewer 由外部 wr
    正式 strict 路径不是靠 sentinel 单独保证，而是靠 producer handshake
    加 FIFO：live 首次发布时 `output_seq == 0`，replay 首次显式调用
    `read_packet(seq=0)`；两者在发布首帧后都会等待
-   `_recording_first_frame_segmented`，不会先把后续正式帧灌入。strict
+   `_first_frame_segmented`，随后继续等待 `_lossless_first_pair_published`，不会
+   先把后续正式帧灌入。strict
    `_wait_for_first_frame` 从 `OrderedPacketQueue` 队首取帧，因此得到 seq 0。
 
    非 strict 分支才调用 `capture_slot.get_latest_after(-1)`；它只保证返回

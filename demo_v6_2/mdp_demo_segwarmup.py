@@ -260,7 +260,7 @@ class _SegWarmupMixin:
                 self._publish_mask_packet(first_packet)
                 self.seg_stats.record(first_packet.process_done_perf_s)
                 if self._lossless_enabled() or _is_replay_input_source(str(self.args.input_source)):
-                    self._recording_first_frame_segmented.set()
+                    self._first_frame_segmented.set()
                 last_seq = first_frame.seq
                 while not self.stop_event.is_set():
                     if self._lossless_enabled():

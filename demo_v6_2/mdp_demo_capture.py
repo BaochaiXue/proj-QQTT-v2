@@ -142,13 +142,15 @@ class _CaptureMixin:
             return
         if self.args.track_mode != "none":
             while not self.stop_event.is_set():
-                if self._recording_first_frame_segmented.wait(timeout=0.01):
+                if self._first_frame_segmented.wait(timeout=0.01):
                     break
                 if not publish_due_fake_live_previews():
                     return
             if self.stop_event.is_set():
                 return
-        if not self._wait_for_lossless_replay_startup_pair(on_wait_tick=publish_due_fake_live_previews):
+        if not self._wait_for_lossless_startup_pair(
+            on_wait_tick=publish_due_fake_live_previews
+        ):
             return
         gate_done_s = time.perf_counter()
         if not publish_due_fake_live_previews():
@@ -334,10 +336,12 @@ class _CaptureMixin:
                 publish_output_packet(packet, record_s=copy_done_s)
                 if self.args.track_mode != "none":
                     while not self.stop_event.is_set():
-                        if self._recording_first_frame_segmented.wait(timeout=0.01):
+                        if self._first_frame_segmented.wait(timeout=0.01):
                             break
                     if self.stop_event.is_set():
                         break
+                if not self._wait_for_lossless_startup_pair():
+                    break
                 live_sampler.start(first_publish_s=time.perf_counter())
                 continue
             live_sampler.put_latest(packet)

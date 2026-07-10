@@ -123,7 +123,7 @@ class _LifecycleMixin:
         self._warmup_perception_profile: dict[str, Any] = {}
         self.table_c2w: np.ndarray | None = None
         self.table_calibration_path: Path | None = None
-        self._recording_first_frame_segmented = threading.Event()
+        self._first_frame_segmented = threading.Event()
         self._lossless_offered_frames = 0
         self._lossless_segmented_frames = 0
         self._lossless_pcd_results = 0
@@ -260,7 +260,7 @@ class _LifecycleMixin:
         self._lossless_capture_done.clear()
         self._lossless_processing_done.clear()
         self._lossless_first_pair_published.clear()
-        self._recording_first_frame_segmented.clear()
+        self._first_frame_segmented.clear()
         self._lossless_pipeline_active = True
         self._lossless_offered_frames = 0
         self._lossless_segmented_frames = 0
@@ -276,13 +276,12 @@ class _LifecycleMixin:
         self.lossless_pair_output_queue.close()
         self._lossless_pipeline_active = False
 
-    def _wait_for_lossless_replay_startup_pair(self, on_wait_tick: Callable[[], None] | None = None) -> bool:
-        """Wait for for lossless replay startup pair."""
-        if not (
-            self._lossless_enabled()
-            and self.args.track_mode != "none"
-            and _is_replay_input_source(str(self.args.input_source))
-        ):
+    def _wait_for_lossless_startup_pair(
+        self,
+        on_wait_tick: Callable[[], None] | None = None,
+    ) -> bool:
+        """Wait until frame 0 has complete PCD and tracking results."""
+        if not self._lossless_enabled() or self.args.track_mode == "none":
             return True
         while not self.stop_event.is_set():
             if self._lossless_first_pair_published.wait(timeout=0.01):
