@@ -31,14 +31,18 @@ tracking video from the latest complete fake-camera run.
 
 1. Run the focused visualization tests.
 2. Run formatting, compile, and static checks on touched Python files.
-3. Render the latest 15 chunks and inspect the MP4 with `ffprobe` plus sampled
-   frames.
+3. Render the latest complete chunks and inspect the MP4 with `ffprobe` plus
+   sampled frames.
 4. Run the repository smoke profile.
 
 ## Result
 
 - One canonical 579-line renderer replaces 1,237 lines across two duplicated
   scripts.
-- Four focused loader/summary tests pass; repository smoke passes 189 tests.
-- The regenerated MP4 contains 525 frames at 1280x900 and 5 FPS (105 seconds).
+- Six focused visualization tests pass; repository smoke passes 231 tests.
+- The latest regenerated MP4 contains 560 frames from 16 chunks at 1280x900
+  and 5 FPS (112 seconds).
 - First, middle, and final frames were extracted and visually inspected.
+- The final frame faithfully omits the object because all 1,976 source
+  `object_motions_valid` values are false; the controller remains visible and
+  the video fully decodes without corruption.

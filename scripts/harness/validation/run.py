@@ -69,6 +69,7 @@ QUICK_UNITTEST_MODULES: tuple[str, ...] = (
     "tests.test_demo_v6_2_cleanup",
     "tests.test_demo_v6_2_shape_prior_timing",
     "tests.test_demo_v6_2_tracking_visualization",
+    "tests.test_demo_v6_2_other_visualizations",
     "tests.test_realsense_extrinsics_matrix",
     "tests.test_single_view_shape_align",
     "tests.test_validation_smoke_manifest",

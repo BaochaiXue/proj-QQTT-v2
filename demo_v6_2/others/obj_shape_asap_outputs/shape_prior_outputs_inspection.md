@@ -1,10 +1,10 @@
-# Demo v6.1 Shape Prior Outputs Inspection
+# Demo v6.2 Shape Prior Outputs Inspection
 
 ## Paths
 
-- case: `/home/xinjie/single_proj_qqtt/outputs_v6_1/shape_prior_case/shape_prior_frame0`
-- warmup final data: `/home/xinjie/single_proj_qqtt/outputs_v6_1/shape_prior_case/shape_prior_frame0/final_data.pkl`
-- published final data: `/home/xinjie/single_proj_qqtt/outputs_v6_1/data/final_data.pkl`
+- case: `outputs_v6_1/shape_prior_case/shape_prior_frame0`
+- warmup final data: `outputs_v6_1/shape_prior_case/shape_prior_frame0/final_data.pkl`
+- published final data: `outputs_v6_1/data/final_data.pkl`
 
 ## Warmup Case
 
@@ -17,49 +17,49 @@
 ## Masked PCD Stats
 
 processed object mask:
-  count: 19,049
-  bbox min: [0.0346, -0.0042, -0.0798]
-  bbox max: [0.3921, 0.4501, -0.0003]
-  mean: [0.1805, 0.2204, -0.0430]
-  std: [0.0878, 0.0860, 0.0188]
+  count: 19,957
+  bbox min: [-0.0236, -0.1068, -0.0786]
+  bbox max: [0.3491, 0.2507, -0.0025]
+  mean: [0.1726, 0.0799, -0.0416]
+  std: [0.0718, 0.0945, 0.0169]
 
 processed controller mask:
-  count: 4,722
-  bbox min: [0.0960, -0.0542, -0.1091]
-  bbox max: [0.2001, 0.4941, 0.0010]
-  mean: [0.1482, 0.2132, -0.0622]
-  std: [0.0221, 0.2311, 0.0257]
+  count: 5,231
+  bbox min: [-0.0904, 0.1637, -0.0655]
+  bbox max: [0.4021, 0.2989, 0.0106]
+  mean: [0.1552, 0.2274, -0.0353]
+  std: [0.2051, 0.0337, 0.0173]
 
-object/controller overlap pixels: 1
+object/controller overlap pixels: 0
 
 The full depth-valid frame includes background and unrelated pixels:
 
 depth-valid frame:
-  count: 352,341
-  bbox min: [-0.2364, -15.1548, -0.3253]
-  bbox max: [11.2190, 1.5079, 13.3737]
-  mean: [0.1805, 0.2239, 0.0300]
-  std: [0.3869, 0.5743, 0.3599]
+  count: 357,327
+  bbox min: [-1.1335, -0.2717, -0.3078]
+  bbox max: [1.5183, 1.1098, 0.8530]
+  mean: [0.1420, 0.1570, 0.0444]
+  std: [0.4577, 0.3033, 0.1646]
 
 ## Shape Prior Supplement
 
-- warmup object points: 3,623
-- warmup controller points: 4,722
-- surface supplement points: 540
-- interior supplement points: 1,124
-- total supplement points: 1,664
+- warmup object points: 3,601
+- warmup controller points: 5,231
+- surface supplement points: 484
+- interior supplement points: 1,371
+- total supplement points: 1,855
 
 The supplement is stored separately as `surface_points` and
 `interior_points`; it is not appended to `object_points`.
 
 ## Published Final Data
 
-- object points shape: `(805, 2001, 3)`
-- controller points shape: `(805, 30, 3)`
-- surface points: 540
-- interior points: 1,124
-- semantic label counts: `{0: 515, 1: 3591, 2: 894}`
-- object visibility ratio: 90.26%
-- object motion-valid ratio: 84.54%
-- controller proxied ratio: 11.61%
+- object points shape: `(560, 1976, 3)`
+- controller points shape: `(560, 30, 3)`
+- surface points: 484
+- interior points: 1,371
+- semantic label counts: `{0: 491, 1: 3610, 2: 899}`
+- object visibility ratio: 95.83%
+- object motion-valid ratio: 92.97%
+- controller proxied ratio: 13.08%
 - track process status: `degraded`

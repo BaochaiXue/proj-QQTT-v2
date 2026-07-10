@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render Demo v6.1 online depth frames with RealSense Dynamic Jet coloring."""
+"""Render Demo v6.2 online depth frames with RealSense Dynamic Jet coloring."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import numpy as np
 
 
 DEFAULT_ONLINE_DATA_DIR = Path("outputs_v6_1/online_data")
-DEFAULT_OUTPUT_DIR = Path("demo_v6_1/others/obj_shape_asap_outputs")
+DEFAULT_OUTPUT_DIR = Path("demo_v6_2/others/obj_shape_asap_outputs")
 DEFAULT_VIDEO_PATH = (
     DEFAULT_OUTPUT_DIR / "online_depth_realsense_dynamic_jet_5fps.mp4"
 )
@@ -25,8 +25,8 @@ DEFAULT_GRID_PATH = (
     Path("outputs_v6_1/diagnostics")
     / "default_fake_live_first_window_raw_depth_full.png"
 )
-DEFAULT_GRID_FRAME_COUNT = 36
-DEFAULT_GRID_COLUMNS = 6
+DEFAULT_GRID_FRAME_COUNT = 35
+DEFAULT_GRID_COLUMNS = 7
 DEFAULT_TILE_SIZE = (260, 175)
 
 JET_RGB_ANCHORS = np.asarray(
@@ -55,7 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser."""
     parser = argparse.ArgumentParser(
         description=(
-            "Render Demo v6.1 online depth frames as a RealSense Dynamic Jet "
+            "Render Demo v6.2 online depth frames as a RealSense Dynamic Jet "
             "MP4 and first-window diagnostic grid."
         )
     )
@@ -63,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--online-data-dir",
         type=Path,
         default=DEFAULT_ONLINE_DATA_DIR,
-        help="Demo v6.1 online_data directory containing depth/ and metadata.",
+        help="Demo v6.2 online_data directory containing depth/ and metadata.",
     )
     parser.add_argument(
         "--output-video-path",

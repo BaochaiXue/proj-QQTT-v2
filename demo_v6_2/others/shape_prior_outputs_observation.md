@@ -1,108 +1,91 @@
-# Demo v6.1 Shape Prior Outputs 观察记录
+# Demo v6.2 Shape Prior Outputs 观察记录
 
-## Open3D 窗口
+## 本轮输入
 
-这次打开的是：
+本轮结果来自 `outputs_v6_1/shape_prior_case/shape_prior_frame0`：
 
-- case: `outputs_v6_1/shape_prior_case/shape_prior_frame0`
-- warmup final data: `final_data.pkl`
-
-Open3D 场景颜色：
-
-- 白色: frame-0 object observation points, 经过 shape-prior sampling 后保留
-- 红色: frame-0 controller points
-- 青色: shape-prior surface 补点
-- 蓝色: shape-prior interior 补点
-
-窗口进程 PID 是 `2504389`；关闭 Open3D 窗口后 viewer 会退出。日志路径是
-`/tmp/demo_v6_1_shape_prior_pcd_only_open3d.log`。
-
-## Warmup 产物
-
-这次 warmup case 是单相机：
-
-- metadata: `input_source=fake-live`
+- input source: `fake-live`
 - depth backend: `native-realsense`
 - object: `stuffed animal`
 - controller: `hand`
 - camera count: 1
 - RGB-D grid: `1 x 480 x 848`
 
-`pcd/0.npz` 里的 dense grid 是整张图，不能直接用全图 min/max 判断质量。
-真正应该看的，是 processed mask 里的 object/controller 点：
+`pcd/0.npz` 里的 dense grid 是整张图。判断 object/controller PCD 质量时，
+应看 processed mask 内的点，而不是用全图的坐标范围。
 
-- depth-valid pixels: 352,341
-- object mask pixels: 19,049
-- controller mask pixels: 4,722
-- object/controller overlap: 1 pixel
+## Warmup PCD
 
-Masked object PCD 的世界坐标 bbox：
+processed object mask：
 
-- min: `[0.0346, -0.0042, -0.0798]`
-- max: `[0.3921, 0.4501, -0.0003]`
-- mean: `[0.1805, 0.2204, -0.0430]`
+- count: 19,957
+- bbox min: `[-0.0236, -0.1068, -0.0786]`
+- bbox max: `[0.3491, 0.2507, -0.0025]`
+- mean: `[0.1726, 0.0799, -0.0416]`
 
-Masked controller PCD 的世界坐标 bbox：
+processed controller mask：
 
-- min: `[0.0960, -0.0542, -0.1091]`
-- max: `[0.2001, 0.4941, 0.0010]`
-- mean: `[0.1482, 0.2132, -0.0622]`
+- count: 5,231
+- bbox min: `[-0.0904, 0.1637, -0.0655]`
+- bbox max: `[0.4021, 0.2989, 0.0106]`
+- mean: `[0.1552, 0.2274, -0.0353]`
 
-全图 depth-valid bbox 很大，因为里面还有背景和无关像素。判断这次 PCD
-是否靠谱，应该看上面的 masked object/controller 统计。
+object/controller overlap 是 0 pixel。整张图共有 357,327 个 depth-valid
+pixel，其中包含背景和无关像素。
 
-## 我们补了哪些点
+## Shape-Prior 补点
 
-明确的 shape-prior 补点是：
+- warmup object points: 3,601
+- warmup controller points: 5,231
+- surface points: 484
+- interior points: 1,371
+- total supplement points: 1,855
 
-- surface points: 540
-- interior points: 1,124
-- total supplement points: 1,664
-
-这些点写在两个地方：
+补点保存在：
 
 - `outputs_v6_1/shape_prior/points.npz`
 - `outputs_v6_1/capture/shape_prior/points.npz`
 
-warmup 的 `final_data.pkl` 里把补点作为独立 PCD 字段保留：
+warmup `final_data.pkl` 仍把 `surface_points` 和 `interior_points` 作为独立
+字段保留；它们不会直接 append 到 `object_points` 尾部。
 
-- `surface_points`: `(540, 3)`
-- `interior_points`: `(1124, 3)`
+## 最终发布结果
 
-采样逻辑是 origin-style 5 mm voxel policy：
+`outputs_v6_1/data/final_data.pkl` 当前状态：
 
-1. frame-0 观测到的 object points 先占 voxel；
-2. shape-prior surface samples 填还没有被占掉的 voxel；
-3. shape-prior interior samples 再填剩下还空的 voxel。
-
-所以补点不是简单 append 到 `object_points` 尾部。判断“补了哪些点”时，
-最可靠的来源是独立的 `surface_points` 和 `interior_points` 字段。
-
-## 最终发布的 PCD 状态
-
-发布出去的 `outputs_v6_1/data/final_data.pkl` 当前是：
-
-- object points: `(805, 2001, 3)`
-- controller points: `(805, 30, 3)`
-- surface shape-prior points: `(540, 3)`
-- interior shape-prior points: `(1124, 3)`
+- object points: `(560, 1976, 3)`
+- controller points: `(560, 30, 3)`
+- surface points: `(484, 3)`
+- interior points: `(1371, 3)`
 - query schema version: `data_process_sam3d_realtime_query_schema_v1`
+- query schema hash:
+  `fe58efb61da1da1c8dddb5567860324f6df79634452fffc9030568d27c52c0c4`
 - track process status: `degraded`
 
 Semantic query label counts：
 
-- `0` none: 515
-- `1` object: 3,591
-- `2` controller: 894
+- `0` none: 491
+- `1` object: 3,610
+- `2` controller: 899
 
 运行质量摘要：
 
-- object visibility: 1,453,839 / 1,610,805, 约 90.26%
-- object motion-valid: 1,361,852 / 1,610,805, 约 84.54%
-- controller proxied: 2,804 / 24,150, 约 11.61%
+- object visibility: 95.83%
+- object motion-valid: 92.97%
+- controller proxied: 13.08%
+- chunks: 16（1 normal，15 degraded）
 
-结论：当前 object PCD 可以作为 shape-prior-augmented 的单相机产物使用。
-frame-0 masked object cloud 是紧的，surface/interior 补点也落在同一段
-object-scale bbox 内；最终 static case 也保留了这两类补点。但 tracking
-不是完全 normal：`track_process_status=degraded`，805 帧里有一部分
-controller proxy 和 object motion-invalid 样本。
+## 更新后的可视化
+
+- object/controller tracking：560 帧，5 FPS
+- online RealSense-style depth：560 帧，5 FPS
+- static shape-prior orbit：90 帧，5 FPS；contact sheet 为 12 个视角
+
+结果写在 `demo_v6_2/others/obj_shape_asap_outputs/`。tracking 会只绘制同时
+满足 visible 和 motion-valid 的 object points。当前结果可以用于检查本轮
+shape-prior-augmented 单相机输出，但 `degraded` 状态仍说明部分 frame 使用了
+controller proxy 或包含 object motion-invalid 样本。
+
+tracking 的最后一帧只显示 controller：该帧 1,976 个 object points 的
+`motion-valid` 全部为 false，所以 renderer 按上述规则没有绘制 object。这是
+上游 tracking mask 的真实结果，不是 MP4 编码损坏。

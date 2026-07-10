@@ -66,14 +66,14 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
     parser = argparse.ArgumentParser(
         description=(
-            "Inspect Demo v6.1 shape-prior outputs and open an Open3D scene."
+            "Inspect Demo v6.2 shape-prior outputs and open an Open3D scene."
         )
     )
     parser.add_argument(
         "--outputs-root",
         type=Path,
         default=DEFAULT_OUTPUTS_ROOT,
-        help="Demo v6.1 outputs root. Defaults to ./outputs_v6_1.",
+        help="Demo v6.2 outputs root. Defaults to ./outputs_v6_1.",
     )
     parser.add_argument(
         "--case-name",
@@ -322,7 +322,7 @@ def build_report(inspection: ShapePriorInspection) -> str:
     """Build report."""
     metadata = inspection.metadata
     lines = [
-        "# Demo v6.1 Shape Prior Outputs Inspection",
+        "# Demo v6.2 Shape Prior Outputs Inspection",
         "",
         "## Paths",
         "",
@@ -410,7 +410,7 @@ def open_viewer(
 
     viewer = o3d.visualization.Visualizer()
     viewer.create_window(
-        window_name="Demo v6.1 shape prior PCD outputs",
+        window_name="Demo v6.2 shape prior PCD outputs",
         width=int(window_width),
         height=int(window_height),
     )

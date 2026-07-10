@@ -15,7 +15,7 @@
   "median_depth_m_max": 0.7380000350531191,
   "median_depth_m_median": 0.7280000345781446,
   "median_depth_m_min": 0.71800003410317,
-  "output_video_path": "demo_v6_1/others/obj_shape_asap_outputs/sloth_new_20260705_230611_depth_realsense_dynamic_jet_30fps.mp4",
+  "output_video_path": "demo_v6_2/others/obj_shape_asap_outputs/sloth_new_20260705_230611_depth_realsense_dynamic_jet_30fps.mp4",
   "p01_depth_m_min": 0.4130000196164474,
   "p99_depth_m_max": 1.693000080413185,
   "source_frame_first": 902,

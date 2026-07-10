@@ -12,10 +12,10 @@ import open3d as o3d
 
 DEFAULT_OUTPUTS_ROOT = Path("outputs_v6_1")
 DEFAULT_CASE_NAME = "shape_prior_frame0"
-DEFAULT_ARTIFACT_DIR = Path("demo_v6_1/others/obj_shape_asap_outputs")
+DEFAULT_ARTIFACT_DIR = Path("demo_v6_2/others/obj_shape_asap_outputs")
 DEFAULT_PREVIEW_VIDEO_PATH = DEFAULT_ARTIFACT_DIR / "shape_prior_lbs_preview.mp4"
 DEFAULT_CONTACT_SHEET_PATH = Path(
-    "demo_v6_1/others/obj_shape_asap_outputs/shape_prior_lbs_preview_sheet.png"
+    "demo_v6_2/others/obj_shape_asap_outputs/shape_prior_lbs_preview_sheet.png"
 )
 
 RAW_PCD_RGB = np.asarray([150, 154, 162], dtype=np.uint8)
@@ -28,7 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
     parser = argparse.ArgumentParser(
         description=(
-            "Render a static Demo v6.1 shape-prior orbit preview from the "
+            "Render a static Demo v6.2 shape-prior orbit preview from the "
             "raw PCD, surface points, and interior points."
         )
     )
@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--outputs-root",
         type=Path,
         default=DEFAULT_OUTPUTS_ROOT,
-        help="Demo v6.1 outputs root. Defaults to ./outputs_v6_1.",
+        help="Demo v6.2 outputs root. Defaults to ./outputs_v6_1.",
     )
     parser.add_argument(
         "--case-name",

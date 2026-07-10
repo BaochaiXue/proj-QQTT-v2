@@ -1,30 +1,33 @@
-# Demo v6.1 Shape-Prior LBS From Chunks
+# Demo v6.2 Shape-Prior Orbit Preview
 
 ## Inputs
 
-- outputs root: `outputs/demo_v6_1_align_render_opt_20260702_202809`
-- case: `outputs/demo_v6_1_align_render_opt_20260702_202809/shape_prior_case/shape_prior_frame0`
-- shape mesh: `outputs/demo_v6_1_align_render_opt_20260702_202809/shape_prior_case/shape_prior_frame0/shape/matching/final_mesh.glb`
-- chunk count: 23
-- query schema hash: `4b4ac66e2efeee2e6c180fab2177417d7ef0addfdc819855a8bc9737e33ee44a`
+- outputs root: `outputs_v6_1`
+- case: `outputs_v6_1/shape_prior_case/shape_prior_frame0`
+- shape mesh:
+  `outputs_v6_1/shape_prior_case/shape_prior_frame0/shape/matching/final_mesh.glb`
 
-## LBS Diagnostic
+## Current Shape Prior
 
-- frames: 805
-- chunk object tracking points: 1,975
-- mesh vertices: 4,471
-- mesh triangles: 6,735
-- surface points: 513
-- interior points: 1,180
-- control K: 8
-- frame stride: 1
+- raw masked object PCD points: 19,957
+- mesh vertices: 5,869
+- mesh triangles: 8,866
+- surface supplement points: 484
+- interior supplement points: 1,371
 
-## Tracking Quality
+## Visualization
 
-- object visibility ratio: 90.28%
-- object motion-valid ratio: 84.58%
-- chunk track status counts: `{'normal': 1, 'degraded': 22}`
+- orbit video:
+  `demo_v6_2/others/obj_shape_asap_outputs/shape_prior_lbs_preview.mp4`
+- contact sheet:
+  `demo_v6_2/others/obj_shape_asap_outputs/shape_prior_lbs_preview_sheet.png`
+- video: 90 frames at 5 FPS, 960 x 720
+- contact sheet: 12 evenly spaced views
+- gray: raw masked object PCD
+- cyan: shape-prior surface points
+- pink: shape-prior interior points
 
-The published chunk object points are used as the LBS controls. The
-derived mesh/surface/interior trajectories are diagnostics only and do
-not overwrite `outputs_v6_1/data/final_data.pkl`.
+The preview is a static one-circle orbit of the current warmup shape prior. It
+does not read the online chunks and does not overwrite
+`outputs_v6_1/data/final_data.pkl`. The legacy report and preview filenames are
+retained so existing links keep working; this is not a dynamic LBS trajectory.
