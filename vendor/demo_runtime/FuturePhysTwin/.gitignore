@@ -241,3 +241,7 @@ compare_visualization_videos_mesh
 # vendor/demo_runtime/checkpoints/ and are ignored by the repo root.
 !*/
 !*
+
+# Generated build and packaging artifacts remain local.
+build/
+*.egg-info/
