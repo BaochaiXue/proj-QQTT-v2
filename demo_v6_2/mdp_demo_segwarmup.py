@@ -18,6 +18,12 @@ from demo_v6_2.mdp_packets import MaskPacket, _formal_chunk_rows_gated
 from demo_v6_2.mdp_segmentation import _load_hf_streaming_runtime, _time_model_forward, _time_runtime_ms, extract_object_masks_from_hf_output
 from demo_v6_2.pipeline_status import STAGE_SHAPE_PRIOR, STAGE_WARMUP_READY
 
+WARMUP_FINISHED_BANNER = (
+    "\n#############################\n"
+    "Warmup finished\n"
+    "#############################"
+)
+
 
 class _SegWarmupMixin:
     """MainDataProcessingDemo segmentation/warmup/shape-prior mixin."""
@@ -408,6 +414,7 @@ class _SegWarmupMixin:
             profile = self._shape_prior_profile_payload()
             self._write_shape_prior_profile_json(profile)
             self._status.emit(STAGE_WARMUP_READY, "shape prior ready; formal timeline open")
+            print(WARMUP_FINISHED_BANNER, flush=True)
             return
         profile = self._shape_prior_profile_payload()
         if self.headless_capture_writer is not None:

@@ -288,6 +288,11 @@ supervisor；Stage 1、可选 Stage 2、train 和两个 HTML viewer 由外部 wr
        prior ready 后写 capture 产物并真正打开 formal gate 的延迟，以及从
        camera runtime start 到 gate open 的总等待。
 
+    当 shape-prior 产物已经写入且 formal gate 首次打开时，camera 子进程会在
+    当前终端只打印一次醒目的 `Warmup finished` banner。它和
+    `STAGE_WARMUP_READY` 在同一个真实完成边界触发，不会在 submit 或后台计算
+    尚未完成时提前显示。
+
     `shape_prior_timing.ranking` 按关键路径 wall duration 排序，`bottleneck`
     是本轮第一优化目标；`accounted_ms` 和 `unattributed_ms` 用于检查计时是否
     闭合。这里的排名只描述本轮，不能用单次结果代替多轮 p50/p95。

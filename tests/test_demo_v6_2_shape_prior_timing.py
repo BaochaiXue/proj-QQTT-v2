@@ -13,6 +13,7 @@ from unittest import mock
 import numpy as np
 from PIL import Image
 
+from demo_v6_2 import mdp_demo_segwarmup
 from demo_v6_2 import sam31_image_segmentation
 from demo_v6_2 import shape_prior_generate
 from demo_v6_2 import shape_prior_timing
@@ -389,6 +390,35 @@ class ShapePriorClientTimingTests(unittest.TestCase):
 
 
 class ShapePriorManagerTimingTests(unittest.TestCase):
+    def test_finished_banner_prints_once_when_formal_gate_opens(self) -> None:
+        result = SimpleNamespace(ready=True)
+        demo = SimpleNamespace(
+            shape_prior_manager=mock.Mock(),
+            headless_capture_writer=mock.Mock(),
+            _shape_prior_written=False,
+            _shape_prior_profile_payload=mock.Mock(return_value={}),
+            _write_shape_prior_profile_json=mock.Mock(),
+            _status=mock.Mock(),
+        )
+        demo.shape_prior_manager.ready_result.return_value = result
+
+        with mock.patch("builtins.print") as print_output:
+            mdp_demo_segwarmup._SegWarmupMixin._maybe_write_shape_prior_headless_result(
+                demo
+            )
+            mdp_demo_segwarmup._SegWarmupMixin._maybe_write_shape_prior_headless_result(
+                demo
+            )
+
+        print_output.assert_called_once_with(
+            mdp_demo_segwarmup.WARMUP_FINISHED_BANNER,
+            flush=True,
+        )
+        demo.headless_capture_writer.write_shape_prior_result.assert_called_once_with(
+            result
+        )
+        demo.shape_prior_manager.mark_gate_open.assert_called_once_with()
+
     def test_default_profile_has_no_unmeasured_legacy_zero_timings(self) -> None:
         profile = shape_prior_warmup.default_profile(enabled=True)
 
