@@ -261,6 +261,11 @@ class _SegWarmupMixin:
                 self.seg_stats.record(first_packet.process_done_perf_s)
                 if self._lossless_enabled() or _is_replay_input_source(str(self.args.input_source)):
                     self._first_frame_segmented.set()
+                if not self.shape_prior_manager.enabled:
+                    # Without shape-prior warm-up the frame-0 seed IS the whole
+                    # warm-up, so the live RGB preview closes here; with it the
+                    # preview closes at the WARMUP_FINISHED banner instead.
+                    self.warmup_rgb_preview.close()
                 last_seq = first_frame.seq
                 while not self.stop_event.is_set():
                     if self._lossless_enabled():
@@ -415,6 +420,9 @@ class _SegWarmupMixin:
             self._write_shape_prior_profile_json(profile)
             self._status.emit(STAGE_WARMUP_READY, "shape prior ready; formal timeline open")
             print(WARMUP_FINISHED_BANNER, flush=True)
+            # Warm-up is over: close the live RGB input preview (its
+            # failure/cancel paths close via stop_event/stop() instead).
+            self.warmup_rgb_preview.close()
             return
         profile = self._shape_prior_profile_payload()
         if self.headless_capture_writer is not None:

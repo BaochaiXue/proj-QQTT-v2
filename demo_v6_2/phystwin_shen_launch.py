@@ -2,7 +2,7 @@
 
 Demo v6.2 owns the online stream, runtime parameters, GPU namespace, viewer
 ports, and supervisor lifetime. The external wrapper owns the ordered
-Stage-1/Stage-2/train execution and its two HTML viewer children.
+Stage-1/Stage-2/train execution and its combined HTML viewer child.
 """
 
 from __future__ import annotations
@@ -11,15 +11,22 @@ import math
 import os
 import socket
 import subprocess
+import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, BinaryIO, Mapping, Sequence
 
 FULL_PIPELINE_SCRIPT_RELATIVE = Path("scripts") / "run_online_full_pipeline.py"
 PORT_KILL_TERM_TIMEOUT_S = 5.0
 PORT_KILL_KILL_TIMEOUT_S = 3.0
+PIPELINE_OUTPUT_RELAY_JOIN_TIMEOUT_S = 5.0
+PIPELINE_OUTPUT_PREFIX = "[phystwin_shen] "
 WILDCARD_LISTENER_HOSTS = frozenset({"", "0.0.0.0", "::"})
+ZERO_ORDER_BACKENDS = frozenset({"legacy", "boba"})
+SIM_FORCE_MODES = frozenset({"gather", "template_state_batched_atomic"})
+STAGE_WINDOW_KEYS = ("batch_size", "segment_len", "segment_stride")
 
 TOP_LEVEL_OVERRIDE_KEYS = (
     "wandb_mode",
@@ -28,9 +35,6 @@ TOP_LEVEL_OVERRIDE_KEYS = (
 SECTION_OVERRIDE_KEYS = {
     "common": (
         "device",
-        "batch_size",
-        "segment_len",
-        "segment_stride",
         "recent_window_count",
         "poll_sec",
         "no_sample_recent",
@@ -38,10 +42,14 @@ SECTION_OVERRIDE_KEYS = {
         "seed",
     ),
     "stage1": (
+        "max_online_chunks",
         "enabled",
         "script",
         "experiments_dir",
         "max_iter",
+        "cma_popsize",
+        "zero_order_backend",
+        "sim_force_mode",
         "cma_timing",
         "realtime_vis",
         "realtime_vis_dir",
@@ -49,10 +57,14 @@ SECTION_OVERRIDE_KEYS = {
         "no_realtime_iteration_history",
     ),
     "stage2": (
+        "max_online_chunks",
         "enabled",
         "script",
         "experiments_dir",
         "max_iter",
+        "cma_popsize",
+        "zero_order_backend",
+        "sim_force_mode",
         "cma_timing",
         "realtime_vis",
         "realtime_vis_dir",
@@ -109,10 +121,93 @@ SECTION_OVERRIDE_KEYS = {
         "rgb_dir",
     ),
 }
+OPTIONAL_SECTION_OVERRIDE_KEYS = {
+    "common": STAGE_WINDOW_KEYS,
+    "stage1": STAGE_WINDOW_KEYS,
+    "stage2": STAGE_WINDOW_KEYS,
+    "train": STAGE_WINDOW_KEYS,
+}
 
 
 class PhystwinShenLaunchError(RuntimeError):
     """Phystwin_shen could not be validated, launched, or kept healthy."""
+
+
+def _write_pipeline_console_line(raw_line: bytes) -> None:
+    """Write one combined supervisor output line to the Demo terminal."""
+    text = raw_line.decode("utf-8", errors="replace")
+    sys.stdout.write(f"{PIPELINE_OUTPUT_PREFIX}{text}")
+    if text and not text.endswith(("\n", "\r")):
+        sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
+class _PipelineOutputRelay:
+    """Tee one supervisor's combined output to its log and the Demo terminal."""
+
+    def __init__(
+        self,
+        *,
+        process: subprocess.Popen[bytes],
+        pipeline_log: BinaryIO,
+    ) -> None:
+        self._process = process
+        self._pipeline_log = pipeline_log
+        self._failure: Exception | None = None
+        self._thread = threading.Thread(
+            target=self._run,
+            name="phystwin-shen-output-relay",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        """Start draining the supervisor pipe before it can fill."""
+        self._thread.start()
+
+    def _run(self) -> None:
+        """Copy every output line to the retained log and parent terminal."""
+        output: BinaryIO | None = None
+        try:
+            output = self._process.stdout
+            if output is None:
+                raise RuntimeError("Phystwin_shen supervisor stdout pipe is missing")
+            for raw_line in iter(output.readline, b""):
+                self._pipeline_log.write(raw_line)
+                self._pipeline_log.flush()
+                _write_pipeline_console_line(raw_line)
+        except Exception as error:
+            self._failure = error
+            if self._process.poll() is None:
+                self._process.terminate()
+        finally:
+            if output is not None:
+                try:
+                    output.close()
+                except Exception as error:
+                    if self._failure is None:
+                        self._failure = error
+            try:
+                self._pipeline_log.close()
+            except Exception as error:
+                if self._failure is None:
+                    self._failure = error
+
+    def assert_healthy(self) -> None:
+        """Raise when output forwarding stopped before the supervisor did."""
+        if self._failure is not None:
+            raise PhystwinShenLaunchError(
+                f"Phystwin_shen console-output relay failed: {self._failure}"
+            ) from self._failure
+
+    def finish(self) -> None:
+        """Drain the final output after the supervisor process group stops."""
+        self._thread.join(timeout=PIPELINE_OUTPUT_RELAY_JOIN_TIMEOUT_S)
+        if self._thread.is_alive():
+            raise PhystwinShenLaunchError(
+                "Phystwin_shen console-output relay did not exit after the "
+                "supervisor stopped"
+            )
+        self.assert_healthy()
 
 
 def _resolve_repo_file(repo: Path, value: str | Path, *, label: str) -> Path:
@@ -352,6 +447,11 @@ def build_full_pipeline_command(
             )
         for key in keys:
             command.extend([f"--{section}_{key}", _override_text(values[key])])
+    for section, keys in OPTIONAL_SECTION_OVERRIDE_KEYS.items():
+        values = _runtime_section(settings.runtime_config, section)
+        for key in keys:
+            if key in values:
+                command.extend([f"--{section}_{key}", _override_text(values[key])])
     if repo != settings.repo_path.resolve():
         raise AssertionError("validated repo path changed unexpectedly")
     return command
@@ -360,26 +460,25 @@ def build_full_pipeline_command(
 def _viewer_endpoints(
     settings: PhystwinShenSettings,
 ) -> list[tuple[str, str, int]]:
-    validated: list[tuple[str, str, int]] = []
+    enabled_viewers: list[tuple[str, str, int]] = []
     for section in ("cma_viewer", "train_viewer"):
         endpoint = settings.viewer_endpoint(section)
         if endpoint is None:
             continue
         host, port = endpoint
+        enabled_viewers.append((section, host, port))
+
+    if len(enabled_viewers) > 1:
+        raise PhystwinShenLaunchError(
+            "phystwin_shen supports at most one enabled HTML viewer; use "
+            "cma_viewer.source='all' and disable train_viewer"
+        )
+
+    for section, host, port in enabled_viewers:
         if not (0 < int(port) < 65536):
             raise PhystwinShenLaunchError(f"{section}.port must be 1..65535")
-        bind_hosts, bind_is_wildcard = _resolved_bind_hosts(host)
-        for prior_section, prior_host, prior_port in validated:
-            if prior_port != port:
-                continue
-            prior_hosts, prior_is_wildcard = _resolved_bind_hosts(prior_host)
-            if bind_is_wildcard or prior_is_wildcard or bool(bind_hosts & prior_hosts):
-                raise PhystwinShenLaunchError(
-                    f"{section} and {prior_section} cannot share port {port} "
-                    f"on overlapping hosts {host!r} and {prior_host!r}"
-                )
-        validated.append((section, host, port))
-    return validated
+        _resolved_bind_hosts(host)
+    return enabled_viewers
 
 
 def validate_phystwin_shen_settings(
@@ -399,15 +498,30 @@ def validate_phystwin_shen_settings(
         python_prefix=python_prefix,
     )
     common = _runtime_section(settings.runtime_config, "common")
-    for key in (
-        "batch_size",
-        "segment_len",
-        "segment_stride",
-        "recent_window_count",
-    ):
+    for key in ("recent_window_count",):
         if int(common[key]) <= 0:
             raise PhystwinShenLaunchError(
                 f"phystwin_shen common.{key} must be positive"
+            )
+    for section in ("common", "stage1", "stage2", "train"):
+        values = _runtime_section(settings.runtime_config, section)
+        for key in STAGE_WINDOW_KEYS:
+            minimum = 2 if key == "segment_len" else 1
+            if key in values and int(values[key]) < minimum:
+                raise PhystwinShenLaunchError(
+                    f"phystwin_shen {section}.{key} must be >= {minimum}"
+                )
+    for section in ("stage1", "stage2", "train"):
+        values = _runtime_section(settings.runtime_config, section)
+        if not bool(values["enabled"]):
+            continue
+        missing = [
+            key for key in STAGE_WINDOW_KEYS if key not in values and key not in common
+        ]
+        if missing:
+            raise PhystwinShenLaunchError(
+                f"phystwin_shen enabled {section} is missing effective window "
+                f"settings {missing}; define them in {section} or common"
             )
     poll_sec = float(common["poll_sec"])
     if not math.isfinite(poll_sec) or poll_sec <= 0.0:
@@ -421,6 +535,28 @@ def validate_phystwin_shen_settings(
         )
     for section in ("stage1", "stage2"):
         values = _runtime_section(settings.runtime_config, section)
+        max_online_chunks = values["max_online_chunks"]
+        if max_online_chunks is not None and int(max_online_chunks) <= 0:
+            raise PhystwinShenLaunchError(
+                f"phystwin_shen {section}.max_online_chunks must be positive or null"
+            )
+        cma_popsize = values["cma_popsize"]
+        if cma_popsize is not None and int(cma_popsize) <= 0:
+            raise PhystwinShenLaunchError(
+                f"phystwin_shen {section}.cma_popsize must be positive or null"
+            )
+        zero_order_backend = str(values["zero_order_backend"])
+        if zero_order_backend not in ZERO_ORDER_BACKENDS:
+            raise PhystwinShenLaunchError(
+                f"phystwin_shen {section}.zero_order_backend must be one of "
+                f"{sorted(ZERO_ORDER_BACKENDS)}, got {zero_order_backend!r}"
+            )
+        sim_force_mode = str(values["sim_force_mode"])
+        if sim_force_mode not in SIM_FORCE_MODES:
+            raise PhystwinShenLaunchError(
+                f"phystwin_shen {section}.sim_force_mode must be one of "
+                f"{sorted(SIM_FORCE_MODES)}, got {sim_force_mode!r}"
+            )
         if bool(values["enabled"]) and int(values["max_iter"]) <= 0:
             raise PhystwinShenLaunchError(
                 f"phystwin_shen {section}.max_iter must be positive"
@@ -466,6 +602,7 @@ class PhystwinShenLaunch:
     process_group_id: int
     pipeline_command: list[str]
     pipeline_log_path: Path
+    pipeline_output_relay: _PipelineOutputRelay
     port_takeover: dict[str, Any]
     start_wall_s: float
     trigger: str
@@ -484,6 +621,7 @@ class PhystwinShenLaunch:
             ),
             "phystwin_shen_pipeline_command": list(self.pipeline_command),
             "phystwin_shen_pipeline_log": str(self.pipeline_log_path),
+            "phystwin_shen_pipeline_console_output": True,
             "phystwin_shen_pipeline_return_code": return_code,
             "phystwin_shen_pipeline_left_running": return_code is None,
             "phystwin_shen_process_group_id": int(self.process_group_id),
@@ -492,6 +630,14 @@ class PhystwinShenLaunch:
             "phystwin_shen_start_wall_s": float(self.start_wall_s),
             **self.summary_extra,
         }
+
+    def assert_pipeline_output_relay_healthy(self) -> None:
+        """Fail fast when terminal/log forwarding stopped unexpectedly."""
+        self.pipeline_output_relay.assert_healthy()
+
+    def finish_pipeline_output_relay(self) -> None:
+        """Flush and close the terminal/log relay after process cleanup."""
+        self.pipeline_output_relay.finish()
 
 
 def launch_phystwin_shen(
@@ -502,7 +648,7 @@ def launch_phystwin_shen(
     trigger: str,
     wall_time_origin_s: float,
 ) -> PhystwinShenLaunch:
-    """Free both viewer ports and start one external supervisor process."""
+    """Free the combined viewer port and start one external supervisor."""
     repo, _ = validate_phystwin_shen_repo(
         settings.repo_path,
         settings.pipeline_config,
@@ -513,25 +659,43 @@ def launch_phystwin_shen(
     pipeline_log_path = logs / "online_full_pipeline.log"
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = str(settings.cuda_visible_devices)
+    env["PYTHONUNBUFFERED"] = "1"
     pipeline_command = validate_phystwin_shen_settings(
         settings,
         python_prefix=python_prefix,
     )
-    with pipeline_log_path.open("wb") as pipeline_log:
+    pipeline_log = pipeline_log_path.open("wb")
+    try:
         pipeline_process = subprocess.Popen(
             pipeline_command,
             cwd=repo,
             env=env,
-            stdout=pipeline_log,
+            stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            bufsize=0,
         )
+    except BaseException:
+        pipeline_log.close()
+        raise
+    pipeline_output_relay = _PipelineOutputRelay(
+        process=pipeline_process,
+        pipeline_log=pipeline_log,
+    )
+    try:
+        pipeline_output_relay.start()
+    except BaseException:
+        pipeline_log.close()
+        pipeline_process.terminate()
+        pipeline_process.wait()
+        raise
     return PhystwinShenLaunch(
         settings=settings,
         pipeline_process=pipeline_process,
         process_group_id=int(pipeline_process.pid),
         pipeline_command=pipeline_command,
         pipeline_log_path=pipeline_log_path,
+        pipeline_output_relay=pipeline_output_relay,
         port_takeover=port_takeover,
         start_wall_s=time.monotonic() - float(wall_time_origin_s),
         trigger=str(trigger),

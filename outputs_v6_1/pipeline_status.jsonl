@@ -78,3 +78,592 @@
 {"detail": "shape prior ready; formal timeline open", "ok": true, "source": "camera", "stage": "warmup_ready", "t": 1783652744.163818}
 {"chunk_index": 0, "detail": "chunk 0", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783652755.9439664, "track_status": "normal"}
 {"chunk_count": 1, "detail": "max_chunks_reached", "ok": true, "source": "orchestrator", "stage": "run_finished", "t": 1783652756.3030849}
+{"detail": "input=live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783654169.8588665}
+{"detail": "input=live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783654170.1275077}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1783654186.8189325}
+{"detail": "shape prior ready; formal timeline open", "ok": true, "source": "camera", "stage": "warmup_ready", "t": 1783654241.7170067}
+{"detail": "phystwin_shen (shape_prior_points_ready)", "ok": true, "source": "orchestrator", "stage": "downstream_start", "t": 1783654241.8010118}
+{"chunk_index": 0, "detail": "chunk 0", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654252.9948242, "track_status": "normal"}
+{"chunk_index": 1, "detail": "chunk 1", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654258.8906465, "track_status": "degraded"}
+{"chunk_index": 2, "detail": "chunk 2", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654265.6596797, "track_status": "degraded"}
+{"chunk_index": 3, "detail": "chunk 3", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654272.6749744, "track_status": "degraded"}
+{"chunk_index": 4, "detail": "chunk 4", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654279.8217027, "track_status": "degraded"}
+{"chunk_index": 5, "detail": "chunk 5", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654286.6964633, "track_status": "degraded"}
+{"chunk_index": 6, "detail": "chunk 6", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654293.5157561, "track_status": "degraded"}
+{"chunk_index": 7, "detail": "chunk 7", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654300.7931845, "track_status": "degraded"}
+{"chunk_index": 8, "detail": "chunk 8", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654307.9141707, "track_status": "degraded"}
+{"chunk_index": 9, "detail": "chunk 9", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654314.7843015, "track_status": "degraded"}
+{"chunk_index": 10, "detail": "chunk 10", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654321.7876887, "track_status": "degraded"}
+{"chunk_index": 11, "detail": "chunk 11", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654328.722461, "track_status": "degraded"}
+{"chunk_index": 12, "detail": "chunk 12", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654335.6858783, "track_status": "degraded"}
+{"chunk_index": 13, "detail": "chunk 13", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654342.833384, "track_status": "degraded"}
+{"chunk_index": 14, "detail": "chunk 14", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654349.7027028, "track_status": "degraded"}
+{"chunk_index": 15, "detail": "chunk 15", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654356.7655866, "track_status": "degraded"}
+{"chunk_index": 16, "detail": "chunk 16", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654363.8573875, "track_status": "degraded"}
+{"chunk_index": 17, "detail": "chunk 17", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654370.8174343, "track_status": "degraded"}
+{"chunk_index": 18, "detail": "chunk 18", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654377.8299775, "track_status": "degraded"}
+{"chunk_index": 19, "detail": "chunk 19", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654384.8816292, "track_status": "degraded"}
+{"chunk_index": 20, "detail": "chunk 20", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654391.6821508, "track_status": "degraded"}
+{"chunk_index": 21, "detail": "chunk 21", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654398.832603, "track_status": "degraded"}
+{"chunk_index": 22, "detail": "chunk 22", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654405.8858726, "track_status": "degraded"}
+{"chunk_index": 23, "detail": "chunk 23", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654412.9102275, "track_status": "degraded"}
+{"chunk_index": 24, "detail": "chunk 24", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783654419.6472552, "track_status": "degraded"}
+{"chunk_count": 25, "detail": "max_chunks_reached", "ok": true, "source": "orchestrator", "stage": "run_finished", "t": 1783654471.4950602}
+{"detail": "input=live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783655775.3495548}
+{"detail": "input=live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783655775.6152432}
+{"detail": "", "ok": false, "source": "orchestrator", "stage": "fatal_error", "t": 1783655788.8294408}
+{"detail": "input=live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783655949.1653707}
+{"detail": "input=live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783655949.4234052}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1783655966.0744903}
+{"detail": "phystwin_shen (shape_prior_points_ready)", "ok": true, "source": "orchestrator", "stage": "downstream_start", "t": 1783656026.525791}
+{"detail": "shape prior ready; formal timeline open", "ok": true, "source": "camera", "stage": "warmup_ready", "t": 1783656026.5729895}
+{"chunk_index": 0, "detail": "chunk 0", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783656037.7052724, "track_status": "normal"}
+{"chunk_index": 1, "detail": "chunk 1", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783656043.701731, "track_status": "degraded"}
+{"chunk_index": 2, "detail": "chunk 2", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783656050.668377, "track_status": "degraded"}
+{"chunk_index": 3, "detail": "chunk 3", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783656057.6380472, "track_status": "degraded"}
+{"chunk_index": 4, "detail": "chunk 4", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783656064.8430219, "track_status": "degraded"}
+{"chunk_count": 5, "detail": "max_chunks_reached", "ok": true, "source": "orchestrator", "stage": "run_finished", "t": 1783656455.0039}
+{"detail": "input=fake-live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783657058.6526806}
+{"detail": "input=fake-live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783657058.9292471}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1783657075.3391745}
+{"detail": "phystwin_shen (shape_prior_points_ready)", "ok": true, "source": "orchestrator", "stage": "downstream_start", "t": 1783657136.974567}
+{"detail": "shape prior ready; formal timeline open", "ok": true, "source": "camera", "stage": "warmup_ready", "t": 1783657137.0886009}
+{"chunk_index": 0, "detail": "chunk 0", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783657148.9849327, "track_status": "normal"}
+{"chunk_index": 1, "detail": "chunk 1", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783657154.7487004, "track_status": "degraded"}
+{"chunk_index": 2, "detail": "chunk 2", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783657162.0858238, "track_status": "degraded"}
+{"chunk_index": 3, "detail": "chunk 3", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783657168.9647136, "track_status": "degraded"}
+{"chunk_index": 4, "detail": "chunk 4", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783657176.3230212, "track_status": "degraded"}
+{"chunk_index": 5, "detail": "chunk 5", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783657182.8280559, "track_status": "degraded"}
+{"chunk_index": 6, "detail": "chunk 6", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783657189.8018043, "track_status": "degraded"}
+{"chunk_index": 7, "detail": "chunk 7", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783657197.043499, "track_status": "degraded"}
+{"chunk_index": 8, "detail": "chunk 8", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783657203.9247816, "track_status": "degraded"}
+{"chunk_index": 9, "detail": "chunk 9", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783657210.8429801, "track_status": "degraded"}
+{"chunk_index": 10, "detail": "chunk 10", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783657218.6587882, "track_status": "degraded"}
+{"chunk_index": 11, "detail": "chunk 11", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783657225.0278432, "track_status": "degraded"}
+{"chunk_index": 12, "detail": "chunk 12", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783657231.8022513, "track_status": "degraded"}
+{"chunk_index": 13, "detail": "chunk 13", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783657238.9626727, "track_status": "degraded"}
+{"chunk_index": 14, "detail": "chunk 14", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783657245.91904, "track_status": "degraded"}
+{"chunk_count": 15, "detail": "main_data_processing_completed", "ok": true, "source": "orchestrator", "stage": "run_finished", "t": 1783657497.2476175}
+{"detail": "input=live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783658066.2020392}
+{"detail": "input=live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783658066.4711382}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1783658083.256915}
+{"detail": "", "ok": false, "source": "orchestrator", "stage": "fatal_error", "t": 1783658108.3338256}
+{"detail": "input=live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783658178.4310775}
+{"detail": "input=live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783658178.670343}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1783658195.491675}
+{"detail": "shape prior ready; formal timeline open", "ok": true, "source": "camera", "stage": "warmup_ready", "t": 1783658255.8248978}
+{"detail": "phystwin_shen (shape_prior_points_ready)", "ok": true, "source": "orchestrator", "stage": "downstream_start", "t": 1783658255.8362772}
+{"chunk_index": 0, "detail": "chunk 0", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783658266.9271421, "track_status": "normal"}
+{"chunk_index": 1, "detail": "chunk 1", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783658273.260524, "track_status": "degraded"}
+{"chunk_index": 2, "detail": "chunk 2", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783658280.0203454, "track_status": "degraded"}
+{"chunk_index": 3, "detail": "chunk 3", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783658287.2742255, "track_status": "degraded"}
+{"chunk_index": 4, "detail": "chunk 4", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783658294.365934, "track_status": "degraded"}
+{"detail": "input=fake-live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783659089.2701924}
+{"detail": "input=fake-live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783659089.5233479}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1783659106.1473188}
+{"detail": "phystwin_shen (shape_prior_points_ready)", "ok": true, "source": "orchestrator", "stage": "downstream_start", "t": 1783659168.3956943}
+{"detail": "shape prior ready; formal timeline open", "ok": true, "source": "camera", "stage": "warmup_ready", "t": 1783659168.5067515}
+{"chunk_index": 0, "detail": "chunk 0", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783659180.2471254, "track_status": "normal"}
+{"chunk_index": 1, "detail": "chunk 1", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783659186.4708676, "track_status": "degraded"}
+{"chunk_index": 2, "detail": "chunk 2", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783659193.4306462, "track_status": "degraded"}
+{"chunk_index": 3, "detail": "chunk 3", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783659200.2146358, "track_status": "degraded"}
+{"chunk_index": 4, "detail": "chunk 4", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783659207.4104507, "track_status": "degraded"}
+{"chunk_index": 5, "detail": "chunk 5", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783659214.2824166, "track_status": "degraded"}
+{"chunk_index": 6, "detail": "chunk 6", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783659221.3076472, "track_status": "degraded"}
+{"chunk_index": 7, "detail": "chunk 7", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783659228.2578392, "track_status": "degraded"}
+{"chunk_index": 8, "detail": "chunk 8", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783659235.4713788, "track_status": "degraded"}
+{"chunk_index": 9, "detail": "chunk 9", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783659242.492602, "track_status": "degraded"}
+{"chunk_index": 10, "detail": "chunk 10", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783659249.6348176, "track_status": "degraded"}
+{"chunk_index": 11, "detail": "chunk 11", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783659256.3381014, "track_status": "degraded"}
+{"chunk_index": 12, "detail": "chunk 12", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783659263.3001416, "track_status": "degraded"}
+{"chunk_index": 13, "detail": "chunk 13", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783659270.3849695, "track_status": "degraded"}
+{"chunk_index": 14, "detail": "chunk 14", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783659277.3704596, "track_status": "degraded"}
+{"chunk_count": 15, "detail": "main_data_processing_completed", "ok": true, "source": "orchestrator", "stage": "run_finished", "t": 1783659622.4391754}
+{"detail": "input=fake-live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783660024.1892028}
+{"detail": "input=fake-live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783660024.464684}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1783660040.5817003}
+{"detail": "phystwin_shen (shape_prior_points_ready)", "ok": true, "source": "orchestrator", "stage": "downstream_start", "t": 1783660098.3930554}
+{"detail": "shape prior ready; formal timeline open", "ok": true, "source": "camera", "stage": "warmup_ready", "t": 1783660098.4333854}
+{"chunk_index": 0, "detail": "chunk 0", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783660109.9646018, "track_status": "normal"}
+{"chunk_index": 1, "detail": "chunk 1", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783660115.963263, "track_status": "degraded"}
+{"chunk_index": 2, "detail": "chunk 2", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783660123.0276585, "track_status": "degraded"}
+{"chunk_index": 3, "detail": "chunk 3", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783660130.0383365, "track_status": "degraded"}
+{"chunk_index": 4, "detail": "chunk 4", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783660137.109669, "track_status": "degraded"}
+{"chunk_index": 5, "detail": "chunk 5", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783660144.207568, "track_status": "degraded"}
+{"chunk_index": 6, "detail": "chunk 6", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783660151.2347882, "track_status": "degraded"}
+{"chunk_index": 7, "detail": "chunk 7", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783660158.0671456, "track_status": "degraded"}
+{"chunk_index": 8, "detail": "chunk 8", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783660165.1957996, "track_status": "degraded"}
+{"chunk_index": 9, "detail": "chunk 9", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783660172.2932963, "track_status": "degraded"}
+{"chunk_index": 10, "detail": "chunk 10", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783660179.151575, "track_status": "degraded"}
+{"chunk_index": 11, "detail": "chunk 11", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783660186.253007, "track_status": "degraded"}
+{"chunk_index": 12, "detail": "chunk 12", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783660193.1891236, "track_status": "degraded"}
+{"chunk_index": 13, "detail": "chunk 13", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783660200.1010597, "track_status": "degraded"}
+{"chunk_index": 14, "detail": "chunk 14", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783660207.2802625, "track_status": "degraded"}
+{"chunk_index": 15, "detail": "chunk 15", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783660214.2203162, "track_status": "degraded"}
+{"detail": "input=fake-live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783661014.501676}
+{"detail": "input=fake-live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783661014.7572892}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1783661030.6787958}
+{"detail": "phystwin_shen (shape_prior_points_ready)", "ok": true, "source": "orchestrator", "stage": "downstream_start", "t": 1783661090.0816262}
+{"detail": "shape prior ready; formal timeline open", "ok": true, "source": "camera", "stage": "warmup_ready", "t": 1783661090.093681}
+{"chunk_index": 0, "detail": "chunk 0", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661101.6589189, "track_status": "normal"}
+{"chunk_index": 1, "detail": "chunk 1", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661107.8510273, "track_status": "degraded"}
+{"chunk_index": 2, "detail": "chunk 2", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661114.624755, "track_status": "degraded"}
+{"chunk_index": 3, "detail": "chunk 3", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661121.8119035, "track_status": "degraded"}
+{"chunk_index": 4, "detail": "chunk 4", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661128.835664, "track_status": "degraded"}
+{"chunk_index": 5, "detail": "chunk 5", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661135.7542937, "track_status": "degraded"}
+{"chunk_index": 6, "detail": "chunk 6", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661142.6125712, "track_status": "degraded"}
+{"chunk_index": 7, "detail": "chunk 7", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661149.8500187, "track_status": "degraded"}
+{"chunk_index": 8, "detail": "chunk 8", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661156.7768488, "track_status": "degraded"}
+{"chunk_index": 9, "detail": "chunk 9", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661163.7729347, "track_status": "degraded"}
+{"chunk_index": 10, "detail": "chunk 10", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661170.734043, "track_status": "degraded"}
+{"chunk_index": 11, "detail": "chunk 11", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661177.6679742, "track_status": "degraded"}
+{"chunk_index": 12, "detail": "chunk 12", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661184.718955, "track_status": "degraded"}
+{"chunk_index": 13, "detail": "chunk 13", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661191.751792, "track_status": "degraded"}
+{"chunk_index": 14, "detail": "chunk 14", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661198.9758334, "track_status": "degraded"}
+{"chunk_index": 15, "detail": "chunk 15", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661205.7011445, "track_status": "degraded"}
+{"detail": "input=live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783661430.317585}
+{"detail": "input=live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783661430.575133}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1783661447.0783038}
+{"detail": "shape prior ready; formal timeline open", "ok": true, "source": "camera", "stage": "warmup_ready", "t": 1783661508.8550367}
+{"detail": "phystwin_shen (shape_prior_points_ready)", "ok": true, "source": "orchestrator", "stage": "downstream_start", "t": 1783661508.867049}
+{"chunk_index": 0, "detail": "chunk 0", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661520.0088816, "track_status": "normal"}
+{"chunk_index": 1, "detail": "chunk 1", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661526.3265986, "track_status": "degraded"}
+{"chunk_index": 2, "detail": "chunk 2", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661533.1167076, "track_status": "degraded"}
+{"chunk_index": 3, "detail": "chunk 3", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661540.174408, "track_status": "degraded"}
+{"chunk_index": 4, "detail": "chunk 4", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661547.4187512, "track_status": "degraded"}
+{"chunk_index": 5, "detail": "chunk 5", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661554.2352242, "track_status": "degraded"}
+{"chunk_index": 6, "detail": "chunk 6", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661561.293199, "track_status": "degraded"}
+{"chunk_index": 7, "detail": "chunk 7", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661568.991275, "track_status": "degraded"}
+{"chunk_index": 8, "detail": "chunk 8", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661575.3571842, "track_status": "degraded"}
+{"chunk_index": 9, "detail": "chunk 9", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661582.7796397, "track_status": "degraded"}
+{"chunk_index": 10, "detail": "chunk 10", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783661589.9985454, "track_status": "degraded"}
+{"detail": "controller anchor recovery found neither 5 valid neighbors among the nearest 100 nor 5 valid same-hand fallback anchors; anchor column 4 (query index 362) had 4 valid neighbors at window frame 32", "ok": false, "source": "orchestrator", "stage": "fatal_error", "t": 1783661594.7755344}
+{"detail": "input=fake-live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783662039.249231}
+{"detail": "input=fake-live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783662039.4815066}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1783662055.3102503}
+{"detail": "phystwin_shen (shape_prior_points_ready)", "ok": true, "source": "orchestrator", "stage": "downstream_start", "t": 1783662114.1587474}
+{"detail": "shape prior ready; formal timeline open", "ok": true, "source": "camera", "stage": "warmup_ready", "t": 1783662114.2378378}
+{"chunk_index": 0, "detail": "chunk 0", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662116.8665621, "track_status": "normal"}
+{"chunk_index": 1, "detail": "chunk 1", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662117.4466588, "track_status": "degraded"}
+{"chunk_index": 2, "detail": "chunk 2", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662118.0161655, "track_status": "degraded"}
+{"chunk_index": 3, "detail": "chunk 3", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662118.6246202, "track_status": "normal"}
+{"chunk_index": 4, "detail": "chunk 4", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662119.7098331, "track_status": "degraded"}
+{"chunk_index": 5, "detail": "chunk 5", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662120.6346552, "track_status": "degraded"}
+{"chunk_index": 6, "detail": "chunk 6", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662121.6285264, "track_status": "normal"}
+{"chunk_index": 7, "detail": "chunk 7", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662122.6531289, "track_status": "degraded"}
+{"chunk_index": 8, "detail": "chunk 8", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662123.6816034, "track_status": "degraded"}
+{"chunk_index": 9, "detail": "chunk 9", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662124.6305532, "track_status": "degraded"}
+{"chunk_index": 10, "detail": "chunk 10", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662125.6438682, "track_status": "degraded"}
+{"chunk_index": 11, "detail": "chunk 11", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662126.6818688, "track_status": "degraded"}
+{"chunk_index": 12, "detail": "chunk 12", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662127.6476514, "track_status": "degraded"}
+{"chunk_index": 13, "detail": "chunk 13", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662128.7600532, "track_status": "degraded"}
+{"chunk_index": 14, "detail": "chunk 14", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662129.6383758, "track_status": "degraded"}
+{"chunk_index": 15, "detail": "chunk 15", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662130.638251, "track_status": "degraded"}
+{"chunk_index": 16, "detail": "chunk 16", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662131.6353335, "track_status": "degraded"}
+{"chunk_index": 17, "detail": "chunk 17", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662132.68316, "track_status": "degraded"}
+{"chunk_index": 18, "detail": "chunk 18", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662133.6431603, "track_status": "degraded"}
+{"chunk_index": 19, "detail": "chunk 19", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662134.6399229, "track_status": "degraded"}
+{"chunk_index": 20, "detail": "chunk 20", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662135.639803, "track_status": "degraded"}
+{"chunk_index": 21, "detail": "chunk 21", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662136.701197, "track_status": "degraded"}
+{"chunk_index": 22, "detail": "chunk 22", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662137.681209, "track_status": "degraded"}
+{"chunk_index": 23, "detail": "chunk 23", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662138.6635103, "track_status": "degraded"}
+{"chunk_index": 24, "detail": "chunk 24", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662139.6743414, "track_status": "degraded"}
+{"chunk_index": 25, "detail": "chunk 25", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662140.7291257, "track_status": "degraded"}
+{"chunk_index": 26, "detail": "chunk 26", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662141.6484098, "track_status": "degraded"}
+{"chunk_index": 27, "detail": "chunk 27", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662142.6414483, "track_status": "degraded"}
+{"chunk_index": 28, "detail": "chunk 28", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662143.6163971, "track_status": "degraded"}
+{"chunk_index": 29, "detail": "chunk 29", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662144.6368165, "track_status": "degraded"}
+{"chunk_index": 30, "detail": "chunk 30", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662145.778303, "track_status": "degraded"}
+{"chunk_index": 31, "detail": "chunk 31", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662146.6773274, "track_status": "degraded"}
+{"chunk_index": 32, "detail": "chunk 32", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662147.7035325, "track_status": "degraded"}
+{"chunk_index": 33, "detail": "chunk 33", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662148.7325675, "track_status": "degraded"}
+{"chunk_index": 34, "detail": "chunk 34", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662149.7726898, "track_status": "degraded"}
+{"chunk_index": 35, "detail": "chunk 35", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662150.674441, "track_status": "degraded"}
+{"chunk_index": 36, "detail": "chunk 36", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662151.6726544, "track_status": "degraded"}
+{"chunk_index": 37, "detail": "chunk 37", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662152.714334, "track_status": "degraded"}
+{"chunk_index": 38, "detail": "chunk 38", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662153.718731, "track_status": "degraded"}
+{"chunk_index": 39, "detail": "chunk 39", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662154.7089102, "track_status": "degraded"}
+{"chunk_index": 40, "detail": "chunk 40", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662155.662734, "track_status": "degraded"}
+{"chunk_index": 41, "detail": "chunk 41", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662156.6881597, "track_status": "degraded"}
+{"chunk_index": 42, "detail": "chunk 42", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662157.691353, "track_status": "degraded"}
+{"chunk_index": 43, "detail": "chunk 43", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662158.7260196, "track_status": "degraded"}
+{"chunk_index": 44, "detail": "chunk 44", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662159.7813833, "track_status": "degraded"}
+{"chunk_index": 45, "detail": "chunk 45", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662160.6666365, "track_status": "degraded"}
+{"chunk_index": 46, "detail": "chunk 46", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662161.6594594, "track_status": "degraded"}
+{"chunk_index": 47, "detail": "chunk 47", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662162.693039, "track_status": "degraded"}
+{"chunk_index": 48, "detail": "chunk 48", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662163.7023778, "track_status": "degraded"}
+{"chunk_index": 49, "detail": "chunk 49", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662164.6720045, "track_status": "degraded"}
+{"chunk_index": 50, "detail": "chunk 50", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662165.6564443, "track_status": "degraded"}
+{"chunk_index": 51, "detail": "chunk 51", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662166.7315412, "track_status": "degraded"}
+{"chunk_index": 52, "detail": "chunk 52", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662167.6642377, "track_status": "degraded"}
+{"chunk_index": 53, "detail": "chunk 53", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662168.666122, "track_status": "degraded"}
+{"chunk_index": 54, "detail": "chunk 54", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662169.6990383, "track_status": "degraded"}
+{"chunk_index": 55, "detail": "chunk 55", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662170.7113812, "track_status": "degraded"}
+{"chunk_index": 56, "detail": "chunk 56", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662171.6764417, "track_status": "degraded"}
+{"chunk_index": 57, "detail": "chunk 57", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662172.70793, "track_status": "degraded"}
+{"chunk_index": 58, "detail": "chunk 58", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662173.7129622, "track_status": "degraded"}
+{"chunk_index": 59, "detail": "chunk 59", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662174.754743, "track_status": "degraded"}
+{"chunk_index": 60, "detail": "chunk 60", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662175.743333, "track_status": "degraded"}
+{"chunk_index": 61, "detail": "chunk 61", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662176.6855743, "track_status": "degraded"}
+{"chunk_index": 62, "detail": "chunk 62", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662177.6712987, "track_status": "degraded"}
+{"chunk_index": 63, "detail": "chunk 63", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662178.6698298, "track_status": "degraded"}
+{"chunk_index": 64, "detail": "chunk 64", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662179.7359285, "track_status": "degraded"}
+{"chunk_index": 65, "detail": "chunk 65", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662180.6763015, "track_status": "degraded"}
+{"chunk_index": 66, "detail": "chunk 66", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662181.7201412, "track_status": "degraded"}
+{"chunk_index": 67, "detail": "chunk 67", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662182.687221, "track_status": "degraded"}
+{"chunk_index": 68, "detail": "chunk 68", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662183.793143, "track_status": "degraded"}
+{"chunk_index": 69, "detail": "chunk 69", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662184.6967409, "track_status": "degraded"}
+{"chunk_index": 70, "detail": "chunk 70", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662185.6909947, "track_status": "degraded"}
+{"chunk_index": 71, "detail": "chunk 71", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662186.7049975, "track_status": "degraded"}
+{"chunk_index": 72, "detail": "chunk 72", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662187.8244526, "track_status": "degraded"}
+{"chunk_index": 73, "detail": "chunk 73", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662188.7383444, "track_status": "degraded"}
+{"chunk_index": 74, "detail": "chunk 74", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662189.7784595, "track_status": "degraded"}
+{"chunk_index": 75, "detail": "chunk 75", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662190.7352955, "track_status": "degraded"}
+{"chunk_index": 76, "detail": "chunk 76", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662191.698331, "track_status": "degraded"}
+{"chunk_index": 77, "detail": "chunk 77", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662192.7757573, "track_status": "degraded"}
+{"chunk_index": 78, "detail": "chunk 78", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662193.755815, "track_status": "degraded"}
+{"chunk_index": 79, "detail": "chunk 79", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662194.7544272, "track_status": "degraded"}
+{"chunk_index": 80, "detail": "chunk 80", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662195.7141597, "track_status": "degraded"}
+{"chunk_index": 81, "detail": "chunk 81", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662196.8958933, "track_status": "degraded"}
+{"chunk_index": 82, "detail": "chunk 82", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662197.6920006, "track_status": "degraded"}
+{"chunk_index": 83, "detail": "chunk 83", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662198.687421, "track_status": "degraded"}
+{"chunk_index": 84, "detail": "chunk 84", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662199.7139099, "track_status": "degraded"}
+{"chunk_index": 85, "detail": "chunk 85", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662200.8228395, "track_status": "degraded"}
+{"chunk_index": 86, "detail": "chunk 86", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662201.7300303, "track_status": "degraded"}
+{"chunk_index": 87, "detail": "chunk 87", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662202.7244747, "track_status": "degraded"}
+{"chunk_index": 88, "detail": "chunk 88", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662203.820693, "track_status": "degraded"}
+{"chunk_index": 89, "detail": "chunk 89", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662204.7405283, "track_status": "degraded"}
+{"chunk_index": 90, "detail": "chunk 90", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662205.794071, "track_status": "degraded"}
+{"chunk_index": 91, "detail": "chunk 91", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662206.7469969, "track_status": "degraded"}
+{"chunk_index": 92, "detail": "chunk 92", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662207.7643752, "track_status": "degraded"}
+{"chunk_index": 93, "detail": "chunk 93", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662208.787461, "track_status": "degraded"}
+{"chunk_index": 94, "detail": "chunk 94", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662209.8237028, "track_status": "degraded"}
+{"chunk_index": 95, "detail": "chunk 95", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662210.7507641, "track_status": "degraded"}
+{"chunk_index": 96, "detail": "chunk 96", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662211.7331135, "track_status": "degraded"}
+{"chunk_index": 97, "detail": "chunk 97", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662212.7506921, "track_status": "degraded"}
+{"chunk_index": 98, "detail": "chunk 98", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662213.8094242, "track_status": "degraded"}
+{"chunk_index": 99, "detail": "chunk 99", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662214.7168405, "track_status": "degraded"}
+{"chunk_index": 100, "detail": "chunk 100", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662215.8317316, "track_status": "degraded"}
+{"chunk_index": 101, "detail": "chunk 101", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662216.7189844, "track_status": "degraded"}
+{"chunk_index": 102, "detail": "chunk 102", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662217.807092, "track_status": "degraded"}
+{"chunk_index": 103, "detail": "chunk 103", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662218.8286932, "track_status": "degraded"}
+{"chunk_index": 104, "detail": "chunk 104", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662219.7259834, "track_status": "degraded"}
+{"chunk_index": 105, "detail": "chunk 105", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662220.761075, "track_status": "degraded"}
+{"chunk_index": 106, "detail": "chunk 106", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662221.8030717, "track_status": "degraded"}
+{"chunk_index": 107, "detail": "chunk 107", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662222.7559066, "track_status": "degraded"}
+{"chunk_index": 108, "detail": "chunk 108", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662223.8164897, "track_status": "degraded"}
+{"chunk_index": 109, "detail": "chunk 109", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662224.7238631, "track_status": "degraded"}
+{"chunk_index": 110, "detail": "chunk 110", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662225.7951918, "track_status": "degraded"}
+{"chunk_index": 111, "detail": "chunk 111", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662226.7675138, "track_status": "degraded"}
+{"chunk_index": 112, "detail": "chunk 112", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662227.8330338, "track_status": "degraded"}
+{"chunk_index": 113, "detail": "chunk 113", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662228.717781, "track_status": "degraded"}
+{"chunk_index": 114, "detail": "chunk 114", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783662231.4538548, "track_status": "degraded"}
+{"chunk_count": 115, "detail": "main_data_processing_completed", "ok": true, "source": "orchestrator", "stage": "run_finished", "t": 1783662502.8295739}
+{"detail": "input=fake-live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783706369.9922206}
+{"detail": "input=fake-live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783706370.2583902}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1783706386.2149596}
+{"detail": "shape prior ready; formal timeline open", "ok": true, "source": "camera", "stage": "warmup_ready", "t": 1783706443.0021553}
+{"detail": "phystwin_shen (shape_prior_points_ready)", "ok": true, "source": "orchestrator", "stage": "downstream_start", "t": 1783706443.0363529}
+{"chunk_index": 0, "detail": "chunk 0", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706445.6471553, "track_status": "normal"}
+{"chunk_index": 1, "detail": "chunk 1", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706446.252955, "track_status": "degraded"}
+{"chunk_index": 2, "detail": "chunk 2", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706446.8488197, "track_status": "degraded"}
+{"chunk_index": 3, "detail": "chunk 3", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706447.4529035, "track_status": "normal"}
+{"chunk_index": 4, "detail": "chunk 4", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706448.4454803, "track_status": "degraded"}
+{"chunk_index": 5, "detail": "chunk 5", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706449.3905776, "track_status": "degraded"}
+{"chunk_index": 6, "detail": "chunk 6", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706450.3691206, "track_status": "normal"}
+{"chunk_index": 7, "detail": "chunk 7", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706451.3893366, "track_status": "degraded"}
+{"chunk_index": 8, "detail": "chunk 8", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706452.4058094, "track_status": "degraded"}
+{"chunk_index": 9, "detail": "chunk 9", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706453.417761, "track_status": "degraded"}
+{"chunk_index": 10, "detail": "chunk 10", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706454.3912058, "track_status": "degraded"}
+{"chunk_index": 11, "detail": "chunk 11", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706455.4300666, "track_status": "degraded"}
+{"chunk_index": 12, "detail": "chunk 12", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706456.407641, "track_status": "degraded"}
+{"chunk_index": 13, "detail": "chunk 13", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706457.4592743, "track_status": "degraded"}
+{"chunk_index": 14, "detail": "chunk 14", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706458.4604194, "track_status": "degraded"}
+{"chunk_index": 15, "detail": "chunk 15", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706459.408554, "track_status": "degraded"}
+{"chunk_index": 16, "detail": "chunk 16", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706460.45822, "track_status": "degraded"}
+{"chunk_index": 17, "detail": "chunk 17", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706461.4499264, "track_status": "degraded"}
+{"chunk_index": 18, "detail": "chunk 18", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706462.4242148, "track_status": "degraded"}
+{"chunk_index": 19, "detail": "chunk 19", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706463.4136646, "track_status": "degraded"}
+{"chunk_index": 20, "detail": "chunk 20", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706464.4162834, "track_status": "degraded"}
+{"chunk_index": 21, "detail": "chunk 21", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706465.484732, "track_status": "degraded"}
+{"chunk_index": 22, "detail": "chunk 22", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706466.4207036, "track_status": "degraded"}
+{"chunk_index": 23, "detail": "chunk 23", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706467.4175751, "track_status": "degraded"}
+{"chunk_index": 24, "detail": "chunk 24", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706468.436863, "track_status": "degraded"}
+{"chunk_index": 25, "detail": "chunk 25", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706469.536247, "track_status": "degraded"}
+{"chunk_index": 26, "detail": "chunk 26", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706470.4233873, "track_status": "degraded"}
+{"chunk_index": 27, "detail": "chunk 27", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706471.4380717, "track_status": "degraded"}
+{"chunk_index": 28, "detail": "chunk 28", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706472.4283316, "track_status": "degraded"}
+{"chunk_index": 29, "detail": "chunk 29", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706473.5600843, "track_status": "degraded"}
+{"chunk_index": 30, "detail": "chunk 30", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706474.508756, "track_status": "degraded"}
+{"chunk_index": 31, "detail": "chunk 31", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706475.4225314, "track_status": "degraded"}
+{"chunk_index": 32, "detail": "chunk 32", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706476.4374065, "track_status": "degraded"}
+{"chunk_index": 33, "detail": "chunk 33", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706477.4297993, "track_status": "degraded"}
+{"chunk_index": 34, "detail": "chunk 34", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706478.5359697, "track_status": "degraded"}
+{"chunk_index": 35, "detail": "chunk 35", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706479.5266206, "track_status": "degraded"}
+{"chunk_index": 36, "detail": "chunk 36", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706480.5207534, "track_status": "degraded"}
+{"chunk_index": 37, "detail": "chunk 37", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706481.4560082, "track_status": "degraded"}
+{"chunk_index": 38, "detail": "chunk 38", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706482.5180144, "track_status": "degraded"}
+{"chunk_index": 39, "detail": "chunk 39", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706483.4204464, "track_status": "degraded"}
+{"chunk_index": 40, "detail": "chunk 40", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706484.4222965, "track_status": "degraded"}
+{"chunk_index": 41, "detail": "chunk 41", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706485.4505265, "track_status": "degraded"}
+{"chunk_index": 42, "detail": "chunk 42", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706486.4403458, "track_status": "degraded"}
+{"chunk_index": 43, "detail": "chunk 43", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706487.495287, "track_status": "degraded"}
+{"chunk_index": 44, "detail": "chunk 44", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706488.4457214, "track_status": "degraded"}
+{"chunk_index": 45, "detail": "chunk 45", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706489.4376674, "track_status": "degraded"}
+{"chunk_index": 46, "detail": "chunk 46", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706490.425544, "track_status": "degraded"}
+{"chunk_index": 47, "detail": "chunk 47", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706491.508566, "track_status": "degraded"}
+{"chunk_index": 48, "detail": "chunk 48", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706492.43736, "track_status": "degraded"}
+{"chunk_index": 49, "detail": "chunk 49", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706493.4491684, "track_status": "degraded"}
+{"chunk_index": 50, "detail": "chunk 50", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706494.4359267, "track_status": "degraded"}
+{"chunk_index": 51, "detail": "chunk 51", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706495.498392, "track_status": "degraded"}
+{"chunk_index": 52, "detail": "chunk 52", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706496.4565346, "track_status": "degraded"}
+{"chunk_index": 53, "detail": "chunk 53", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706497.4632893, "track_status": "degraded"}
+{"chunk_index": 54, "detail": "chunk 54", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706498.4584746, "track_status": "degraded"}
+{"chunk_index": 55, "detail": "chunk 55", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706499.4497483, "track_status": "degraded"}
+{"chunk_index": 56, "detail": "chunk 56", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706500.5404117, "track_status": "degraded"}
+{"chunk_index": 57, "detail": "chunk 57", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706501.4884646, "track_status": "degraded"}
+{"chunk_index": 58, "detail": "chunk 58", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706502.506358, "track_status": "degraded"}
+{"chunk_index": 59, "detail": "chunk 59", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706503.5946503, "track_status": "degraded"}
+{"chunk_index": 60, "detail": "chunk 60", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706504.4858038, "track_status": "degraded"}
+{"chunk_index": 61, "detail": "chunk 61", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706505.5435126, "track_status": "degraded"}
+{"chunk_index": 62, "detail": "chunk 62", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706506.4549341, "track_status": "degraded"}
+{"chunk_index": 63, "detail": "chunk 63", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706507.4877164, "track_status": "degraded"}
+{"chunk_index": 64, "detail": "chunk 64", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706508.4612873, "track_status": "degraded"}
+{"chunk_index": 65, "detail": "chunk 65", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706509.5571308, "track_status": "degraded"}
+{"chunk_index": 66, "detail": "chunk 66", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706510.4933374, "track_status": "degraded"}
+{"chunk_index": 67, "detail": "chunk 67", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706511.4980462, "track_status": "degraded"}
+{"chunk_index": 68, "detail": "chunk 68", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706512.5705903, "track_status": "degraded"}
+{"chunk_index": 69, "detail": "chunk 69", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706513.5719593, "track_status": "degraded"}
+{"chunk_index": 70, "detail": "chunk 70", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706514.4601476, "track_status": "degraded"}
+{"chunk_index": 71, "detail": "chunk 71", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706515.543356, "track_status": "degraded"}
+{"chunk_index": 72, "detail": "chunk 72", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706516.5500066, "track_status": "degraded"}
+{"chunk_index": 73, "detail": "chunk 73", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706517.4769664, "track_status": "degraded"}
+{"chunk_index": 74, "detail": "chunk 74", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706518.5605521, "track_status": "degraded"}
+{"chunk_index": 75, "detail": "chunk 75", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706519.5797563, "track_status": "degraded"}
+{"chunk_index": 76, "detail": "chunk 76", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706520.5941849, "track_status": "degraded"}
+{"chunk_index": 77, "detail": "chunk 77", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706521.5474458, "track_status": "degraded"}
+{"chunk_index": 78, "detail": "chunk 78", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706522.5831661, "track_status": "degraded"}
+{"chunk_index": 79, "detail": "chunk 79", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706523.521737, "track_status": "degraded"}
+{"chunk_index": 80, "detail": "chunk 80", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706524.5224693, "track_status": "degraded"}
+{"chunk_index": 81, "detail": "chunk 81", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706525.5261528, "track_status": "degraded"}
+{"chunk_index": 82, "detail": "chunk 82", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706526.605405, "track_status": "degraded"}
+{"chunk_index": 83, "detail": "chunk 83", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706527.5202599, "track_status": "degraded"}
+{"chunk_index": 84, "detail": "chunk 84", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706528.519662, "track_status": "degraded"}
+{"chunk_index": 85, "detail": "chunk 85", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706529.5153537, "track_status": "degraded"}
+{"chunk_index": 86, "detail": "chunk 86", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706530.5270963, "track_status": "degraded"}
+{"chunk_index": 87, "detail": "chunk 87", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706531.6584346, "track_status": "degraded"}
+{"chunk_index": 88, "detail": "chunk 88", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706532.5248804, "track_status": "degraded"}
+{"chunk_index": 89, "detail": "chunk 89", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706533.5055783, "track_status": "degraded"}
+{"chunk_index": 90, "detail": "chunk 90", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706534.6077363, "track_status": "degraded"}
+{"chunk_index": 91, "detail": "chunk 91", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706535.5316918, "track_status": "degraded"}
+{"chunk_index": 92, "detail": "chunk 92", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706536.5977705, "track_status": "degraded"}
+{"chunk_index": 93, "detail": "chunk 93", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706537.5300875, "track_status": "degraded"}
+{"chunk_index": 94, "detail": "chunk 94", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706538.5323577, "track_status": "degraded"}
+{"chunk_index": 95, "detail": "chunk 95", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706539.5525746, "track_status": "degraded"}
+{"chunk_index": 96, "detail": "chunk 96", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706540.5832753, "track_status": "degraded"}
+{"chunk_index": 97, "detail": "chunk 97", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706541.523399, "track_status": "degraded"}
+{"chunk_index": 98, "detail": "chunk 98", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706542.5189075, "track_status": "degraded"}
+{"chunk_index": 99, "detail": "chunk 99", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706543.5252912, "track_status": "degraded"}
+{"chunk_index": 100, "detail": "chunk 100", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706544.874466, "track_status": "degraded"}
+{"chunk_index": 101, "detail": "chunk 101", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706545.6038735, "track_status": "degraded"}
+{"chunk_index": 102, "detail": "chunk 102", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706546.493181, "track_status": "degraded"}
+{"chunk_index": 103, "detail": "chunk 103", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706547.5429904, "track_status": "degraded"}
+{"chunk_index": 104, "detail": "chunk 104", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706548.5217266, "track_status": "degraded"}
+{"chunk_index": 105, "detail": "chunk 105", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706549.6031916, "track_status": "degraded"}
+{"chunk_index": 106, "detail": "chunk 106", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706550.5471885, "track_status": "degraded"}
+{"chunk_index": 107, "detail": "chunk 107", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706551.5275965, "track_status": "degraded"}
+{"chunk_index": 108, "detail": "chunk 108", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706552.5450165, "track_status": "degraded"}
+{"chunk_index": 109, "detail": "chunk 109", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706553.6067748, "track_status": "degraded"}
+{"chunk_index": 110, "detail": "chunk 110", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706554.536067, "track_status": "degraded"}
+{"chunk_index": 111, "detail": "chunk 111", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706555.5506597, "track_status": "degraded"}
+{"chunk_index": 112, "detail": "chunk 112", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706556.5230875, "track_status": "degraded"}
+{"chunk_index": 113, "detail": "chunk 113", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706557.7401412, "track_status": "degraded"}
+{"chunk_index": 114, "detail": "chunk 114", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706558.5737724, "track_status": "degraded"}
+{"chunk_index": 115, "detail": "chunk 115", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706559.59466, "track_status": "degraded"}
+{"chunk_index": 116, "detail": "chunk 116", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783706562.452966, "track_status": "degraded"}
+{"detail": "input=fake-live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783708102.0451226}
+{"detail": "input=fake-live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783708102.309413}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1783708118.0965395}
+{"detail": "phystwin_shen (shape_prior_points_ready)", "ok": true, "source": "orchestrator", "stage": "downstream_start", "t": 1783708175.2066388}
+{"detail": "shape prior ready; formal timeline open", "ok": true, "source": "camera", "stage": "warmup_ready", "t": 1783708175.2652862}
+{"chunk_index": 0, "detail": "chunk 0", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708177.9594195, "track_status": "normal"}
+{"chunk_index": 1, "detail": "chunk 1", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708178.5831022, "track_status": "normal"}
+{"chunk_index": 2, "detail": "chunk 2", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708179.154524, "track_status": "normal"}
+{"chunk_index": 3, "detail": "chunk 3", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708179.729673, "track_status": "normal"}
+{"chunk_index": 4, "detail": "chunk 4", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708180.7113757, "track_status": "normal"}
+{"chunk_index": 5, "detail": "chunk 5", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708181.6539183, "track_status": "degraded"}
+{"chunk_index": 6, "detail": "chunk 6", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708182.6657403, "track_status": "degraded"}
+{"chunk_index": 7, "detail": "chunk 7", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708183.65488, "track_status": "normal"}
+{"chunk_index": 8, "detail": "chunk 8", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708184.7110157, "track_status": "degraded"}
+{"chunk_index": 9, "detail": "chunk 9", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708185.666117, "track_status": "degraded"}
+{"chunk_index": 10, "detail": "chunk 10", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708186.6566334, "track_status": "degraded"}
+{"chunk_index": 11, "detail": "chunk 11", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708187.6561816, "track_status": "degraded"}
+{"chunk_index": 12, "detail": "chunk 12", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708188.6633844, "track_status": "degraded"}
+{"chunk_index": 13, "detail": "chunk 13", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708189.7889528, "track_status": "degraded"}
+{"chunk_index": 14, "detail": "chunk 14", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708190.6786947, "track_status": "degraded"}
+{"chunk_index": 15, "detail": "chunk 15", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708191.6807601, "track_status": "degraded"}
+{"chunk_index": 16, "detail": "chunk 16", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708192.6826081, "track_status": "degraded"}
+{"chunk_index": 17, "detail": "chunk 17", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708193.7325513, "track_status": "degraded"}
+{"chunk_index": 18, "detail": "chunk 18", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708194.64233, "track_status": "degraded"}
+{"chunk_index": 19, "detail": "chunk 19", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708195.6622927, "track_status": "degraded"}
+{"chunk_index": 20, "detail": "chunk 20", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708196.6679523, "track_status": "degraded"}
+{"chunk_index": 21, "detail": "chunk 21", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708197.713409, "track_status": "degraded"}
+{"chunk_index": 22, "detail": "chunk 22", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708198.6709332, "track_status": "degraded"}
+{"chunk_index": 23, "detail": "chunk 23", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708199.678196, "track_status": "degraded"}
+{"chunk_index": 24, "detail": "chunk 24", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708200.7340913, "track_status": "degraded"}
+{"chunk_index": 25, "detail": "chunk 25", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708201.75729, "track_status": "degraded"}
+{"chunk_index": 26, "detail": "chunk 26", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708202.6817389, "track_status": "degraded"}
+{"chunk_index": 27, "detail": "chunk 27", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708203.71124, "track_status": "degraded"}
+{"chunk_index": 28, "detail": "chunk 28", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708204.670879, "track_status": "degraded"}
+{"chunk_index": 29, "detail": "chunk 29", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708205.6570368, "track_status": "degraded"}
+{"chunk_index": 30, "detail": "chunk 30", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708206.7620885, "track_status": "degraded"}
+{"chunk_index": 31, "detail": "chunk 31", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708207.786658, "track_status": "degraded"}
+{"chunk_index": 32, "detail": "chunk 32", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708208.76709, "track_status": "degraded"}
+{"chunk_index": 33, "detail": "chunk 33", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708209.6972547, "track_status": "degraded"}
+{"chunk_index": 34, "detail": "chunk 34", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708210.7626398, "track_status": "degraded"}
+{"chunk_index": 35, "detail": "chunk 35", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708211.729146, "track_status": "degraded"}
+{"chunk_index": 36, "detail": "chunk 36", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708212.7773573, "track_status": "degraded"}
+{"chunk_index": 37, "detail": "chunk 37", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708213.7306566, "track_status": "degraded"}
+{"chunk_index": 38, "detail": "chunk 38", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708214.767145, "track_status": "degraded"}
+{"chunk_index": 39, "detail": "chunk 39", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708215.833753, "track_status": "degraded"}
+{"chunk_index": 40, "detail": "chunk 40", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708216.7047818, "track_status": "degraded"}
+{"chunk_index": 41, "detail": "chunk 41", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708217.6710663, "track_status": "degraded"}
+{"chunk_index": 42, "detail": "chunk 42", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708218.685148, "track_status": "degraded"}
+{"chunk_index": 43, "detail": "chunk 43", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708219.7446563, "track_status": "degraded"}
+{"chunk_index": 44, "detail": "chunk 44", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708220.6838398, "track_status": "degraded"}
+{"chunk_index": 45, "detail": "chunk 45", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708221.7002823, "track_status": "degraded"}
+{"chunk_index": 46, "detail": "chunk 46", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708222.6934958, "track_status": "degraded"}
+{"chunk_index": 47, "detail": "chunk 47", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708223.7492115, "track_status": "degraded"}
+{"chunk_index": 48, "detail": "chunk 48", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708224.707729, "track_status": "degraded"}
+{"chunk_index": 49, "detail": "chunk 49", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708225.702926, "track_status": "degraded"}
+{"chunk_index": 50, "detail": "chunk 50", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708226.6732433, "track_status": "degraded"}
+{"chunk_index": 51, "detail": "chunk 51", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708227.747587, "track_status": "degraded"}
+{"chunk_index": 52, "detail": "chunk 52", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708228.69176, "track_status": "degraded"}
+{"chunk_index": 53, "detail": "chunk 53", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708229.7070994, "track_status": "degraded"}
+{"chunk_index": 54, "detail": "chunk 54", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708230.746956, "track_status": "degraded"}
+{"chunk_index": 55, "detail": "chunk 55", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708231.6976988, "track_status": "degraded"}
+{"chunk_index": 56, "detail": "chunk 56", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708232.733593, "track_status": "degraded"}
+{"chunk_index": 57, "detail": "chunk 57", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708233.6880767, "track_status": "degraded"}
+{"chunk_index": 58, "detail": "chunk 58", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708234.6760445, "track_status": "degraded"}
+{"chunk_index": 59, "detail": "chunk 59", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708235.7013493, "track_status": "degraded"}
+{"chunk_index": 60, "detail": "chunk 60", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708236.6641736, "track_status": "degraded"}
+{"chunk_index": 61, "detail": "chunk 61", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708237.7424817, "track_status": "degraded"}
+{"chunk_index": 62, "detail": "chunk 62", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708238.6867597, "track_status": "degraded"}
+{"chunk_index": 63, "detail": "chunk 63", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708239.68439, "track_status": "degraded"}
+{"chunk_index": 64, "detail": "chunk 64", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708240.6846542, "track_status": "degraded"}
+{"chunk_index": 65, "detail": "chunk 65", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708241.7625792, "track_status": "degraded"}
+{"chunk_index": 66, "detail": "chunk 66", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708242.713382, "track_status": "degraded"}
+{"chunk_index": 67, "detail": "chunk 67", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708243.7559454, "track_status": "degraded"}
+{"chunk_index": 68, "detail": "chunk 68", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708244.8276472, "track_status": "degraded"}
+{"chunk_index": 69, "detail": "chunk 69", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708245.806807, "track_status": "degraded"}
+{"chunk_index": 70, "detail": "chunk 70", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708246.7290473, "track_status": "degraded"}
+{"chunk_index": 71, "detail": "chunk 71", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708247.7050054, "track_status": "degraded"}
+{"chunk_index": 72, "detail": "chunk 72", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708248.7029436, "track_status": "degraded"}
+{"chunk_index": 73, "detail": "chunk 73", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708249.7344668, "track_status": "degraded"}
+{"chunk_index": 74, "detail": "chunk 74", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708250.8069394, "track_status": "degraded"}
+{"chunk_index": 75, "detail": "chunk 75", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708251.8234007, "track_status": "degraded"}
+{"chunk_index": 76, "detail": "chunk 76", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708252.7567651, "track_status": "degraded"}
+{"chunk_index": 77, "detail": "chunk 77", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708253.7684119, "track_status": "degraded"}
+{"chunk_index": 78, "detail": "chunk 78", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708254.7458682, "track_status": "degraded"}
+{"chunk_index": 79, "detail": "chunk 79", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708255.71, "track_status": "degraded"}
+{"chunk_index": 80, "detail": "chunk 80", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708256.7346718, "track_status": "degraded"}
+{"chunk_index": 81, "detail": "chunk 81", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708257.8250446, "track_status": "degraded"}
+{"chunk_index": 82, "detail": "chunk 82", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708258.876513, "track_status": "degraded"}
+{"chunk_index": 83, "detail": "chunk 83", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708259.7465594, "track_status": "degraded"}
+{"chunk_index": 84, "detail": "chunk 84", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708260.749069, "track_status": "degraded"}
+{"chunk_index": 85, "detail": "chunk 85", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708261.74868, "track_status": "degraded"}
+{"chunk_index": 86, "detail": "chunk 86", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708262.7397146, "track_status": "degraded"}
+{"chunk_index": 87, "detail": "chunk 87", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708263.7973182, "track_status": "degraded"}
+{"chunk_index": 88, "detail": "chunk 88", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708264.7214708, "track_status": "degraded"}
+{"chunk_index": 89, "detail": "chunk 89", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708265.722577, "track_status": "degraded"}
+{"chunk_index": 90, "detail": "chunk 90", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708266.8260524, "track_status": "degraded"}
+{"chunk_index": 91, "detail": "chunk 91", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708267.7896843, "track_status": "degraded"}
+{"chunk_index": 92, "detail": "chunk 92", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708268.8054612, "track_status": "degraded"}
+{"chunk_index": 93, "detail": "chunk 93", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708269.7521799, "track_status": "degraded"}
+{"chunk_index": 94, "detail": "chunk 94", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708270.9117436, "track_status": "degraded"}
+{"chunk_index": 95, "detail": "chunk 95", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708271.8084154, "track_status": "degraded"}
+{"chunk_index": 96, "detail": "chunk 96", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708272.813586, "track_status": "degraded"}
+{"chunk_index": 97, "detail": "chunk 97", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708273.7356005, "track_status": "degraded"}
+{"chunk_index": 98, "detail": "chunk 98", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708274.720086, "track_status": "degraded"}
+{"chunk_index": 99, "detail": "chunk 99", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708275.7667477, "track_status": "degraded"}
+{"chunk_index": 100, "detail": "chunk 100", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708276.8429058, "track_status": "degraded"}
+{"chunk_index": 101, "detail": "chunk 101", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708277.7960045, "track_status": "degraded"}
+{"chunk_index": 102, "detail": "chunk 102", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708278.733594, "track_status": "degraded"}
+{"chunk_index": 103, "detail": "chunk 103", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708279.702022, "track_status": "degraded"}
+{"chunk_index": 104, "detail": "chunk 104", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708280.7268891, "track_status": "degraded"}
+{"chunk_index": 105, "detail": "chunk 105", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708281.822457, "track_status": "degraded"}
+{"chunk_index": 106, "detail": "chunk 106", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708282.7425103, "track_status": "degraded"}
+{"chunk_index": 107, "detail": "chunk 107", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708283.7853289, "track_status": "degraded"}
+{"chunk_index": 108, "detail": "chunk 108", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708284.7934132, "track_status": "degraded"}
+{"chunk_index": 109, "detail": "chunk 109", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708285.9079313, "track_status": "degraded"}
+{"chunk_index": 110, "detail": "chunk 110", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708286.7888265, "track_status": "degraded"}
+{"chunk_index": 111, "detail": "chunk 111", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708287.7739358, "track_status": "degraded"}
+{"chunk_index": 112, "detail": "chunk 112", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708288.7473335, "track_status": "degraded"}
+{"chunk_index": 113, "detail": "chunk 113", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708289.8131988, "track_status": "degraded"}
+{"chunk_index": 114, "detail": "chunk 114", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708290.7997494, "track_status": "degraded"}
+{"chunk_index": 115, "detail": "chunk 115", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783708291.7516522, "track_status": "degraded"}
+{"detail": "", "ok": false, "source": "orchestrator", "stage": "fatal_error", "t": 1783708407.4773953}
+{"detail": "input=fake-live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783709228.877252}
+{"detail": "input=fake-live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783709229.2738}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1783709255.6694038}
+{"detail": "phystwin_shen (shape_prior_points_ready)", "ok": true, "source": "orchestrator", "stage": "downstream_start", "t": 1783709317.0166252}
+{"detail": "shape prior ready; formal timeline open", "ok": true, "source": "camera", "stage": "warmup_ready", "t": 1783709317.1045182}
+{"chunk_index": 0, "detail": "chunk 0", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709319.8645961, "track_status": "normal"}
+{"chunk_index": 1, "detail": "chunk 1", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709320.4910533, "track_status": "degraded"}
+{"chunk_index": 2, "detail": "chunk 2", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709321.100918, "track_status": "degraded"}
+{"chunk_index": 3, "detail": "chunk 3", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709321.677297, "track_status": "degraded"}
+{"chunk_index": 4, "detail": "chunk 4", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709322.5761998, "track_status": "degraded"}
+{"chunk_index": 5, "detail": "chunk 5", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709323.483016, "track_status": "degraded"}
+{"chunk_index": 6, "detail": "chunk 6", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709324.5390635, "track_status": "degraded"}
+{"chunk_index": 7, "detail": "chunk 7", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709325.4963655, "track_status": "degraded"}
+{"chunk_index": 8, "detail": "chunk 8", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709326.5567331, "track_status": "degraded"}
+{"chunk_index": 9, "detail": "chunk 9", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709327.531339, "track_status": "degraded"}
+{"chunk_index": 10, "detail": "chunk 10", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709328.5142305, "track_status": "degraded"}
+{"chunk_index": 11, "detail": "chunk 11", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709329.5991948, "track_status": "degraded"}
+{"chunk_index": 12, "detail": "chunk 12", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709330.5551865, "track_status": "degraded"}
+{"chunk_index": 13, "detail": "chunk 13", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709331.6313403, "track_status": "degraded"}
+{"chunk_index": 14, "detail": "chunk 14", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709332.5227497, "track_status": "degraded"}
+{"chunk_index": 15, "detail": "chunk 15", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709333.4891756, "track_status": "degraded"}
+{"chunk_index": 16, "detail": "chunk 16", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709334.5018122, "track_status": "degraded"}
+{"chunk_index": 17, "detail": "chunk 17", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709335.5608315, "track_status": "degraded"}
+{"chunk_index": 18, "detail": "chunk 18", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709336.5791323, "track_status": "degraded"}
+{"chunk_index": 19, "detail": "chunk 19", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709337.5330212, "track_status": "degraded"}
+{"chunk_index": 20, "detail": "chunk 20", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709338.5562673, "track_status": "degraded"}
+{"chunk_index": 21, "detail": "chunk 21", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709339.6311944, "track_status": "degraded"}
+{"chunk_index": 22, "detail": "chunk 22", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709340.5333273, "track_status": "degraded"}
+{"chunk_index": 23, "detail": "chunk 23", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709341.519147, "track_status": "degraded"}
+{"chunk_index": 24, "detail": "chunk 24", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709342.5377269, "track_status": "degraded"}
+{"chunk_index": 25, "detail": "chunk 25", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709343.558223, "track_status": "degraded"}
+{"chunk_index": 26, "detail": "chunk 26", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709344.61593, "track_status": "degraded"}
+{"chunk_index": 27, "detail": "chunk 27", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709345.5257106, "track_status": "degraded"}
+{"chunk_index": 28, "detail": "chunk 28", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709346.5730176, "track_status": "degraded"}
+{"chunk_index": 29, "detail": "chunk 29", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709347.5485675, "track_status": "degraded"}
+{"chunk_index": 30, "detail": "chunk 30", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709348.5137966, "track_status": "degraded"}
+{"chunk_index": 31, "detail": "chunk 31", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709349.58667, "track_status": "degraded"}
+{"chunk_index": 32, "detail": "chunk 32", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709350.5013728, "track_status": "degraded"}
+{"chunk_index": 33, "detail": "chunk 33", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709351.5168502, "track_status": "degraded"}
+{"chunk_index": 34, "detail": "chunk 34", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709352.5116358, "track_status": "degraded"}
+{"chunk_index": 35, "detail": "chunk 35", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709353.5699377, "track_status": "degraded"}
+{"chunk_index": 36, "detail": "chunk 36", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709354.526686, "track_status": "degraded"}
+{"chunk_index": 37, "detail": "chunk 37", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709355.500975, "track_status": "degraded"}
+{"chunk_index": 38, "detail": "chunk 38", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709356.5191736, "track_status": "degraded"}
+{"chunk_index": 39, "detail": "chunk 39", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709357.6123204, "track_status": "degraded"}
+{"chunk_index": 40, "detail": "chunk 40", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709358.5123541, "track_status": "degraded"}
+{"chunk_index": 41, "detail": "chunk 41", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709359.528666, "track_status": "degraded"}
+{"chunk_index": 42, "detail": "chunk 42", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709360.5366457, "track_status": "degraded"}
+{"chunk_index": 43, "detail": "chunk 43", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709361.5781267, "track_status": "degraded"}
+{"chunk_index": 44, "detail": "chunk 44", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709362.5810137, "track_status": "degraded"}
+{"chunk_index": 45, "detail": "chunk 45", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709363.54874, "track_status": "degraded"}
+{"chunk_index": 46, "detail": "chunk 46", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709364.5385869, "track_status": "degraded"}
+{"chunk_index": 47, "detail": "chunk 47", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709365.5550954, "track_status": "degraded"}
+{"chunk_index": 48, "detail": "chunk 48", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709366.6516786, "track_status": "degraded"}
+{"chunk_index": 49, "detail": "chunk 49", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709367.5234728, "track_status": "degraded"}
+{"chunk_index": 50, "detail": "chunk 50", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709368.5471792, "track_status": "degraded"}
+{"chunk_index": 51, "detail": "chunk 51", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709369.5309384, "track_status": "degraded"}
+{"chunk_index": 52, "detail": "chunk 52", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709370.6412873, "track_status": "degraded"}
+{"chunk_index": 53, "detail": "chunk 53", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709371.5605483, "track_status": "degraded"}
+{"chunk_index": 54, "detail": "chunk 54", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709372.5439746, "track_status": "degraded"}
+{"chunk_index": 55, "detail": "chunk 55", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709373.534341, "track_status": "degraded"}
+{"chunk_index": 56, "detail": "chunk 56", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709374.5405436, "track_status": "degraded"}
+{"chunk_index": 57, "detail": "chunk 57", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709375.65286, "track_status": "degraded"}
+{"chunk_index": 58, "detail": "chunk 58", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783709376.550115, "track_status": "degraded"}

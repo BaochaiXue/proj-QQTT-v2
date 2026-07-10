@@ -32,7 +32,7 @@ input:
 chunking:
   # Options: positive finite float seconds; chunk_frame_count defaults to
   # round(replay_fps * chunk_seconds).
-  chunk_seconds: 7.0
+  chunk_seconds: 1.0
   # Options: positive finite float seconds; sleep between frames.jsonl polls.
   chunk_poll_interval_s: 0.001
   # Options: null or positive integer; null streams until input ends/stops.
@@ -106,7 +106,7 @@ shape_prior:
 downstream:
   # Options: disabled | demo_visualizer | phystwin_shen.
   # demo_visualizer opens the point-cloud viewer; phystwin_shen launches the
-  # full Stage 1 / optional Stage 2 / train / two-viewer online pipeline.
+  # full Stage 1 / optional Stage 2 / train / combined-viewer online pipeline.
   mode: "phystwin_shen"
 
 # Phystwin_shen full online pipeline (downstream.mode: phystwin_shen).
@@ -126,12 +126,11 @@ phystwin_shen:
   # Options: path relative to repo_path or an absolute physics config path.
   phys_config: "configs/real.yaml"
 
-  # Shared by CMA Stage 1, CMA Stage 2, and first-order training.
+  # Shared defaults inherited by CMA Stage 1, CMA Stage 2, and training.
+  # batch_size / segment_len / segment_stride may instead be defined in each
+  # enabled stage, where they override any corresponding common value.
   common:
     device: "cuda:0"
-    batch_size: 4
-    segment_len: 30
-    segment_stride: 30
     recent_window_count: 4
     poll_sec: 1.0
     no_sample_recent: true
@@ -141,9 +140,20 @@ phystwin_shen:
   # Zero-order CMA over topology and physical parameters.
   stage1:
     enabled: true
+    batch_size: 2
+    segment_len: 10
+    segment_stride: 10
     script: "optimize_online_cma.py"
     experiments_dir: "experiments_online_cma"
-    max_iter: 3
+    # Limit Stage 1 to the first N committed chunks; null means no limit.
+    max_online_chunks: null
+    max_iter: 2
+    # CMA candidates per generation; null uses CMA-ES automatic sizing.
+    cma_popsize: 4
+    # Options: legacy | boba.
+    zero_order_backend: "boba"
+    # Options: gather | template_state_batched_atomic.
+    sim_force_mode: "gather"
     cma_timing: false
     realtime_vis: true
     realtime_vis_dir: null
@@ -155,7 +165,15 @@ phystwin_shen:
     enabled: false
     script: "optimize_online_cma_fixed_topology.py"
     experiments_dir: "experiments_online_cma_fixed_topology"
-    max_iter: 3
+    # Limit Stage 2 to the first N committed chunks; null means no limit.
+    max_online_chunks: 10
+    max_iter: 10
+    # CMA candidates per generation; null uses CMA-ES automatic sizing.
+    cma_popsize: 4
+    # Options: legacy | boba.
+    zero_order_backend: "boba"
+    # Options: gather | template_state_batched_atomic.
+    sim_force_mode: "gather"
     cma_timing: false
     realtime_vis: true
     realtime_vis_dir: null
@@ -166,26 +184,29 @@ phystwin_shen:
   # First-order differentiable online training.
   train:
     enabled: true
+    batch_size: 5
+    segment_len: 30
+    segment_stride: 30
     script: "train_online_warp.py"
     experiments_dir: "experiments_online_train"
-    iterations: 20
+    iterations: 100
     train_frame: null
     checkpoint_interval: 10
     # true exits after the terminal iteration that observes manifest finished;
     # false ignores finished and runs exactly `iterations` total steps.
     stop_when_finished: false
     realtime_vis: true
-    realtime_vis_every: 10
+    realtime_vis_every: 1
     no_realtime_iteration_history: false
     realtime_vis_dir: null
     zero_order_source: "stage1"
     optimal_params_path: null
 
-  # HTML viewer for the selected CMA output.
+  # One combined HTML viewer for Stage 1, optional Stage 2, and train output.
   cma_viewer:
     enabled: true
     script: "scripts/html_realtime_viewer.py"
-    source: "stage1"
+    source: "all"
     host: "127.0.0.1"
     port: 8765
     cam_idx: 0
@@ -199,9 +220,10 @@ phystwin_shen:
     realtime_dir: null
     rgb_dir: null
 
-  # HTML viewer for first-order training output.
+  # The dedicated train viewer stays disabled; cma_viewer.source=all includes
+  # the train output in the single combined viewer.
   train_viewer:
-    enabled: true
+    enabled: false
     script: "scripts/html_realtime_viewer.py"
     host: "127.0.0.1"
     port: 8766
@@ -210,7 +232,7 @@ phystwin_shen:
     point_stride: 5
     npz_cache_size: 96
     quiet: true
-    keep_running: false
+    keep_running: true
     base_path: null
     case_name: null
     realtime_dir: null

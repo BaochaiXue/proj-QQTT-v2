@@ -128,6 +128,41 @@ that depend on removed legacy paths now fail explicitly.
   `iterations` total steps instead of stopping on manifest `finished`. Default
   config and explicit-command tests now assert the same policy; the override
   test proves `true` still passes through when selected.
+- [x] Warm-up live RGB input preview (2026-07-09 night, user request) — new
+  `mdp_warmup_preview.WarmupRgbPreview`: an OpenCV window in the camera process
+  showing the live RGB input during warm-up in EVERY downstream.mode (reads
+  `input_preview_slot` in memory, zero disk IO; NOT the tracking-chunk
+  visualizer, whose per-mode policy is unchanged). Closes at warm-up end (the
+  WARMUP_FINISHED banner site; frame-0-seed site when shape-prior warm-up is
+  disabled) and IMMEDIATELY on warm-up failure/cancel/early exit (render loop
+  watches `stop_event`; `stop()` also joins-closes). Best-effort GUI: display
+  failures log one line and disable, never touching capture. Flags
+  `--warmup-rgb-preview/--no-warmup-rgb-preview` (default on) at both
+  orchestrator and camera CLIs, forwarded by build_main_data_processing_command.
+  4 new WarmupRgbPreviewTests (fake-cv2 injection: shows frames, closes on
+  normal end, closes on stop_event, disabled never opens; flag forwarding).
+- [x] PhysTwin supervisor terminal output (2026-07-10, user request) — Demo
+  now drains the supervisor's combined stdout/stderr in a dedicated relay
+  thread, writes every line to both the parent terminal with a
+  `[phystwin_shen]` prefix and the existing
+  `phystwin_shen/online_full_pipeline.log`, and sets `PYTHONUNBUFFERED=1` for
+  immediate Python-stage output. Relay failure terminates the supervisor and
+  surfaces a launch error; normal/forced cleanup waits for the relay to drain.
+  Regression test proves stdout and stderr arrive before a blocked supervisor
+  exits and remain in the log.
+- [x] PhysTwin Boba runtime ownership (2026-07-10, user request) — added
+  Stage 1/2 `max_online_chunks`, `cma_popsize`, `zero_order_backend`, and
+  `sim_force_mode` to Demo's authoritative YAML and explicit supervisor
+  command. Defaults preserve the updated external pipeline behavior
+  (`2/4/boba/gather` for Stage 1 and `10/4/boba/gather` for Stage 2); invalid
+  limits/backend/mode fail before camera launch, and command tests assert all
+  eight flags.
+- [x] PhysTwin single combined viewer (2026-07-10, user request) — changed the
+  authoritative defaults to `cma_viewer.source=all` and
+  `train_viewer.enabled=false`, so one HTML process displays Stage 1, optional
+  Stage 2, and train rows. Validation rejects any runtime mapping that enables
+  both viewer sections; launch tests now prove only the combined viewer port is
+  reclaimed, and the real-wrapper dry run emits exactly one viewer command.
 - NOTE (parity fixture): the P3 session curated `outputs_v6_1/capture/frames.jsonl`
   (549→539 rows; removed the 10 startup rows lacking prepared frames, src
   2376..2430, mtime 16:55). Golden refs generated before that are stale — always
@@ -304,8 +339,9 @@ is not imported by the runtime; quarantine/exclude, do NOT delete unilaterally
     (`:411`); manifest `status` goes `recording` → `finished`/`failed` (`:353`).
 22. **Training-side start** — when `shape_prior/points.npz` appears, Demo starts
     one phystwin_shen `scripts/run_online_full_pipeline.py` supervisor. The
-    wrapper starts both configured viewers and runs Stage 1 → optional Stage 2
-    → train. Its readers poll `online_data/manifest.json` from the first
+    wrapper starts one combined `cma_viewer.source=all` viewer and runs Stage 1
+    → optional Stage 2 → train; the dedicated train viewer is disabled. Its
+    readers poll `online_data/manifest.json` from the first
     committed chunk forward; trainer finish behavior comes from the local
     `train.stop_when_finished` value passed explicitly by Demo.
 23. **Real-time viz today** — a separate `visualize_track.py` subprocess

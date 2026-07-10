@@ -67,6 +67,23 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--warmup-rgb-preview",
+        dest="warmup_rgb_preview",
+        action="store_true",
+        help=(
+            "Show the live RGB camera-input window during warm-up (every "
+            "downstream mode); it closes when warm-up finishes and "
+            "immediately on failure/cancel/early exit."
+        ),
+    )
+    parser.add_argument(
+        "--no-warmup-rgb-preview",
+        dest="warmup_rgb_preview",
+        action="store_false",
+        help="Disable the warm-up live RGB input preview window.",
+    )
+    parser.set_defaults(warmup_rgb_preview=True)
+    parser.add_argument(
         "--input-source",
         choices=INPUT_SOURCES,
         default=INPUT_SOURCE_LIVE,

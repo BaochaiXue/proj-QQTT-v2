@@ -200,6 +200,25 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--warmup-rgb-preview",
+        dest="warmup_rgb_preview",
+        action="store_true",
+        help=(
+            "Show the live RGB camera-input window during warm-up regardless "
+            "of --downstream-mode; it closes when warm-up finishes and "
+            "immediately on warm-up failure/cancel/early exit. (This is not "
+            "the tracking-chunk visualizer, whose per-mode policy is "
+            "unchanged.)"
+        ),
+    )
+    parser.add_argument(
+        "--no-warmup-rgb-preview",
+        dest="warmup_rgb_preview",
+        action="store_false",
+        help="Disable the warm-up live RGB input preview window.",
+    )
+    parser.set_defaults(warmup_rgb_preview=True)
+    parser.add_argument(
         "--camera-color-exposure",
         type=float,
         default=DEFAULT_CAMERA_COLOR_EXPOSURE,
@@ -364,7 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
     # Exactly one downstream consumer runs per session. demo_visualizer keeps
     # the historical viewer policies (side-by-side starts immediately,
     # output-only waits for the first committed chunk); phystwin_shen starts
-    # the external CMA/train/two-viewer full pipeline when shape prior is ready.
+    # the external CMA/train/combined-viewer pipeline when shape prior is ready.
     parser.add_argument(
         "--downstream-mode",
         choices=DOWNSTREAM_MODES,

@@ -9,9 +9,20 @@ from demo_v6_2.mdp_packets import FramePacket, LiveLatestFrameSampler, PipelineT
 class _CaptureMixin:
     """MainDataProcessingDemo capture-worker mixin."""
 
+    def _put_preview_slot_frame(self, packet: FramePacket) -> None:
+        """Stamp the next monotonic preview seq and put the frame to the slot.
+
+        Every producer of ``input_preview_slot`` (frame 0, the warm-up preview
+        pump, resumed live output) goes through here so the slot's seq never
+        regresses — the pump raising the consumer's last_seq must not lock out
+        resumed output frames whose output_seq restarts at 1.
+        """
+        self._input_preview_publish_seq += 1
+        self.input_preview_slot.put(replace(packet, seq=self._input_preview_publish_seq))
+
     def _publish_input_preview_packet(self, packet: FramePacket, *, record_s: float | None = None) -> None:
         """Publish input preview packet."""
-        self.input_preview_slot.put(packet)
+        self._put_preview_slot_frame(packet)
         should_write_timeline = _is_replay_input_source(str(self.args.input_source)) or bool(
             getattr(self.args, "write_input_rgb_timeline", False)
         )
@@ -248,6 +259,45 @@ class _CaptureMixin:
             self._publish_capture_packet(output_packet, record_s=float(record_s))
             output_seq += 1
 
+        # Display-only warm-up preview pump. While the capture loop is blocked
+        # waiting for frame-0 segmentation + the first lossless pair, keep
+        # draining the camera and mirroring the latest color frame into the
+        # preview slot ONLY, via _put_preview_slot_frame's shared monotonic seq.
+        # These frames never touch capture_slot, the lossless queue,
+        # capture_stats, or the input timeline, so frame 0 stays the sole
+        # pipeline anchor and the sampler t=0 grid is unchanged. The shared seq
+        # ensures resumed live output (which the preview keeps showing until
+        # shape-prior warm-up completes) is never locked out behind the pump.
+        # Paced to the sampler cadence.
+        last_preview_publish_s = 0.0
+        preview_period_s = 1.0 / max(1.0, self._lossless_input_fps())
+
+        def pump_warmup_preview() -> None:
+            """Grab one live color frame and publish it to the preview slot."""
+            nonlocal last_preview_publish_s
+            try:
+                preview_frames = pipeline.wait_for_frames()
+            except Exception:
+                return
+            now_s = time.perf_counter()
+            if now_s - last_preview_publish_s < preview_period_s:
+                return
+            color_frame = preview_frames.get_color_frame()
+            if not color_frame:
+                return
+            self._put_preview_slot_frame(
+                FramePacket(
+                    seq=0,  # reseq'd by _put_preview_slot_frame
+                    color_bgr=np.ascontiguousarray(np.asanyarray(color_frame.get_data()).copy()),
+                    depth_source=str(self.args.depth_source),
+                    intrinsics=self.runtime.intrinsics,
+                    depth_scale_m_per_unit=self.runtime.depth_scale_m_per_unit,
+                    receive_perf_s=now_s,
+                    timing=PipelineTiming(),
+                )
+            )
+            last_preview_publish_s = now_s
+
         while not self.stop_event.is_set():
             wait_start_s = time.perf_counter()
             try:
@@ -336,11 +386,16 @@ class _CaptureMixin:
                 publish_output_packet(packet, record_s=copy_done_s)
                 if self.args.track_mode != "none":
                     while not self.stop_event.is_set():
-                        if self._first_frame_segmented.wait(timeout=0.01):
+                        if self._first_frame_segmented.wait(timeout=0.005):
                             break
+                        # Keep the warm-up preview live during the frame-0
+                        # segmentation wait (display-only, drains the camera).
+                        pump_warmup_preview()
                     if self.stop_event.is_set():
                         break
-                if not self._wait_for_lossless_startup_pair():
+                if not self._wait_for_lossless_startup_pair(
+                    on_wait_tick=pump_warmup_preview
+                ):
                     break
                 live_sampler.start(first_publish_s=time.perf_counter())
                 continue

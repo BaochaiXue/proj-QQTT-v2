@@ -1,22 +1,22 @@
 {
   "execution_mode": "prewarmed",
-  "ready_wall_time_s": 1783652677.5272615,
+  "ready_wall_time_s": 1783709240.803643,
   "schema_version": 1,
-  "snapshot_wall_time_s": 1783652722.8175702,
+  "snapshot_wall_time_s": 1783709298.4097779,
   "stage": "generate",
   "status": "completed",
   "timing_ms": {
-    "gaussian_export_ms": 482.3779599973932,
-    "go_wait_ms": 17750.406637904234,
-    "input_decode_ms": 18.517733900807798,
-    "mesh_export_ms": 461.95714198984206,
-    "model_load_ms": 11837.693826993927,
-    "module_import_ms": 112.81455995049328,
-    "pipeline_run_ms": 14737.885291106068,
-    "pre_go_prepare_ms": 10508.204711950384,
-    "process_lifetime_ms": 55912.66818798613,
-    "total_ms": 38159.45316886064,
-    "visualization_export_ms": 0.001942971721291542
+    "gaussian_export_ms": 468.82486999999173,
+    "go_wait_ms": 27611.683295000006,
+    "input_decode_ms": 15.900651999999127,
+    "mesh_export_ms": 410.77933200000416,
+    "model_load_ms": 14954.894106000012,
+    "module_import_ms": 122.1593470000073,
+    "pipeline_run_ms": 14142.809280000023,
+    "pre_go_prepare_ms": 11388.153916999996,
+    "process_lifetime_ms": 69117.850087,
+    "total_ms": 41503.52349700002,
+    "visualization_export_ms": 0.0019929999837131618
   },
-  "worker_pid": 593926
+  "worker_pid": 10921
 }

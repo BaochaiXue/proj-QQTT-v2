@@ -246,10 +246,13 @@ def _runtime_chunk_summary(manifests: Sequence[dict[str, object]]) -> dict[str, 
 
 def _stop_phystwin_launch(launch: PhystwinShenLaunch) -> int | None:
     """Terminate the saved full-pipeline process group."""
-    return _stop_process(
-        launch.pipeline_process,
-        process_group_id=launch.process_group_id,
-    )
+    try:
+        return _stop_process(
+            launch.pipeline_process,
+            process_group_id=launch.process_group_id,
+        )
+    finally:
+        launch.finish_pipeline_output_relay()
 
 
 def _wait_for_phystwin_launch(launch: PhystwinShenLaunch) -> int:
@@ -390,6 +393,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not phystwin_shen_enabled(args):
             return
         if phystwin_launch is not None:
+            phystwin_launch.assert_pipeline_output_relay_healthy()
             return_code = phystwin_launch.pipeline_process.poll()
             if return_code not in (None, 0):
                 raise PhystwinShenLaunchError(

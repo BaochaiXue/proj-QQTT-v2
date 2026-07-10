@@ -296,6 +296,14 @@ def build_main_data_processing_command(
         # camera subprocess receives the one resolved serial.
         "--serial",
         resolve_camera_serials(args)[0],
+        # Warm-up live RGB preview runs in the camera process (it owns the
+        # frames and the warm-up lifecycle); forwarded for every downstream
+        # mode.
+        (
+            "--warmup-rgb-preview"
+            if bool(args.warmup_rgb_preview)
+            else "--no-warmup-rgb-preview"
+        ),
         "--color-gain",
         str(float(args.camera_color_gain)),
         "--input-source",

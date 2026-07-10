@@ -7,6 +7,7 @@ from demo_v6_2.mdp_cli import _is_replay_input_source, active_object_id_labels, 
 from demo_v6_2.mdp_headless_writer import HeadlessCaptureWriter
 from demo_v6_2.mdp_packets import FatalWorkerError
 from demo_v6_2.mdp_pipeline_plumbing import OrderedPacketQueue, SameSeqPairer, StageStats
+from demo_v6_2.mdp_warmup_preview import WarmupRgbPreview
 from demo_v6_2.pipeline_status import (
     STAGE_CAPTURE_START,
     STAGE_FATAL,
@@ -30,6 +31,12 @@ class _LifecycleMixin:
         self.ray_x: np.ndarray | None = None
         self.ray_y: np.ndarray | None = None
         self.input_preview_slot: LatestSlot[FramePacket] = LatestSlot()
+        # Dedicated monotonic seq for EVERY put into input_preview_slot (frame 0,
+        # the warm-up preview pump, and resumed live output alike). The slot's
+        # sole consumer (WarmupRgbPreview) accepts only strictly-increasing seq,
+        # so preview publishes must never regress — output_seq restarting at 1
+        # after warm-up would otherwise be rejected behind the pump's seq.
+        self._input_preview_publish_seq = 0
         self.capture_slot: LatestSlot[FramePacket] = LatestSlot()
         self.mask_slot: LatestSlot[MaskPacket] = LatestSlot()
         self.depth_profile_slot: LatestSlot[DepthProfilePacket] = LatestSlot()
@@ -113,6 +120,14 @@ class _LifecycleMixin:
             "camera",
         )
         self.shape_prior_manager = self._create_shape_prior_manager()
+        # Live RGB input preview shown ONLY during warm-up, in every downstream
+        # mode; closes at warm-up end and immediately on failure/cancel/early
+        # exit (stop_event + stop()). Not the tracking-chunk visualizer.
+        self.warmup_rgb_preview = WarmupRgbPreview(
+            input_preview_slot=self.input_preview_slot,
+            stop_event=self.stop_event,
+            enabled=bool(args.warmup_rgb_preview),
+        )
         self._shape_prior_written = False
         self._formal_timeline_gated_frames = 0
         self._formal_timeline_metadata_written = False
@@ -486,6 +501,10 @@ class _LifecycleMixin:
         """Run MainDataProcessingDemo."""
         self._warmup_runtime_start_perf_s = time.perf_counter()
         self._status.emit(STAGE_CAPTURE_START, f"input={self.args.input_source}")
+        # Warm-up live RGB preview: opens with capture in every downstream
+        # mode; closed at the warm-up-finished banner, in stop(), and by
+        # stop_event on fatal errors.
+        self.warmup_rgb_preview.start()
         main_warmup.prepare_runtime_services_and_source(
             self,
             pcd_filter_enabled=pcd_filter_enabled,
@@ -538,6 +557,9 @@ class _LifecycleMixin:
     def stop(self) -> None:
         """Stop MainDataProcessingDemo."""
         self.stop_event.set()
+        # Warm-up failure, cancellation, or early exit must close the live RGB
+        # preview immediately (the render loop also watches stop_event).
+        self.warmup_rgb_preview.close()
         self._close_lossless_queues()
         for thread in list(self._threads):
             if thread.is_alive():

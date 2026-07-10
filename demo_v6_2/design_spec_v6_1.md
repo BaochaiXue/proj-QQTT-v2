@@ -141,9 +141,9 @@ online_data/
 - **demo_visualizer**：原 `visualizer_mode: "window"` 行为不变
   （side-by-side 随 capture 启动、output-only 等第一个 chunk）。
 - **phystwin_shen**：在 shape prior ready 后，只启动一个 Phystwin_shen
-  `scripts/run_online_full_pipeline.py` supervisor。外部 wrapper 负责两个 HTML
-  viewer、Stage 1、可选 Stage 2 和 train；Demo 负责 runtime 参数、端口和完整
-  进程组生命周期。
+  `scripts/run_online_full_pipeline.py` supervisor。外部 wrapper 负责一个合并
+  HTML viewer、Stage 1、可选 Stage 2 和 train；Demo 负责 runtime 参数、端口
+  和完整进程组生命周期。
   - **触发点**：`shape_prior/points.npz` 出现（warmup 完成的落盘产物，
     此时 SAM3D stage 子进程已退出、GPU 1 已清空）；由
     `stream_chunk_data_from_headless_capture` 的 `before_poll` 每轮轮询，
@@ -161,13 +161,16 @@ online_data/
   - **Python 环境**：Demo 用 `demo_2_max` 启动 supervisor；外部 pipeline
     YAML 的 `python: null` 让所有 stage/train/viewer child 继承 supervisor 的
     Python，而不是继承操作者当前 `(base)` 的 Python。
-  - **执行顺序**：wrapper 先启动启用的两个 viewer，再顺序执行 Stage 1、
-    可选 Stage 2、train。当前本地配置是 Stage 1 enabled、Stage 2 disabled、
-    train enabled，`segment_len=30`、`batch_size=4`。
-  - **端口**：CMA viewer 默认绑定 `127.0.0.1:8765`，train viewer 默认绑定
-    `127.0.0.1:8766`。启动 supervisor 前，Demo 对两个启用 endpoint 都清理
-    旧 listener（SIGTERM→SIGKILL）；endpoint 重叠、无法识别占用者或 kill 后
-    仍被占用都以 `PhystwinShenLaunchError` fail fast。
+  - **执行顺序**：wrapper 先启动 `cma_viewer.source=all` 的单个合并 viewer，
+    再顺序执行 Stage 1、可选 Stage 2、train；独立 `train_viewer` 禁用。当前
+    本地配置是 Stage 1 enabled、Stage 2 disabled、train enabled。窗口参数按
+    common-then-stage 继承并通过 stage-specific CLI 传递：Stage 1 使用
+    `batch_size/segment_len/segment_stride=2/10/10`，train 使用
+    `5/30/30`；启用的 stage 缺少自身值和 common 默认值时启动前失败。
+  - **端口**：单个合并 viewer 默认绑定 `127.0.0.1:8765`。启动 supervisor
+    前，Demo 清理该 endpoint 的旧 listener（SIGTERM→SIGKILL）；同时启用
+    CMA/train 两个 viewer、无法识别占用者或 kill 后仍被占用都以
+    `PhystwinShenLaunchError` fail fast。
   - **case dir 预置**：trainer 从 `online_dir`、viewer 从
     `base_path/case_name` 读取同一份
     `online_data/{calibrate.pkl,metadata.json}`，早于第一个 chunk commit。
@@ -183,9 +186,9 @@ online_data/
     `iterations`。supervisor return code 0 才代表完整 pipeline 成功。
   - **异常结束**：shape prior、materialization、camera、supervisor 或 Ctrl+C
     任一异常都写 `STAGE_FATAL`，并按 supervisor 启动时保存的 PGID 清理
-    wrapper、active stage/train 和两个 viewer（SIGTERM→SIGKILL）。reader 仍只
+    wrapper、active stage/train 和合并 viewer（SIGTERM→SIGKILL）。reader 仍只
     识别 `finished`；producer 写 `failed` 时不靠 reader 退出，而由 Demo 异常
     路径强制结束整个 PhysTwin group。
   - **summary/log**：run summary 记录 supervisor command/config/log、PGID、
-    两个 viewer URL、端口接管结果和 return code；组合日志写入
+    启用的 viewer URL、端口接管结果和 return code；组合日志写入
     `base_path/phystwin_shen/online_full_pipeline.log`。

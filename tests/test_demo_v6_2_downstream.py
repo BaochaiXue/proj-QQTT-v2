@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -21,12 +22,16 @@ import numpy as np
 
 from demo_v6_2 import main as runner
 from demo_v6_2 import main_subprocess
+from demo_v6_2 import phystwin_shen_launch
 from demo_v6_2.online_frame_archive import (
     OnlineFrameArchive,
     OnlineFrameArchiveError,
 )
 from demo_v6_2.phystwin_strict_product import PreparedPhysTwinFrame
 from demo_v6_2.phystwin_shen_launch import (
+    OPTIONAL_SECTION_OVERRIDE_KEYS,
+    SECTION_OVERRIDE_KEYS,
+    TOP_LEVEL_OVERRIDE_KEYS,
     PhystwinShenLaunchError,
     PhystwinShenSettings,
     build_full_pipeline_command,
@@ -132,15 +137,60 @@ class DownstreamConfigTests(unittest.TestCase):
         self.assertEqual(
             section["pipeline_config"], "configs/online_full_pipeline.yaml"
         )
-        self.assertEqual(section["common"]["batch_size"], 4)
-        self.assertEqual(section["common"]["segment_len"], 30)
+        self.assertNotIn("batch_size", section["common"])
+        self.assertNotIn("segment_len", section["common"])
+        self.assertNotIn("segment_stride", section["common"])
+        self.assertIsNone(section["common"]["max_online_chunks"])
         self.assertTrue(section["stage1"]["enabled"])
+        self.assertEqual(
+            (
+                section["stage1"]["batch_size"],
+                section["stage1"]["segment_len"],
+                section["stage1"]["segment_stride"],
+            ),
+            (2, 10, 10),
+        )
+        self.assertIsNone(section["stage1"]["max_online_chunks"])
+        self.assertEqual(section["stage1"]["cma_popsize"], 4)
+        self.assertEqual(section["stage1"]["zero_order_backend"], "boba")
+        self.assertEqual(section["stage1"]["sim_force_mode"], "gather")
         self.assertFalse(section["stage2"]["enabled"])
-        self.assertEqual(section["train"]["iterations"], 20)
+        self.assertEqual(section["stage2"]["max_online_chunks"], 10)
+        self.assertEqual(section["stage2"]["cma_popsize"], 4)
+        self.assertEqual(section["stage2"]["zero_order_backend"], "boba")
+        self.assertEqual(section["stage2"]["sim_force_mode"], "gather")
+        self.assertNotIn("batch_size", section["stage2"])
+        self.assertNotIn("segment_len", section["stage2"])
+        self.assertNotIn("segment_stride", section["stage2"])
+        self.assertEqual(
+            (
+                section["train"]["batch_size"],
+                section["train"]["segment_len"],
+                section["train"]["segment_stride"],
+            ),
+            (5, 30, 30),
+        )
+        self.assertEqual(section["train"]["iterations"], 100)
         self.assertFalse(section["train"]["stop_when_finished"])
+        self.assertTrue(section["cma_viewer"]["enabled"])
+        self.assertEqual(section["cma_viewer"]["source"], "all")
         self.assertEqual(section["cma_viewer"]["port"], 8765)
+        self.assertFalse(section["train_viewer"]["enabled"])
         self.assertEqual(section["train_viewer"]["port"], 8766)
         self.assertEqual(str(config["gpu"]["phystwin_shen_cuda_visible_devices"]), "1")
+
+    def test_every_local_runtime_leaf_has_an_explicit_cli_override(self) -> None:
+        runtime = runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG
+        section_names = set(SECTION_OVERRIDE_KEYS) | set(OPTIONAL_SECTION_OVERRIDE_KEYS)
+        self.assertEqual(
+            set(runtime),
+            set(TOP_LEVEL_OVERRIDE_KEYS) | section_names,
+        )
+        for section in section_names:
+            supported_keys = set(SECTION_OVERRIDE_KEYS.get(section, ())) | set(
+                OPTIONAL_SECTION_OVERRIDE_KEYS.get(section, ())
+            )
+            self.assertEqual(set(runtime[section]) - supported_keys, set())
 
     def test_base_shell_still_launches_wrapper_in_demo_2_max(self) -> None:
         with mock.patch.dict(os.environ, {"CONDA_DEFAULT_ENV": "base"}):
@@ -272,13 +322,35 @@ class LauncherCommandTests(unittest.TestCase):
             str(self.repo / "configs" / "online_full_pipeline.yaml"),
         )
         self.assertEqual(value("--online_dir"), str(self.base / "online_data"))
-        self.assertEqual(value("--common_batch_size"), "4")
-        self.assertEqual(value("--common_segment_len"), "30")
+        self.assertNotIn("--common_batch_size", command)
+        self.assertNotIn("--common_segment_len", command)
+        self.assertNotIn("--common_segment_stride", command)
+        self.assertEqual(value("--stage1_batch_size"), "2")
+        self.assertEqual(value("--stage1_segment_len"), "10")
+        self.assertEqual(value("--stage1_segment_stride"), "10")
         self.assertEqual(value("--stage1_enabled"), "true")
+        self.assertEqual(value("--stage1_max_online_chunks"), "none")
+        self.assertEqual(value("--stage1_cma_popsize"), "4")
+        self.assertEqual(value("--stage1_zero_order_backend"), "boba")
+        self.assertEqual(value("--stage1_sim_force_mode"), "gather")
         self.assertEqual(value("--stage2_enabled"), "false")
+        self.assertEqual(value("--stage2_max_online_chunks"), "10")
+        self.assertEqual(value("--stage2_cma_popsize"), "4")
+        self.assertEqual(value("--stage2_zero_order_backend"), "boba")
+        self.assertEqual(value("--stage2_sim_force_mode"), "gather")
+        self.assertNotIn("--stage2_batch_size", command)
+        self.assertNotIn("--stage2_segment_len", command)
+        self.assertNotIn("--stage2_segment_stride", command)
+        self.assertEqual(value("--train_batch_size"), "5")
+        self.assertEqual(value("--train_segment_len"), "30")
+        self.assertEqual(value("--train_segment_stride"), "30")
         self.assertEqual(value("--train_stop_when_finished"), "false")
         self.assertEqual(value("--train_train_frame"), "none")
+        self.assertEqual(value("--train_iterations"), "100")
+        self.assertEqual(value("--cma_viewer_enabled"), "true")
+        self.assertEqual(value("--cma_viewer_source"), "all")
         self.assertEqual(value("--cma_viewer_port"), "8765")
+        self.assertEqual(value("--train_viewer_enabled"), "false")
         self.assertEqual(value("--train_viewer_port"), "8766")
 
     def test_stop_when_finished_is_controlled_by_local_config(self) -> None:
@@ -292,40 +364,126 @@ class LauncherCommandTests(unittest.TestCase):
         index = command.index("--train_stop_when_finished")
         self.assertEqual(command[index + 1], "true")
 
-    def test_duplicate_viewer_endpoint_fails_before_launch(self) -> None:
+    def test_common_window_values_are_inherited_by_enabled_stages(self) -> None:
         runtime = copy.deepcopy(runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
-        runtime["train_viewer"]["port"] = runtime["cma_viewer"]["port"]
-        settings = _settings(self.repo, self.base, runtime_config=runtime)
-        with self.assertRaisesRegex(PhystwinShenLaunchError, "cannot share"):
+        runtime["common"].update(
+            {
+                "batch_size": 3,
+                "segment_len": 12,
+                "segment_stride": 6,
+            }
+        )
+        for section in ("stage1", "train"):
+            runtime[section].pop("batch_size")
+            runtime[section].pop("segment_len")
+            runtime[section].pop("segment_stride")
+        settings = _settings(
+            self.repo,
+            self.base,
+            runtime_config=runtime,
+        )
+
+        command = validate_phystwin_shen_settings(
+            settings,
+            python_prefix=[sys.executable],
+        )
+
+        for key, expected in (
+            ("batch_size", "3"),
+            ("segment_len", "12"),
+            ("segment_stride", "6"),
+        ):
+            common_flag = f"--common_{key}"
+            self.assertEqual(command[command.index(common_flag) + 1], expected)
+            self.assertNotIn(f"--stage1_{key}", command)
+            self.assertNotIn(f"--train_{key}", command)
+
+    def test_enabled_stage_requires_effective_window_values(self) -> None:
+        runtime = copy.deepcopy(runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
+        runtime["train"].pop("segment_len")
+        settings = _settings(
+            self.repo,
+            self.base,
+            runtime_config=runtime,
+        )
+
+        with self.assertRaisesRegex(
+            PhystwinShenLaunchError,
+            r"enabled train.*segment_len",
+        ):
             validate_phystwin_shen_settings(
                 settings,
                 python_prefix=[sys.executable],
             )
 
-    def test_launch_kills_both_old_viewers_and_starts_one_supervisor(self) -> None:
-        ports = (_free_port(), _free_port())
-        listeners: list[subprocess.Popen[bytes]] = []
-        for port in ports:
-            listener = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-c",
-                    (
-                        "import socket, time; s = socket.socket(); "
-                        "s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); "
-                        f"s.bind(('127.0.0.1', {port})); s.listen(); "
-                        "print('ready', flush=True); time.sleep(60)"
-                    ),
-                ],
-                stdout=subprocess.PIPE,
+    def test_invalid_stage_runtime_options_fail_before_launch(self) -> None:
+        invalid_options = (
+            ("stage1", "batch_size", 0),
+            ("stage1", "segment_len", 1),
+            ("stage1", "segment_stride", 0),
+            ("stage1", "max_online_chunks", 0),
+            ("stage1", "cma_popsize", 0),
+            ("stage1", "zero_order_backend", "unknown"),
+            ("stage1", "sim_force_mode", "unknown"),
+            ("stage2", "batch_size", 0),
+            ("stage2", "segment_len", 1),
+            ("stage2", "segment_stride", 0),
+            ("stage2", "max_online_chunks", -1),
+            ("stage2", "cma_popsize", -1),
+            ("stage2", "zero_order_backend", "unknown"),
+            ("stage2", "sim_force_mode", "unknown"),
+            ("train", "batch_size", 0),
+            ("train", "segment_len", 1),
+            ("train", "segment_stride", 0),
+        )
+        for section, key, invalid_value in invalid_options:
+            with self.subTest(section=section, key=key):
+                runtime = copy.deepcopy(runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
+                runtime[section][key] = invalid_value
+                settings = _settings(
+                    self.repo,
+                    self.base,
+                    runtime_config=runtime,
+                )
+                with self.assertRaisesRegex(
+                    PhystwinShenLaunchError,
+                    rf"{section}\.{key}",
+                ):
+                    validate_phystwin_shen_settings(
+                        settings,
+                        python_prefix=[sys.executable],
+                    )
+
+    def test_two_enabled_viewers_fail_before_launch(self) -> None:
+        runtime = copy.deepcopy(runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
+        runtime["train_viewer"]["enabled"] = True
+        settings = _settings(self.repo, self.base, runtime_config=runtime)
+        with self.assertRaisesRegex(PhystwinShenLaunchError, "at most one"):
+            validate_phystwin_shen_settings(
+                settings,
+                python_prefix=[sys.executable],
             )
-            self.assertIsNotNone(listener.stdout)
-            self.assertEqual(listener.stdout.readline().strip(), b"ready")
-            listeners.append(listener)
+
+    def test_launch_kills_old_combined_viewer_and_starts_supervisor(self) -> None:
+        port = _free_port()
+        listener = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import socket, time; s = socket.socket(); "
+                    "s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); "
+                    f"s.bind(('127.0.0.1', {port})); s.listen(); "
+                    "print('ready', flush=True); time.sleep(60)"
+                ),
+            ],
+            stdout=subprocess.PIPE,
+        )
+        self.assertIsNotNone(listener.stdout)
+        self.assertEqual(listener.stdout.readline().strip(), b"ready")
 
         runtime = copy.deepcopy(runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
-        runtime["cma_viewer"]["port"] = ports[0]
-        runtime["train_viewer"]["port"] = ports[1]
+        runtime["cma_viewer"]["port"] = port
         settings = _settings(self.repo, self.base, runtime_config=runtime)
         launch = None
         try:
@@ -338,24 +496,78 @@ class LauncherCommandTests(unittest.TestCase):
             )
             self.assertIsNone(launch.pipeline_process.poll())
             self.assertEqual(launch.process_group_id, launch.pipeline_process.pid)
-            self.assertEqual(
-                set(launch.port_takeover),
-                {"cma_viewer", "train_viewer"},
-            )
+            self.assertEqual(set(launch.port_takeover), {"cma_viewer"})
             self.assertEqual(
                 {item["status"] for item in launch.port_takeover.values()},
                 {"killed_occupant"},
             )
-            self.assertTrue(all(item.poll() is not None for item in listeners))
+            self.assertIsNotNone(listener.poll())
         finally:
             if launch is not None:
                 runner._stop_phystwin_launch(launch)
-            for listener in listeners:
-                if listener.poll() is None:
-                    listener.kill()
-                    listener.wait()
-                if listener.stdout is not None:
-                    listener.stdout.close()
+            if listener.poll() is None:
+                listener.kill()
+                listener.wait()
+            if listener.stdout is not None:
+                listener.stdout.close()
+
+    def test_launch_relays_stdout_and_stderr_before_supervisor_exits(self) -> None:
+        release_path = self.repo / "release"
+        (self.repo / "scripts" / "run_online_full_pipeline.py").write_text(
+            "from pathlib import Path\n"
+            "import sys\n"
+            "import time\n"
+            "print('PHYSTWIN_STDOUT_MARKER', flush=True)\n"
+            "print('PHYSTWIN_STDERR_MARKER', file=sys.stderr, flush=True)\n"
+            f"release = Path({str(release_path)!r})\n"
+            "while not release.exists():\n"
+            "    time.sleep(0.01)\n",
+            encoding="utf-8",
+        )
+        runtime = copy.deepcopy(runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
+        runtime["cma_viewer"]["enabled"] = False
+        runtime["train_viewer"]["enabled"] = False
+        settings = _settings(self.repo, self.base, runtime_config=runtime)
+        forwarded: list[bytes] = []
+        received_both_markers = threading.Event()
+
+        def record_console_line(raw_line: bytes) -> None:
+            forwarded.append(raw_line)
+            markers = b"".join(forwarded)
+            if (
+                b"PHYSTWIN_STDOUT_MARKER" in markers
+                and b"PHYSTWIN_STDERR_MARKER" in markers
+            ):
+                received_both_markers.set()
+
+        launch = None
+        with mock.patch.object(
+            phystwin_shen_launch,
+            "_write_pipeline_console_line",
+            side_effect=record_console_line,
+        ):
+            try:
+                launch = launch_phystwin_shen(
+                    settings,
+                    python_prefix=[sys.executable],
+                    log_dir=self.base / "logs",
+                    trigger="test",
+                    wall_time_origin_s=time.monotonic(),
+                )
+                self.assertTrue(received_both_markers.wait(timeout=2.0))
+                self.assertIsNone(launch.pipeline_process.poll())
+                release_path.touch()
+                self.assertEqual(launch.pipeline_process.wait(timeout=2.0), 0)
+            finally:
+                if launch is not None:
+                    runner._stop_phystwin_launch(launch)
+
+        relayed = b"".join(forwarded)
+        self.assertIn(b"PHYSTWIN_STDOUT_MARKER", relayed)
+        self.assertIn(b"PHYSTWIN_STDERR_MARKER", relayed)
+        logged = launch.pipeline_log_path.read_bytes()
+        self.assertIn(b"PHYSTWIN_STDOUT_MARKER", logged)
+        self.assertIn(b"PHYSTWIN_STDERR_MARKER", logged)
 
 
 class PhystwinLifecycleTests(unittest.TestCase):
@@ -363,6 +575,8 @@ class PhystwinLifecycleTests(unittest.TestCase):
         return SimpleNamespace(
             pipeline_process=process,
             process_group_id=4321,
+            finish_pipeline_output_relay=mock.Mock(),
+            assert_pipeline_output_relay_healthy=mock.Mock(),
         )
 
     def test_normal_completion_waits_and_cleans_process_group(self) -> None:
@@ -401,6 +615,8 @@ class PhystwinLifecycleTests(unittest.TestCase):
             pipeline_process=pipeline_process,
             process_group_id=2222,
             settings=SimpleNamespace(viewer_urls={}),
+            finish_pipeline_output_relay=mock.Mock(),
+            assert_pipeline_output_relay_healthy=mock.Mock(),
         )
 
         def fail_stream(*args, **kwargs):
@@ -772,6 +988,134 @@ class InitializeCaseTests(unittest.TestCase):
             self.assertEqual(seeded["frame_num"], 0)
 
 
+class _FakeCv2:
+    """Records the GUI calls WarmupRgbPreview makes; no display needed."""
+
+    FONT_HERSHEY_SIMPLEX = 0
+    LINE_AA = 16
+    WINDOW_AUTOSIZE = 1
+
+    def __init__(self) -> None:
+        self.named: list[str] = []
+        self.shown = 0
+        self.destroyed: list[str] = []
+
+    def namedWindow(self, name, flags=None):  # noqa: N802
+        self.named.append(name)
+
+    def putText(self, *args, **kwargs):  # noqa: N802
+        pass
+
+    def imshow(self, name, frame):  # noqa: N802
+        self.shown += 1
+
+    def waitKey(self, delay_ms):  # noqa: N802
+        time.sleep(min(0.002, delay_ms / 1000.0))
+        return -1
+
+    def destroyWindow(self, name):  # noqa: N802
+        self.destroyed.append(name)
+
+
+class WarmupRgbPreviewTests(unittest.TestCase):
+    """The warm-up RGB input preview opens with frames and always closes."""
+
+    def _slot_with_frame(self):
+        from demo_v6_2.utils.concurrency import LatestSlot
+
+        slot = LatestSlot()
+        slot.put(SimpleNamespace(seq=0, color_bgr=np.zeros((6, 8, 3), dtype=np.uint8)))
+        return slot
+
+    def _wait_until(self, predicate, timeout_s: float = 2.0) -> None:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            time.sleep(0.01)
+        self.fail("preview did not reach the expected state in time")
+
+    def test_shows_frames_and_closes_on_warmup_end(self) -> None:
+        import threading
+
+        from demo_v6_2.mdp_warmup_preview import WarmupRgbPreview
+
+        fake = _FakeCv2()
+        preview = WarmupRgbPreview(
+            input_preview_slot=self._slot_with_frame(),
+            stop_event=threading.Event(),
+            cv2_module=fake,
+        )
+        preview.start()
+        self._wait_until(lambda: fake.shown >= 1)
+        preview.close()  # normal warm-up end
+        self.assertEqual(fake.destroyed, [WarmupRgbPreview.WINDOW_NAME])
+        self.assertGreaterEqual(fake.shown, 1)
+
+    def test_stop_event_closes_immediately(self) -> None:
+        import threading
+
+        from demo_v6_2.mdp_warmup_preview import WarmupRgbPreview
+
+        fake = _FakeCv2()
+        stop_event = threading.Event()
+        preview = WarmupRgbPreview(
+            input_preview_slot=self._slot_with_frame(),
+            stop_event=stop_event,
+            cv2_module=fake,
+        )
+        preview.start()
+        self._wait_until(lambda: fake.shown >= 1)
+        stop_event.set()  # warm-up failure / cancel / early exit
+        self._wait_until(lambda: fake.destroyed)
+        self.assertEqual(fake.destroyed, [WarmupRgbPreview.WINDOW_NAME])
+
+    def test_disabled_preview_never_opens(self) -> None:
+        import threading
+
+        from demo_v6_2.mdp_warmup_preview import WarmupRgbPreview
+
+        fake = _FakeCv2()
+        preview = WarmupRgbPreview(
+            input_preview_slot=self._slot_with_frame(),
+            stop_event=threading.Event(),
+            enabled=False,
+            cv2_module=fake,
+        )
+        preview.start()
+        preview.close()
+        self.assertEqual(fake.shown, 0)
+        self.assertEqual(fake.named, [])
+
+    def test_flag_defaults_on_and_forwards_to_camera_subprocess(self) -> None:
+        from demo_v6_2.main_subprocess import build_main_data_processing_command
+        from demo_v6_2.mdp_cli import build_parser as build_camera_parser
+
+        args = runner.build_parser().parse_args([])
+        self.assertTrue(args.warmup_rgb_preview)
+        command = build_main_data_processing_command(
+            args,
+            capture_dir=Path("capture"),
+            profile_json=Path("profile.json"),
+            chunk_frame_count=35,
+        )
+        self.assertIn("--warmup-rgb-preview", command)
+        off = runner.build_parser().parse_args(["--no-warmup-rgb-preview"])
+        off_command = build_main_data_processing_command(
+            off,
+            capture_dir=Path("capture"),
+            profile_json=Path("profile.json"),
+            chunk_frame_count=35,
+        )
+        self.assertIn("--no-warmup-rgb-preview", off_command)
+        self.assertTrue(build_camera_parser().parse_args([]).warmup_rgb_preview)
+        self.assertFalse(
+            build_camera_parser()
+            .parse_args(["--no-warmup-rgb-preview"])
+            .warmup_rgb_preview
+        )
+
+
 class StreamingArchiveTests(unittest.TestCase):
     """color/depth stream in real time; frame_num stays commit-gated."""
 
@@ -790,9 +1134,7 @@ class StreamingArchiveTests(unittest.TestCase):
     def _frame(self, seq: int) -> PreparedPhysTwinFrame:
         return PreparedPhysTwinFrame(
             seq=seq,
-            rgb_frame=np.full(
-                (self.HEIGHT, self.WIDTH, 3), seq % 255, dtype=np.uint8
-            ),
+            rgb_frame=np.full((self.HEIGHT, self.WIDTH, 3), seq % 255, dtype=np.uint8),
             processed_mask_frame={
                 "object": np.ones((self.HEIGHT, self.WIDTH), dtype=bool),
                 "controller": np.zeros((self.HEIGHT, self.WIDTH), dtype=bool),
@@ -852,9 +1194,9 @@ class StreamingArchiveTests(unittest.TestCase):
             self.assertEqual(
                 json.loads((online / "metadata.json").read_text())["frame_num"], 2
             )
-            mapping = json.loads(
-                (online / "enhance_metadata.json").read_text()
-            )["frame_mapping"]
+            mapping = json.loads((online / "enhance_metadata.json").read_text())[
+                "frame_mapping"
+            ]
             self.assertEqual([m["online_frame_index"] for m in mapping], [0, 1])
 
     def test_archive_chunk_rejects_streamed_identity_mismatch(self) -> None:

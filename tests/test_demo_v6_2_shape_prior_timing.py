@@ -399,6 +399,7 @@ class ShapePriorManagerTimingTests(unittest.TestCase):
             _shape_prior_profile_payload=mock.Mock(return_value={}),
             _write_shape_prior_profile_json=mock.Mock(),
             _status=mock.Mock(),
+            warmup_rgb_preview=mock.Mock(),
         )
         demo.shape_prior_manager.ready_result.return_value = result
 
@@ -418,6 +419,7 @@ class ShapePriorManagerTimingTests(unittest.TestCase):
             result
         )
         demo.shape_prior_manager.mark_gate_open.assert_called_once_with()
+        demo.warmup_rgb_preview.close.assert_called_once_with()
 
     def test_default_profile_has_no_unmeasured_legacy_zero_timings(self) -> None:
         profile = shape_prior_warmup.default_profile(enabled=True)

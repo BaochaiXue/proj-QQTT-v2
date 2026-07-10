@@ -12,7 +12,7 @@
 `shape_prior_*` 模块生成 SAM3D shape prior，最后启动一个下游消费者：
 `visualize_track.py`，或 Phystwin_shen 的
 `scripts/run_online_full_pipeline.py` supervisor。Demo 只直接管理这个
-supervisor；Stage 1、可选 Stage 2、train 和两个 HTML viewer 由外部 wrapper
+supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外部 wrapper
 创建并继承同一个进程组。生命周期事件写入
 `pipeline_status.jsonl`；Q23 会区分“已经实现的状态写入”和“默认 viewer
 尚未显示的部分”。
@@ -93,7 +93,7 @@ supervisor；Stage 1、可选 Stage 2、train 和两个 HTML viewer 由外部 wr
 3. **进程和线程如何协作？**
    外层是多进程：总控进程启动 camera 子进程；可选 visualizer、
    Phystwin_shen full-pipeline supervisor 也是总控的直接子进程。supervisor
-   再按配置启动两个 HTML viewer、Stage 1、可选 Stage 2 和 train；这些 child
+   再按配置启动一个合并 HTML viewer、Stage 1、可选 Stage 2 和 train；这些 child
    不创建新 session，因此继承 supervisor 的进程组。shape-prior 不是一条与
    camera 并列、常驻的单一进程：camera 进程先启动 warm-up thread，
    `ShapePriorLocalClient.request_shape_prior` 再顺序调用各阶段子进程。
@@ -639,19 +639,33 @@ supervisor；Stage 1、可选 Stage 2、train 和两个 HTML viewer 由外部 wr
     `scripts/run_online_full_pipeline.py` supervisor，并显式传入
     `--online_dir <base_path>/online_data` 以及本地
     `config/default.yaml::phystwin_shen` 的每个 runtime 叶子。外部 pipeline
-    YAML 不再是 Demo 参数的维护源。
+    YAML 不再是 Demo 参数的维护源。Stage 1/2 各自的
+    `max_online_chunks`、`cma_popsize`、`zero_order_backend` 和
+    `sim_force_mode` 也由本地 YAML 显式传入；当前 Stage 1 是
+    `2/4/boba/gather`，Stage 2 是 `10/4/boba/gather`。
+    `batch_size/segment_len/segment_stride` 遵循 Phystwin 原生的
+    common-then-stage 继承语义，并通过 stage-specific CLI 显式传递。当前
+    `common` 不提供这三个默认值，Stage 1 使用 `2/10/10`，train 使用
+    `5/30/30`；禁用的 Stage 2 可省略，若启用且没有自身值或 common 默认值，
+    Demo 会在 camera 启动前失败。
 
     supervisor 在 `demo_2_max` 中运行；外部 YAML 的 `python: null` 令 Stage 1、
     Stage 2、train 和 viewer 继承 supervisor 的同一个 Python。wrapper 先启动
-    启用的 CMA/train viewer，再顺序运行 Stage 1、可选 Stage 2 和 train。
-    Demo 在启动 supervisor 前先清理两个启用 viewer 的 endpoint，默认是
-    `127.0.0.1:8765` 和 `127.0.0.1:8766`。
+    `cma_viewer.source=all` 的单个合并 viewer，再顺序运行 Stage 1、可选
+    Stage 2 和 train；独立 `train_viewer` 保持关闭。Demo 在启动 supervisor
+    前只清理这个 viewer 的 endpoint，默认是 `127.0.0.1:8765`。
+
+    supervisor、Stage 1/2 和 train 的合并 stdout/stderr 同时实时转发到 Demo
+    启动终端（每行前缀 `[phystwin_shen]`）并保留到
+    `<base_path>/phystwin_shen/online_full_pipeline.log`。Demo 显式设置
+    `PYTHONUNBUFFERED=1`，避免外部 Python stage 因 pipe 重定向延迟输出。
+    当前默认 viewer 使用 `--quiet`，它们自己的输出仍由外部 wrapper 静默处理。
 
     顺序读取逻辑位于外部 Phystwin_shen checkout：
     `OnlineChunkReader.load_new_chunks` 从 `last_loaded_chunk + 1` 顺序读到
     manifest 的 `latest_committed_chunk`；`wait_for_initial_frames` 会先等到至少
-    `segment_len` 帧才创建 trainer。当前本地配置是 `segment_len=30`、
-    chunk=35，因此首个完整 chunk 足够开始，但这不是任意配置的通用保证。
+    各 stage 自己的 `segment_len` 帧才创建 simulator/trainer。当前 chunk 是
+    5 帧，Stage 1 需要 10 帧（2 chunks），train 需要 30 帧（6 chunks）。
     `train.stop_when_finished: true` 时，trainer 以 manifest 的 `finished` 为停止
     条件，完成并保存观察到 finished 的 terminal iteration；设为 false 时严格
     跑 `iterations`。无论是哪一种，Demo 正常路径最终都会等待 supervisor
@@ -706,6 +720,16 @@ supervisor；Stage 1、可选 Stage 2、train 和两个 HTML viewer 由外部 wr
     这个 banner 只表示采集完成，不表示整个 Demo 进程已经退出；Phystwin_shen
     尚未训练完时，主进程会继续等待它。
 
+    **Warm-up 实时 RGB 输入预览**（`mdp_warmup_preview.WarmupRgbPreview`，
+    不是 tracking-chunk viewer）：无论 `downstream.mode` 选什么，camera 进程
+    在 capture 启动时打开一个实时 RGB 输入窗口（直接读内存里的
+    `input_preview_slot`，零磁盘 IO），供操作员在 hold-still 期间确认取景/
+    双手可见。生命周期：warm-up 正常结束（WARMUP_FINISHED banner 处；若
+    shape-prior warm-up 关闭则在 frame-0 seed 完成处）自动关闭；warm-up
+    失败/取消/提前退出经 `stop_event` + `stop()` **立即**关闭。GUI 失败
+    （无显示环境）只打一行日志并禁用，绝不影响采集。开关：
+    `--warmup-rgb-preview / --no-warmup-rgb-preview`（默认开，编排器透传给
+    camera 子进程）。
     即使 supervisor leader 已退出，遗留的 train/viewer child 仍按保存 PGID
     清理。reader 仍只把 `manifest.status=finished` 当完成；若 producer 写
     `failed`，Demo 不等待 reader 自己理解 failed，而是由上述异常路径终止整个

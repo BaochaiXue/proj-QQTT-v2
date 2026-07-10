@@ -1,19 +1,19 @@
 {
   "execution_mode": "prewarmed",
-  "ready_wall_time_s": 1783652672.1654902,
+  "ready_wall_time_s": 1783709236.2547376,
   "schema_version": 1,
-  "snapshot_wall_time_s": 1783652694.1991022,
+  "snapshot_wall_time_s": 1783709267.157301,
   "stage": "upscale",
   "status": "completed",
   "timing_ms": {
-    "go_wait_ms": 11472.697035060264,
-    "inference_ms": 10099.235119996592,
-    "input_crop_ms": 14.624800067394972,
-    "model_load_ms": 1002.7745281113312,
-    "module_import_ms": 4257.513704011217,
-    "output_write_ms": 445.8127529360354,
-    "process_lifetime_ms": 27294.395937002264,
-    "total_ms": 15819.96090512257
+    "go_wait_ms": 19861.96298600001,
+    "inference_ms": 10606.557022000005,
+    "input_crop_ms": 16.489814999999908,
+    "model_load_ms": 1890.147001999992,
+    "module_import_ms": 5076.175506000012,
+    "output_write_ms": 416.3663779999922,
+    "process_lifetime_ms": 37869.38031300001,
+    "total_ms": 18005.735723
   },
-  "worker_pid": 593925
+  "worker_pid": 10920
 }

@@ -2,20 +2,20 @@
   "execution_mode": "cold",
   "ready_wall_time_s": null,
   "schema_version": 1,
-  "snapshot_wall_time_s": 1783652743.544939,
+  "snapshot_wall_time_s": 1783709316.6577606,
   "stage": "sample",
   "status": "completed",
   "timing_ms": {
-    "deduplicate_ms": 5.783639964647591,
-    "input_load_ms": 0.7008688990026712,
-    "mesh_load_ms": 34.6496410202235,
-    "module_import_ms": 1468.9213269157335,
-    "output_write_ms": 0.377361080609262,
-    "process_lifetime_ms": 2700.6316899787635,
-    "surface_sample_ms": 2.1891980431973934,
-    "total_ms": 2699.544646893628,
-    "volume_sample_ms": 1141.932233935222,
-    "voxel_dedup_ms": 44.99037703499198
+    "deduplicate_ms": 5.461812000021382,
+    "input_load_ms": 0.6513799999936509,
+    "mesh_load_ms": 28.645869000001767,
+    "module_import_ms": 1237.6587770000071,
+    "output_write_ms": 0.307472999992342,
+    "process_lifetime_ms": 2338.364086000013,
+    "surface_sample_ms": 1.7750320000118336,
+    "total_ms": 2337.4963600000174,
+    "volume_sample_ms": 1020.1351329999966,
+    "voxel_dedup_ms": 42.86088399999244
   },
-  "worker_pid": 610431
+  "worker_pid": 13855
 }
