@@ -41,3 +41,40 @@
 {"chunk_index": 14, "detail": "chunk 14", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783640753.2256126, "track_status": "degraded"}
 {"chunk_index": 15, "detail": "chunk 15", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783640760.005498, "track_status": "degraded"}
 {"chunk_count": 16, "detail": "main_data_processing_completed", "ok": true, "source": "orchestrator", "stage": "run_finished", "t": 1783640760.3882306}
+{"detail": "input=fake-live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783650133.8356216}
+{"detail": "input=fake-live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783650134.1070712}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1783650150.3465004}
+{"detail": "shape prior ready; formal timeline open", "ok": true, "source": "camera", "stage": "warmup_ready", "t": 1783650211.7905233}
+{"detail": "phystwin_shen (shape_prior_points_ready)", "ok": true, "source": "orchestrator", "stage": "downstream_start", "t": 1783650211.8449972}
+{"chunk_index": 0, "detail": "chunk 0", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783650223.610414, "track_status": "normal"}
+{"chunk_index": 1, "detail": "chunk 1", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783650229.8225064, "track_status": "degraded"}
+{"chunk_index": 2, "detail": "chunk 2", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783650237.0150647, "track_status": "degraded"}
+{"chunk_index": 3, "detail": "chunk 3", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783650243.8965874, "track_status": "degraded"}
+{"chunk_index": 4, "detail": "chunk 4", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783650250.9053092, "track_status": "degraded"}
+{"chunk_index": 5, "detail": "chunk 5", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783650257.8486483, "track_status": "degraded"}
+{"chunk_index": 6, "detail": "chunk 6", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783650264.735794, "track_status": "degraded"}
+{"chunk_index": 7, "detail": "chunk 7", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783650271.678344, "track_status": "degraded"}
+{"chunk_index": 8, "detail": "chunk 8", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783650278.7032604, "track_status": "degraded"}
+{"chunk_index": 9, "detail": "chunk 9", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783650285.7168596, "track_status": "degraded"}
+{"chunk_index": 10, "detail": "chunk 10", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783650292.8251643, "track_status": "degraded"}
+{"chunk_index": 11, "detail": "chunk 11", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783650299.7873774, "track_status": "degraded"}
+{"chunk_index": 12, "detail": "chunk 12", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783650306.8131092, "track_status": "degraded"}
+{"chunk_index": 13, "detail": "chunk 13", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783650313.6970086, "track_status": "degraded"}
+{"chunk_index": 14, "detail": "chunk 14", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783650320.861647, "track_status": "degraded"}
+{"chunk_index": 15, "detail": "chunk 15", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783650329.125994, "track_status": "degraded"}
+{"chunk_count": 16, "detail": "main_data_processing_completed", "ok": true, "source": "orchestrator", "stage": "run_finished", "t": 1783650408.752413}
+{"detail": "input=live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783651687.4806266}
+{"detail": "input=live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783651687.7281132}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1783651704.283576}
+{"detail": "lossless TAPNext++ tracker worker: Offset increment outside graph capture encountered unexpectedly.", "exc_type": "RuntimeError", "ok": false, "source": "camera", "stage": "fatal_error", "t": 1783651704.4984782}
+{"detail": "main_data_processing exited before the Demo completed (return code 2)", "ok": false, "source": "orchestrator", "stage": "fatal_error", "t": 1783651711.731767}
+{"detail": "input=live downstream=disabled", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783652631.4434712}
+{"detail": "input=live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783652631.6966116}
+{"detail": "segmentation worker: SAM3.1 did not produce a mask for label 'hand'", "exc_type": "RuntimeError", "ok": false, "source": "camera", "stage": "fatal_error", "t": 1783652645.0201373}
+{"detail": "main_data_processing exited before the Demo completed (return code 2)", "ok": false, "source": "orchestrator", "stage": "fatal_error", "t": 1783652651.9440165}
+{"detail": "input=fake-live downstream=disabled", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1783652666.6116376}
+{"detail": "input=fake-live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1783652666.8906503}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1783652683.1809478}
+{"detail": "shape prior ready; formal timeline open", "ok": true, "source": "camera", "stage": "warmup_ready", "t": 1783652744.163818}
+{"chunk_index": 0, "detail": "chunk 0", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1783652755.9439664, "track_status": "normal"}
+{"chunk_count": 1, "detail": "max_chunks_reached", "ok": true, "source": "orchestrator", "stage": "run_finished", "t": 1783652756.3030849}
