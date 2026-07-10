@@ -433,11 +433,21 @@ def prepare_runtime_projection_and_capture(
 
 def prepare_segmentation_warmup(demo: Any) -> SegmentationWarmupState:
     """Prepare segmentation warmup."""
+    prepare_start_s = time.perf_counter()
     hf_stream, torch_module, dtype, model, processor = demo._init_hf_model()
+    model_ready_s = time.perf_counter()
+    frame_wait_start_s = time.perf_counter()
     first_frame = demo._wait_for_first_frame()
+    frame_wait_end_s = time.perf_counter()
     # first_frame is None when capture shut down before frame 0; the seg worker
     # treats that state as a clean early exit rather than an error.
     if first_frame is None:
+        demo._warmup_perception_profile["segmentation_warmup"] = {
+            "edgetam_init_ms": (model_ready_s - prepare_start_s) * 1000.0,
+            "frame_wait_ms": (frame_wait_end_s - frame_wait_start_s) * 1000.0,
+            "total_ms": (frame_wait_end_s - prepare_start_s) * 1000.0,
+            "frame0_available": False,
+        }
         return SegmentationWarmupState(
             hf_stream=hf_stream,
             torch_module=torch_module,
@@ -447,10 +457,30 @@ def prepare_segmentation_warmup(demo: Any) -> SegmentationWarmupState:
             first_frame=None,
             initial_masks=None,
         )
+    initial_masks_start_s = time.perf_counter()
     initial_masks = resolve_initial_mask_bundle(
         first_frame,
         demo.args,
     )
+    initial_masks_end_s = time.perf_counter()
+    initial_sam31_timing = getattr(demo.args, "_sam31_last_timing_ms", {})
+    if not isinstance(initial_sam31_timing, dict):
+        raise RuntimeError("frame-0 SAM3.1 timing must be an object")
+    demo._warmup_perception_profile["segmentation_warmup"] = {
+        "edgetam_init_ms": (model_ready_s - prepare_start_s) * 1000.0,
+        "frame_wait_ms": (frame_wait_end_s - frame_wait_start_s) * 1000.0,
+        "initial_mask_bundle_ms": (initial_masks_end_s - initial_masks_start_s)
+        * 1000.0,
+        "initial_sam31": dict(initial_sam31_timing),
+        "sam31_trim_cleanup_ms": float(
+            getattr(demo.args, "_sam31_last_trim_cleanup_ms", 0.0)
+        ),
+        "sam31_release_cleanup_ms": float(
+            getattr(demo.args, "_sam31_last_release_cleanup_ms", 0.0)
+        ),
+        "total_ms": (initial_masks_end_s - prepare_start_s) * 1000.0,
+        "frame0_available": True,
+    }
     return SegmentationWarmupState(
         hf_stream=hf_stream,
         torch_module=torch_module,

@@ -1,10 +1,23 @@
-import os
-from argparse import ArgumentParser
-from pathlib import Path
-import sys
+import time
 
-import numpy as np
-from PIL import Image
+
+_MODULE_IMPORT_START_S = time.perf_counter()
+
+
+import os  # noqa: E402
+from argparse import ArgumentParser  # noqa: E402
+from pathlib import Path  # noqa: E402
+import sys  # noqa: E402
+
+import numpy as np  # noqa: E402
+from PIL import Image  # noqa: E402
+
+from demo_v6_2.shape_prior_timing import (  # noqa: E402
+    STAGE_PROFILE_STATUS_COMPLETED,
+    STAGE_PROFILE_STATUS_WAITING,
+    elapsed_ms,
+    write_stage_profile,
+)
 
 
 # os.environ['ATTN_BACKEND'] = 'xformers'   # Can be 'flash-attn' or
@@ -24,6 +37,16 @@ DEFAULT_SAM3D_ROOT_CANDIDATES += [
     Path("/home/xinjie/external/MV-SAM3D"),
 ]
 DEFAULT_SEED = 42
+_ACTIVE_TIMING_FIELDS = (
+    "module_import_ms",
+    "pre_go_prepare_ms",
+    "model_load_ms",
+    "input_decode_ms",
+    "pipeline_run_ms",
+    "mesh_export_ms",
+    "gaussian_export_ms",
+    "visualization_export_ms",
+)
 
 
 def build_parser():
@@ -46,6 +69,7 @@ def build_parser():
         help="SAM3D pipeline config. Defaults under --sam3d-root.",
     )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--profile-json", type=Path, default=None)
     parser.add_argument(
         "--skip-visualization",
         action="store_true",
@@ -66,10 +90,9 @@ def resolve_sam3d_root(value=None):
     candidates.extend(DEFAULT_SAM3D_ROOT_CANDIDATES)
     for candidate in candidates:
         root = candidate.resolve()
-        if (
-            (root / "notebook" / "inference.py").is_file()
-            and (root / "sam3d_objects").is_dir()
-        ):
+        if (root / "notebook" / "inference.py").is_file() and (
+            root / "sam3d_objects"
+        ).is_dir():
             return root
     searched = ", ".join(str(path) for path in candidates)
     raise FileNotFoundError(
@@ -160,15 +183,25 @@ def load_sam3d_inference(args):
     return Inference(str(config), compile=False)
 
 
-def run_sam3d_shape_prior(args, infer=None):
-    """Run SAM3D shape prior."""
+def run_sam3d_shape_prior(args, infer=None, *, timing_ms=None):
+    """Run the unchanged SAM3D algorithm and return its active timings."""
+    timings = {} if timing_ms is None else timing_ms
     if infer is None:
-        infer = load_sam3d_inference(args)
+        prepare_start_s = time.perf_counter()
+        Inference, config = resolve_inference_inputs(args)
+        timings["pre_go_prepare_ms"] = elapsed_ms(prepare_start_s)
 
+        model_load_start_s = time.perf_counter()
+        infer = Inference(str(config), compile=False)
+        timings["model_load_ms"] = elapsed_ms(model_load_start_s)
+
+    input_decode_start_s = time.perf_counter()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     image_rgb, mask = rgba_to_sam3d_inputs(Image.open(args.img_path))
+    timings["input_decode_ms"] = elapsed_ms(input_decode_start_s)
 
+    pipeline_run_start_s = time.perf_counter()
     pipeline = getattr(infer, "_pipeline", None)
     if pipeline is not None and hasattr(pipeline, "run"):
         if hasattr(pipeline, "rendering_engine"):
@@ -184,30 +217,62 @@ def run_sam3d_shape_prior(args, infer=None):
         )
     else:
         outputs = infer(image_rgb, mask, seed=int(args.seed))
+    timings["pipeline_run_ms"] = elapsed_ms(pipeline_run_start_s)
 
+    mesh_export_start_s = time.perf_counter()
     mesh_obj = _first(outputs.get("glb"))
     if mesh_obj is None:
         mesh_obj = _first(outputs.get("mesh"))
     mesh_path = output_dir / "object.glb"
     export_mesh(mesh_obj, mesh_path)
+    timings["mesh_export_ms"] = elapsed_ms(mesh_export_start_s)
 
+    gaussian_export_start_s = time.perf_counter()
     gaussian = _first(outputs.get("gaussian"))
     if gaussian is None:
         gaussian = _first(outputs.get("gs"))
     if gaussian is not None and hasattr(gaussian, "save_ply"):
         gaussian.save_ply(output_dir / "object.ply")
+    timings["gaussian_export_ms"] = elapsed_ms(gaussian_export_start_s)
 
+    visualization_start_s = time.perf_counter()
     if not args.skip_visualization:
         frames = outputs.get("video") or outputs.get("visualization")
         if frames is not None:
             import imageio
 
             imageio.mimsave(output_dir / "visualization.mp4", frames, fps=30)
+    timings["visualization_export_ms"] = elapsed_ms(visualization_start_s)
+    return timings
+
+
+def _new_timing_record(*, module_import_ms: float) -> dict[str, float]:
+    """Return all generate timing fields with explicit zero values."""
+    timing_ms = {field: 0.0 for field in _ACTIVE_TIMING_FIELDS}
+    timing_ms.update(
+        {
+            "go_wait_ms": 0.0,
+            "total_ms": 0.0,
+            "process_lifetime_ms": 0.0,
+        }
+    )
+    timing_ms["module_import_ms"] = float(module_import_ms)
+    return timing_ms
+
+
+def _active_total_ms(timing_ms: dict[str, float]) -> float:
+    """Return active stage time, intentionally excluding the GO idle wait."""
+    return float(sum(timing_ms[field] for field in _ACTIVE_TIMING_FIELDS))
 
 
 def main(argv=None):
     """Run the command-line entry point."""
+    module_import_ms = elapsed_ms(_MODULE_IMPORT_START_S)
     args = build_parser().parse_args(argv)
+    execution_mode = "prewarmed" if args.wait_signal else "cold"
+    timing_ms = _new_timing_record(module_import_ms=module_import_ms)
+    ready_wall_time_s = None
+
     if args.wait_signal:
         from demo_v6_2.utils import stage_prewarm
 
@@ -215,13 +280,45 @@ def main(argv=None):
         # import tree). Weights go to the GPU only after GO: the upscale
         # stage's inference peak plus resident SAM3D weights do not fit on
         # one 24GB warmup GPU, so they must never overlap.
+        prepare_start_s = time.perf_counter()
         Inference, config = resolve_inference_inputs(args)
-        if not stage_prewarm.wait_for_go("generate"):
+        timing_ms["pre_go_prepare_ms"] = elapsed_ms(prepare_start_s)
+
+        ready_wall_time_s = time.time()
+        timing_ms["total_ms"] = _active_total_ms(timing_ms)
+        timing_ms["process_lifetime_ms"] = elapsed_ms(_MODULE_IMPORT_START_S)
+        write_stage_profile(
+            args.profile_json,
+            stage="generate",
+            status=STAGE_PROFILE_STATUS_WAITING,
+            execution_mode=execution_mode,
+            timing_ms=timing_ms,
+            ready_wall_time_s=ready_wall_time_s,
+        )
+
+        go_wait_start_s = time.perf_counter()
+        should_run = stage_prewarm.wait_for_go("generate")
+        timing_ms["go_wait_ms"] = elapsed_ms(go_wait_start_s)
+        if not should_run:
             return
+
+        model_load_start_s = time.perf_counter()
         infer = Inference(str(config), compile=False)
-        run_sam3d_shape_prior(args, infer=infer)
-        return
-    run_sam3d_shape_prior(args)
+        timing_ms["model_load_ms"] = elapsed_ms(model_load_start_s)
+        run_sam3d_shape_prior(args, infer=infer, timing_ms=timing_ms)
+    else:
+        run_sam3d_shape_prior(args, timing_ms=timing_ms)
+
+    timing_ms["total_ms"] = _active_total_ms(timing_ms)
+    timing_ms["process_lifetime_ms"] = elapsed_ms(_MODULE_IMPORT_START_S)
+    write_stage_profile(
+        args.profile_json,
+        stage="generate",
+        status=STAGE_PROFILE_STATUS_COMPLETED,
+        execution_mode=execution_mode,
+        timing_ms=timing_ms,
+        ready_wall_time_s=ready_wall_time_s,
+    )
 
 
 if __name__ == "__main__":

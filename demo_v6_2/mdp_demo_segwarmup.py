@@ -24,18 +24,43 @@ class _SegWarmupMixin:
 
     def _init_hf_model(self) -> tuple[Any, Any, Any, Any, Any]:
         """Return the init HF model."""
+        init_start_s = time.perf_counter()
+        runtime_load_start_s = time.perf_counter()
         hf_stream = _load_hf_streaming_runtime()
         torch_module = hf_stream.torch
         if str(self.args.device).startswith("cuda") and not torch_module.cuda.is_available():
             raise RuntimeError("CUDA device requested but torch.cuda.is_available() is false")
         dtype = hf_stream._dtype_from_name(self.args.dtype)
+        runtime_load_end_s = time.perf_counter()
+        model_load_start_s = time.perf_counter()
         model = hf_stream.EdgeTamVideoModel.from_pretrained(DEFAULT_MODEL_ID).to(
             self.args.device,
             dtype=dtype,
         )
         model.eval()
+        model_load_end_s = time.perf_counter()
+        compile_start_s = time.perf_counter()
         model, compile_metadata = hf_stream._apply_compile_mode(model, DEFAULT_COMPILE_MODE)
+        compile_end_s = time.perf_counter()
+        processor_load_start_s = time.perf_counter()
         processor = hf_stream.Sam2VideoProcessor.from_pretrained(DEFAULT_MODEL_ID)
+        processor_load_end_s = time.perf_counter()
+        self._warmup_perception_profile["edgetam_runtime_init"] = {
+            "runtime_import_ms": _elapsed_ms(
+                runtime_load_start_s,
+                runtime_load_end_s,
+            ),
+            "model_load_ms": _elapsed_ms(
+                model_load_start_s,
+                model_load_end_s,
+            ),
+            "compile_ms": _elapsed_ms(compile_start_s, compile_end_s),
+            "processor_load_ms": _elapsed_ms(
+                processor_load_start_s,
+                processor_load_end_s,
+            ),
+            "total_ms": _elapsed_ms(init_start_s, processor_load_end_s),
+        }
         metadata = {
             **runtime_metadata_identity(self.args),
             "edge_model": DEFAULT_MODEL_ID,
@@ -200,6 +225,7 @@ class _SegWarmupMixin:
             initial_masks = warmup.initial_masks
             if initial_masks is None:
                 raise RuntimeError("segmentation warmup did not produce frame-0 masks")
+            session_start_s = time.perf_counter()
             session = warmup.hf_stream.EdgeTamVideoInferenceSession(
                 video=None,
                 video_height=int(first_frame.color_bgr.shape[0]),
@@ -208,6 +234,10 @@ class _SegWarmupMixin:
                 inference_state_device=self.args.device,
                 video_storage_device=self.args.device,
                 dtype=warmup.dtype,
+            )
+            session_end_s = time.perf_counter()
+            self._warmup_perception_profile["edgetam_session_init_ms"] = (
+                _elapsed_ms(session_start_s, session_end_s)
             )
             with warmup.torch_module.inference_mode():
                 first_packet = self._run_segmentation_frame(
@@ -298,6 +328,15 @@ class _SegWarmupMixin:
             k_color=k_color,
             camera_to_world_c2w=self.table_c2w,
             table_z_m=TABLE_Z_M,
+            warmup_runtime_start_perf_s=self._warmup_runtime_start_perf_s,
+            frame_receive_perf_s=float(mask_packet.receive_perf_s),
+            frame_mask_ready_perf_s=float(mask_packet.process_done_perf_s),
+            frame_pcd_ready_perf_s=float(result.packet.process_done_perf_s),
+            frame0_pipeline_timing_ms={
+                key: float(value)
+                for key, value in asdict(result.packet.timing).items()
+            },
+            frame0_perception_profile=dict(self._warmup_perception_profile),
         )
 
     def _shape_prior_observation_mask_from_pcd_result(self, result: PcdBuildResult) -> np.ndarray:
@@ -361,14 +400,16 @@ class _SegWarmupMixin:
 
     def _maybe_write_shape_prior_headless_result(self) -> None:
         """Maybe start or update write shape prior headless result."""
-        profile = self._shape_prior_profile_payload()
         result = self.shape_prior_manager.ready_result()
         if self.headless_capture_writer is not None and result is not None and result.ready and not self._shape_prior_written:
             self.headless_capture_writer.write_shape_prior_result(result)
             self._shape_prior_written = True
+            self.shape_prior_manager.mark_gate_open()
+            profile = self._shape_prior_profile_payload()
             self._write_shape_prior_profile_json(profile)
             self._status.emit(STAGE_WARMUP_READY, "shape prior ready; formal timeline open")
             return
+        profile = self._shape_prior_profile_payload()
         if self.headless_capture_writer is not None:
             self.headless_capture_writer.update_metadata(profile)
         self._write_shape_prior_profile_json(profile)

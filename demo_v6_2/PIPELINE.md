@@ -263,27 +263,53 @@
      解除逻辑。
 
 10. **Warm-up 最耗时的步骤是什么？**
-    源码能证明阶段顺序和逐阶段计时，但不能静态证明哪个阶段“通常最慢”。
-    `ShapePriorLocalClient.request_shape_prior` 的顺序是：write case → upscale →
-    SAM3.1 segment → SAM3D generate → SuperGlue-based align → sample；分别记录
-    `shape_prior_upscale_ms`、`shape_prior_segment_image_ms`、
-    `shape_prior_generate_ms`、`shape_prior_align_ms` 和
-    `shape_prior_sample_ms`。
+    权威产物是 `capture/shape_prior_profile.json`。现在它把操作员等待时间拆成
+    三层，而不是只报告 submit 后的五个粗阶段：
 
-    仓库保存的一个实测 profile 中，generate 为约 32.0 s，高于 align 的
-    15.2 s、upscale 的 11.6 s、sample 的 3.2 s 和 segment 的 0.34 s；因此
-    只能说“这次实测中 generate 最慢”，不能仅凭函数体推广为所有运行。
+    1. `shape_prior_timing.pre_submit`：camera runtime start → frame 0 receive →
+       EdgeTAM mask ready → PCD ready → shape-prior submit。它同时保留 frame-0
+       SAM3.1、EdgeTAM 和 PCD 的已有细分 timing。
+    2. `shape_prior_timing.critical_path`：case write → upscale → SAM3.1 RGBA
+       export → SAM3D generate → align → sample → result finalize。每项有
+       start/end offset、wall duration 和子阶段 `details`。
+    3. 顶层 `warmup_shape_prior_ready_to_gate_open_ms` 与 `warmup_total_ms`：记录
+       prior ready 后写 capture 产物并真正打开 formal gate 的延迟，以及从
+       camera runtime start 到 gate open 的总等待。
+
+    `shape_prior_timing.ranking` 按关键路径 wall duration 排序，`bottleneck`
+    是本轮第一优化目标；`accounted_ms` 和 `unattributed_ms` 用于检查计时是否
+    闭合。这里的排名只描述本轮，不能用单次结果代替多轮 p50/p95。
+
+    三个预热子进程还会在
+    `<shape-prior-case>/shape/timing/{upscale,generate,align}.json` 写 READY 与
+    completed 快照；sample 写 `sample.json`。父进程比较 READY wall time 与
+    GO wall time，给出 `ready_before_go`、`ready_lead_ms` 和
+    `startup_tail_on_critical_path_ms`，因此可以区分“模型已经预热完成”和
+    “GO 发出后仍在补模型加载”。`profile_snapshot_to_parent_return_ms` 还把
+    最后一次 profile snapshot 后的 JSON flush/进程退出成本单独暴露出来。
+
+    子阶段拆分直接对应可优化动作：upscale 区分 model load/crop/inference/
+    PNG write；generate 区分 prepare/model load/pipeline run/GLB/PLY export；
+    align 区分 input/render candidates/SuperGlue/PnP+scale/两段 ARAP/mesh
+    export；sample 区分 mesh load/surface+volume sample/voxel dedup/pickle。
+
+    修改前保存的一轮基线中，submit 后总计约 59.23 s：generate 29.44 s
+    （49.7%）、align 14.26 s（24.1%）、upscale 12.27 s（20.7%）；三者合计
+    94.5%。camera start 到 submit 另约 15.94 s。因此下一轮详细 profile 应先
+    判断 generate 的模型加载还是 pipeline/export 最慢，再判断 align 的
+    render/match 与 ARAP，占比很小的二次 SAM3.1 segment 不是首要目标。
 
     **源码与实测证据：**
 
-    - [`ShapePriorLocalClient.request_shape_prior`](shape_prior_warmup.py#L575)
-      给出完整顺序和五个 timing key。
-    - [`run_sam3d_shape_prior`](shape_prior_generate.py#L163) 执行 SAM3D 并导出
-      mesh；[`shape_prior_align.main`](shape_prior_align.py#L343) 与
-      [`image_pair_matching`](shape_prior_match_pairs.py#L109) 给出
-      SuperGlue-based align 路径。
+    - [`shape_prior_timing`](shape_prior_timing.py) 定义 schema 校验、关键路径
+      闭合与 bottleneck 排名；
+      [`ShapePriorLocalClient.request_shape_prior`](shape_prior_warmup.py) 聚合它。
+    - [`run_sam3d_shape_prior`](shape_prior_generate.py)、
+      [`shape_prior_align.main`](shape_prior_align.py)、
+      [`shape_prior_sample.main`](shape_prior_sample.py) 和
+      [`image_upscale.main`](utils/image_upscale.py) 写子进程明细。
     - [`outputs_v6_1/capture/shape_prior_profile.json`](../outputs_v6_1/capture/shape_prior_profile.json#L5)
-      是上述 32.0/15.2/11.6/3.2/0.34 s 的具体实测记录。
+      是修改前 59.23 s 基线；需要下一次运行才会生成新的详细 schema。
 
 11. **Warm-up 完成后保留哪些状态和文件？**
     `_seg_worker` 在其生命周期内保留 `SegmentationWarmupState`、

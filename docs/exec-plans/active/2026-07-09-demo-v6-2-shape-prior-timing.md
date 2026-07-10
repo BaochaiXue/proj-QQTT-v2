@@ -46,13 +46,13 @@ new real measurements after instrumentation.
 
 ## Plan
 
-- [ ] Define and test the versioned stage/critical-path timing schema.
-- [ ] Instrument upscale, SAM3.1 export, SAM3D generation, alignment, and
+- [x] Define and test the versioned stage/critical-path timing schema.
+- [x] Instrument upscale, SAM3.1 export, SAM3D generation, alignment, and
   sampling at optimization-relevant boundaries.
-- [ ] Aggregate subprocess profiles, frame-0 case preparation, and final
+- [x] Aggregate subprocess profiles, frame-0 case preparation, and final
   result I/O into `shape_prior_profile.json` with a ranked bottleneck.
-- [ ] Document how to read the profile and update focused tests.
-- [ ] Run focused validation and the repository smoke profile.
+- [x] Document how to read the profile and update focused tests.
+- [x] Run focused validation and the repository smoke profile.
 
 ## Validation
 
@@ -64,3 +64,24 @@ Branch/setup:
   because `single-camera` and `origin/main` have diverged; no merge or rebase
   was performed.
 
+Focused validation:
+
+- `python -m unittest -v tests.test_demo_v6_2_shape_prior_timing
+  tests.test_demo_v6_2_cleanup tests.test_demo_v6_2_pipeline_status
+  tests.test_validation_smoke_manifest`
+- Result: `26` tests passed.
+- Scoped Ruff format/check passed. Legacy star-import modules were checked with
+  their existing `F405/E402/F841` categories excluded.
+- All four instrumented subprocess CLIs accepted `--help` in `demo_2_max`.
+
+Repository validation:
+
+- `conda run -n demo_2_max --no-capture-output python
+  scripts/harness/validation/run.py --profile smoke`
+- Result: `205` tests passed; all smoke guards and help probes passed.
+
+Hardware status:
+
+- No new SAM3D/RealSense warm-up was run in this change. The next live or
+  fake-live run will create schema-v1 stage files and the detailed final
+  profile; the pre-change `outputs_v6_1` profile remains the baseline only.

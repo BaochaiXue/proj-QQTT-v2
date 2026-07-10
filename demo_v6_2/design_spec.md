@@ -12,6 +12,33 @@
 - warmup frame 0 的锚位只能由 chunk-ready 的行占据（controller ≥ 30 点、object > 0 点，与 bridge 的 `_row_ready_for_realtime_chunk_start` 一致）；实况相机在对齐 PCD 就绪前吐出的无效首帧照常写行、由 bridge 修剪，不触发闸门。
 - run 在闸门期内结束（prior 未就绪、正式时间线从未开始）时，收尾必须响亮报错并在 metadata 标记 `formal_timeline_incomplete`，绝不能以"成功零 chunk"收场。`--duration-s` 只计正式采集时段，不含闸门等待。
 
+## warmup 时间分析契约
+
+- `capture/shape_prior_profile.json` 是 warmup 性能分析的权威快照；
+  `pipeline_status.jsonl` 只服务实时 UI，不用于跨进程相减或性能结论。
+- 所有 duration 使用 `time.perf_counter()` wall time，单位统一为毫秒。
+  跨 shape-prior 子进程的 READY/GO 判断使用同机 `time.time()` epoch，并只
+  用于计算预热是否及时；source timestamp 不参与性能计算。
+- `shape_prior_timing.schema_version = 1`。`pre_submit` 记录 runtime start、
+  frame-0 receive/mask/PCD ready 到 submit；`critical_path` 固定按
+  `case_write, upscale, segment_image, generate, align, sample,
+  result_finalize` 排列。
+- `critical_path` 的父进程 wall duration 是瓶颈排名的依据。子进程
+  `timing_ms.total_ms` 是主动工作合计、不含等待 GO 的 idle；
+  `process_lifetime_ms` 单独包含进程生命周期，`go_wait_ms` 单独报告 idle。
+- `accounted_ms` 是七段 duration 之和，`unattributed_ms = total_ms -
+  accounted_ms`；负数、非有限值、阶段错序、错误 schema、缺失 completed
+  stage profile 都立即失败，不能输出误导性的零耗时。
+- `warmup_runtime_start_to_shape_prior_ready_ms` 表示 prior 已算完；
+  `warmup_shape_prior_ready_to_gate_open_ms` 还包括 capture 产物写入和正式路径
+  实际观察 READY 的延迟；`warmup_total_ms` 才是操作员从 camera runtime
+  start 等到可以开始正式运动的总时间。
+- 删除旧的 `shape_prior_submit_ms`、`first_mask_depth_pair_ms` 和
+  `first_strict_pair_ms`：本地 v6.2 从未给后两项赋真实测量，且前者曾错误表示
+  request 总耗时。对应语义现在分别由
+  `runtime_start_to_shape_prior_submit_ms`、`shape_prior_request_total_ms` 和明确
+  的 pre-submit milestone 取代，不能继续写误导性的 `0.0`。
+
 在我们设计demo 6.1开始会建立一个总表，我们会用dictionary like的数据结构存储每一个controller point的最近的100 controler point。（如果不足则选满同一只手），你必须确保我们的每一个controller point的最近的100 controler point选择的时候都是在同一只手上
 我们会考虑二个大类3种情况。这里先把 invalid state 定义清楚：
 

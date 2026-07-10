@@ -15,6 +15,8 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from demo_v6_2.shape_prior_timing import elapsed_ms
+
 
 QQTT_SAM31_CHECKPOINT_ENV = "QQTT_SAM31_CHECKPOINT"
 QQTT_SAM31_BPE_PATH_ENV = "QQTT_SAM31_BPE_PATH"
@@ -76,7 +78,9 @@ def resolve_sam31_checkpoint_path(checkpoint_path: str | Path | None = None) -> 
     if checkpoint_path is not None:
         resolved = Path(checkpoint_path).expanduser().resolve()
         if not resolved.is_file():
-            raise FileNotFoundError(f"--checkpoint points to a missing file: {resolved}")
+            raise FileNotFoundError(
+                f"--checkpoint points to a missing file: {resolved}"
+            )
         return str(resolved)
 
     checkpoint_override = os.getenv(QQTT_SAM31_CHECKPOINT_ENV)
@@ -200,15 +204,21 @@ def _build_sam31_image_processor(
     )
     if reuse_model and cache_key in _IMAGE_PROCESSOR_CACHE:
         model, processor = _IMAGE_PROCESSOR_CACHE[cache_key]
-        return model, processor, resolved_checkpoint, resolved_bpe_path, {
-            "cache_hit": True,
-            "import_ms": import_ms,
-            "configure_ms": configure_ms,
-            "resolve_paths_ms": resolve_ms,
-            "model_load_ms": 0.0,
-            "processor_init_ms": 0.0,
-            "total_ms": float((time.perf_counter() - total_start_s) * 1000.0),
-        }
+        return (
+            model,
+            processor,
+            resolved_checkpoint,
+            resolved_bpe_path,
+            {
+                "cache_hit": True,
+                "import_ms": import_ms,
+                "configure_ms": configure_ms,
+                "resolve_paths_ms": resolve_ms,
+                "model_load_ms": 0.0,
+                "processor_init_ms": 0.0,
+                "total_ms": float((time.perf_counter() - total_start_s) * 1000.0),
+            },
+        )
 
     model_start_s = time.perf_counter()
     model = build_sam3_image_model(
@@ -231,15 +241,21 @@ def _build_sam31_image_processor(
     if reuse_model:
         _IMAGE_PROCESSOR_CACHE[cache_key] = (model, processor)
 
-    return model, processor, resolved_checkpoint, resolved_bpe_path, {
-        "cache_hit": False,
-        "import_ms": import_ms,
-        "configure_ms": configure_ms,
-        "resolve_paths_ms": resolve_ms,
-        "model_load_ms": model_load_ms,
-        "processor_init_ms": processor_init_ms,
-        "total_ms": float((time.perf_counter() - total_start_s) * 1000.0),
-    }
+    return (
+        model,
+        processor,
+        resolved_checkpoint,
+        resolved_bpe_path,
+        {
+            "cache_hit": False,
+            "import_ms": import_ms,
+            "configure_ms": configure_ms,
+            "resolve_paths_ms": resolve_ms,
+            "model_load_ms": model_load_ms,
+            "processor_init_ms": processor_init_ms,
+            "total_ms": float((time.perf_counter() - total_start_s) * 1000.0),
+        },
+    )
 
 
 def _as_numpy_array(value: Any) -> np.ndarray:
@@ -419,33 +435,42 @@ def segment_image_to_origin_rgba(
     output_path: str | Path,
     device: str = "cuda",
     reuse_model: bool = False,
-) -> Path:
-    """Segment image to origin RGBA."""
+) -> tuple[Path, dict[str, Any]]:
+    """Segment one image and return its RGBA export timing breakdown."""
+    total_start_s = time.perf_counter()
     prompt_labels = parse_text_prompts(text_prompt)
     if len(prompt_labels) != 1:
         raise ValueError("--TEXT_PROMPT must resolve to exactly one prompt")
 
     # The image is read twice on purpose: cv2 supplies the raw pixels for the
     # RGBA export while PIL feeds the model in the format the processor expects.
+    input_read_start_s = time.perf_counter()
     image_path = Path(img_path)
     raw_img = cv2.imread(str(image_path))
     if raw_img is None:
         raise FileNotFoundError(f"Unable to read image: {image_path}")
 
     with Image.open(image_path) as image:
-        result = run_image_segmentation(
-            image=image.convert("RGB"),
-            text_prompt=text_prompt,
-            checkpoint_path=None,
-            compile_model=False,
-            max_num_objects=16,
-            confidence_threshold=0.5,
-            device=device,
-            reuse_model=bool(reuse_model),
-        )
+        model_image = image.convert("RGB")
+    input_read_ms = elapsed_ms(input_read_start_s)
+
+    result = run_image_segmentation(
+        image=model_image,
+        text_prompt=text_prompt,
+        checkpoint_path=None,
+        compile_model=False,
+        max_num_objects=16,
+        confidence_threshold=0.5,
+        device=device,
+        reuse_model=bool(reuse_model),
+    )
+    inference_timing = result.get("timing_ms")
+    if not isinstance(inference_timing, dict):
+        raise RuntimeError("SAM3.1 result timing_ms must be an object")
 
     # Union every instance mask returned for the label; the RGBA export wants
     # one foreground mask, not per-instance masks.
+    mask_union_start_s = time.perf_counter()
     label = prompt_labels[0]
     label_masks = list(result["masks_by_label"].get(label, []))
     if not label_masks:
@@ -462,9 +487,11 @@ def segment_image_to_origin_rgba(
             f"SAM3.1 mask shape {mask.shape} does not match image shape "
             f"{tuple(raw_img.shape[:2])}"
         )
+    mask_union_ms = elapsed_ms(mask_union_start_s)
 
     # Origin-parity export: foreground keeps the original pixel values, the
     # alpha channel is 255 inside the mask and 0 (with black RGB) outside.
+    output_write_start_s = time.perf_counter()
     h, w = mask.shape
     ref_img = np.zeros((h, w, 4), dtype=np.uint8)
     mask_bool = mask > 0
@@ -475,7 +502,15 @@ def segment_image_to_origin_rgba(
     output.parent.mkdir(parents=True, exist_ok=True)
     if not cv2.imwrite(str(output), ref_img):
         raise RuntimeError(f"Unable to write masked image: {output}")
-    return output
+    output_write_ms = elapsed_ms(output_write_start_s)
+    timing = {
+        "input_read_ms": input_read_ms,
+        "inference": dict(inference_timing),
+        "mask_union_ms": mask_union_ms,
+        "output_write_ms": output_write_ms,
+        "total_ms": elapsed_ms(total_start_s),
+    }
+    return output, timing
 
 
 def build_parser() -> ArgumentParser:

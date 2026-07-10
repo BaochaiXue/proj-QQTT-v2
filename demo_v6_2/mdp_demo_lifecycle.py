@@ -12,6 +12,7 @@ from demo_v6_2.pipeline_status import (
     STAGE_FATAL,
     PipelineStatusWriter,
 )
+from demo_v6_2.utils.atomic_io import atomic_json_dump
 
 
 class _LifecycleMixin:
@@ -118,6 +119,8 @@ class _LifecycleMixin:
         self._warmup_anchor_row_written = False
         self._formal_timeline_gate_started_s: float | None = None
         self._formal_timeline_gate_expired = False
+        self._warmup_runtime_start_perf_s: float | None = None
+        self._warmup_perception_profile: dict[str, Any] = {}
         self.table_c2w: np.ndarray | None = None
         self.table_calibration_path: Path | None = None
         self._recording_first_frame_segmented = threading.Event()
@@ -214,9 +217,8 @@ class _LifecycleMixin:
         if path is None:
             return
         output_path = Path(path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
         payload = self._shape_prior_profile_payload() if profile is None else dict(profile)
-        output_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        atomic_json_dump(payload, output_path)
 
     def _initialize_table_calibration(self) -> None:
         """Initialize table calibration."""
@@ -381,9 +383,6 @@ class _LifecycleMixin:
             ),
             "shape_prior_source_seq": shape_profile.get("shape_prior_source_seq"),
             "shape_prior_source_time_s": shape_profile.get("shape_prior_source_time_s"),
-            "shape_prior_submit_ms": float(shape_profile.get("shape_prior_submit_ms", 0.0) or 0.0),
-            "first_mask_depth_pair_ms": float(shape_profile.get("first_mask_depth_pair_ms", 0.0) or 0.0),
-            "first_strict_pair_ms": float(shape_profile.get("first_strict_pair_ms", 0.0) or 0.0),
             "shape_prior_depth_backend": depth_backend_label(self.args),
             "shape_prior_depth_source_internal": str(self.args.depth_source),
             "execution_mode": PHYSTWIN_STRICT_EXECUTION_MODE,
@@ -486,6 +485,7 @@ class _LifecycleMixin:
 
     def run(self) -> int:
         """Run MainDataProcessingDemo."""
+        self._warmup_runtime_start_perf_s = time.perf_counter()
         self._status.emit(STAGE_CAPTURE_START, f"input={self.args.input_source}")
         main_warmup.prepare_runtime_services_and_source(
             self,

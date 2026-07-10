@@ -6,18 +6,27 @@
 import json
 import os
 import pickle
+import time
 from argparse import ArgumentParser, Namespace
 
-import cv2
-import matplotlib.pyplot as plt
-import numpy as np
-import open3d as o3d
-import torch
-import trimesh
-from demo_v6_2.shape_prior_match_pairs import image_pair_matching
-from scipy.optimize import minimize
-from scipy.spatial import KDTree
-from demo_v6_2.utils.align_util import (
+_MODULE_IMPORT_STARTED_S = time.perf_counter()
+
+import cv2  # noqa: E402
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import open3d as o3d  # noqa: E402
+import torch  # noqa: E402
+import trimesh  # noqa: E402
+from demo_v6_2.shape_prior_match_pairs import image_pair_matching  # noqa: E402
+from demo_v6_2.shape_prior_timing import (  # noqa: E402
+    STAGE_PROFILE_STATUS_COMPLETED,
+    STAGE_PROFILE_STATUS_WAITING,
+    elapsed_ms,
+    write_stage_profile,
+)
+from scipy.optimize import minimize  # noqa: E402
+from scipy.spatial import KDTree  # noqa: E402
+from demo_v6_2.utils.align_util import (  # noqa: E402
     as_mesh,
     plot_image_with_points,
     plot_mesh_with_points,
@@ -26,6 +35,8 @@ from demo_v6_2.utils.align_util import (
     render_multi_images,
     select_point,
 )
+
+_MODULE_IMPORT_MS = elapsed_ms(_MODULE_IMPORT_STARTED_S)
 
 VIS = False
 parser = ArgumentParser()
@@ -48,6 +59,12 @@ parser.add_argument(
     action="store_true",
     help="Preload CUDA + SuperGlue, then block on stdin for GO before aligning.",
 )
+parser.add_argument(
+    "--profile-json",
+    type=str,
+    default=None,
+    help="Optional JSON path for detailed align-stage timing.",
+)
 # Import-safe placeholder so the module can be imported without CLI args;
 # main() re-parses argv and rebinds these globals.
 args = Namespace(
@@ -55,6 +72,7 @@ args = Namespace(
     case_name="",
     controller_name="",
     wait_signal=False,
+    profile_json=None,
 )
 
 base_path = args.base_path
@@ -70,7 +88,13 @@ def existDir(dir_path):
 
 
 def pose_selection_render_superglue(
-    raw_img, fov, mesh_path, mesh, crop_img, output_dir
+    raw_img,
+    fov,
+    mesh_path,
+    mesh,
+    crop_img,
+    output_dir,
+    timing_ms=None,
 ):
     # Calculate suitable rendering radius
     """Return the pose selection render superglue."""
@@ -79,6 +103,7 @@ def pose_selection_render_superglue(
     radius = 2 * (max_dimension / 2) / np.tan(fov / 2)
 
     # Render multimle images and feature matching
+    render_started_s = time.perf_counter()
     colors, depths, camera_poses, camera_intrinsics = render_multi_images(
         mesh_path,
         raw_img.shape[1],
@@ -89,16 +114,22 @@ def pose_selection_render_superglue(
         num_ups=4,
         device="cuda",
     )
+    render_candidates_ms = elapsed_ms(render_started_s)
     grays = [cv2.cvtColor(color, cv2.COLOR_BGR2GRAY) for color in colors]
     # Use superglue to match the features
+    match_started_s = time.perf_counter()
     best_idx, match_result = image_pair_matching(
         grays, crop_img, output_dir, viz_best=True
     )
+    superglue_match_ms = elapsed_ms(match_started_s)
     print("matched point number", np.sum(match_result["matches"] > -1))
 
     best_color = colors[best_idx]
     best_depth = depths[best_idx]
     best_pose = camera_poses[best_idx].cpu().numpy()
+    if timing_ms is not None:
+        timing_ms["render_candidates_ms"] = render_candidates_ms
+        timing_ms["superglue_match_ms"] = superglue_match_ms
     return best_color, best_depth, best_pose, match_result, camera_intrinsics
 
 
@@ -138,6 +169,7 @@ def registration_pnp(mesh_matching_points, raw_matching_points, intrinsic):
 def registration_scale(mesh_matching_points_cam, matching_points_cam):
     # After PNP, optimize the scale in the camera coordinate
     """Return the registration scale."""
+
     def objective(scale, mesh_points, pcd_points):
         """Return the objective."""
         transformed_points = scale * mesh_points
@@ -296,16 +328,20 @@ def align_full_vendor_compatible(
     trimesh_indices,
     c2ws,
     w2cs,
+    timing_ms=None,
 ):
     # ARAP based on the keypoints
     """Return the align full vendor compatible."""
+    keypoint_started_s = time.perf_counter()
     deform_kp_mesh_world, mesh_points_indices = deform_ARAP(
         initial_mesh_world, mesh_matching_points_world, matching_points
     )
+    arap_keypoint_ms = elapsed_ms(keypoint_started_s)
 
     # Do the ARAP based on both the ray-casting matching and the keypoints
     # Identify the vertex which blocks or blocked by the observation, then match them with the observation points on the ray
-    return deform_ARAP_ray_registration(
+    ray_started_s = time.perf_counter()
+    final_mesh_world = deform_ARAP_ray_registration(
         deform_kp_mesh_world,
         obs_points,
         mesh,
@@ -315,6 +351,10 @@ def align_full_vendor_compatible(
         mesh_points_indices,
         matching_points,
     )
+    if timing_ms is not None:
+        timing_ms["arap_keypoint_ms"] = arap_keypoint_ms
+        timing_ms["arap_ray_ms"] = elapsed_ms(ray_started_s)
+    return final_mesh_world
 
 
 def line_point_distance(p, points):
@@ -349,14 +389,52 @@ def main(argv=None):
     case_name = args.case_name
     CONTROLLER_NAME = args.controller_name
     output_dir = f"{base_path}/{case_name}/shape/matching"
+    execution_mode = "prewarmed" if args.wait_signal else "cold"
+    ready_wall_time_s = None
+    timing_ms = {
+        "module_import_ms": _MODULE_IMPORT_MS,
+        "model_prewarm_ms": 0.0,
+        "input_load_ms": 0.0,
+        "render_candidates_ms": 0.0,
+        "superglue_match_ms": 0.0,
+        "pnp_scale_ms": 0.0,
+        "observation_prepare_ms": 0.0,
+        "arap_keypoint_ms": 0.0,
+        "arap_ray_ms": 0.0,
+        "mesh_export_ms": 0.0,
+        "go_wait_ms": 0.0,
+        "post_go_ms": 0.0,
+        "total_ms": 0.0,
+        "process_lifetime_ms": 0.0,
+    }
 
     if args.wait_signal:
         from demo_v6_2.utils import stage_prewarm  # noqa: PLC0415
 
+        prewarm_started_s = time.perf_counter()
         _prewarm_models()
-        if not stage_prewarm.wait_for_go("align"):
+        timing_ms["model_prewarm_ms"] = elapsed_ms(prewarm_started_s)
+        ready_wall_time_s = time.time()
+        timing_ms["total_ms"] = float(
+            timing_ms["module_import_ms"] + timing_ms["model_prewarm_ms"]
+        )
+        timing_ms["process_lifetime_ms"] = elapsed_ms(_MODULE_IMPORT_STARTED_S)
+        write_stage_profile(
+            args.profile_json,
+            stage="align",
+            status=STAGE_PROFILE_STATUS_WAITING,
+            execution_mode=execution_mode,
+            timing_ms=timing_ms,
+            ready_wall_time_s=ready_wall_time_s,
+        )
+        go_wait_started_s = time.perf_counter()
+        should_run = stage_prewarm.wait_for_go("align")
+        timing_ms["go_wait_ms"] = elapsed_ms(go_wait_started_s)
+        if not should_run:
             return
 
+    stage_started_s = time.perf_counter()
+    input_load_started_s = time.perf_counter()
     existDir(output_dir)
 
     cam_idx = 0
@@ -396,9 +474,11 @@ def main(argv=None):
 
     # Calculate camera parameters
     fov = 2 * np.arctan(raw_img.shape[1] / (2 * intrinsic[0, 0]))
+    timing_ms["input_load_ms"] = elapsed_ms(input_load_started_s)
 
     if not os.path.exists(f"{output_dir}/best_match.pkl"):
         # 2D feature Matching to get the best pose of the object
+        crop_started_s = time.perf_counter()
         bbox = np.argwhere(mask_img > 0.8 * 255)
         bbox = (
             np.min(bbox[:, 1]),
@@ -428,6 +508,7 @@ def main(argv=None):
         crop_img[~mask_bool] = 0
         crop_img = crop_img[bbox[1] : bbox[3], bbox[0] : bbox[2]]
         crop_img = cv2.cvtColor(crop_img, cv2.COLOR_RGB2GRAY)
+        timing_ms["input_load_ms"] += elapsed_ms(crop_started_s)
 
         # Render the object and match the features
         best_color, best_depth, best_pose, match_result, camera_intrinsics = (
@@ -438,6 +519,7 @@ def main(argv=None):
                 mesh,
                 crop_img,
                 output_dir=output_dir,
+                timing_ms=timing_ms,
             )
         )
         with open(f"{output_dir}/best_match.pkl", "wb") as f:
@@ -453,13 +535,16 @@ def main(argv=None):
                 f,
             )
     else:
+        cached_match_started_s = time.perf_counter()
         with open(f"{output_dir}/best_match.pkl", "rb") as f:
             best_color, best_depth, best_pose, match_result, camera_intrinsics, bbox = (
                 pickle.load(f)
             )
+        timing_ms["input_load_ms"] += elapsed_ms(cached_match_started_s)
 
     # Process to get the matching points on the mesh and on the image
     # Get the projected 3D matching points on the mesh
+    observation_started_s = time.perf_counter()
     valid_matches = match_result["matches"] > -1
     render_matching_points = match_result["keypoints0"][valid_matches]
     mesh_matching_points, valid_mask = project_2d_to_3d(
@@ -472,6 +557,7 @@ def main(argv=None):
     ]
     raw_matching_points_box = raw_matching_points_box[valid_mask]
     raw_matching_points = raw_matching_points_box + np.array([bbox[0], bbox[1]])
+    timing_ms["observation_prepare_ms"] += elapsed_ms(observation_started_s)
 
     if VIS:
         # Do visualization for the matching
@@ -492,9 +578,11 @@ def main(argv=None):
         )
 
     # Do PnP optimization to optimize the rotation between the 3D mesh keypoints and the 2D image keypoints
+    pnp_started_s = time.perf_counter()
     mesh2raw_camera = registration_pnp(
         mesh_matching_points, raw_matching_points, intrinsic
     )
+    timing_ms["pnp_scale_ms"] += elapsed_ms(pnp_started_s)
 
     if VIS:
         pnp_camera_pose = np.eye(4, dtype=np.float32)
@@ -509,6 +597,7 @@ def main(argv=None):
         plt.imsave(f"{output_dir}/pnp_results.png", color[0])
 
     # Transform the mesh into the real world coordinate
+    observation_started_s = time.perf_counter()
     mesh_matching_points_cam = np.dot(
         mesh2raw_camera,
         np.hstack(
@@ -564,10 +653,15 @@ def main(argv=None):
             new_match,
         )
 
+    timing_ms["observation_prepare_ms"] += elapsed_ms(observation_started_s)
+
     # Use the matching points in the camera coordinate to optimize the scame between the mesh and the observation
+    scale_started_s = time.perf_counter()
     optimal_scale = registration_scale(mesh_matching_points_cam, matching_points_cam)
+    timing_ms["pnp_scale_ms"] += elapsed_ms(scale_started_s)
 
     # Compute the rigid transformation from the original mesh to the final world coordinate
+    observation_started_s = time.perf_counter()
     scale_matrix = np.eye(4) * optimal_scale
     scale_matrix[3, 3] = 1
     mesh2world = np.dot(c2w, np.dot(scale_matrix, mesh2raw_camera))
@@ -592,6 +686,7 @@ def main(argv=None):
     _, trimesh_indices = kdtree.query(np.asarray(mesh.vertices))
     trimesh_indices = np.asarray(trimesh_indices, dtype=np.int32)
     initial_mesh_world.transform(mesh2world)
+    timing_ms["observation_prepare_ms"] += elapsed_ms(observation_started_s)
 
     final_mesh_world = align_full_vendor_compatible(
         initial_mesh_world,
@@ -602,6 +697,7 @@ def main(argv=None):
         trimesh_indices,
         c2ws,
         w2cs,
+        timing_ms=timing_ms,
     )
 
     if VIS:
@@ -642,8 +738,37 @@ def main(argv=None):
             video_writer.write(frame)
         vis.destroy_window()
 
+    mesh_export_started_s = time.perf_counter()
     mesh.vertices = np.asarray(final_mesh_world.vertices)[trimesh_indices]
     mesh.export(f"{output_dir}/final_mesh.glb")
+    timing_ms["mesh_export_ms"] = elapsed_ms(mesh_export_started_s)
+    timing_ms["post_go_ms"] = elapsed_ms(stage_started_s)
+    timing_ms["total_ms"] = float(
+        sum(
+            timing_ms[field]
+            for field in (
+                "module_import_ms",
+                "model_prewarm_ms",
+                "input_load_ms",
+                "render_candidates_ms",
+                "superglue_match_ms",
+                "pnp_scale_ms",
+                "observation_prepare_ms",
+                "arap_keypoint_ms",
+                "arap_ray_ms",
+                "mesh_export_ms",
+            )
+        )
+    )
+    timing_ms["process_lifetime_ms"] = elapsed_ms(_MODULE_IMPORT_STARTED_S)
+    write_stage_profile(
+        args.profile_json,
+        stage="align",
+        status=STAGE_PROFILE_STATUS_COMPLETED,
+        execution_mode=execution_mode,
+        timing_ms=timing_ms,
+        ready_wall_time_s=ready_wall_time_s,
+    )
 
 
 if __name__ == "__main__":

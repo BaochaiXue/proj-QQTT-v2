@@ -1,4 +1,5 @@
 """Single-camera shape-prior warmup for Demo v6.1."""
+
 from __future__ import annotations
 
 import atexit
@@ -18,6 +19,12 @@ from PIL import Image
 
 from demo_v6_2.phystwin_strict_product import (
     apply_radius_outlier_to_mask_frame,
+)
+from demo_v6_2.shape_prior_timing import (
+    build_critical_path_analysis,
+    critical_path_entry,
+    elapsed_ms,
+    load_completed_stage_profile,
 )
 
 
@@ -71,6 +78,12 @@ class ShapePriorFrame0Request:
     k_color: np.ndarray
     camera_to_world_c2w: np.ndarray
     table_z_m: float | None = None
+    warmup_runtime_start_perf_s: float | None = None
+    frame_receive_perf_s: float | None = None
+    frame_mask_ready_perf_s: float | None = None
+    frame_pcd_ready_perf_s: float | None = None
+    frame0_pipeline_timing_ms: dict[str, float] = field(default_factory=dict)
+    frame0_perception_profile: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -103,7 +116,10 @@ def default_profile(*, enabled: bool) -> dict[str, Any]:
         "shape_prior_status": status,
         "shape_prior_source_seq": None,
         "shape_prior_source_time_s": None,
-        "shape_prior_submit_ms": 0.0,
+        "shape_prior_request_total_ms": 0.0,
+        "warmup_runtime_start_to_shape_prior_ready_ms": None,
+        "warmup_shape_prior_ready_to_gate_open_ms": None,
+        "warmup_total_ms": None,
         "shape_prior_error": None,
     }
 
@@ -164,7 +180,9 @@ def _write_mask(mask: np.ndarray, path: Path) -> None:
 def _write_json(payload: dict[str, Any], path: Path) -> None:
     """Write JSON."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def _run_stage(command: list[str], *, env: dict[str, str]) -> float:
@@ -191,6 +209,58 @@ def _points_array(value: np.ndarray, *, name: str) -> np.ndarray:
     if points.ndim != 2 or points.shape[1] != 3:
         raise ValueError(f"{name} must have shape Nx3")
     return np.ascontiguousarray(points, dtype=np.float32)
+
+
+def _pre_submit_timing(
+    frame0: ShapePriorFrame0Request,
+    *,
+    request_start_s: float,
+) -> dict[str, Any]:
+    """Describe the camera-process critical path before shape-prior submit."""
+    milestones = (
+        frame0.warmup_runtime_start_perf_s,
+        frame0.frame_receive_perf_s,
+        frame0.frame_mask_ready_perf_s,
+        frame0.frame_pcd_ready_perf_s,
+    )
+    if all(value is None for value in milestones):
+        return {
+            "available": False,
+            "reason": "standalone request has no camera warm-up milestones",
+        }
+    if any(value is None for value in milestones):
+        raise ValueError("shape-prior pre-submit milestones must be all present")
+    runtime_start_s, receive_s, mask_ready_s, pcd_ready_s = (
+        float(value) for value in milestones if value is not None
+    )
+    ordered = (
+        runtime_start_s,
+        receive_s,
+        mask_ready_s,
+        pcd_ready_s,
+        float(request_start_s),
+    )
+    if any(current < previous for previous, current in zip(ordered, ordered[1:])):
+        raise ValueError("shape-prior pre-submit milestones are not monotonic")
+    return {
+        "available": True,
+        "runtime_start_to_frame0_receive_ms": elapsed_ms(
+            runtime_start_s,
+            receive_s,
+        ),
+        "frame0_receive_to_mask_ready_ms": elapsed_ms(receive_s, mask_ready_s),
+        "mask_ready_to_pcd_ready_ms": elapsed_ms(mask_ready_s, pcd_ready_s),
+        "pcd_ready_to_shape_prior_submit_ms": elapsed_ms(
+            pcd_ready_s,
+            request_start_s,
+        ),
+        "runtime_start_to_shape_prior_submit_ms": elapsed_ms(
+            runtime_start_s,
+            request_start_s,
+        ),
+        "frame0_pipeline_timing_ms": dict(frame0.frame0_pipeline_timing_ms),
+        "perception_profile": dict(frame0.frame0_perception_profile),
+    }
 
 
 def write_shape_prior_points_npz(
@@ -357,7 +427,9 @@ def write_shape_prior_case(
                 "object_points": object_points[None].astype(np.float32),
                 "object_colors": object_colors[None].astype(np.float32),
                 "object_visibilities": np.ones((1, object_points.shape[0]), dtype=bool),
-                "object_motions_valid": np.ones((1, object_points.shape[0]), dtype=bool),
+                "object_motions_valid": np.ones(
+                    (1, object_points.shape[0]), dtype=bool
+                ),
                 "controller_points": controller_points[None].astype(np.float32),
             },
             handle,
@@ -414,6 +486,10 @@ class ShapePriorLocalClient:
         self._prewarm_lock = threading.Lock()
         self._atexit_registered = False
 
+    def _stage_profile_path(self, stage: str) -> Path:
+        """Return the fixed detailed timing path for one subprocess stage."""
+        return self.case_root / self.case_name / "shape" / "timing" / f"{stage}.json"
+
     def _stage_env(self) -> dict[str, str]:
         """Environment shared by all stage subprocesses (cold or pre-warmed)."""
         # Subprocess stages must import demo_v6_1 both as a package (repo
@@ -444,6 +520,8 @@ class ShapePriorLocalClient:
             str(shape_dir / "high_resolution.png"),
             "--category",
             self.object_name,
+            "--profile-json",
+            str(self._stage_profile_path(PREWARM_STAGE_UPSCALE)),
         ]
         generate = [
             sys.executable,
@@ -454,6 +532,8 @@ class ShapePriorLocalClient:
             "--output_dir",
             str(shape_dir),
             "--skip-visualization",
+            "--profile-json",
+            str(self._stage_profile_path(PREWARM_STAGE_GENERATE)),
         ]
         if self.sam3d_root is not None:
             generate.extend(["--sam3d-root", str(self.sam3d_root)])
@@ -469,6 +549,8 @@ class ShapePriorLocalClient:
             self.case_name,
             "--controller_name",
             self.controller_name,
+            "--profile-json",
+            str(self._stage_profile_path(PREWARM_STAGE_ALIGN)),
         ]
         return {
             PREWARM_STAGE_UPSCALE: upscale,
@@ -539,14 +621,15 @@ class ShapePriorLocalClient:
 
     def _run_prewarmed_stage(
         self, worker: subprocess.Popen[str], *, stage_name: str
-    ) -> float:
-        """Signal GO to a pre-warmed worker and wait; returns wall time in ms."""
+    ) -> tuple[float, float]:
+        """Signal GO and return its critical-path time and wall timestamp."""
         if worker.poll() is not None:
             raise RuntimeError(
                 f"pre-warmed {stage_name} worker exited before GO "
                 f"with code {worker.returncode}"
             )
         start_s = time.perf_counter()
+        go_wall_time_s = time.time()
         assert worker.stdin is not None
         worker.stdin.write("GO\n")
         worker.stdin.flush()
@@ -554,7 +637,7 @@ class ShapePriorLocalClient:
         returncode = worker.wait()
         if returncode != 0:
             raise subprocess.CalledProcessError(returncode, worker.args)
-        return (time.perf_counter() - start_s) * 1000.0
+        return elapsed_ms(start_s), float(go_wall_time_s)
 
     def _run_stage_maybe_prewarmed(
         self,
@@ -563,17 +646,102 @@ class ShapePriorLocalClient:
         *,
         env: dict[str, str],
         prewarmed_stages: list[str],
-    ) -> float:
+    ) -> tuple[float, dict[str, Any]]:
         """Run a stage via its pre-warmed worker when present, else cold."""
         worker = self._take_prewarmed_worker(stage)
         if worker is None:
-            return _run_stage(command, env=env)
-        elapsed_ms = self._run_prewarmed_stage(worker, stage_name=stage)
+            stage_ms = _run_stage(command, env=env)
+            return stage_ms, {
+                "execution_mode": "cold",
+                "critical_path_ms": float(stage_ms),
+                "go_wall_time_s": None,
+            }
+        stage_ms, go_wall_time_s = self._run_prewarmed_stage(
+            worker,
+            stage_name=stage,
+        )
         prewarmed_stages.append(stage)
-        return elapsed_ms
+        return stage_ms, {
+            "execution_mode": "prewarmed",
+            "critical_path_ms": float(stage_ms),
+            "go_wall_time_s": float(go_wall_time_s),
+        }
+
+    def _completed_stage_details(
+        self,
+        stage: str,
+        *,
+        orchestration: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Load child timing and attribute any unfinished prewarm at GO."""
+        profile = load_completed_stage_profile(
+            self._stage_profile_path(stage),
+            expected_stage=stage,
+        )
+        expected_mode = str(orchestration["execution_mode"])
+        if str(profile.get("execution_mode")) != expected_mode:
+            raise ValueError(
+                f"shape-prior {stage} execution mode mismatch: "
+                f"parent={expected_mode!r} child={profile.get('execution_mode')!r}"
+            )
+        go_wall_time_s = orchestration.get("go_wall_time_s")
+        ready_wall_time_s = profile.get("ready_wall_time_s")
+        readiness: dict[str, Any] = {
+            "ready_before_go": None,
+            "ready_lead_ms": None,
+            "startup_tail_on_critical_path_ms": None,
+        }
+        if expected_mode == "prewarmed":
+            if go_wall_time_s is None or ready_wall_time_s is None:
+                raise ValueError(
+                    f"prewarmed shape-prior stage {stage!r} lacks READY timing"
+                )
+            delta_ms = (float(go_wall_time_s) - float(ready_wall_time_s)) * 1000.0
+            readiness = {
+                "ready_before_go": bool(delta_ms >= 0.0),
+                "ready_lead_ms": max(0.0, float(delta_ms)),
+                "startup_tail_on_critical_path_ms": max(
+                    0.0,
+                    float(-delta_ms),
+                ),
+            }
+        critical_path_ms = float(orchestration["critical_path_ms"])
+        snapshot_wall_time_s = float(profile["snapshot_wall_time_s"])
+        if go_wall_time_s is not None:
+            profile_snapshot_from_parent_start_ms = max(
+                0.0,
+                (snapshot_wall_time_s - float(go_wall_time_s)) * 1000.0,
+            )
+        else:
+            process_lifetime_ms = profile["timing_ms"].get("process_lifetime_ms")
+            profile_snapshot_from_parent_start_ms = (
+                None if process_lifetime_ms is None else float(process_lifetime_ms)
+            )
+        exit_after_profile_ms = (
+            None
+            if profile_snapshot_from_parent_start_ms is None
+            else max(
+                0.0,
+                critical_path_ms - profile_snapshot_from_parent_start_ms,
+            )
+        )
+        details = dict(profile)
+        details["orchestration"] = {
+            **orchestration,
+            **readiness,
+            "profile_snapshot_from_parent_start_ms": (
+                profile_snapshot_from_parent_start_ms
+            ),
+            "profile_snapshot_to_parent_return_ms": exit_after_profile_ms,
+        }
+        return details
 
     def request_shape_prior(self, frame0: ShapePriorFrame0Request) -> ShapePriorResult:
         """Request shape prior."""
+        request_start_s = time.perf_counter()
+        critical_path: list[dict[str, Any]] = []
+
+        case_start_s = time.perf_counter()
         paths = write_shape_prior_case(
             frame0,
             case_root=self.case_root,
@@ -581,89 +749,212 @@ class ShapePriorLocalClient:
             object_name=self.object_name,
             controller_name=self.controller_name,
         )
+        case_end_s = time.perf_counter()
+        critical_path.append(
+            critical_path_entry(
+                stage="case_write",
+                path_start_s=request_start_s,
+                stage_start_s=case_start_s,
+                stage_end_s=case_end_s,
+            )
+        )
         env = self._stage_env()
         commands = self._stage_commands()
         prewarmed_stages: list[str] = []
-        timings: dict[str, float] = {}
 
         high_resolution_path = paths["shape"] / "high_resolution.png"
         masked_image_path = paths["shape"] / "masked_image.png"
 
-        timings["shape_prior_upscale_ms"] = self._run_stage_maybe_prewarmed(
+        upscale_start_s = time.perf_counter()
+        _upscale_ms, upscale_orchestration = self._run_stage_maybe_prewarmed(
             PREWARM_STAGE_UPSCALE,
             commands[PREWARM_STAGE_UPSCALE],
             env=env,
             prewarmed_stages=prewarmed_stages,
         )
+        upscale_end_s = time.perf_counter()
         _require_stage_file(high_resolution_path, stage_name="shape-prior upscale")
+        critical_path.append(
+            critical_path_entry(
+                stage="upscale",
+                path_start_s=request_start_s,
+                stage_start_s=upscale_start_s,
+                stage_end_s=upscale_end_s,
+                details=self._completed_stage_details(
+                    PREWARM_STAGE_UPSCALE,
+                    orchestration=upscale_orchestration,
+                ),
+            )
+        )
 
         from demo_v6_2 import sam31_image_segmentation  # noqa: PLC0415
 
         segment_start_s = time.perf_counter()
-        sam31_image_segmentation.segment_image_to_origin_rgba(
-            img_path=high_resolution_path,
-            text_prompt=self.object_name,
-            output_path=masked_image_path,
-            device=self.sam31_device,
-            reuse_model=self.reuse_sam31_model,
+        _masked_image, segment_details = (
+            sam31_image_segmentation.segment_image_to_origin_rgba(
+                img_path=high_resolution_path,
+                text_prompt=self.object_name,
+                output_path=masked_image_path,
+                device=self.sam31_device,
+                reuse_model=self.reuse_sam31_model,
+            )
         )
-        timings["shape_prior_segment_image_ms"] = (
-            time.perf_counter() - segment_start_s
-        ) * 1000.0
+        segment_end_s = time.perf_counter()
         _require_stage_file(masked_image_path, stage_name="shape-prior segment")
+        critical_path.append(
+            critical_path_entry(
+                stage="segment_image",
+                path_start_s=request_start_s,
+                stage_start_s=segment_start_s,
+                stage_end_s=segment_end_s,
+                details=segment_details,
+            )
+        )
 
-        timings["shape_prior_generate_ms"] = self._run_stage_maybe_prewarmed(
+        generate_start_s = time.perf_counter()
+        _generate_ms, generate_orchestration = self._run_stage_maybe_prewarmed(
             PREWARM_STAGE_GENERATE,
             commands[PREWARM_STAGE_GENERATE],
             env=env,
             prewarmed_stages=prewarmed_stages,
         )
+        generate_end_s = time.perf_counter()
+        critical_path.append(
+            critical_path_entry(
+                stage="generate",
+                path_start_s=request_start_s,
+                stage_start_s=generate_start_s,
+                stage_end_s=generate_end_s,
+                details=self._completed_stage_details(
+                    PREWARM_STAGE_GENERATE,
+                    orchestration=generate_orchestration,
+                ),
+            )
+        )
 
-        timings["shape_prior_align_ms"] = self._run_stage_maybe_prewarmed(
+        align_start_s = time.perf_counter()
+        _align_ms, align_orchestration = self._run_stage_maybe_prewarmed(
             PREWARM_STAGE_ALIGN,
             commands[PREWARM_STAGE_ALIGN],
             env=env,
             prewarmed_stages=prewarmed_stages,
         )
-        timings["shape_prior_sample_ms"] = _run_stage(
-            [
-                sys.executable,
-                "-m",
-                "demo_v6_2.shape_prior_sample",
-                "--base_path",
-                str(self.case_root),
-                "--case_name",
-                self.case_name,
-                "--shape_prior",
-                "--num_surface_points",
-                str(DEFAULT_SURFACE_POINT_COUNT),
-                "--volume_sample_size",
-                str(DEFAULT_VOLUME_SAMPLE_SIZE_M),
-            ],
-            env=env,
+        align_end_s = time.perf_counter()
+        critical_path.append(
+            critical_path_entry(
+                stage="align",
+                path_start_s=request_start_s,
+                stage_start_s=align_start_s,
+                stage_end_s=align_end_s,
+                details=self._completed_stage_details(
+                    PREWARM_STAGE_ALIGN,
+                    orchestration=align_orchestration,
+                ),
+            )
         )
+
+        sample_command = [
+            sys.executable,
+            "-m",
+            "demo_v6_2.shape_prior_sample",
+            "--base_path",
+            str(self.case_root),
+            "--case_name",
+            self.case_name,
+            "--shape_prior",
+            "--num_surface_points",
+            str(DEFAULT_SURFACE_POINT_COUNT),
+            "--volume_sample_size",
+            str(DEFAULT_VOLUME_SAMPLE_SIZE_M),
+            "--profile-json",
+            str(self._stage_profile_path("sample")),
+        ]
+        sample_start_s = time.perf_counter()
+        sample_ms = _run_stage(sample_command, env=env)
+        sample_end_s = time.perf_counter()
+        critical_path.append(
+            critical_path_entry(
+                stage="sample",
+                path_start_s=request_start_s,
+                stage_start_s=sample_start_s,
+                stage_end_s=sample_end_s,
+                details=self._completed_stage_details(
+                    "sample",
+                    orchestration={
+                        "execution_mode": "cold",
+                        "critical_path_ms": float(sample_ms),
+                        "go_wall_time_s": None,
+                    },
+                ),
+            )
+        )
+
+        finalize_start_s = time.perf_counter()
         final_data_path = paths["case"] / "final_data.pkl"
         if not final_data_path.is_file():
-            raise FileNotFoundError(f"shape-prior sample did not write {final_data_path}")
+            raise FileNotFoundError(
+                f"shape-prior sample did not write {final_data_path}"
+            )
+        load_start_s = time.perf_counter()
         with final_data_path.open("rb") as handle:
             final_data = pickle.load(handle)
+        load_end_s = time.perf_counter()
 
         surface = _points_array(final_data["surface_points"], name="surface_points")
         interior = _points_array(final_data["interior_points"], name="interior_points")
         points = np.concatenate([surface, interior], axis=0)
+        points_write_start_s = time.perf_counter()
         write_shape_prior_points_npz(
             self.points_npz,
             surface_points=surface,
             interior_points=interior,
         )
+        points_write_end_s = time.perf_counter()
         # Uniform display tint for prior points; real per-point colors are
         # not available for sampled surface/interior points.
         colors = np.tile(
             np.array([[86, 180, 233]], dtype=np.uint8),
             (points.shape[0], 1),
         )
+        finalize_end_s = time.perf_counter()
+        critical_path.append(
+            critical_path_entry(
+                stage="result_finalize",
+                path_start_s=request_start_s,
+                stage_start_s=finalize_start_s,
+                stage_end_s=finalize_end_s,
+                details={
+                    "final_data_load_ms": elapsed_ms(load_start_s, load_end_s),
+                    "points_npz_write_ms": elapsed_ms(
+                        points_write_start_s,
+                        points_write_end_s,
+                    ),
+                },
+            )
+        )
+        request_total_ms = elapsed_ms(request_start_s, finalize_end_s)
+        timing_analysis = build_critical_path_analysis(
+            critical_path,
+            total_ms=request_total_ms,
+        )
+        timing_analysis["pre_submit"] = _pre_submit_timing(
+            frame0,
+            request_start_s=request_start_s,
+        )
+        stage_ms = {
+            entry["stage"]: float(entry["duration_ms"])
+            for entry in timing_analysis["critical_path"]
+        }
         metadata = {
-            **timings,
+            "shape_prior_case_write_ms": stage_ms["case_write"],
+            "shape_prior_upscale_ms": stage_ms["upscale"],
+            "shape_prior_segment_image_ms": stage_ms["segment_image"],
+            "shape_prior_generate_ms": stage_ms["generate"],
+            "shape_prior_align_ms": stage_ms["align"],
+            "shape_prior_sample_ms": stage_ms["sample"],
+            "shape_prior_result_finalize_ms": stage_ms["result_finalize"],
+            "shape_prior_request_total_ms": request_total_ms,
+            "shape_prior_timing": timing_analysis,
             "shape_prior_case_dir": str(paths["case"]),
             "shape_prior_points_npz": str(self.points_npz),
             "shape_prior_warmup_cuda_visible_devices": self.cuda_visible_devices,
@@ -705,6 +996,9 @@ class ShapePriorWarmupManager:
         self._thread: threading.Thread | None = None
         self._result: ShapePriorResult | None = None
         self._profile = default_profile(enabled=self.enabled)
+        self._warmup_runtime_start_perf_s: float | None = None
+        self._ready_perf_s: float | None = None
+        self._gate_open_perf_s: float | None = None
 
     def maybe_submit(self, frame0: ShapePriorFrame0Request) -> bool:
         """Maybe start or update submit."""
@@ -722,6 +1016,11 @@ class ShapePriorWarmupManager:
                     "shape_prior_source_time_s": frame0.source_timestamp_s,
                 }
             )
+            self._warmup_runtime_start_perf_s = (
+                None
+                if frame0.warmup_runtime_start_perf_s is None
+                else float(frame0.warmup_runtime_start_perf_s)
+            )
             self._thread = threading.Thread(
                 target=self._run,
                 args=(frame0,),
@@ -738,29 +1037,70 @@ class ShapePriorWarmupManager:
             assert self.client is not None
             result = self.client.request_shape_prior(frame0)
         except Exception as exc:
-            elapsed_ms = (time.perf_counter() - start_s) * 1000.0
+            failed_s = time.perf_counter()
+            request_total_ms = elapsed_ms(start_s, failed_s)
             with self._lock:
                 self._profile.update(
                     {
                         "shape_prior_status": STATUS_FAILED,
-                        "shape_prior_submit_ms": elapsed_ms,
+                        "shape_prior_request_total_ms": request_total_ms,
                         "shape_prior_error": str(exc),
                     }
                 )
+                if self._warmup_runtime_start_perf_s is not None:
+                    self._profile["warmup_runtime_start_to_shape_prior_failure_ms"] = (
+                        elapsed_ms(
+                            self._warmup_runtime_start_perf_s,
+                            failed_s,
+                        )
+                    )
             return
-        elapsed_ms = (time.perf_counter() - start_s) * 1000.0
+        ready_perf_s = time.perf_counter()
+        request_total_ms = elapsed_ms(start_s, ready_perf_s)
         with self._lock:
+            self._ready_perf_s = ready_perf_s
             self._result = result
             self._profile.update(result.metadata)
             self._profile.update(
                 {
                     "shape_prior_status": str(result.status),
-                    "shape_prior_submit_ms": elapsed_ms,
+                    "shape_prior_request_total_ms": request_total_ms,
+                    "shape_prior_ready_wall_time_s": float(time.time()),
                     "shape_prior_error": None,
                     "shape_prior_source_seq": result.source_seq,
                     "shape_prior_source_time_s": result.source_timestamp_s,
                 }
             )
+            if self._warmup_runtime_start_perf_s is not None:
+                self._profile["warmup_runtime_start_to_shape_prior_ready_ms"] = (
+                    elapsed_ms(
+                        self._warmup_runtime_start_perf_s,
+                        ready_perf_s,
+                    )
+                )
+
+    def mark_gate_open(self) -> None:
+        """Record the first moment the formal timeline observes READY."""
+        gate_open_perf_s = time.perf_counter()
+        gate_open_wall_time_s = time.time()
+        with self._lock:
+            if self._gate_open_perf_s is not None:
+                return
+            if self._ready_perf_s is None:
+                raise RuntimeError("shape-prior gate opened before READY")
+            self._gate_open_perf_s = gate_open_perf_s
+            ready_to_gate_ms = elapsed_ms(self._ready_perf_s, gate_open_perf_s)
+            self._profile.update(
+                {
+                    "shape_prior_gate_open_wall_time_s": float(gate_open_wall_time_s),
+                    "warmup_shape_prior_ready_to_gate_open_ms": ready_to_gate_ms,
+                }
+            )
+            if self._warmup_runtime_start_perf_s is not None:
+                self._profile["warmup_total_ms"] = elapsed_ms(
+                    self._warmup_runtime_start_perf_s,
+                    gate_open_perf_s,
+                )
 
     def wait(self, timeout_s: float | None = None) -> ShapePriorResult | None:
         """Wait for ShapePriorWarmupManager."""
