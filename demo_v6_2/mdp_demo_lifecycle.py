@@ -1,32 +1,34 @@
 """MainDataProcessingDemo lifecycle mixin (init/run/stop/threads)."""
+
 from __future__ import annotations
 
 from demo_v6_2.mdp_constants import *  # noqa: F401,F403
-from demo_v6_2.mdp_capture_source import RecordedRgbdFrameSource, _start_realsense_pipeline
+from demo_v6_2.mdp_capture_source import (
+    RecordedRgbdFrameSource,
+    _start_realsense_pipeline,
+)
 from demo_v6_2.mdp_cli import (
     _is_replay_input_source,
     active_object_id_labels,
     controller_pcd_mask_erode_pixels,
     depth_backend_label,
     headless_capture_enabled,
-    headless_capture_saved_pcd_source,
     lossless_enabled,
     lossless_input_fps,
     object_pcd_mask_erode_pixels,
-    pcd_filter_enabled,
     runtime_metadata_identity,
     shape_prior_profile_payload,
     tracker_enabled,
-    tracker_marker_gate,
-    tracker_marker_retirement_policy,
-    tracker_query_source,
-    tracker_retire_filtered_markers,
     write_shape_prior_profile_json,
 )
 from demo_v6_2.mdp_demo_contract import _DemoRuntimeContract
 from demo_v6_2.mdp_headless_writer import HeadlessCaptureWriter
 from demo_v6_2.mdp_packets import FatalWorkerError
-from demo_v6_2.mdp_pipeline_plumbing import OrderedPacketQueue, SameSeqPairer, StageStats
+from demo_v6_2.mdp_pipeline_plumbing import (
+    OrderedPacketQueue,
+    SameSeqPairer,
+    StageStats,
+)
 from demo_v6_2.mdp_warmup_preview import WarmupRgbPreview
 from demo_v6_2.pipeline_status import (
     STAGE_CAPTURE_START,
@@ -44,7 +46,11 @@ class _LifecycleMixin(_DemoRuntimeContract):
         self.width, self.height = parse_profile(DEFAULT_PROFILE)
         self.lossless_max_backlog_frames = max(
             1,
-            int(round(lossless_input_fps(args) * float(args.lossless_max_backlog_seconds))),
+            int(
+                round(
+                    lossless_input_fps(args) * float(args.lossless_max_backlog_seconds)
+                )
+            ),
         )
         self.runtime: RealtimeCameraRuntime | None = None
         self.ray_x: np.ndarray | None = None
@@ -64,19 +70,27 @@ class _LifecycleMixin(_DemoRuntimeContract):
             name="frame",
             max_backlog_frames=self.lossless_max_backlog_frames,
         )
-        self.lossless_pcd_mask_queue: OrderedPacketQueue[MaskPacket] = OrderedPacketQueue(
-            name="mask-pcd",
-            max_backlog_frames=self.lossless_max_backlog_frames,
+        self.lossless_pcd_mask_queue: OrderedPacketQueue[MaskPacket] = (
+            OrderedPacketQueue(
+                name="mask-pcd",
+                max_backlog_frames=self.lossless_max_backlog_frames,
+            )
         )
-        self.lossless_tracker_mask_queue: OrderedPacketQueue[MaskPacket] = OrderedPacketQueue(
-            name="mask-tracker",
-            max_backlog_frames=self.lossless_max_backlog_frames,
+        self.lossless_tracker_mask_queue: OrderedPacketQueue[MaskPacket] = (
+            OrderedPacketQueue(
+                name="mask-tracker",
+                max_backlog_frames=self.lossless_max_backlog_frames,
+            )
         )
-        self.lossless_pair_output_queue: OrderedPacketQueue[PairedBuildResult] = OrderedPacketQueue(
-            name="pair-output",
-            max_backlog_frames=self.lossless_max_backlog_frames,
+        self.lossless_pair_output_queue: OrderedPacketQueue[PairedBuildResult] = (
+            OrderedPacketQueue(
+                name="pair-output",
+                max_backlog_frames=self.lossless_max_backlog_frames,
+            )
         )
-        self.same_seq_pairer = SameSeqPairer(max_backlog_frames=self.lossless_max_backlog_frames)
+        self.same_seq_pairer = SameSeqPairer(
+            max_backlog_frames=self.lossless_max_backlog_frames
+        )
         self._lossless_pairer_lock = threading.Lock()
         self._lossless_publish_condition = threading.Condition()
         self._lossless_next_publish_seq = 0
@@ -92,37 +106,22 @@ class _LifecycleMixin(_DemoRuntimeContract):
         self.depth_stats = StageStats()
         self.pcd_stats = StageStats()
         self.tracker_stats = StageStats()
-        self.filter_submit_stats = StageStats()
-        self.filter_output_stats = StageStats()
-        self.filter_worker: Any | None = None
-        self._filter_submit_skip_count = 0
-        self._last_filter_output_seq_recorded = -1
-        controller_filter_min_cap = int(5000)
-        if lossless_enabled(args):
-            controller_filter_min_cap = min(controller_filter_min_cap, DEFAULT_LOSSLESS_CONTROLLER_FILTER_MIN_CAP)
-        self.object_filter_budget = FilterBudgetController(
-            target_ms=max(0.0, float(12.0)) * 0.5,
-            min_cap=int(5000),
-            max_cap=max(int(5000), int(args.object_filter_cap) if int(args.object_filter_cap) > 0 else 200_000),
-            init_cap=int(args.object_filter_cap) if int(args.object_filter_cap) > 0 else 200_000,
-        )
-        self.controller_filter_budget = FilterBudgetController(
-            target_ms=max(0.0, float(12.0)) * 0.5,
-            min_cap=int(controller_filter_min_cap),
-            max_cap=max(int(controller_filter_min_cap), int(args.controller_filter_cap) if int(args.controller_filter_cap) > 0 else 200_000),
-            init_cap=int(args.controller_filter_cap) if int(args.controller_filter_cap) > 0 else 200_000,
-        )
         self.ffs_runner: object | None = None
         self._local_ffs_lock = threading.Lock()
-        self._local_ffs_depth_cache: OrderedDict[int, tuple[np.ndarray, float, float]] = OrderedDict()
+        self._local_ffs_depth_cache: OrderedDict[
+            int, tuple[np.ndarray, float, float]
+        ] = OrderedDict()
         self.ir_to_color_aligner: FfsIrToColorAligner | None = None
-        self._ir_to_color_aligner_key: tuple[
-            tuple[int, int],
-            tuple[int, int],
-            tuple[float, ...],
-            tuple[float, ...],
-            tuple[float, ...],
-        ] | None = None
+        self._ir_to_color_aligner_key: (
+            tuple[
+                tuple[int, int],
+                tuple[int, int],
+                tuple[float, ...],
+                tuple[float, ...],
+                tuple[float, ...],
+            ]
+            | None
+        ) = None
         self.recording_source: RecordedRgbdFrameSource | None = None
         self.headless_capture_writer: HeadlessCaptureWriter | None = None
         # Live pipeline-status stream (design question 23), shared with the
@@ -167,8 +166,6 @@ class _LifecycleMixin(_DemoRuntimeContract):
         self._tracker_query_target_id: np.ndarray | None = None
         self._tracker_query_controller_instance_id: np.ndarray | None = None
         self._tracker_consistent_visible: np.ndarray | None = None
-        self._tracker_query_alive_mask: np.ndarray | None = None
-        self._tracker_query_initial_seq: int | None = None
         self._fatal_error_lock = threading.Lock()
         self._fatal_error: FatalWorkerError | None = None
 
@@ -223,9 +220,13 @@ class _LifecycleMixin(_DemoRuntimeContract):
             raise RuntimeError("camera runtime is not initialized")
         path = Path(self.args.table_calibrate)
         try:
-            transforms = load_table_calibration_transforms(path, serial_numbers=[str(self.runtime.serial)])
+            transforms = load_table_calibration_transforms(
+                path, serial_numbers=[str(self.runtime.serial)]
+            )
         except TableCalibrationLoadError as exc:
-            raise RuntimeError(f"Invalid table calibration for active camera {self.runtime.serial}: {exc}") from exc
+            raise RuntimeError(
+                f"Invalid table calibration for active camera {self.runtime.serial}: {exc}"
+            ) from exc
         self.table_c2w = np.ascontiguousarray(transforms[0], dtype=np.float32)
         self.table_calibration_path = path
         print(
@@ -292,7 +293,9 @@ class _LifecycleMixin(_DemoRuntimeContract):
             frame_count = int(self.recording_source.frame_count)
             recording_case = _repo_relative_path_text(self.recording_source.case_path)
         frame_selection_policy = (
-            FAKE_LIVE_FRAME_SELECTION_POLICY if str(self.args.input_source) == INPUT_SOURCE_FAKE_LIVE else None
+            FAKE_LIVE_FRAME_SELECTION_POLICY
+            if str(self.args.input_source) == INPUT_SOURCE_FAKE_LIVE
+            else None
         )
         return {
             **runtime_metadata_identity(self.args),
@@ -318,14 +321,26 @@ class _LifecycleMixin(_DemoRuntimeContract):
             "depth_coordinate_frame": COORDINATE_FRAME,
             "depth_alignment_target": "color",
             "track_mode": str(self.args.track_mode),
-            "edgetam_tracking_identities": list(active_object_id_labels(self.args).values()),
+            "edgetam_tracking_identities": list(
+                active_object_id_labels(self.args).values()
+            ),
             "demo_visual_mode": str(self.args.demo_visual_mode),
             "tracker_backend": str(self.args.tracker_backend),
             "tracking_product_backend": str(
-                normalize_tracking_product_backend(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
+                normalize_tracking_product_backend(
+                    getattr(
+                        self.args,
+                        "tracking_product_backend",
+                        DEFAULT_TRACKING_PRODUCT_BACKEND,
+                    )
+                )
             ),
-            "headless_prepared_only": bool(getattr(self.args, "headless_prepared_only", False)),
-            "write_input_rgb_timeline": bool(getattr(self.args, "write_input_rgb_timeline", False)),
+            "headless_prepared_only": bool(
+                getattr(self.args, "headless_prepared_only", False)
+            ),
+            "write_input_rgb_timeline": bool(
+                getattr(self.args, "write_input_rgb_timeline", False)
+            ),
             "phystwin_strict_output_dir": (
                 None
                 if getattr(self.args, "phystwin_strict_output_dir", None) is None
@@ -334,7 +349,9 @@ class _LifecycleMixin(_DemoRuntimeContract):
             "compatibility_target": COMPATIBILITY_TARGET_PHYSTWIN,
             "mask_backend": "edgetam",
             "depth_backend": depth_backend_label(self.args),
-            "shape_prior_enabled": bool(shape_profile.get("shape_prior_enabled", False)),
+            "shape_prior_enabled": bool(
+                shape_profile.get("shape_prior_enabled", False)
+            ),
             "shape_prior_status": str(
                 shape_profile.get(
                     "shape_prior_status",
@@ -373,17 +390,19 @@ class _LifecycleMixin(_DemoRuntimeContract):
             "shape_prior_depth_source_internal": str(self.args.depth_source),
             "execution_mode": PHYSTWIN_STRICT_EXECUTION_MODE,
             "tracker_query_count": int(DEFAULT_TRACKER_QUERY_COUNT),
-            "tracker_query_source": tracker_query_source(self.args) if tracker_enabled(self.args) else None,
-            "tracker_marker_gate": tracker_marker_gate(self.args) if tracker_enabled(self.args) else None,
-            "tracker_retire_filtered_markers": (
-                tracker_retire_filtered_markers(self.args) if tracker_enabled(self.args) else None
+            "tracker_query_source": (
+                TRACKER_QUERY_SOURCE_UNION_MASK if tracker_enabled(self.args) else None
             ),
-            "tracker_marker_retirement_policy": (
-                tracker_marker_retirement_policy(self.args) if tracker_enabled(self.args) else None
+            "tracker_marker_gate": (
+                TRACKER_MARKER_GATE_TARGET_MASK_DEPTH
+                if tracker_enabled(self.args)
+                else None
             ),
             "tracker_display_scope": str(DEFAULT_TRACKER_DISPLAY_SCOPE),
             "tracker_sync_policy": (
-                "strict_same_seq_lossless_5fps" if lossless_enabled(self.args) else "none"
+                "strict_same_seq_lossless_5fps"
+                if lossless_enabled(self.args)
+                else "none"
             ),
             "lossless_input_fps": (
                 float(lossless_input_fps(self.args))
@@ -395,28 +414,17 @@ class _LifecycleMixin(_DemoRuntimeContract):
                 if lossless_enabled(self.args)
                 else None
             ),
-            "pcd_filter_enabled": pcd_filter_enabled(self.args),
-            "pcd_filter_mode": str(self.args.pcd_filter_mode if pcd_filter_enabled(self.args) else PCD_FILTER_NONE),
-            "pcd_filter_preset": getattr(self.args, "pcd_filter_preset", None),
             "saved_pcd_source": (
-                headless_capture_saved_pcd_source(self.args) if headless_capture_enabled(self.args) else None
+                HEADLESS_CAPTURE_SAVED_PCD_SOURCE
+                if headless_capture_enabled(self.args)
+                else None
             ),
-            "object_filter": str(self.args.object_filter),
-            "controller_filter": str(self.args.controller_filter),
-            "object_filter_keep_components": int(self.args.object_filter_keep_components),
-            "controller_filter_keep_components": int(self.args.controller_filter_keep_components),
-            "filter_radius_m": float(self.args.filter_radius_m),
-            "filter_nb_points": int(self.args.filter_nb_points),
-            "filter_min_cap": int(5000),
-            "lossless_controller_filter_min_cap": (
-                int(self.controller_filter_budget.min_cap) if lossless_enabled(self.args) else None
-            ),
-            "enhanced_component_voxel_size_m": float(self.args.enhanced_component_voxel_size_m),
-            "pcd_max_points": int(60000),
             "pcd_stride": int(1),
             "pcd_mask_erode_pixels": int(DEFAULT_PCD_MASK_ERODE_PIXELS),
             "object_pcd_mask_erode_pixels": object_pcd_mask_erode_pixels(self.args),
-            "controller_pcd_mask_erode_pixels": controller_pcd_mask_erode_pixels(self.args),
+            "controller_pcd_mask_erode_pixels": controller_pcd_mask_erode_pixels(
+                self.args
+            ),
             "depth_min_m": float(0.2),
             "depth_max_m": float(1.5),
             "serial": str(self.runtime.serial),
@@ -425,11 +433,11 @@ class _LifecycleMixin(_DemoRuntimeContract):
             "coordinate_frame": pcd_coordinate_frame(self.table_c2w),
             "pcd_coordinate_frame": pcd_coordinate_frame(self.table_c2w),
             "camera_coordinate_frame": COORDINATE_FRAME,
-            "table_calibration_path": _repo_relative_path_text(self.table_calibration_path),
+            "table_calibration_path": _repo_relative_path_text(
+                self.table_calibration_path
+            ),
             "table_world_frame_kind": (
-                TABLE_WORLD_FRAME_KIND
-                if table_world_enabled(self.table_c2w)
-                else None
+                TABLE_WORLD_FRAME_KIND if table_world_enabled(self.table_c2w) else None
             ),
             "table_z_m": TABLE_Z_M if table_world_enabled(self.table_c2w) else None,
             "table_z_above_direction": TABLE_Z_ABOVE_DIRECTION,
@@ -458,9 +466,13 @@ class _LifecycleMixin(_DemoRuntimeContract):
         with self._fatal_error_lock:
             return self._fatal_error
 
-    def _record_fatal_worker_error(self, stage: str, exc: BaseException) -> FatalWorkerError:
+    def _record_fatal_worker_error(
+        self, stage: str, exc: BaseException
+    ) -> FatalWorkerError:
         """Record fatal worker error."""
-        fatal = FatalWorkerError(stage=str(stage), exc_type=type(exc).__name__, message=str(exc))
+        fatal = FatalWorkerError(
+            stage=str(stage), exc_type=type(exc).__name__, message=str(exc)
+        )
         should_notify = False
         with self._fatal_error_lock:
             if self._fatal_error is None:
@@ -491,7 +503,6 @@ class _LifecycleMixin(_DemoRuntimeContract):
         self.warmup_rgb_preview.start()
         main_warmup.prepare_runtime_services_and_source(
             self,
-            pcd_filter_enabled=pcd_filter_enabled,
             is_replay_input_source=_is_replay_input_source,
             recording_source_cls=RecordedRgbdFrameSource,
             start_realsense_pipeline=_start_realsense_pipeline,
@@ -515,18 +526,24 @@ class _LifecycleMixin(_DemoRuntimeContract):
         if self._fatal_error_snapshot() is not None:
             return
         if self.headless_capture_writer is None:
-            raise RuntimeError("phystwin-strict-tracking requires an initialized headless capture writer")
+            raise RuntimeError(
+                "phystwin-strict-tracking requires an initialized headless capture writer"
+            )
         output_dir = (
             Path(self.args.phystwin_strict_output_dir)
             if getattr(self.args, "phystwin_strict_output_dir", None) is not None
             else self.headless_capture_writer.output_dir / "phystwin_like"
         )
         print(f"[phystwin-strict] finalizing output_dir={output_dir}", flush=True)
-        manifest = finalize_headless_capture(self.headless_capture_writer.output_dir, output_dir=output_dir)
+        manifest = finalize_headless_capture(
+            self.headless_capture_writer.output_dir, output_dir=output_dir
+        )
         self.headless_capture_writer.update_metadata(
             {
                 "phystwin_strict_output_dir": _repo_relative_path_text(output_dir),
-                "phystwin_strict_manifest": _repo_relative_path_text(output_dir / "manifest.json"),
+                "phystwin_strict_manifest": _repo_relative_path_text(
+                    output_dir / "manifest.json"
+                ),
                 "phystwin_strict_frame_count": int(manifest.get("frame_count", 0)),
                 "phystwin_strict_query_count": int(manifest.get("query_count", 0)),
             }
@@ -586,9 +603,6 @@ class _LifecycleMixin(_DemoRuntimeContract):
                 RuntimeError(error_message),
             )
         self.headless_capture_writer = None
-        if self.filter_worker is not None:
-            self.filter_worker.stop()
-            self.filter_worker = None
         with self._local_ffs_lock:
             self._local_ffs_depth_cache.clear()
 
@@ -602,10 +616,14 @@ class _LifecycleMixin(_DemoRuntimeContract):
             return FastFoundationStereoTensorRTRunner(
                 ffs_repo=Path(self.args.ffs_repo),
                 model_dir=Path(self.args.ffs_trt_model_dir),
-                trt_root=None if self.args.ffs_trt_root is None else Path(self.args.ffs_trt_root),
+                trt_root=None
+                if self.args.ffs_trt_root is None
+                else Path(self.args.ffs_trt_root),
             )
         except Exception as exc:
-            raise RuntimeError(f"failed to start FFS TensorRT runner: {type(exc).__name__}: {exc}") from exc
+            raise RuntimeError(
+                f"failed to start FFS TensorRT runner: {type(exc).__name__}: {exc}"
+            ) from exc
 
     def _get_ir_to_color_aligner(
         self,
@@ -642,7 +660,9 @@ class _LifecycleMixin(_DemoRuntimeContract):
         """Start threads."""
         if lossless_enabled(self.args):
             self._reset_lossless_state()
-        workers: list[tuple[str, Callable[[], None]]] = [("capture", self._capture_worker)]
+        workers: list[tuple[str, Callable[[], None]]] = [
+            ("capture", self._capture_worker)
+        ]
         if self.args.track_mode != "none":
             workers.append(("seg", self._seg_worker))
         if lossless_enabled(self.args):
@@ -654,8 +674,11 @@ class _LifecycleMixin(_DemoRuntimeContract):
         if self.args.pcd_mode == "none" and self.args.depth_source == "ffs":
             workers.append(("depth", self._depth_profile_worker))
 
-        def worker_runner(worker_name: str, worker_target: Callable[[], None]) -> Callable[[], None]:
+        def worker_runner(
+            worker_name: str, worker_target: Callable[[], None]
+        ) -> Callable[[], None]:
             """Return the worker runner."""
+
             def run_worker() -> None:
                 """Run worker."""
                 try:
@@ -667,7 +690,11 @@ class _LifecycleMixin(_DemoRuntimeContract):
             return run_worker
 
         for name, target in workers:
-            thread = threading.Thread(target=worker_runner(name, target), name=f"masked-edgetam-{name}", daemon=True)
+            thread = threading.Thread(
+                target=worker_runner(name, target),
+                name=f"masked-edgetam-{name}",
+                daemon=True,
+            )
             thread.start()
             self._threads.append(thread)
 

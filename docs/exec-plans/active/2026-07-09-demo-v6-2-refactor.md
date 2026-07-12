@@ -213,7 +213,8 @@ all three harness guards green; bounded fake-live structural run: run_finished
 tracebacks, and every predicate-derived metadata field spot-checked
 (tracker_sync_policy=strict_same_seq_lossless_5fps, lossless_input_fps=5.0,
 backlog=15, coordinate_frame=pcd_coordinate_frame=table_world_z0,
-tracker_strict_same_seq_render=true, lossless_controller_filter_min_cap=2500).
+tracker_strict_same_seq_render=true). The runtime-filter cap field recorded by
+the original validation was removed with the runtime PCD filter on 2026-07-12.
 
 Two PRE-EXISTING environment landmines hit while verifying (not caused by the
 refactor; both will bite any future automation/headless launch):

@@ -10,6 +10,7 @@ starts at output frame 1, one frame after the warm-up frame-0 anchor, once
 shape-prior is READY. Warm-up failures route to ``_record_fatal_worker_error`` and
 tear the process down (surfaced on the live status band, Q23).
 """
+
 from __future__ import annotations
 
 from demo_v6_2.mdp_constants import *  # noqa: F401,F403
@@ -21,31 +22,28 @@ from demo_v6_2.mdp_cli import (
     controller_tracking_enabled,
     depth_backend_label,
     headless_capture_enabled,
-    headless_capture_saved_pcd_source,
     lossless_enabled,
     lossless_input_fps,
     object_pcd_mask_erode_pixels,
     object_tracking_enabled,
-    pcd_filter_enabled,
     runtime_metadata_identity,
     shape_prior_profile,
     shape_prior_profile_payload,
     tracker_enabled,
-    tracker_marker_gate,
-    tracker_marker_retirement_policy,
-    tracker_query_source,
-    tracker_retire_filtered_markers,
     write_shape_prior_profile_json,
 )
 from demo_v6_2.mdp_demo_contract import _DemoRuntimeContract
 from demo_v6_2.mdp_packets import MaskPacket, _formal_chunk_rows_gated
-from demo_v6_2.mdp_segmentation import _load_hf_streaming_runtime, _time_model_forward, _time_runtime_ms, extract_object_masks_from_hf_output
+from demo_v6_2.mdp_segmentation import (
+    _load_hf_streaming_runtime,
+    _time_model_forward,
+    _time_runtime_ms,
+    extract_object_masks_from_hf_output,
+)
 from demo_v6_2.pipeline_status import STAGE_SHAPE_PRIOR, STAGE_WARMUP_READY
 
 WARMUP_FINISHED_BANNER = (
-    "\n#############################\n"
-    "Warmup finished\n"
-    "#############################"
+    "\n#############################\nWarmup finished\n#############################"
 )
 
 
@@ -58,8 +56,13 @@ class _SegWarmupMixin(_DemoRuntimeContract):
         runtime_load_start_s = time.perf_counter()
         hf_stream = _load_hf_streaming_runtime()
         torch_module = hf_stream.torch
-        if str(self.args.device).startswith("cuda") and not torch_module.cuda.is_available():
-            raise RuntimeError("CUDA device requested but torch.cuda.is_available() is false")
+        if (
+            str(self.args.device).startswith("cuda")
+            and not torch_module.cuda.is_available()
+        ):
+            raise RuntimeError(
+                "CUDA device requested but torch.cuda.is_available() is false"
+            )
         dtype = hf_stream._dtype_from_name(self.args.dtype)
         runtime_load_end_s = time.perf_counter()
         model_load_start_s = time.perf_counter()
@@ -70,7 +73,9 @@ class _SegWarmupMixin(_DemoRuntimeContract):
         model.eval()
         model_load_end_s = time.perf_counter()
         compile_start_s = time.perf_counter()
-        model, compile_metadata = hf_stream._apply_compile_mode(model, DEFAULT_COMPILE_MODE)
+        model, compile_metadata = hf_stream._apply_compile_mode(
+            model, DEFAULT_COMPILE_MODE
+        )
         compile_end_s = time.perf_counter()
         processor_load_start_s = time.perf_counter()
         processor = hf_stream.Sam2VideoProcessor.from_pretrained(DEFAULT_MODEL_ID)
@@ -102,44 +107,58 @@ class _SegWarmupMixin(_DemoRuntimeContract):
             "inference_state_device": self.args.device,
             "video_storage_device": self.args.device,
             "frame_by_frame_streaming": True,
-            "edgetam_live_session_keep_frames": int(DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES),
-            "offline_video_input_used": _is_replay_input_source(str(self.args.input_source)),
+            "edgetam_live_session_keep_frames": int(
+                DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES
+            ),
+            "offline_video_input_used": _is_replay_input_source(
+                str(self.args.input_source)
+            ),
             "input_source": self.args.input_source,
             "demo_visual_mode": str(self.args.demo_visual_mode),
             "recording_case": (
-                _repo_relative_path_text(self.args.recording_case) if _is_replay_input_source(str(self.args.input_source)) else None
+                _repo_relative_path_text(self.args.recording_case)
+                if _is_replay_input_source(str(self.args.input_source))
+                else None
             ),
             "replay_fps": (
                 self.recording_source.effective_fps
-                if _is_replay_input_source(str(self.args.input_source)) and self.recording_source is not None
+                if _is_replay_input_source(str(self.args.input_source))
+                and self.recording_source is not None
                 else None
             ),
             "recording_fps": (
                 self.recording_source.recording_fps
-                if _is_replay_input_source(str(self.args.input_source)) and self.recording_source is not None
+                if _is_replay_input_source(str(self.args.input_source))
+                and self.recording_source is not None
                 else None
             ),
             "fake_live_frame_selection_policy": (
-                FAKE_LIVE_FRAME_SELECTION_POLICY if str(self.args.input_source) == INPUT_SOURCE_FAKE_LIVE else None
+                FAKE_LIVE_FRAME_SELECTION_POLICY
+                if str(self.args.input_source) == INPUT_SOURCE_FAKE_LIVE
+                else None
             ),
             "track_mode": self.args.track_mode,
-            "edgetam_tracking_identities": list(active_object_id_labels(self.args).values()),
+            "edgetam_tracking_identities": list(
+                active_object_id_labels(self.args).values()
+            ),
             "depth_source": self.args.depth_source,
             "depth_source_internal": str(self.args.depth_source),
             "depth_units": "meters",
             "depth_coordinate_frame": COORDINATE_FRAME,
             "depth_alignment_target": "color",
             "local_ffs_depth_cache_frames": (
-                DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES if self.args.depth_source == "ffs" else None
+                DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES
+                if self.args.depth_source == "ffs"
+                else None
             ),
             "pcd_mode": self.args.pcd_mode,
             "pcd_coordinate_frame": pcd_coordinate_frame(self.table_c2w),
             "camera_coordinate_frame": COORDINATE_FRAME,
-            "table_calibration_path": _repo_relative_path_text(self.table_calibration_path),
+            "table_calibration_path": _repo_relative_path_text(
+                self.table_calibration_path
+            ),
             "table_world_frame_kind": (
-                TABLE_WORLD_FRAME_KIND
-                if table_world_enabled(self.table_c2w)
-                else None
+                TABLE_WORLD_FRAME_KIND if table_world_enabled(self.table_c2w) else None
             ),
             "table_z_m": TABLE_Z_M if table_world_enabled(self.table_c2w) else None,
             "table_z_above_direction": TABLE_Z_ABOVE_DIRECTION,
@@ -148,14 +167,12 @@ class _SegWarmupMixin(_DemoRuntimeContract):
                 if self.table_c2w is None
                 else np.asarray(self.table_c2w, dtype=np.float32).reshape(4, 4).tolist()
             ),
-            "pcd_max_points": int(60000),
             "pcd_stride": int(1),
             "pcd_mask_erode_pixels": int(DEFAULT_PCD_MASK_ERODE_PIXELS),
             "object_pcd_mask_erode_pixels": object_pcd_mask_erode_pixels(self.args),
-            "controller_pcd_mask_erode_pixels": controller_pcd_mask_erode_pixels(self.args),
-            "pcd_filter_enabled": pcd_filter_enabled(self.args),
-            "pcd_filter_mode": self.args.pcd_filter_mode if pcd_filter_enabled(self.args) else PCD_FILTER_NONE,
-            "pcd_filter_preset": getattr(self.args, "pcd_filter_preset", None),
+            "controller_pcd_mask_erode_pixels": controller_pcd_mask_erode_pixels(
+                self.args
+            ),
             "world_z_diagnostic_thresholds_m": [
                 float(value) for value in DEFAULT_TABLE_Z_DIAGNOSTIC_THRESHOLDS_M
             ],
@@ -163,33 +180,28 @@ class _SegWarmupMixin(_DemoRuntimeContract):
             "table_z_filter_threshold_m": float(DEFAULT_TABLE_Z_FILTER_THRESHOLD_M),
             "table_z_filter_classes": str(TABLE_Z_FILTER_CLASS_BOTH),
             "headless_capture_enabled": headless_capture_enabled(self.args),
-            "headless_prepared_only": bool(getattr(self.args, "headless_prepared_only", False)),
+            "headless_prepared_only": bool(
+                getattr(self.args, "headless_prepared_only", False)
+            ),
             "headless_capture_dir": (
-                _repo_relative_path_text(self.args.headless_capture_dir) if headless_capture_enabled(self.args) else None
+                _repo_relative_path_text(self.args.headless_capture_dir)
+                if headless_capture_enabled(self.args)
+                else None
             ),
             "saved_pcd_source": (
-                headless_capture_saved_pcd_source(self.args) if headless_capture_enabled(self.args) else None
-            ),
-            "object_filter": self.args.object_filter,
-            "controller_filter": self.args.controller_filter,
-            "object_filter_cap": int(self.args.object_filter_cap),
-            "controller_filter_cap": int(self.args.controller_filter_cap),
-            "object_filter_keep_components": int(self.args.object_filter_keep_components),
-            "controller_filter_keep_components": int(self.args.controller_filter_keep_components),
-            "object_filter_min_retain_ratio": float(DEFAULT_OBJECT_FILTER_MIN_RETAIN_RATIO),
-            "controller_filter_min_retain_ratio": float(DEFAULT_CONTROLLER_FILTER_MIN_RETAIN_RATIO),
-            "object_filter_min_raw_retain_ratio": float(DEFAULT_OBJECT_FILTER_MIN_RAW_RETAIN_RATIO),
-            "controller_filter_min_raw_retain_ratio": float(DEFAULT_CONTROLLER_FILTER_MIN_RAW_RETAIN_RATIO),
-            "filter_every_n": int(self.args.filter_every_n),
-            "filter_max_age_frames": int(self.args.filter_max_age_frames),
-            "filter_budget_ms": float(12.0),
-            "filter_min_cap": int(5000),
-            "lossless_controller_filter_min_cap": (
-                int(self.controller_filter_budget.min_cap) if lossless_enabled(self.args) else None
+                HEADLESS_CAPTURE_SAVED_PCD_SOURCE
+                if headless_capture_enabled(self.args)
+                else None
             ),
             "tracker_backend": str(self.args.tracker_backend),
             "tracking_product_backend": str(
-                normalize_tracking_product_backend(getattr(self.args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND))
+                normalize_tracking_product_backend(
+                    getattr(
+                        self.args,
+                        "tracking_product_backend",
+                        DEFAULT_TRACKING_PRODUCT_BACKEND,
+                    )
+                )
             ),
             "phystwin_strict_output_dir": (
                 None
@@ -202,32 +214,44 @@ class _SegWarmupMixin(_DemoRuntimeContract):
             "execution_mode": PHYSTWIN_STRICT_EXECUTION_MODE,
             "tracker_device": str(self.args.tracker_device),
             "tracker_query_count": int(DEFAULT_TRACKER_QUERY_COUNT),
-            "tracker_query_source": tracker_query_source(self.args) if tracker_enabled(self.args) else None,
-            "tracker_marker_gate": tracker_marker_gate(self.args) if tracker_enabled(self.args) else None,
-            "tracker_retire_filtered_markers": (
-                tracker_retire_filtered_markers(self.args) if tracker_enabled(self.args) else None
+            "tracker_query_source": (
+                TRACKER_QUERY_SOURCE_UNION_MASK if tracker_enabled(self.args) else None
             ),
-            "tracker_marker_retirement_policy": (
-                tracker_marker_retirement_policy(self.args) if tracker_enabled(self.args) else None
+            "tracker_marker_gate": (
+                TRACKER_MARKER_GATE_TARGET_MASK_DEPTH
+                if tracker_enabled(self.args)
+                else None
             ),
             "tracker_display_scope": str(DEFAULT_TRACKER_DISPLAY_SCOPE),
             "tracker_overlay_max_points": int(self.args.tracker_overlay_max_points),
             "tracker_marker_point_size": float(DEFAULT_TRACKER_MARKER_POINT_SIZE),
             "tracker_strict_same_seq_render": lossless_enabled(self.args),
             "tracker_visualization_mode": (
-                "phystwin_rainbow_identity_3d_lift" if tracker_enabled(self.args) else "none"
+                "phystwin_rainbow_identity_3d_lift"
+                if tracker_enabled(self.args)
+                else "none"
             ),
             "tracker_sync_policy": (
-                "strict_same_seq_lossless_5fps" if lossless_enabled(self.args) else "none"
+                "strict_same_seq_lossless_5fps"
+                if lossless_enabled(self.args)
+                else "none"
             ),
             "lossless_input_fps": (
-                float(lossless_input_fps(self.args)) if lossless_enabled(self.args) else None
+                float(lossless_input_fps(self.args))
+                if lossless_enabled(self.args)
+                else None
             ),
             "lossless_max_backlog_frames": (
-                int(self.lossless_max_backlog_frames) if lossless_enabled(self.args) else None
+                int(self.lossless_max_backlog_frames)
+                if lossless_enabled(self.args)
+                else None
             ),
-            "query_display_policy": "visible_3d_lifted_all" if tracker_enabled(self.args) else "none",
-            "query_color_mode": "phystwin_rainbow_identity" if tracker_enabled(self.args) else "none",
+            "query_display_policy": "visible_3d_lifted_all"
+            if tracker_enabled(self.args)
+            else "none",
+            "query_color_mode": "phystwin_rainbow_identity"
+            if tracker_enabled(self.args)
+            else "none",
             "tracker_lift_mask_erode_pixels": min(
                 object_pcd_mask_erode_pixels(self.args),
                 controller_pcd_mask_erode_pixels(self.args),
@@ -270,8 +294,8 @@ class _SegWarmupMixin(_DemoRuntimeContract):
                 dtype=warmup.dtype,
             )
             session_end_s = time.perf_counter()
-            self._warmup_perception_profile["edgetam_session_init_ms"] = (
-                _elapsed_ms(session_start_s, session_end_s)
+            self._warmup_perception_profile["edgetam_session_init_ms"] = _elapsed_ms(
+                session_start_s, session_end_s
             )
             with warmup.torch_module.inference_mode():
                 first_packet = self._run_segmentation_frame(
@@ -299,7 +323,9 @@ class _SegWarmupMixin(_DemoRuntimeContract):
                 last_seq = first_frame.seq
                 while not self.stop_event.is_set():
                     if lossless_enabled(self.args):
-                        frame = self.lossless_frame_queue.get(stop_event=self.stop_event)
+                        frame = self.lossless_frame_queue.get(
+                            stop_event=self.stop_event
+                        )
                         if frame is None:
                             break
                     else:
@@ -354,7 +380,9 @@ class _SegWarmupMixin(_DemoRuntimeContract):
             k_color = np.asarray(self.runtime.k_color, dtype=np.float32)
         if k_color is None:
             return None
-        object_observation_mask = self._shape_prior_observation_mask_from_pcd_result(result)
+        object_observation_mask = self._shape_prior_observation_mask_from_pcd_result(
+            result
+        )
         return shape_prior_warmup.ShapePriorFrame0Request(
             seq=int(mask_packet.seq),
             source_timestamp_s=mask_packet.source_timestamp_s,
@@ -374,13 +402,14 @@ class _SegWarmupMixin(_DemoRuntimeContract):
             frame_mask_ready_perf_s=float(mask_packet.process_done_perf_s),
             frame_pcd_ready_perf_s=float(result.packet.process_done_perf_s),
             frame0_pipeline_timing_ms={
-                key: float(value)
-                for key, value in asdict(result.packet.timing).items()
+                key: float(value) for key, value in asdict(result.packet.timing).items()
             },
             frame0_perception_profile=dict(self._warmup_perception_profile),
         )
 
-    def _shape_prior_observation_mask_from_pcd_result(self, result: PcdBuildResult) -> np.ndarray:
+    def _shape_prior_observation_mask_from_pcd_result(
+        self, result: PcdBuildResult
+    ) -> np.ndarray:
         """Return the shape prior observation mask from PCD result."""
         raw = np.asarray(result.mask_packet.object_mask, dtype=bool)
         candidate = result.object_observation_mask
@@ -401,15 +430,21 @@ class _SegWarmupMixin(_DemoRuntimeContract):
 
         return np.ascontiguousarray(mask, dtype=bool)
 
-    def _packet_with_shape_prior_state(self, packet: MaskedPcdPacket) -> MaskedPcdPacket:
+    def _packet_with_shape_prior_state(
+        self, packet: MaskedPcdPacket
+    ) -> MaskedPcdPacket:
         """Return the packet with shape prior state."""
         profile = shape_prior_profile(self.shape_prior_manager)
         result = self.shape_prior_manager.ready_result()
         if result is not None and result.ready:
             return replace(
                 packet,
-                shape_prior_points_m=np.ascontiguousarray(result.points_m, dtype=np.float32).reshape(-1, 3),
-                shape_prior_colors_rgb_u8=np.ascontiguousarray(result.colors_rgb_u8, dtype=np.uint8).reshape(-1, 3),
+                shape_prior_points_m=np.ascontiguousarray(
+                    result.points_m, dtype=np.float32
+                ).reshape(-1, 3),
+                shape_prior_colors_rgb_u8=np.ascontiguousarray(
+                    result.colors_rgb_u8, dtype=np.uint8
+                ).reshape(-1, 3),
                 shape_prior_status=shape_prior_warmup.STATUS_READY,
                 shape_prior_profile=profile,
             )
@@ -436,19 +471,28 @@ class _SegWarmupMixin(_DemoRuntimeContract):
         submitted = self.shape_prior_manager.maybe_submit(frame0_request)
         if submitted:
             write_shape_prior_profile_json(self.shape_prior_manager, self.args)
-            self._status.emit(STAGE_SHAPE_PRIOR, "frame-0 submitted; generating shape prior")
+            self._status.emit(
+                STAGE_SHAPE_PRIOR, "frame-0 submitted; generating shape prior"
+            )
         return bool(submitted)
 
     def _maybe_write_shape_prior_headless_result(self) -> None:
         """Maybe start or update write shape prior headless result."""
         result = self.shape_prior_manager.ready_result()
-        if self.headless_capture_writer is not None and result is not None and result.ready and not self._shape_prior_written:
+        if (
+            self.headless_capture_writer is not None
+            and result is not None
+            and result.ready
+            and not self._shape_prior_written
+        ):
             self.headless_capture_writer.write_shape_prior_result(result)
             self._shape_prior_written = True
             self.shape_prior_manager.mark_gate_open()
             profile = shape_prior_profile_payload(self.shape_prior_manager, self.args)
             write_shape_prior_profile_json(self.shape_prior_manager, self.args, profile)
-            self._status.emit(STAGE_WARMUP_READY, "shape prior ready; formal timeline open")
+            self._status.emit(
+                STAGE_WARMUP_READY, "shape prior ready; formal timeline open"
+            )
             print(WARMUP_FINISHED_BANNER, flush=True)
             # Warm-up is over: close the live RGB input preview (its
             # failure/cancel paths close via stop_event/stop() instead).
@@ -478,10 +522,16 @@ class _SegWarmupMixin(_DemoRuntimeContract):
         """Return the autocast context."""
         if not str(self.args.device).startswith("cuda") or self.args.dtype == "float32":
             return nullcontext()
-        dtype = torch_module.bfloat16 if self.args.dtype == "bfloat16" else torch_module.float16
+        dtype = (
+            torch_module.bfloat16
+            if self.args.dtype == "bfloat16"
+            else torch_module.float16
+        )
         return torch_module.autocast("cuda", dtype=dtype)
 
-    def _prune_edgetam_live_session(self, session: Any, *, current_frame_idx: int) -> None:
+    def _prune_edgetam_live_session(
+        self, session: Any, *, current_frame_idx: int
+    ) -> None:
         """Prune edgetam live session."""
         keep_frames = int(DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES)
         if keep_frames <= 0:
@@ -529,8 +579,12 @@ class _SegWarmupMixin(_DemoRuntimeContract):
     ) -> MaskPacket:
         """Run segmentation frame."""
         image = main_warmup.bgr_to_pil_rgb(frame.color_bgr)
-        inputs, preprocess_ms, preprocess_pre_sync_ms, preprocess_post_sync_ms = _time_runtime_ms(
-            lambda: processor(images=image, device=self.args.device, return_tensors="pt"),
+        inputs, preprocess_ms, preprocess_pre_sync_ms, preprocess_post_sync_ms = (
+            _time_runtime_ms(
+                lambda: processor(
+                    images=image, device=self.args.device, return_tensors="pt"
+                ),
+            )
         )
         pixel_values = inputs.pixel_values[0].to(device=self.args.device, dtype=dtype)
         prompt_ms = 0.0
@@ -553,21 +607,38 @@ class _SegWarmupMixin(_DemoRuntimeContract):
                     prompt_masks.append(
                         np.asarray(initial_masks.hand_b_mask, dtype=bool)
                     )
-                _unused, prompt_ms, prompt_pre_sync_ms, prompt_post_sync_ms = _time_runtime_ms(
-                    lambda: processor.add_inputs_to_inference_session(
-                        inference_session=session,
-                        frame_idx=int(frame.seq),
-                        obj_ids=prompt_obj_ids,
-                        input_masks=prompt_masks,
-                    ),
+                _unused, prompt_ms, prompt_pre_sync_ms, prompt_post_sync_ms = (
+                    _time_runtime_ms(
+                        lambda: processor.add_inputs_to_inference_session(
+                            inference_session=session,
+                            frame_idx=int(frame.seq),
+                            obj_ids=prompt_obj_ids,
+                            input_masks=prompt_masks,
+                        ),
+                    )
                 )
             else:
                 prompt_pre_sync_ms = 0.0
                 prompt_post_sync_ms = 0.0
-            output, wall_model_ms, cuda_event_model_ms, model_pre_sync_ms, model_post_sync_ms = _time_model_forward(
-                lambda: model(inference_session=session, frame=pixel_values, frame_idx=int(frame.seq)),
+            (
+                output,
+                wall_model_ms,
+                cuda_event_model_ms,
+                model_pre_sync_ms,
+                model_post_sync_ms,
+            ) = _time_model_forward(
+                lambda: model(
+                    inference_session=session,
+                    frame=pixel_values,
+                    frame_idx=int(frame.seq),
+                ),
             )
-            post_masks, postprocess_ms, postprocess_pre_sync_ms, postprocess_post_sync_ms = _time_runtime_ms(
+            (
+                post_masks,
+                postprocess_ms,
+                postprocess_pre_sync_ms,
+                postprocess_post_sync_ms,
+            ) = _time_runtime_ms(
                 lambda: processor.post_process_masks(
                     [output.pred_masks],
                     original_sizes=inputs.original_sizes,
@@ -579,7 +650,11 @@ class _SegWarmupMixin(_DemoRuntimeContract):
             post_masks,
             mask_logit_threshold=float(self.args.edgetam_mask_logit_threshold),
         )
-        missing = [obj_id for obj_id in active_object_ids(self.args) if obj_id not in masks_by_id]
+        missing = [
+            obj_id
+            for obj_id in active_object_ids(self.args)
+            if obj_id not in masks_by_id
+        ]
         if missing:
             raise RuntimeError(f"HF output missing tracked object ids: {missing}")
         reference_mask = next(iter(masks_by_id.values()))
@@ -593,7 +668,9 @@ class _SegWarmupMixin(_DemoRuntimeContract):
         if hand_b_mask is None:
             hand_b_mask = np.zeros_like(reference_mask, dtype=bool)
         controller_mask = np.logical_or(hand_a_mask, hand_b_mask)
-        self._prune_edgetam_live_session(session, current_frame_idx=int(output.frame_idx))
+        self._prune_edgetam_live_session(
+            session, current_frame_idx=int(output.frame_idx)
+        )
         process_done_s = time.perf_counter()
         timing = replace(
             frame.timing,
@@ -602,8 +679,18 @@ class _SegWarmupMixin(_DemoRuntimeContract):
             model_ms=wall_model_ms,
             wall_model_ms=wall_model_ms,
             cuda_event_model_ms=cuda_event_model_ms,
-            pre_sync_wait_ms=float(preprocess_pre_sync_ms + prompt_pre_sync_ms + model_pre_sync_ms + postprocess_pre_sync_ms),
-            post_sync_wait_ms=float(preprocess_post_sync_ms + prompt_post_sync_ms + model_post_sync_ms + postprocess_post_sync_ms),
+            pre_sync_wait_ms=float(
+                preprocess_pre_sync_ms
+                + prompt_pre_sync_ms
+                + model_pre_sync_ms
+                + postprocess_pre_sync_ms
+            ),
+            post_sync_wait_ms=float(
+                preprocess_post_sync_ms
+                + prompt_post_sync_ms
+                + model_post_sync_ms
+                + postprocess_post_sync_ms
+            ),
             postprocess_ms=postprocess_ms,
             mask_ms=float(preprocess_ms + prompt_ms + wall_model_ms + postprocess_ms),
         )
@@ -663,7 +750,9 @@ class _SegWarmupMixin(_DemoRuntimeContract):
                 shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
             )
         )
-        if timeout_ms > 0 and (now_s - self._formal_timeline_gate_started_s) * 1000.0 >= float(timeout_ms):
+        if timeout_ms > 0 and (
+            now_s - self._formal_timeline_gate_started_s
+        ) * 1000.0 >= float(timeout_ms):
             self._formal_timeline_gate_expired = True
             print(
                 "[WARN] shape prior still not ready after --shape-prior-timeout-ms="

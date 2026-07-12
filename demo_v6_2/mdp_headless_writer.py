@@ -1,18 +1,23 @@
 """Headless capture: on-disk artifact writer."""
+
 from __future__ import annotations
 
 from demo_v6_2.mdp_constants import *  # noqa: F401,F403
-from demo_v6_2.mdp_cli import controller_pcd_mask_erode_pixels, object_pcd_mask_erode_pixels
 from demo_v6_2.mdp_packets import _full_tracker_arrays_for_prepared_frame
 from demo_v6_2.mdp_pcd_depth import _mask_packet_hand_a_mask, _mask_packet_hand_b_mask
+
 
 class HeadlessCaptureWriter:
     def __init__(self, output_dir: str | Path, *, metadata: dict[str, Any]) -> None:
         """Initialize HeadlessCaptureWriter."""
         self.output_dir = _resolve_path(output_dir)
         self.prepared_only = bool(metadata.get("headless_prepared_only", False))
-        self.write_input_rgb_timeline = bool(metadata.get("write_input_rgb_timeline", False))
-        self.saved_pcd_source = str(metadata.get("saved_pcd_source") or HEADLESS_CAPTURE_SAVED_PCD_SOURCE)
+        self.write_input_rgb_timeline = bool(
+            metadata.get("write_input_rgb_timeline", False)
+        )
+        self.saved_pcd_source = str(
+            metadata.get("saved_pcd_source") or HEADLESS_CAPTURE_SAVED_PCD_SOURCE
+        )
         self.pcd_coordinate_frame = str(
             metadata.get("pcd_coordinate_frame")
             or metadata.get("coordinate_frame")
@@ -66,7 +71,9 @@ class HeadlessCaptureWriter:
     def _write_metadata_payload(self, payload: dict[str, Any]) -> None:
         """Write metadata payload."""
         tmp_path = self.metadata_path.with_name(f"{self.metadata_path.name}.tmp")
-        tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        tmp_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
         tmp_path.replace(self.metadata_path)
 
     def update_metadata(self, values: dict[str, Any]) -> None:
@@ -77,23 +84,42 @@ class HeadlessCaptureWriter:
             self._metadata_payload = payload
             self._write_metadata_payload(payload)
 
-    def write_shape_prior_result(self, result: shape_prior_warmup.ShapePriorResult) -> None:
+    def write_shape_prior_result(
+        self, result: shape_prior_warmup.ShapePriorResult
+    ) -> None:
         """Write shape prior result."""
         self.shape_prior_dir.mkdir(parents=True, exist_ok=True)
         path = self.shape_prior_dir / "points.npz"
         np.savez_compressed(
             path,
             seq=np.asarray([int(result.seq)], dtype=np.int64),
-            source_seq=np.asarray([-1 if result.source_seq is None else int(result.source_seq)], dtype=np.int64),
+            source_seq=np.asarray(
+                [-1 if result.source_seq is None else int(result.source_seq)],
+                dtype=np.int64,
+            ),
             source_timestamp_s=np.asarray(
-                [np.nan if result.source_timestamp_s is None else float(result.source_timestamp_s)],
+                [
+                    np.nan
+                    if result.source_timestamp_s is None
+                    else float(result.source_timestamp_s)
+                ],
                 dtype=np.float64,
             ),
-            points_m=np.ascontiguousarray(result.points_m, dtype=np.float32).reshape(-1, 3),
-            colors_rgb_u8=np.ascontiguousarray(result.colors_rgb_u8, dtype=np.uint8).reshape(-1, 3),
-            surface_points_m=np.ascontiguousarray(result.surface_points_m, dtype=np.float32).reshape(-1, 3),
-            interior_points_m=np.ascontiguousarray(result.interior_points_m, dtype=np.float32).reshape(-1, 3),
-            metadata_json=np.asarray([json.dumps(dict(result.metadata), sort_keys=True)]),
+            points_m=np.ascontiguousarray(result.points_m, dtype=np.float32).reshape(
+                -1, 3
+            ),
+            colors_rgb_u8=np.ascontiguousarray(
+                result.colors_rgb_u8, dtype=np.uint8
+            ).reshape(-1, 3),
+            surface_points_m=np.ascontiguousarray(
+                result.surface_points_m, dtype=np.float32
+            ).reshape(-1, 3),
+            interior_points_m=np.ascontiguousarray(
+                result.interior_points_m, dtype=np.float32
+            ).reshape(-1, 3),
+            metadata_json=np.asarray(
+                [json.dumps(dict(result.metadata), sort_keys=True)]
+            ),
         )
         values = dict(result.metadata)
         values.update(
@@ -103,9 +129,15 @@ class HeadlessCaptureWriter:
                 "shape_prior_source_time_s": result.source_timestamp_s,
                 "shape_prior_ready_seq": int(result.seq),
                 "shape_prior_path": self._relative(path),
-                "shape_prior_point_count": int(np.asarray(result.points_m).reshape(-1, 3).shape[0]),
-                "shape_prior_surface_point_count": int(np.asarray(result.surface_points_m).reshape(-1, 3).shape[0]),
-                "shape_prior_interior_point_count": int(np.asarray(result.interior_points_m).reshape(-1, 3).shape[0]),
+                "shape_prior_point_count": int(
+                    np.asarray(result.points_m).reshape(-1, 3).shape[0]
+                ),
+                "shape_prior_surface_point_count": int(
+                    np.asarray(result.surface_points_m).reshape(-1, 3).shape[0]
+                ),
+                "shape_prior_interior_point_count": int(
+                    np.asarray(result.interior_points_m).reshape(-1, 3).shape[0]
+                ),
             }
         )
         self.update_metadata(values)
@@ -117,12 +149,18 @@ class HeadlessCaptureWriter:
         row = {
             "seq": int(packet.seq),
             "source_timestamp_s": (
-                None if packet.source_timestamp_s is None else float(packet.source_timestamp_s)
+                None
+                if packet.source_timestamp_s is None
+                else float(packet.source_timestamp_s)
             ),
             "source_frame_index": (
-                None if packet.source_frame_index is None else int(packet.source_frame_index)
+                None
+                if packet.source_frame_index is None
+                else int(packet.source_frame_index)
             ),
-            "source_step": None if packet.source_step is None else int(packet.source_step),
+            "source_step": None
+            if packet.source_step is None
+            else int(packet.source_step),
             "receive_perf_s": float(packet.receive_perf_s),
         }
         if self.write_input_rgb_timeline or not self.prepared_only:
@@ -150,11 +188,10 @@ class HeadlessCaptureWriter:
         startup_hold_s: float = 0.0,
     ) -> None:
         """Write RGB-D, PCD, masks, tracking, and prepared PhysTwin artifacts."""
-        filter_info = packet.filter_telemetry
-        if not (filter_info.enabled and filter_info.mode == "sync" and filter_info.render_using_filtered):
-            raise RuntimeError("headless capture refuses to save non-filtered PCD output")
         if self.prepared_only and tracker_packet is None:
-            raise RuntimeError("prepared-only headless capture requires a tracker packet")
+            raise RuntimeError(
+                "prepared-only headless capture requires a tracker packet"
+            )
         fps_info = stage_fps or {}
         seq_name = f"{int(packet.seq):06d}"
         pcd_path = self.pcd_dir / f"{seq_name}.npz"
@@ -172,25 +209,47 @@ class HeadlessCaptureWriter:
             np.savez_compressed(
                 mask_path,
                 seq=np.asarray([int(packet.seq)], dtype=np.int64),
-                controller_mask=np.ascontiguousarray(mask_packet.controller_mask, dtype=bool),
+                controller_mask=np.ascontiguousarray(
+                    mask_packet.controller_mask, dtype=bool
+                ),
                 object_mask=np.ascontiguousarray(mask_packet.object_mask, dtype=bool),
-                hand_a_mask=np.ascontiguousarray(_mask_packet_hand_a_mask(mask_packet), dtype=bool),
-                hand_b_mask=np.ascontiguousarray(_mask_packet_hand_b_mask(mask_packet), dtype=bool),
-                controller_pcd_mask=np.ascontiguousarray(controller_pcd_mask, dtype=bool),
+                hand_a_mask=np.ascontiguousarray(
+                    _mask_packet_hand_a_mask(mask_packet), dtype=bool
+                ),
+                hand_b_mask=np.ascontiguousarray(
+                    _mask_packet_hand_b_mask(mask_packet), dtype=bool
+                ),
+                controller_pcd_mask=np.ascontiguousarray(
+                    controller_pcd_mask, dtype=bool
+                ),
                 object_pcd_mask=np.ascontiguousarray(object_pcd_mask, dtype=bool),
                 pcd_stride=np.asarray([int(pcd_stride)], dtype=np.int64),
-                pcd_mask_erode_pixels=np.asarray([int(pcd_mask_erode_pixels)], dtype=np.int64),
-                object_pcd_mask_erode_pixels=np.asarray([int(object_pcd_mask_erode_pixels)], dtype=np.int64),
-                controller_pcd_mask_erode_pixels=np.asarray([int(controller_pcd_mask_erode_pixels)], dtype=np.int64),
+                pcd_mask_erode_pixels=np.asarray(
+                    [int(pcd_mask_erode_pixels)], dtype=np.int64
+                ),
+                object_pcd_mask_erode_pixels=np.asarray(
+                    [int(object_pcd_mask_erode_pixels)], dtype=np.int64
+                ),
+                controller_pcd_mask_erode_pixels=np.asarray(
+                    [int(controller_pcd_mask_erode_pixels)], dtype=np.int64
+                ),
                 mask_source=np.asarray(["edgetam_binary_masks"]),
             )
             np.savez(
                 pcd_path,
                 seq=np.asarray([int(packet.seq)], dtype=np.int64),
-                controller_xyz_m=np.ascontiguousarray(packet.controller_xyz_m, dtype=np.float32),
-                controller_rgb_u8=np.ascontiguousarray(packet.controller_colors_rgb_u8, dtype=np.uint8),
-                object_xyz_m=np.ascontiguousarray(packet.object_xyz_m, dtype=np.float32),
-                object_rgb_u8=np.ascontiguousarray(packet.object_colors_rgb_u8, dtype=np.uint8),
+                controller_xyz_m=np.ascontiguousarray(
+                    packet.controller_xyz_m, dtype=np.float32
+                ),
+                controller_rgb_u8=np.ascontiguousarray(
+                    packet.controller_colors_rgb_u8, dtype=np.uint8
+                ),
+                object_xyz_m=np.ascontiguousarray(
+                    packet.object_xyz_m, dtype=np.float32
+                ),
+                object_rgb_u8=np.ascontiguousarray(
+                    packet.object_colors_rgb_u8, dtype=np.uint8
+                ),
                 intrinsics=np.asarray(
                     [
                         float(packet.intrinsics.fx),
@@ -201,12 +260,19 @@ class HeadlessCaptureWriter:
                     dtype=np.float32,
                 ),
                 saved_pcd_source=np.asarray([self.saved_pcd_source]),
-                coordinate_frame=np.asarray([str(packet.coordinate_frame or self.pcd_coordinate_frame)]),
+                coordinate_frame=np.asarray(
+                    [str(packet.coordinate_frame or self.pcd_coordinate_frame)]
+                ),
             )
         prepared_phystwin_frame_path: str | None = None
         if tracker_packet is not None:
-            c2w = np.asarray(self._metadata_payload.get("camera_to_world_c2w", np.eye(4)), dtype=np.float32).reshape(4, 4)
-            full_tracks_yx, full_visibility = _full_tracker_arrays_for_prepared_frame(tracker_packet)
+            c2w = np.asarray(
+                self._metadata_payload.get("camera_to_world_c2w", np.eye(4)),
+                dtype=np.float32,
+            ).reshape(4, 4)
+            full_tracks_yx, full_visibility = _full_tracker_arrays_for_prepared_frame(
+                tracker_packet
+            )
             mask_frame = {
                 "object": np.asarray(mask_packet.object_mask, dtype=bool),
                 "controller": np.asarray(mask_packet.controller_mask, dtype=bool),
@@ -215,12 +281,16 @@ class HeadlessCaptureWriter:
             }
             prepared = prepare_phystwin_frame(
                 seq=int(packet.seq),
-                rgb_frame=np.ascontiguousarray(mask_packet.color_bgr[:, :, ::-1], dtype=np.uint8),
+                rgb_frame=np.ascontiguousarray(
+                    mask_packet.color_bgr[:, :, ::-1], dtype=np.uint8
+                ),
                 depth_m=np.asarray(depth_m, dtype=np.float32),
                 mask_frame=mask_frame,
                 tracks_yx=full_tracks_yx,
                 visibility=full_visibility,
-                query_points_yx=np.asarray(tracker_packet.query_points_yx, dtype=np.float32),
+                query_points_yx=np.asarray(
+                    tracker_packet.query_points_yx, dtype=np.float32
+                ),
                 intrinsics=packet.intrinsics,
                 c2w=c2w,
                 source_timestamp_s=packet.source_timestamp_s,
@@ -230,71 +300,75 @@ class HeadlessCaptureWriter:
             write_prepared_phystwin_frame(prepared_phystwin_path, prepared)
             prepared_phystwin_frame_path = self._relative(prepared_phystwin_path)
         pair_process_done_s = (
-            max(float(packet.process_done_perf_s), float(tracker_packet.process_done_perf_s))
+            max(
+                float(packet.process_done_perf_s),
+                float(tracker_packet.process_done_perf_s),
+            )
             if tracker_packet is not None
             else float(packet.process_done_perf_s)
         )
         row = {
             "seq": int(packet.seq),
             "source_timestamp_s": (
-                None if packet.source_timestamp_s is None else float(packet.source_timestamp_s)
+                None
+                if packet.source_timestamp_s is None
+                else float(packet.source_timestamp_s)
             ),
             "source_frame_index": (
-                None if packet.source_frame_index is None else int(packet.source_frame_index)
+                None
+                if packet.source_frame_index is None
+                else int(packet.source_frame_index)
             ),
-            "source_step": None if packet.source_step is None else int(packet.source_step),
+            "source_step": None
+            if packet.source_step is None
+            else int(packet.source_step),
             "startup_hold_s": float(startup_hold_s),
-            "pipeline_latency_ms": float(pair_process_done_s - float(packet.receive_perf_s)) * 1000.0,
+            "pipeline_latency_ms": float(
+                pair_process_done_s - float(packet.receive_perf_s)
+            )
+            * 1000.0,
             "capture_fps": float(fps_info.get("capture_fps", 0.0)),
             "seg_fps": float(fps_info.get("seg_fps", 0.0)),
             "depth_fps": float(fps_info.get("depth_fps", 0.0)),
             "pcd_fps": float(fps_info.get("pcd_fps", 0.0)),
             "tracker_fps": float(fps_info.get("tracker_fps", 0.0)),
-            "filter_preset": self.saved_pcd_source,
-            "marker_count": int(tracker_packet.marker_count) if tracker_packet is not None else 0,
-            "marker_residual_checked_count": (
-                int(tracker_packet.marker_residual_checked_count) if tracker_packet is not None else 0
-            ),
-            "marker_residual_violation_count": (
-                int(tracker_packet.marker_residual_violation_count) if tracker_packet is not None else 0
-            ),
-            "marker_residual_gate": (
-                str(tracker_packet.marker_residual_gate) if tracker_packet is not None else "none"
-            ),
-            "remaining_query_count": int(tracker_packet.remaining_query_count) if tracker_packet is not None else 0,
-            "remaining_object_query_count": (
-                int(tracker_packet.remaining_object_query_count) if tracker_packet is not None else 0
-            ),
-            "remaining_controller_query_count": (
-                int(tracker_packet.remaining_controller_query_count) if tracker_packet is not None else 0
-            ),
-            "remaining_hand_a_query_count": (
-                int(tracker_packet.remaining_hand_a_query_count) if tracker_packet is not None else 0
-            ),
-            "remaining_hand_b_query_count": (
-                int(tracker_packet.remaining_hand_b_query_count) if tracker_packet is not None else 0
-            ),
-            "retired_query_count": int(tracker_packet.retired_query_count) if tracker_packet is not None else 0,
+            "saved_pcd_source": self.saved_pcd_source,
+            "marker_count": int(tracker_packet.marker_count)
+            if tracker_packet is not None
+            else 0,
             "controller_point_count": int(packet.controller_point_count),
             "object_point_count": int(packet.object_point_count),
-            "controller_mask_pixels": int(np.count_nonzero(mask_packet.controller_mask)),
+            "controller_mask_pixels": int(
+                np.count_nonzero(mask_packet.controller_mask)
+            ),
             "object_mask_pixels": int(np.count_nonzero(mask_packet.object_mask)),
-            "hand_a_mask_pixels": int(np.count_nonzero(_mask_packet_hand_a_mask(mask_packet))),
-            "hand_b_mask_pixels": int(np.count_nonzero(_mask_packet_hand_b_mask(mask_packet))),
+            "hand_a_mask_pixels": int(
+                np.count_nonzero(_mask_packet_hand_a_mask(mask_packet))
+            ),
+            "hand_b_mask_pixels": int(
+                np.count_nonzero(_mask_packet_hand_b_mask(mask_packet))
+            ),
             "controller_pcd_mask_pixels": int(np.count_nonzero(controller_pcd_mask)),
             "object_pcd_mask_pixels": int(np.count_nonzero(object_pcd_mask)),
             "pcd_mask_erode_pixels": int(pcd_mask_erode_pixels),
             "controller_pcd_mask_erode_pixels": int(controller_pcd_mask_erode_pixels),
             "object_pcd_mask_erode_pixels": int(object_pcd_mask_erode_pixels),
-            "hand_a_query_count": int(tracker_packet.hand_a_query_count) if tracker_packet is not None else 0,
-            "hand_b_query_count": int(tracker_packet.hand_b_query_count) if tracker_packet is not None else 0,
-            "object_query_count": int(tracker_packet.object_query_count) if tracker_packet is not None else 0,
-            "query_count": int(tracker_packet.query_count) if tracker_packet is not None else 0,
+            "hand_a_query_count": int(tracker_packet.hand_a_query_count)
+            if tracker_packet is not None
+            else 0,
+            "hand_b_query_count": int(tracker_packet.hand_b_query_count)
+            if tracker_packet is not None
+            else 0,
+            "object_query_count": int(tracker_packet.object_query_count)
+            if tracker_packet is not None
+            else 0,
+            "query_count": int(tracker_packet.query_count)
+            if tracker_packet is not None
+            else 0,
             "receive_perf_s": float(packet.receive_perf_s),
             "process_done_perf_s": float(packet.process_done_perf_s),
             "pair_process_done_perf_s": float(pair_process_done_s),
             "timing": asdict(packet.timing),
-            "filter_telemetry": asdict(packet.filter_telemetry),
         }
         if not self.prepared_only:
             row.update(
@@ -329,46 +403,52 @@ class HeadlessCaptureWriter:
         np.savez(
             path,
             seq=np.asarray([int(packet.seq)], dtype=np.int64),
-            query_points_yx=np.ascontiguousarray(packet.query_points_yx, dtype=np.float32),
+            query_points_yx=np.ascontiguousarray(
+                packet.query_points_yx, dtype=np.float32
+            ),
             query_indices=np.ascontiguousarray(packet.query_indices, dtype=np.int64),
             query_rgb_u8=np.ascontiguousarray(packet.query_rgb_u8, dtype=np.uint8),
             marker_xyz_m=np.ascontiguousarray(packet.marker_xyz_m, dtype=np.float32),
-            marker_rgb_u8=np.ascontiguousarray(packet.marker_colors_rgb_u8, dtype=np.uint8),
+            marker_rgb_u8=np.ascontiguousarray(
+                packet.marker_colors_rgb_u8, dtype=np.uint8
+            ),
             tracks_yx=np.ascontiguousarray(packet.tracks_yx, dtype=np.float32),
             visibility=np.ascontiguousarray(packet.visibility, dtype=np.float32),
             query_is_object=np.ascontiguousarray(packet.query_is_object, dtype=bool),
-            query_is_controller=np.ascontiguousarray(packet.query_is_controller, dtype=bool),
-            query_target_id=np.ascontiguousarray(packet.query_target_id, dtype=np.int64),
-            query_controller_instance_id=np.ascontiguousarray(packet.query_controller_instance_id, dtype=np.int64),
-            query_all_target_id=np.ascontiguousarray(packet.query_all_target_id, dtype=np.int64),
-            query_all_controller_instance_id=np.ascontiguousarray(
-                packet.query_all_controller_instance_id,
-                dtype=np.int64,
+            query_is_controller=np.ascontiguousarray(
+                packet.query_is_controller, dtype=bool
             ),
-            marker_pixels_yx=np.ascontiguousarray(packet.marker_pixels_yx, dtype=np.int64).reshape(-1, 2),
-            marker_residual_valid=np.ascontiguousarray(packet.marker_residual_valid, dtype=bool),
-            marker_residual_violation=np.ascontiguousarray(packet.marker_residual_violation, dtype=bool),
-            marker_residual_checked_count=np.asarray([int(packet.marker_residual_checked_count)], dtype=np.int64),
-            marker_residual_violation_count=np.asarray([int(packet.marker_residual_violation_count)], dtype=np.int64),
-            marker_residual_gate=np.asarray([str(packet.marker_residual_gate)]),
-            query_alive_mask=np.ascontiguousarray(packet.query_alive_mask, dtype=bool),
-            all_tracks_yx=np.ascontiguousarray(packet.all_tracks_yx, dtype=np.float32).reshape(-1, 2),
-            all_tracker_visibility=np.ascontiguousarray(packet.all_tracker_visibility, dtype=np.float32).reshape(-1),
-            remaining_query_count=np.asarray([int(packet.remaining_query_count)], dtype=np.int64),
-            remaining_object_query_count=np.asarray([int(packet.remaining_object_query_count)], dtype=np.int64),
-            remaining_controller_query_count=np.asarray([int(packet.remaining_controller_query_count)], dtype=np.int64),
-            remaining_hand_a_query_count=np.asarray([int(packet.remaining_hand_a_query_count)], dtype=np.int64),
-            remaining_hand_b_query_count=np.asarray([int(packet.remaining_hand_b_query_count)], dtype=np.int64),
-            retired_query_count=np.asarray([int(packet.retired_query_count)], dtype=np.int64),
+            query_target_id=np.ascontiguousarray(
+                packet.query_target_id, dtype=np.int64
+            ),
+            query_controller_instance_id=np.ascontiguousarray(
+                packet.query_controller_instance_id, dtype=np.int64
+            ),
+            all_tracks_yx=np.ascontiguousarray(
+                packet.all_tracks_yx, dtype=np.float32
+            ).reshape(-1, 2),
+            all_tracker_visibility=np.ascontiguousarray(
+                packet.all_tracker_visibility, dtype=np.float32
+            ).reshape(-1),
             query_count=np.asarray([int(packet.query_count)], dtype=np.int64),
-            consistent_visible_count=np.asarray([int(packet.consistent_visible_count)], dtype=np.int64),
-            hand_a_query_count=np.asarray([int(packet.hand_a_query_count)], dtype=np.int64),
-            hand_b_query_count=np.asarray([int(packet.hand_b_query_count)], dtype=np.int64),
-            object_query_count=np.asarray([int(packet.object_query_count)], dtype=np.int64),
+            consistent_visible_count=np.asarray(
+                [int(packet.consistent_visible_count)], dtype=np.int64
+            ),
+            hand_a_query_count=np.asarray(
+                [int(packet.hand_a_query_count)], dtype=np.int64
+            ),
+            hand_b_query_count=np.asarray(
+                [int(packet.hand_b_query_count)], dtype=np.int64
+            ),
+            object_query_count=np.asarray(
+                [int(packet.object_query_count)], dtype=np.int64
+            ),
             model_ms=np.asarray([float(packet.model_ms)], dtype=np.float32),
             lift_ms=np.asarray([float(packet.lift_ms)], dtype=np.float32),
             e2e_ms=np.asarray([float(packet.e2e_ms)], dtype=np.float32),
-            coordinate_frame=np.asarray([str(packet.coordinate_frame or self.pcd_coordinate_frame)]),
+            coordinate_frame=np.asarray(
+                [str(packet.coordinate_frame or self.pcd_coordinate_frame)]
+            ),
         )
 
     @property

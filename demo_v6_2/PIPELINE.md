@@ -75,6 +75,9 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
    `pcd_mode=masked` 只允许这条 strict 路径：参数校验要求 TAPNext++ tracker
    且 `track_mode != none`。无 tracker 只允许 `pcd_mode=none` 的纯
    capture/depth isolation；旧的 latest-frame `_pcd_worker` 已删除。
+   lossless PCD worker 对 mask 内全部 `0.2 < depth < 1.5 m` 的有效像素反投影，
+   不执行点数 cap 或 runtime PCD filter。原始 PhysTwin 的 3D radius-outlier
+   过滤只在 canonical prepared frame 中执行一次并回写 processed mask。
 
    seg 和 lossless tracker 会在同一个进程、同一个 CUDA device 上并发执行。
    EdgeTAM 的 `reduce-overhead` 会在第 2 次 model call 录制 CUDA graph；
@@ -557,7 +560,8 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
     `tracking.motion_consistency` 执行动作一致性过滤：半径 0.01 m、至少 5 个
     邻居（radius query 未排除自身）、相似阈值 0.005 m，至少 50% 邻居同意。
 
-    depth-validity **mask refinement** 与 3D radius-outlier mask refinement 在
+    depth-validity **mask refinement** 与固定的 3D radius-outlier mask
+    refinement（`radius=0.01 m`、`nb_points=40`）在
     camera 写 canonical prepared frame 时按顺序执行一次；chunk 侧只加载结果，
     不再次做 radius refinement。不过 `tracking.build_window_observations` 仍会在
     track pixel 采样时重新计算逐 query 的 depth-valid，因此不能泛称“所有

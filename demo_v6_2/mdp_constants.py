@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Demo v6.1 shared imports, path bootstrap, and module constants."""
+
 from __future__ import annotations
 
 import argparse
@@ -75,13 +76,6 @@ from demo_v6_2.utils.concurrency import (  # noqa: E402
     packet_seq as _packet_seq,
 )
 from demo_v6_2.utils.ffs_align import FfsIrToColorAligner, validate_ffs_paths  # noqa: E402
-from demo_v6_2.utils.pcd_filter import (  # noqa: E402
-    FilterBudgetController,
-    FilterInput,
-    FilterOutput,
-    voxel_cap_indices,
-    voxel_density_indices,
-)
 from demo_v6_2 import main_warmup  # noqa: E402
 from demo_v6_2 import shape_prior_warmup  # noqa: E402
 from demo_v6_2.tracking import CONTROLLER_FINAL_COUNT  # noqa: E402
@@ -131,7 +125,12 @@ TRACK_MODE_CONTROLLER_OBJECT = "controller-object"
 TRACK_MODE_OBJECT_ONLY = "object-only"
 TRACK_MODE_CONTROLLER_ONLY = "controller-only"
 TRACK_MODE_NONE = "none"
-TRACK_MODES = (TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_OBJECT_ONLY, TRACK_MODE_CONTROLLER_ONLY, TRACK_MODE_NONE)
+TRACK_MODES = (
+    TRACK_MODE_CONTROLLER_OBJECT,
+    TRACK_MODE_OBJECT_ONLY,
+    TRACK_MODE_CONTROLLER_ONLY,
+    TRACK_MODE_NONE,
+)
 DEFAULT_TRACK_MODE = "controller-object"
 DEPTH_SOURCES = ("ffs", "realsense", "none")
 DEFAULT_DEPTH_SOURCE = "ffs"
@@ -145,44 +144,12 @@ DEMO_VISUAL_MODE_PCD = "pcd"
 DEMO_VISUAL_MODE_TRACKING = "tracking"
 DEMO_VISUAL_MODES = (DEMO_VISUAL_MODE_PCD, DEMO_VISUAL_MODE_TRACKING)
 DEFAULT_DEMO_VISUAL_MODE = DEMO_VISUAL_MODE_TRACKING
-PCD_FILTER_MODES = ("async", "sync", "none")
-PCD_FILTER_NONE = "none"
-PCD_FILTER_PT_FILTER = "pt-filter"
-PCD_FILTER_ENHANCED_PT = "enhanced-pt"
-PCD_FILTER_VOXEL_DENSITY = "voxel-density"
-PCD_FILTERS = (PCD_FILTER_NONE, PCD_FILTER_PT_FILTER, PCD_FILTER_ENHANCED_PT, PCD_FILTER_VOXEL_DENSITY)
-PCD_FILTER_PRESET_ORIGINAL = "original"
-PCD_FILTER_PRESET_PT = "pt"
-PCD_FILTER_PRESET_ENHANCED_PT = PCD_FILTER_ENHANCED_PT
-PCD_FILTER_PRESETS = (PCD_FILTER_PRESET_ORIGINAL, PCD_FILTER_PRESET_PT, PCD_FILTER_PRESET_ENHANCED_PT)
 TRACKER_QUERY_SOURCE_UNION_MASK = "object_controller_union_mask"
-TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL = "pcd_filter_residual"
 TRACKER_MARKER_GATE_TARGET_MASK_DEPTH = "target_mask_depth"
-TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z = "pcd_filter_residual_table_z"
-TRACKER_MARKER_RETIREMENT_POLICY_DISABLED = "disabled"
-TRACKER_MARKER_RETIREMENT_POLICY_PCD_FILTER_RESIDUAL_TABLE_Z_ONCE_FALSE = (
-    "pcd_filter_residual_table_z_once_false"
-)
 FAKE_LIVE_FRAME_SELECTION_POLICY = "drop_source_frames_preserve_recording_time"
-DEFAULT_FILTER_RADIUS_M = 0.01
-DEFAULT_FILTER_NB_POINTS = 40
 DEFAULT_PCD_MASK_ERODE_PIXELS = 0
 DEFAULT_OBJECT_PCD_MASK_ERODE_PIXELS: int | None = None
 DEFAULT_CONTROLLER_PCD_MASK_ERODE_PIXELS: int | None = None
-DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M = 0.01
-DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M = 0.0
-DEFAULT_OBJECT_FILTER = PCD_FILTER_NONE
-DEFAULT_CONTROLLER_FILTER = PCD_FILTER_NONE
-DEFAULT_OBJECT_FILTER_CAP = 0
-DEFAULT_CONTROLLER_FILTER_CAP = 0
-DEFAULT_OBJECT_FILTER_KEEP_COMPONENTS = 1
-DEFAULT_CONTROLLER_FILTER_KEEP_COMPONENTS = 2
-DEFAULT_OBJECT_FILTER_MIN_RETAIN_RATIO = 0.0
-DEFAULT_CONTROLLER_FILTER_MIN_RETAIN_RATIO = 0.5
-DEFAULT_OBJECT_FILTER_MIN_RAW_RETAIN_RATIO = 0.0
-DEFAULT_CONTROLLER_FILTER_MIN_RAW_RETAIN_RATIO = 0.5
-DEFAULT_FILTER_MAX_AGE_FRAMES = 3
-DEFAULT_LOSSLESS_CONTROLLER_FILTER_MIN_CAP = 2500
 DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES = 64
 DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD = 0.0
 DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES = 8
@@ -226,8 +193,7 @@ DEFAULT_TRACKER_MARKER_POINT_SIZE = 8.0
 QUERY_CONTROLLER_INSTANCE_NONE = 0
 QUERY_CONTROLLER_INSTANCE_HAND_A = 1
 QUERY_CONTROLLER_INSTANCE_HAND_B = 2
-HEADLESS_CAPTURE_SAVED_PCD_SOURCE = "none_filtered"
-HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS = (PCD_FILTER_ENHANCED_PT, PCD_FILTER_PT_FILTER, PCD_FILTER_NONE)
+HEADLESS_CAPTURE_SAVED_PCD_SOURCE = "full_masked_depth"
 DEFAULT_LOSSLESS_INPUT_FPS = 5.0
 
 
@@ -238,7 +204,9 @@ def table_world_enabled(table_c2w: np.ndarray | None) -> bool:
 
 def pcd_coordinate_frame(table_c2w: np.ndarray | None) -> str:
     """Return the coordinate frame PCD products are expressed in."""
-    return TABLE_WORLD_FRAME_KIND if table_world_enabled(table_c2w) else COORDINATE_FRAME
+    return (
+        TABLE_WORLD_FRAME_KIND if table_world_enabled(table_c2w) else COORDINATE_FRAME
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +229,5 @@ def _resolve_path(value: str | Path) -> Path:
 
 
 __all__ = [
-    _n
-    for _n in list(globals())
-    if not _n.startswith("__") and _n != "annotations"
+    _n for _n in list(globals()) if not _n.startswith("__") and _n != "annotations"
 ]

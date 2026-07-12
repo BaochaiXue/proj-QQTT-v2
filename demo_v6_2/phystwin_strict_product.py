@@ -37,6 +37,8 @@ PHYSTWIN_COMPATIBILITY_PATH_NAME = "cotracker"
 QUERY_SEMANTIC_NONE = np.int8(0)
 QUERY_SEMANTIC_OBJECT = np.int8(1)
 QUERY_SEMANTIC_CONTROLLER = np.int8(2)
+PHYSTWIN_RADIUS_OUTLIER_RADIUS_M = 0.01
+PHYSTWIN_RADIUS_OUTLIER_NB_POINTS = 40
 
 
 @dataclass(frozen=True)
@@ -78,7 +80,9 @@ def normalize_tracking_product_backend(value: str | None) -> str:
     # Accept hyphen/underscore and shorthand spellings from CLI flags and
     # config files; everything maps onto the two canonical backend names.
     """Normalize tracking product backend."""
-    normalized = str(value or DEFAULT_TRACKING_PRODUCT_BACKEND).strip().lower().replace("_", "-")
+    normalized = (
+        str(value or DEFAULT_TRACKING_PRODUCT_BACKEND).strip().lower().replace("_", "-")
+    )
     aliases = {
         "overlay": TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY,
         "realtime": TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY,
@@ -97,7 +101,10 @@ def normalize_tracking_product_backend(value: str | None) -> str:
 
 def tracking_product_backend_is_strict(value: str | None) -> bool:
     """Return the tracking product backend is strict."""
-    return normalize_tracking_product_backend(value) == TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT
+    return (
+        normalize_tracking_product_backend(value)
+        == TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -120,8 +127,12 @@ def normalize_processed_mask_frame(frame: Mapping[str, Any]) -> dict[str, np.nda
     else:
         # No explicit controller mask: the controller is the union of the two
         # hand masks (either hand may be absent).
-        hand_a = np.asarray(frame.get("hand_a", np.zeros_like(obj, dtype=bool)), dtype=bool)
-        hand_b = np.asarray(frame.get("hand_b", np.zeros_like(obj, dtype=bool)), dtype=bool)
+        hand_a = np.asarray(
+            frame.get("hand_a", np.zeros_like(obj, dtype=bool)), dtype=bool
+        )
+        hand_b = np.asarray(
+            frame.get("hand_b", np.zeros_like(obj, dtype=bool)), dtype=bool
+        )
         ctrl = np.logical_or(hand_a, hand_b)
     if obj.shape != ctrl.shape:
         raise ValueError("object/controller masks must have the same shape")
@@ -132,13 +143,19 @@ def normalize_processed_mask_frame(frame: Mapping[str, Any]) -> dict[str, np.nda
     # Raw per-hand masks ride along when present so downstream consumers can
     # still tell the hands apart; they stay optional in the processed frame.
     if "hand_a" in frame and frame["hand_a"] is not None:
-        out["hand_a"] = np.ascontiguousarray(np.asarray(frame["hand_a"], dtype=bool), dtype=bool)
+        out["hand_a"] = np.ascontiguousarray(
+            np.asarray(frame["hand_a"], dtype=bool), dtype=bool
+        )
     if "hand_b" in frame and frame["hand_b"] is not None:
-        out["hand_b"] = np.ascontiguousarray(np.asarray(frame["hand_b"], dtype=bool), dtype=bool)
+        out["hand_b"] = np.ascontiguousarray(
+            np.asarray(frame["hand_b"], dtype=bool), dtype=bool
+        )
     return out
 
 
-def write_processed_masks(output_dir: str | Path, frames: Sequence[Mapping[str, Any]]) -> Path:
+def write_processed_masks(
+    output_dir: str | Path, frames: Sequence[Mapping[str, Any]]
+) -> Path:
     """Write processed masks."""
     root = Path(output_dir)
     mask_dir = root / "mask"
@@ -168,7 +185,9 @@ def _intrinsics_to_matrix(intrinsics: Any) -> np.ndarray:
         fy = float(intrinsics["fy"])
         cx = float(intrinsics["cx"])
         cy = float(intrinsics["cy"])
-        return np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float32)
+        return np.array(
+            [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float32
+        )
     if all(hasattr(intrinsics, name) for name in ("fx", "fy", "cx", "cy")):
         return np.array(
             [
@@ -222,11 +241,15 @@ def dense_world_pcd_grid(
             ],
             axis=1,
         ).astype(np.float32)
-        points_world = transform_points(points_camera, np.asarray(c2w, dtype=np.float32).reshape(4, 4)).astype(np.float32)
+        points_world = transform_points(
+            points_camera, np.asarray(c2w, dtype=np.float32).reshape(4, 4)
+        ).astype(np.float32)
         points[rows, cols] = points_world
     # Leading axis is the camera axis (single camera here), matching the
     # origin per-frame pcd layout of (num_cameras, H, W, 3).
-    return points[None].astype(np.float32, copy=False), color[None].astype(np.uint8, copy=False)
+    return points[None].astype(np.float32, copy=False), color[None].astype(
+        np.uint8, copy=False
+    )
 
 
 def apply_depth_validity_to_mask_frame(
@@ -243,7 +266,9 @@ def apply_depth_validity_to_mask_frame(
     for key, mask in normalized.items():
         arr = np.asarray(mask, dtype=bool)
         if arr.shape != valid.shape:
-            raise ValueError(f"mask {key!r} shape {arr.shape} does not match depth shape {valid.shape}")
+            raise ValueError(
+                f"mask {key!r} shape {arr.shape} does not match depth shape {valid.shape}"
+            )
         filtered[key] = np.ascontiguousarray(arr & valid, dtype=bool)
     return normalize_processed_mask_frame(filtered)
 
@@ -251,36 +276,38 @@ def apply_depth_validity_to_mask_frame(
 def apply_radius_outlier_to_mask_frame(
     frame: Mapping[str, np.ndarray],
     points_grid: np.ndarray,
-    *,
-    enabled: bool,
-    radius_m: float,
-    nb_points: int,
 ) -> dict[str, np.ndarray]:
     # Demo v6.1 offline parity: data_process_sam3d/data_process_mask.py:L81-L92
     # and L107-L136 remove isolated 3D mask points before processed mask output.
     """Apply radius outlier to mask frame."""
     normalized = normalize_processed_mask_frame(frame)
-    if not bool(enabled):
-        return normalized
     grid = np.asarray(points_grid, dtype=np.float32)
     if grid.ndim == 4:
         grid = grid[0]
     if grid.ndim != 3 or grid.shape[-1] != 3:
-        raise ValueError(f"points_grid must have shape H,W,3 or 1,H,W,3; got {grid.shape}")
+        raise ValueError(
+            f"points_grid must have shape H,W,3 or 1,H,W,3; got {grid.shape}"
+        )
 
     # Only the object/controller classes are filtered; optional per-hand masks
     # pass through unchanged.
-    filtered = {key: np.asarray(value, dtype=bool).copy() for key, value in normalized.items()}
+    filtered = {
+        key: np.asarray(value, dtype=bool).copy() for key, value in normalized.items()
+    }
     for key in ("object", "controller"):
         mask = filtered[key]
         if mask.shape != grid.shape[:2]:
-            raise ValueError(f"mask {key!r} shape {mask.shape} does not match points grid {grid.shape[:2]}")
+            raise ValueError(
+                f"mask {key!r} shape {mask.shape} does not match points grid {grid.shape[:2]}"
+            )
         yy, xx = np.nonzero(mask)
         if len(yy) == 0:
             continue
         class_points = grid[yy, xx]
         # Zero-norm points are the "no depth" sentinel from dense_world_pcd_grid.
-        finite = np.isfinite(class_points).all(axis=1) & (np.linalg.norm(class_points, axis=1) > 1e-9)
+        finite = np.isfinite(class_points).all(axis=1) & (
+            np.linalg.norm(class_points, axis=1) > 1e-9
+        )
         if not np.all(finite):
             invalid_rows = yy[~finite]
             invalid_cols = xx[~finite]
@@ -292,8 +319,8 @@ def apply_radius_outlier_to_mask_frame(
             continue
         result = detect_radius_outlier_indices(
             class_points,
-            radius_m=float(radius_m),
-            nb_points=int(nb_points),
+            radius_m=PHYSTWIN_RADIUS_OUTLIER_RADIUS_M,
+            nb_points=PHYSTWIN_RADIUS_OUTLIER_NB_POINTS,
         )
         outlier_indices = np.asarray(result["outlier_indices"], dtype=np.int64)
         if len(outlier_indices):
@@ -340,9 +367,6 @@ def prepare_phystwin_frame(
     query_points_yx: np.ndarray,
     intrinsics: Any,
     c2w: np.ndarray,
-    mask_radius_outlier_filter: bool = True,
-    mask_radius_outlier_radius_m: float = 0.01,
-    mask_radius_outlier_nb_points: int = 40,
     source_timestamp_s: float | None = None,
     source_frame_index: int | None = None,
     source_step: int | None = None,
@@ -362,13 +386,14 @@ def prepare_phystwin_frame(
     processed = apply_radius_outlier_to_mask_frame(
         depth_valid_masks,
         points,
-        enabled=bool(mask_radius_outlier_filter),
-        radius_m=float(mask_radius_outlier_radius_m),
-        nb_points=int(mask_radius_outlier_nb_points),
     )
-    tracks = np.ascontiguousarray(np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2))
+    tracks = np.ascontiguousarray(
+        np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
+    )
     vis = np.ascontiguousarray(np.asarray(visibility, dtype=bool).reshape(-1))
-    queries = np.ascontiguousarray(np.asarray(query_points_yx, dtype=np.float32).reshape(-1, 2))
+    queries = np.ascontiguousarray(
+        np.asarray(query_points_yx, dtype=np.float32).reshape(-1, 2)
+    )
     if tracks.shape[0] != queries.shape[0] or vis.shape[0] != queries.shape[0]:
         raise ValueError(
             "prepared PhysTwin frame requires full tracks/visibility matching query_points_yx; "
@@ -383,14 +408,20 @@ def prepare_phystwin_frame(
         tracks_yx=tracks,
         visibility=vis,
         query_points_yx=queries,
-        source_timestamp_s=None if source_timestamp_s is None else float(source_timestamp_s),
-        source_frame_index=None if source_frame_index is None else int(source_frame_index),
+        source_timestamp_s=None
+        if source_timestamp_s is None
+        else float(source_timestamp_s),
+        source_frame_index=None
+        if source_frame_index is None
+        else int(source_frame_index),
         source_step=None if source_step is None else int(source_step),
         depth_mm_u16=depth_m_to_mm_u16(depth),
     )
 
 
-def write_prepared_phystwin_frame(path: str | Path, frame: PreparedPhysTwinFrame) -> Path:
+def write_prepared_phystwin_frame(
+    path: str | Path, frame: PreparedPhysTwinFrame
+) -> Path:
     """Write prepared phystwin frame."""
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -407,10 +438,16 @@ def write_prepared_phystwin_frame(path: str | Path, frame: PreparedPhysTwinFrame
         "pcd_colors": np.ascontiguousarray(frame.pcd_colors, dtype=np.uint8),
         "tracks_yx": np.ascontiguousarray(frame.tracks_yx, dtype=np.float32),
         "visibility": np.ascontiguousarray(frame.visibility, dtype=bool),
-        "query_points_yx": np.ascontiguousarray(frame.query_points_yx, dtype=np.float32),
+        "query_points_yx": np.ascontiguousarray(
+            frame.query_points_yx, dtype=np.float32
+        ),
         "mask_keys": mask_keys,
         "source_timestamp_s": np.asarray(
-            [np.nan if frame.source_timestamp_s is None else float(frame.source_timestamp_s)],
+            [
+                np.nan
+                if frame.source_timestamp_s is None
+                else float(frame.source_timestamp_s)
+            ],
             dtype=np.float64,
         ),
         "source_frame_index": np.asarray(
@@ -446,18 +483,32 @@ def load_prepared_phystwin_frame(path: str | Path) -> PreparedPhysTwinFrame:
     mask_frame: dict[str, np.ndarray] = {}
     for key in payload["mask_keys"]:
         name = str(key)
-        mask_frame[name] = np.ascontiguousarray(np.asarray(payload[f"mask_{name}"], dtype=bool))
+        mask_frame[name] = np.ascontiguousarray(
+            np.asarray(payload[f"mask_{name}"], dtype=bool)
+        )
     # NaN timestamp is the "no provenance" sentinel from the writer.
     timestamp = float(payload["source_timestamp_s"][0])
     return PreparedPhysTwinFrame(
         seq=int(payload["seq"][0]),
-        rgb_frame=np.ascontiguousarray(np.asarray(payload["rgb_frame"], dtype=np.uint8)),
+        rgb_frame=np.ascontiguousarray(
+            np.asarray(payload["rgb_frame"], dtype=np.uint8)
+        ),
         processed_mask_frame=normalize_processed_mask_frame(mask_frame),
-        pcd_points=np.ascontiguousarray(np.asarray(payload["pcd_points"], dtype=np.float32)),
-        pcd_colors=np.ascontiguousarray(np.asarray(payload["pcd_colors"], dtype=np.uint8)),
-        tracks_yx=np.ascontiguousarray(np.asarray(payload["tracks_yx"], dtype=np.float32).reshape(-1, 2)),
-        visibility=np.ascontiguousarray(np.asarray(payload["visibility"], dtype=bool).reshape(-1)),
-        query_points_yx=np.ascontiguousarray(np.asarray(payload["query_points_yx"], dtype=np.float32).reshape(-1, 2)),
+        pcd_points=np.ascontiguousarray(
+            np.asarray(payload["pcd_points"], dtype=np.float32)
+        ),
+        pcd_colors=np.ascontiguousarray(
+            np.asarray(payload["pcd_colors"], dtype=np.uint8)
+        ),
+        tracks_yx=np.ascontiguousarray(
+            np.asarray(payload["tracks_yx"], dtype=np.float32).reshape(-1, 2)
+        ),
+        visibility=np.ascontiguousarray(
+            np.asarray(payload["visibility"], dtype=bool).reshape(-1)
+        ),
+        query_points_yx=np.ascontiguousarray(
+            np.asarray(payload["query_points_yx"], dtype=np.float32).reshape(-1, 2)
+        ),
         source_timestamp_s=None if not np.isfinite(timestamp) else timestamp,
         source_frame_index=_none_if_negative(int(payload["source_frame_index"][0])),
         source_step=_none_if_negative(int(payload["source_step"][0])),
@@ -545,7 +596,9 @@ def _finalize_prepared_only_headless_capture(
         "tracking_product_backend": TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT,
         "tracker_backend": "tapnextpp",
         "mask_backend": "edgetam",
-        "depth_backend": str(metadata.get("depth_backend") or metadata.get("depth_source", "")),
+        "depth_backend": str(
+            metadata.get("depth_backend") or metadata.get("depth_source", "")
+        ),
         "depth_source_internal": str(
             metadata.get("depth_source_internal")
             or metadata.get("depth_source")
@@ -565,7 +618,9 @@ def _finalize_prepared_only_headless_capture(
         "track_process_data_path": None,
         "final_data_path": None,
     }
-    (out / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (out / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return manifest
 
 
@@ -581,7 +636,10 @@ def _write_pcd_frames(
     pcd_dir.mkdir(parents=True, exist_ok=True)
     # Captures without table calibration carry no camera_to_world_c2w; identity
     # keeps the product in camera space.
-    c2w = np.asarray(metadata.get("camera_to_world_c2w") or np.eye(4, dtype=np.float32), dtype=np.float32).reshape(4, 4)
+    c2w = np.asarray(
+        metadata.get("camera_to_world_c2w") or np.eye(4, dtype=np.float32),
+        dtype=np.float32,
+    ).reshape(4, 4)
     intrinsics = metadata["intrinsics"]
     all_points: list[np.ndarray] = []
     all_colors: list[np.ndarray] = []
@@ -592,7 +650,9 @@ def _write_pcd_frames(
             # Older captures recorded the depth npy under the ffs-specific key.
             depth_path = capture_dir / str(row["ffs_depth_path"])
         else:
-            raise KeyError("headless capture row must contain depth_color_m_path or legacy ffs_depth_path")
+            raise KeyError(
+                "headless capture row must contain depth_color_m_path or legacy ffs_depth_path"
+            )
         depth = np.load(depth_path)
         rgb = _load_rgb(capture_dir / str(row["rgb_path"]))
         points, colors = dense_world_pcd_grid(
@@ -605,7 +665,9 @@ def _write_pcd_frames(
         all_points.append(points)
         all_colors.append(colors)
     if not all_points:
-        return np.empty((0, 1, 0, 0, 3), dtype=np.float32), np.empty((0, 1, 0, 0, 3), dtype=np.uint8)
+        return np.empty((0, 1, 0, 0, 3), dtype=np.float32), np.empty(
+            (0, 1, 0, 0, 3), dtype=np.uint8
+        )
     return np.stack(all_points, axis=0), np.stack(all_colors, axis=0)
 
 
@@ -620,7 +682,9 @@ def _open_video_writer(path: Path, *, size: tuple[int, int], fps: float = 30.0):
 
     path.parent.mkdir(parents=True, exist_ok=True)
     width, height = int(size[0]), int(size[1])
-    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), float(fps), (width, height))
+    writer = cv2.VideoWriter(
+        str(path), cv2.VideoWriter_fourcc(*"mp4v"), float(fps), (width, height)
+    )
     if not writer.isOpened():
         raise RuntimeError(f"failed to open video writer for {path}")
     return writer
@@ -664,8 +728,16 @@ def _render_tracking_2d_video(
                 continue
             # BGR color code: green = object query, red = controller query,
             # light gray = neither semantic class.
-            color = (60, 220, 60) if idx < len(is_object) and is_object[idx] else (40, 80, 255)
-            if idx < len(is_controller) and not is_object[idx] and not is_controller[idx]:
+            color = (
+                (60, 220, 60)
+                if idx < len(is_object) and is_object[idx]
+                else (40, 80, 255)
+            )
+            if (
+                idx < len(is_controller)
+                and not is_object[idx]
+                and not is_controller[idx]
+            ):
                 color = (220, 220, 220)
             cv2.circle(frame, (x, y), 2, color, -1, lineType=cv2.LINE_AA)
         cv2.putText(
@@ -696,7 +768,9 @@ def _world_xy_bounds(*arrays: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         if np.any(finite):
             chunks.append(pts[finite, :2])
     if not chunks:
-        return np.array([-1.0, -1.0], dtype=np.float32), np.array([1.0, 1.0], dtype=np.float32)
+        return np.array([-1.0, -1.0], dtype=np.float32), np.array(
+            [1.0, 1.0], dtype=np.float32
+        )
     xy = np.concatenate(chunks, axis=0)
     lo = np.min(xy, axis=0)
     hi = np.max(xy, axis=0)
@@ -726,11 +800,21 @@ def _draw_world_points(
     span = np.maximum(hi - lo, np.float32(1e-6))
     # Fixed pixel margins leave room for the HUD text; world +Y points up, so
     # flip the row axis after mapping.
-    px = np.clip(((pts[:, 0] - lo[0]) / span[0] * (width - 60) + 30).astype(np.int64), 0, width - 1)
-    py = np.clip(((pts[:, 1] - lo[1]) / span[1] * (height - 80) + 50).astype(np.int64), 0, height - 1)
+    px = np.clip(
+        ((pts[:, 0] - lo[0]) / span[0] * (width - 60) + 30).astype(np.int64),
+        0,
+        width - 1,
+    )
+    py = np.clip(
+        ((pts[:, 1] - lo[1]) / span[1] * (height - 80) + 50).astype(np.int64),
+        0,
+        height - 1,
+    )
     py = height - 1 - py
     for x, y in zip(px, py):
-        cv2.circle(frame, (int(x), int(y)), int(radius), color_bgr, -1, lineType=cv2.LINE_AA)
+        cv2.circle(
+            frame, (int(x), int(y)), int(radius), color_bgr, -1, lineType=cv2.LINE_AA
+        )
     return int(len(pts))
 
 
@@ -747,7 +831,11 @@ def _render_world_track_video(
     import cv2
 
     writer = _open_video_writer(path, size=size)
-    frame_count = max(int(np.asarray(object_points).shape[0]), int(np.asarray(controller_points).shape[0]), 1)
+    frame_count = max(
+        int(np.asarray(object_points).shape[0]),
+        int(np.asarray(controller_points).shape[0]),
+        1,
+    )
     # Bounds are computed once over the whole clip so the view does not jitter
     # frame to frame.
     bounds = _world_xy_bounds(object_points, controller_points)
@@ -756,14 +844,35 @@ def _render_world_track_video(
         frame = np.zeros((height, width, 3), dtype=np.uint8)
         # Indices clamp to the last frame so a shorter object/controller/valid
         # array simply holds its final state.
-        obj = np.asarray(object_points[min(frame_idx, max(0, object_points.shape[0] - 1))], dtype=np.float32).reshape(-1, 3)
-        valid = np.asarray(object_valid[min(frame_idx, max(0, object_valid.shape[0] - 1))], dtype=bool).reshape(-1)
+        obj = np.asarray(
+            object_points[min(frame_idx, max(0, object_points.shape[0] - 1))],
+            dtype=np.float32,
+        ).reshape(-1, 3)
+        valid = np.asarray(
+            object_valid[min(frame_idx, max(0, object_valid.shape[0] - 1))], dtype=bool
+        ).reshape(-1)
         if len(valid) == len(obj):
             obj = obj[valid]
-        ctrl = np.asarray(controller_points[min(frame_idx, max(0, controller_points.shape[0] - 1))], dtype=np.float32).reshape(-1, 3)
-        obj_count = _draw_world_points(frame, obj, bounds=bounds, color_bgr=(50, 220, 80), radius=2)
-        ctrl_count = _draw_world_points(frame, ctrl, bounds=bounds, color_bgr=(40, 40, 255), radius=5)
-        cv2.putText(frame, title, (18, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (255, 255, 255), 2, cv2.LINE_AA)
+        ctrl = np.asarray(
+            controller_points[min(frame_idx, max(0, controller_points.shape[0] - 1))],
+            dtype=np.float32,
+        ).reshape(-1, 3)
+        obj_count = _draw_world_points(
+            frame, obj, bounds=bounds, color_bgr=(50, 220, 80), radius=2
+        )
+        ctrl_count = _draw_world_points(
+            frame, ctrl, bounds=bounds, color_bgr=(40, 40, 255), radius=5
+        )
+        cv2.putText(
+            frame,
+            title,
+            (18, 32),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.72,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
         cv2.putText(
             frame,
             f"frame={frame_idx} object={obj_count} controller={ctrl_count}",
@@ -778,7 +887,9 @@ def _render_world_track_video(
     writer.release()
 
 
-def _render_empty_video(path: Path, *, frame_count: int, label: str, size: tuple[int, int] = (640, 360)) -> None:
+def _render_empty_video(
+    path: Path, *, frame_count: int, label: str, size: tuple[int, int] = (640, 360)
+) -> None:
     """Render empty video."""
     import cv2
 
@@ -787,8 +898,26 @@ def _render_empty_video(path: Path, *, frame_count: int, label: str, size: tuple
     count = max(1, int(frame_count))
     for frame_idx in range(count):
         frame = np.zeros((height, width, 3), dtype=np.uint8)
-        cv2.putText(frame, label, (24, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.putText(frame, f"frame={frame_idx}", (24, 86), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (180, 220, 255), 2, cv2.LINE_AA)
+        cv2.putText(
+            frame,
+            label,
+            (24, 48),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            f"frame={frame_idx}",
+            (24, 86),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (180, 220, 255),
+            2,
+            cv2.LINE_AA,
+        )
         writer.write(frame)
     writer.release()
 
@@ -825,15 +954,22 @@ def finalize_headless_capture(
     if bool(metadata.get("headless_prepared_only")) or (
         "prepared_phystwin_frame_path" in rows[0] and "mask_path" not in rows[0]
     ):
-        return _finalize_prepared_only_headless_capture(capture, out, metadata=metadata, rows=rows)
+        return _finalize_prepared_only_headless_capture(
+            capture, out, metadata=metadata, rows=rows
+        )
 
     mask_frames = [_load_frame_masks(capture / str(row["mask_path"])) for row in rows]
     processed_mask_path = write_processed_masks(out, mask_frames)
 
-    trajectory_payloads = [np.load(capture / str(row["query_trajectory_path"]), allow_pickle=False) for row in rows]
+    trajectory_payloads = [
+        np.load(capture / str(row["query_trajectory_path"]), allow_pickle=False)
+        for row in rows
+    ]
     # All queries are seeded on frame 0, so queries_txy is (t=0, x, y) — note
     # the (y, x) -> (x, y) swap relative to query_points_yx.
-    query_points_yx = np.asarray(trajectory_payloads[0]["query_points_yx"], dtype=np.float32)
+    query_points_yx = np.asarray(
+        trajectory_payloads[0]["query_points_yx"], dtype=np.float32
+    )
     query_txy = np.zeros((len(query_points_yx), 3), dtype=np.float32)
     query_txy[:, 1] = query_points_yx[:, 1]
     query_txy[:, 2] = query_points_yx[:, 0]
@@ -844,7 +980,11 @@ def finalize_headless_capture(
         # tracks_yx/visibility may hold only the currently-alive subset. The
         # length check below enforces the full-array requirement either way.
         track_key = "all_tracks_yx" if "all_tracks_yx" in payload.files else "tracks_yx"
-        vis_key = "all_tracker_visibility" if "all_tracker_visibility" in payload.files else "visibility"
+        vis_key = (
+            "all_tracker_visibility"
+            if "all_tracker_visibility" in payload.files
+            else "visibility"
+        )
         current_tracks = np.asarray(payload[track_key], dtype=np.float32).reshape(-1, 2)
         current_vis = np.asarray(payload[vis_key], dtype=bool).reshape(-1)
         if current_tracks.shape[0] != len(query_points_yx):
@@ -856,8 +996,12 @@ def finalize_headless_capture(
         visibility.append(current_vis)
     tracks_yx = np.stack(tracks, axis=0)
     tracker_visibility = np.stack(visibility, axis=0)
-    _write_tracking_npz(out, tracks_yx=tracks_yx, visibility=tracker_visibility, query_txy=query_txy)
-    pcd_points, pcd_colors = _write_pcd_frames(out, rows, capture_dir=capture, metadata=metadata)
+    _write_tracking_npz(
+        out, tracks_yx=tracks_yx, visibility=tracker_visibility, query_txy=query_txy
+    )
+    pcd_points, pcd_colors = _write_pcd_frames(
+        out, rows, capture_dir=capture, metadata=metadata
+    )
 
     from demo_v6_2 import tracking as tracking_module  # noqa: PLC0415
 
@@ -929,17 +1073,24 @@ def finalize_headless_capture(
         controller_points=track_process["controller_points"],
         title="final_data object 5mm sample + controller FPS30",
     )
-    if track_process["object_points"].shape[1] or track_process["controller_points"].shape[1]:
+    if (
+        track_process["object_points"].shape[1]
+        or track_process["controller_points"].shape[1]
+    ):
         # final_pcd treats every sampled object point as valid for the whole clip.
         _render_world_track_video(
             out / "final_pcd.mp4",
             object_points=track_process["object_points"],
-            object_valid=np.ones(np.asarray(track_process["object_points"]).shape[:2], dtype=bool),
+            object_valid=np.ones(
+                np.asarray(track_process["object_points"]).shape[:2], dtype=bool
+            ),
             controller_points=track_process["controller_points"],
             title="final_pcd 5mm object sample + controller FPS30",
         )
     else:
-        _render_empty_video(out / "final_pcd.mp4", frame_count=len(rows), label="final_pcd empty")
+        _render_empty_video(
+            out / "final_pcd.mp4", frame_count=len(rows), label="final_pcd empty"
+        )
 
     # Keep the shared keys in sync with the prepared-only manifest in
     # _finalize_prepared_only_headless_capture.
@@ -948,7 +1099,9 @@ def finalize_headless_capture(
         "tracking_product_backend": TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT,
         "tracker_backend": "tapnextpp",
         "mask_backend": "edgetam",
-        "depth_backend": str(metadata.get("depth_backend") or metadata.get("depth_source", "")),
+        "depth_backend": str(
+            metadata.get("depth_backend") or metadata.get("depth_source", "")
+        ),
         "depth_source_internal": str(
             metadata.get("depth_source_internal")
             or metadata.get("depth_source")
@@ -964,5 +1117,7 @@ def finalize_headless_capture(
         "track_process_data_path": str(track_process_path.relative_to(out)),
         "final_data_path": str(final_data_path.relative_to(out)),
     }
-    (out / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    (out / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return manifest

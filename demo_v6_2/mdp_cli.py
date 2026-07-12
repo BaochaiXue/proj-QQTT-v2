@@ -1,4 +1,5 @@
 """CLI: build_parser, apply_demo_preset, derived-mode accessors, validate_args."""
+
 from __future__ import annotations
 
 from demo_v6_2.mdp_constants import *  # noqa: F401,F403
@@ -57,7 +58,13 @@ def build_parser() -> argparse.ArgumentParser:
             "masked-PCD/tracking capture products."
         )
     )
-    parser.add_argument("--fps", choices=SUPPORTED_CAPTURE_FPS, type=int, default=DEFAULT_FPS, help="Capture FPS.")
+    parser.add_argument(
+        "--fps",
+        choices=SUPPORTED_CAPTURE_FPS,
+        type=int,
+        default=DEFAULT_FPS,
+        help="Capture FPS.",
+    )
     parser.add_argument(
         "--serial",
         default=None,
@@ -206,7 +213,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--runtime-product-name", default=None, help=argparse.SUPPRESS)
     parser.add_argument("--metadata-demo-version", default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--metadata-reference-pipeline", default=None, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--metadata-reference-pipeline", default=None, help=argparse.SUPPRESS
+    )
     parser.add_argument(
         "--tracker-backend",
         choices=TRACKER_BACKENDS,
@@ -308,22 +317,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
     )
     parser.set_defaults(shape_prior_skip_route_visualizations=True)
-    parser.add_argument(
-        "--tracker-retire-filtered-markers",
-        dest="tracker_retire_filtered_markers",
-        action="store_true",
-        help="Opt in to permanently hiding any query marker after it fails the active PCD residual/table-Z gate.",
-    )
-    parser.add_argument(
-        "--no-tracker-retire-filtered-markers",
-        dest="tracker_retire_filtered_markers",
-        action="store_false",
-        help="Use the default per-frame marker gate; filtered markers may reappear later.",
-    )
-    parser.set_defaults(tracker_retire_filtered_markers=False)
     parser.set_defaults(tapnextpp_fast_postprocess=True)
-    parser.add_argument("--device", default=DEFAULT_DEVICE, help="Inference device, usually cuda.")
-    parser.add_argument("--dtype", choices=("bfloat16", "float16", "float32"), default=DEFAULT_DTYPE, help="Inference dtype.")
+    parser.add_argument(
+        "--device", default=DEFAULT_DEVICE, help="Inference device, usually cuda."
+    )
+    parser.add_argument(
+        "--dtype",
+        choices=("bfloat16", "float16", "float32"),
+        default=DEFAULT_DTYPE,
+        help="Inference dtype.",
+    )
     parser.add_argument(
         "--edgetam-mask-logit-threshold",
         type=float,
@@ -352,66 +355,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Controller-only mask erosion before RGB-D point-cloud backprojection. Defaults to --pcd-mask-erode-pixels.",
     )
     parser.add_argument(
-        "--enable-pcd-filter",
-        action="store_true",
-        help="Enable capped point-cloud filtering. Async mode never blocks capture, EdgeTAM, FFS, or render.",
-    )
-    parser.add_argument(
-        "--pcd-filter-mode",
-        choices=PCD_FILTER_MODES,
-        default="async",
-        help="Point-cloud filter scheduling mode. Requires --enable-pcd-filter unless set to none.",
-    )
-    parser.add_argument(
-        "--pcd-filter-preset",
-        choices=PCD_FILTER_PRESETS,
-        default=None,
-        help=(
-            "High-level PCD surface preset. When set, the same preset controls object/controller PCD "
-            "and TAPNext++ initial query sampling from filtered residual pixels."
-        ),
-    )
-    parser.add_argument("--object-filter", choices=PCD_FILTERS, default=DEFAULT_OBJECT_FILTER)
-    parser.add_argument("--controller-filter", choices=PCD_FILTERS, default=DEFAULT_CONTROLLER_FILTER)
-    parser.add_argument("--object-filter-cap", type=int, default=DEFAULT_OBJECT_FILTER_CAP)
-    parser.add_argument("--controller-filter-cap", type=int, default=DEFAULT_CONTROLLER_FILTER_CAP)
-    parser.add_argument(
-        "--object-filter-keep-components",
-        type=int,
-        default=DEFAULT_OBJECT_FILTER_KEEP_COMPONENTS,
-        help="Connected components to keep when --object-filter enhanced-pt is used.",
-    )
-    parser.add_argument(
-        "--controller-filter-keep-components",
-        type=int,
-        default=DEFAULT_CONTROLLER_FILTER_KEEP_COMPONENTS,
-        help="Connected components to keep when --controller-filter enhanced-pt is used.",
-    )
-    parser.add_argument("--object-filter-voxel-m", type=float, default=0.004)
-    parser.add_argument("--controller-filter-voxel-m", type=float, default=0.003)
-    parser.add_argument(
-        "--filter-every-n",
-        type=int,
-        default=3,
-        help="Submit capped PCD filtering every N PCD packets. Async mode renders the latest available filtered output.",
-    )
-    parser.add_argument(
-        "--filter-max-age-frames",
-        type=int,
-        default=DEFAULT_FILTER_MAX_AGE_FRAMES,
-        help="Maximum async filtered-output age in frames before rendering raw current PCD instead.",
-    )
-    parser.add_argument(
-        "--voxel-density-min-points",
-        type=int,
-        default=2,
-        help="Minimum points per voxel for the realtime voxel-density approximate filter.",
-    )
-    parser.add_argument("--filter-radius-m", type=float, default=DEFAULT_FILTER_RADIUS_M)
-    parser.add_argument("--filter-nb-points", type=int, default=DEFAULT_FILTER_NB_POINTS)
-    parser.add_argument("--enhanced-component-voxel-size-m", type=float, default=DEFAULT_ENHANCED_COMPONENT_VOXEL_SIZE_M)
-    parser.add_argument("--enhanced-keep-near-main-gap-m", type=float, default=DEFAULT_ENHANCED_KEEP_NEAR_MAIN_GAP_M)
-    parser.add_argument(
         "--enable-table-z-filter",
         action="store_true",
         help=(
@@ -424,7 +367,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable the table-world Z filter when a demo visual preset would enable it by default.",
     )
-    parser.add_argument("--duration-s", type=float, default=0.0, help="Optional auto-stop duration. Use 0 to run until closed.")
+    parser.add_argument(
+        "--duration-s",
+        type=float,
+        default=0.0,
+        help="Optional auto-stop duration. Use 0 to run until closed.",
+    )
     parser.add_argument(
         "--headless-capture-dir",
         type=Path,
@@ -448,8 +396,18 @@ def build_parser() -> argparse.ArgumentParser:
             "realtime side-by-side viewing."
         ),
     )
-    parser.add_argument("--controller-color", type=_parse_rgb_triplet, default=CONTROLLER_COLOR_RGB, help="Controller RGB color.")
-    parser.add_argument("--object-color", type=_parse_rgb_triplet, default=OBJECT_COLOR_RGB, help="Object RGB color.")
+    parser.add_argument(
+        "--controller-color",
+        type=_parse_rgb_triplet,
+        default=CONTROLLER_COLOR_RGB,
+        help="Controller RGB color.",
+    )
+    parser.add_argument(
+        "--object-color",
+        type=_parse_rgb_triplet,
+        default=OBJECT_COLOR_RGB,
+        help="Object RGB color.",
+    )
     return parser
 
 
@@ -459,75 +417,17 @@ def apply_demo_preset(args: argparse.Namespace) -> argparse.Namespace:
         not bool(getattr(args, "disable_table_z_filter", False))
         and not bool(getattr(args, "enable_table_z_filter", False))
         and getattr(args, "table_calibrate", None) is not None
-        and str(getattr(args, "demo_visual_mode", DEFAULT_DEMO_VISUAL_MODE)) in DEMO_VISUAL_MODES
+        and str(getattr(args, "demo_visual_mode", DEFAULT_DEMO_VISUAL_MODE))
+        in DEMO_VISUAL_MODES
         and headless_capture_enabled(args)
     ):
         args.enable_table_z_filter = True
     return args
 
 
-def pcd_filter_enabled(args: argparse.Namespace) -> bool:
-    """Return whether PCD filter is enabled."""
-    return bool(args.enable_pcd_filter) and str(args.pcd_filter_mode) != "none"
-
-
-def pcd_filter_preset_to_filter(preset: str | None) -> str | None:
-    """Return the PCD filter preset to filter."""
-    if preset is None:
-        return None
-    normalized = str(preset).strip().lower()
-    if not normalized:
-        return None
-    if normalized == PCD_FILTER_PRESET_ORIGINAL:
-        return PCD_FILTER_NONE
-    if normalized == PCD_FILTER_PRESET_PT:
-        return PCD_FILTER_PT_FILTER
-    if normalized == PCD_FILTER_PRESET_ENHANCED_PT:
-        return PCD_FILTER_ENHANCED_PT
-    raise ValueError(f"--pcd-filter-preset must be one of {', '.join(PCD_FILTER_PRESETS)}")
-
-
-def tracker_query_source(args: argparse.Namespace) -> str:
-    """Return the tracker query source (phystwin-strict is the only backend)."""
-    return TRACKER_QUERY_SOURCE_UNION_MASK
-
-
-def tracker_marker_gate(args: argparse.Namespace) -> str:
-    """Return the tracker marker gate."""
-    return (
-        TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z
-        if tracker_query_source(args) == TRACKER_QUERY_SOURCE_PCD_FILTER_RESIDUAL
-        else TRACKER_MARKER_GATE_TARGET_MASK_DEPTH
-    )
-
-
-def tracker_retire_filtered_markers(args: argparse.Namespace) -> bool:
-    """Return the tracker retire filtered markers."""
-    return bool(getattr(args, "tracker_retire_filtered_markers", False))
-
-
-def tracker_marker_retirement_policy(args: argparse.Namespace) -> str:
-    """Return the tracker marker retirement policy."""
-    if (
-        tracker_retire_filtered_markers(args)
-        and tracker_marker_gate(args) == TRACKER_MARKER_GATE_PCD_FILTER_RESIDUAL_TABLE_Z
-    ):
-        return TRACKER_MARKER_RETIREMENT_POLICY_PCD_FILTER_RESIDUAL_TABLE_Z_ONCE_FALSE
-    return TRACKER_MARKER_RETIREMENT_POLICY_DISABLED
-
-
 def headless_capture_enabled(args: argparse.Namespace) -> bool:
     """Return whether headless capture is enabled."""
     return args.headless_capture_dir is not None
-
-
-def headless_capture_saved_pcd_source(args: argparse.Namespace) -> str:
-    """Return the headless capture saved PCD source."""
-    object_filter = str(getattr(args, "object_filter", DEFAULT_OBJECT_FILTER)).replace("-", "_")
-    controller_filter = str(getattr(args, "controller_filter", DEFAULT_CONTROLLER_FILTER)).replace("-", "_")
-    if object_filter == controller_filter:
-        return f"{object_filter}_filtered"
-    return f"object_{object_filter}_controller_{controller_filter}_filtered"
 
 
 def validate_args(args: argparse.Namespace) -> None:
@@ -560,12 +460,13 @@ def validate_args(args: argparse.Namespace) -> None:
         args.recording_case = DEFAULT_FAKE_LIVE_CASE
     if _is_replay_input_source(str(args.input_source)):
         if args.recording_case is None:
-            raise ValueError(
-                "--input-source fake-live requires --fake-live-case"
-            )
+            raise ValueError("--input-source fake-live requires --fake-live-case")
     elif args.recording_case is not None:
         raise ValueError("--fake-live-case requires --input-source fake-live")
-    if bool(args.shape_prior_warmup) and not str(args.shape_prior_controller_name or "").strip():
+    if (
+        bool(args.shape_prior_warmup)
+        and not str(args.shape_prior_controller_name or "").strip()
+    ):
         raise ValueError(
             "--shape-prior-controller-name is required when --shape-prior-warmup "
             "is enabled"
@@ -580,9 +481,15 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--pcd-stride must be >= 1")
     if int(DEFAULT_PCD_MASK_ERODE_PIXELS) < 0:
         raise ValueError("--pcd-mask-erode-pixels must be >= 0")
-    if args.object_pcd_mask_erode_pixels is not None and int(args.object_pcd_mask_erode_pixels) < 0:
+    if (
+        args.object_pcd_mask_erode_pixels is not None
+        and int(args.object_pcd_mask_erode_pixels) < 0
+    ):
         raise ValueError("--object-pcd-mask-erode-pixels must be >= 0")
-    if args.controller_pcd_mask_erode_pixels is not None and int(args.controller_pcd_mask_erode_pixels) < 0:
+    if (
+        args.controller_pcd_mask_erode_pixels is not None
+        and int(args.controller_pcd_mask_erode_pixels) < 0
+    ):
         raise ValueError("--controller-pcd-mask-erode-pixels must be >= 0")
     if int(DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES) < 0:
         raise ValueError("--edgetam-live-session-keep-frames must be >= 0")
@@ -612,39 +519,17 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError(
             f"--table-z-filter-classes must be one of {', '.join(TABLE_Z_FILTER_CLASSES)}"
         )
-    if args.pcd_filter_mode not in PCD_FILTER_MODES:
-        raise ValueError(f"--pcd-filter-mode must be one of {', '.join(PCD_FILTER_MODES)}")
-    preset_filter = pcd_filter_preset_to_filter(getattr(args, "pcd_filter_preset", None))
-    if preset_filter is not None:
-        args.enable_pcd_filter = True
-        args.pcd_filter_mode = "sync"
-        args.object_filter = preset_filter
-        args.controller_filter = preset_filter
-        if str(getattr(args, "pcd_filter_preset", "")) == PCD_FILTER_PRESET_ORIGINAL:
-            args.object_filter_cap = 0
-            args.controller_filter_cap = 0
-    for flag in (
-        "object_filter_cap",
-        "controller_filter_cap",
-        "object_filter_keep_components",
-        "controller_filter_keep_components",
-        "filter_max_age_frames",
-    ):
-        if int(getattr(args, flag)) < 0:
-            raise ValueError(f"--{flag.replace('_', '-')} must be >= 0")
     if args.depth_source == "none" and args.pcd_mode == "masked":
         raise ValueError("--depth-source none requires --pcd-mode none")
     if headless_capture_enabled(args):
         if args.input_source not in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_LIVE}:
-            raise ValueError("--headless-capture-dir requires --input-source live or fake-live")
+            raise ValueError(
+                "--headless-capture-dir requires --input-source live or fake-live"
+            )
         if args.depth_source not in {"ffs", "realsense"}:
-            raise ValueError("--headless-capture-dir requires --depth-source ffs or realsense")
-        if args.object_filter not in HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS:
-            allowed = ", ".join(HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS)
-            raise ValueError(f"--headless-capture-dir requires --object-filter one of {allowed}")
-        if args.controller_filter not in HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS:
-            allowed = ", ".join(HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS)
-            raise ValueError(f"--headless-capture-dir requires --controller-filter one of {allowed}")
+            raise ValueError(
+                "--headless-capture-dir requires --depth-source ffs or realsense"
+            )
     args.tracker_backend = normalize_tracker_backend(str(args.tracker_backend))
     args.tracking_product_backend = normalize_tracking_product_backend(
         getattr(args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND)
@@ -654,31 +539,50 @@ def validate_args(args: argparse.Namespace) -> None:
     if args.pcd_mode == "masked" and args.track_mode == TRACK_MODE_NONE:
         raise ValueError("--pcd-mode masked requires an enabled --track-mode")
     if str(args.input_source) not in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_LIVE}:
-        raise ValueError("phystwin-strict-tracking requires --input-source live or fake-live")
+        raise ValueError(
+            "phystwin-strict-tracking requires --input-source live or fake-live"
+        )
     if args.headless_capture_dir is None:
         raise ValueError("phystwin-strict-tracking requires --headless-capture-dir")
     if args.phystwin_strict_output_dir is None:
-        args.phystwin_strict_output_dir = Path(args.headless_capture_dir) / "phystwin_like"
-    if getattr(args, "color_exposure", None) is not None and float(args.color_exposure) <= 0.0:
+        args.phystwin_strict_output_dir = (
+            Path(args.headless_capture_dir) / "phystwin_like"
+        )
+    if (
+        getattr(args, "color_exposure", None) is not None
+        and float(args.color_exposure) <= 0.0
+    ):
         raise ValueError("--color-exposure must be positive")
     if getattr(args, "color_gain", None) is not None and float(args.color_gain) < 0.0:
         raise ValueError("--color-gain must be >= 0")
     if tracker_enabled(args):
         if args.depth_source == "none":
-            raise ValueError("--tracker-backend tapnextpp requires RGB-D depth for 3D marker lift")
+            raise ValueError(
+                "--tracker-backend tapnextpp requires RGB-D depth for 3D marker lift"
+            )
     if args.depth_source == "ffs":
-        validate_ffs_paths(ffs_repo=Path(args.ffs_repo), model_dir=Path(args.ffs_trt_model_dir))
+        validate_ffs_paths(
+            ffs_repo=Path(args.ffs_repo), model_dir=Path(args.ffs_trt_model_dir)
+        )
 
 
 def controller_tracking_enabled(args_or_track_mode: argparse.Namespace | str) -> bool:
     """Return whether controller tracking is enabled."""
-    track_mode = args_or_track_mode if isinstance(args_or_track_mode, str) else args_or_track_mode.track_mode
+    track_mode = (
+        args_or_track_mode
+        if isinstance(args_or_track_mode, str)
+        else args_or_track_mode.track_mode
+    )
     return str(track_mode) in {TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_CONTROLLER_ONLY}
 
 
 def object_tracking_enabled(args_or_track_mode: argparse.Namespace | str) -> bool:
     """Return whether object tracking is enabled."""
-    track_mode = args_or_track_mode if isinstance(args_or_track_mode, str) else args_or_track_mode.track_mode
+    track_mode = (
+        args_or_track_mode
+        if isinstance(args_or_track_mode, str)
+        else args_or_track_mode.track_mode
+    )
     return str(track_mode) in {TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_OBJECT_ONLY}
 
 
@@ -710,7 +614,12 @@ def active_object_ids(args: argparse.Namespace) -> list[int]:
 
 def tracker_enabled(args: argparse.Namespace) -> bool:
     """Return whether tracker is enabled."""
-    return normalize_tracker_backend(str(getattr(args, "tracker_backend", TRACKER_BACKEND_NONE))) != TRACKER_BACKEND_NONE
+    return (
+        normalize_tracker_backend(
+            str(getattr(args, "tracker_backend", TRACKER_BACKEND_NONE))
+        )
+        != TRACKER_BACKEND_NONE
+    )
 
 
 def lossless_enabled(args: argparse.Namespace) -> bool:
@@ -756,7 +665,9 @@ def write_shape_prior_profile_json(
     path = getattr(args, "shape_prior_profile_json", None)
     if path is None:
         return
-    payload = shape_prior_profile_payload(manager, args) if profile is None else dict(profile)
+    payload = (
+        shape_prior_profile_payload(manager, args) if profile is None else dict(profile)
+    )
     atomic_json_dump(payload, Path(path))
 
 
@@ -783,14 +694,7 @@ __all__ = [
     "runtime_metadata_identity",
     "build_parser",
     "apply_demo_preset",
-    "pcd_filter_enabled",
-    "pcd_filter_preset_to_filter",
-    "tracker_query_source",
-    "tracker_marker_gate",
-    "tracker_retire_filtered_markers",
-    "tracker_marker_retirement_policy",
     "headless_capture_enabled",
-    "headless_capture_saved_pcd_source",
     "validate_args",
     "controller_tracking_enabled",
     "object_tracking_enabled",

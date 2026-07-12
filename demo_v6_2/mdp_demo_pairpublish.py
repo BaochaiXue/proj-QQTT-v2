@@ -1,4 +1,5 @@
 """MainDataProcessingDemo pairing/publish/depth mixin."""
+
 from __future__ import annotations
 
 from demo_v6_2.mdp_constants import *  # noqa: F401,F403
@@ -57,7 +58,9 @@ class _PairPublishMixin(_DemoRuntimeContract):
         with self._lossless_publish_condition:
             expected = self._lossless_next_publish_seq
             if seq != expected:
-                raise LosslessPipelineError(f"lossless publish expected seq {expected}, got {seq}")
+                raise LosslessPipelineError(
+                    f"lossless publish expected seq {expected}, got {seq}"
+                )
             self._lossless_next_publish_seq += 1
             self._lossless_publish_condition.notify_all()
 
@@ -96,12 +99,11 @@ class _PairPublishMixin(_DemoRuntimeContract):
                 "[tapnextpp-tracker] "
                 f"backend={adapter.name} device={self.args.tracker_device} "
                 f"repo={DEFAULT_TAPNET_REPO_DIR} checkpoint={DEFAULT_TAPNEXTPP_CHECKPOINT} "
-                f"image_size={"256,256"} overlay_max={int(self.args.tracker_overlay_max_points)} "
+                f"image_size={'256,256'} overlay_max={int(self.args.tracker_overlay_max_points)} "
                 "strict_sync=1",
                 flush=True,
             )
             last_seq = -1
-            rng = np.random.default_rng()
             while not self.stop_event.is_set():
                 mask_packet = self.mask_slot.get_latest_after(last_seq)
                 if mask_packet is None:
@@ -109,14 +111,13 @@ class _PairPublishMixin(_DemoRuntimeContract):
                     continue
                 last_seq = mask_packet.seq
                 try:
-                    pcd_result = self._build_pcd_packet_from_mask(
-                        mask_packet,
-                        rng=rng,
-                        require_filter_seq=True,
-                    )
+                    pcd_result = self._build_pcd_packet_from_mask(mask_packet)
                 except Exception as exc:
                     if not self.stop_event.is_set():
-                        print(f"[WARN] strict PCD frame {mask_packet.seq} failed: {type(exc).__name__}: {exc}", flush=True)
+                        print(
+                            f"[WARN] strict PCD frame {mask_packet.seq} failed: {type(exc).__name__}: {exc}",
+                            flush=True,
+                        )
                     continue
                 self._maybe_start_shape_prior_from_pcd_result(pcd_result)
                 tracker_packet = self._build_tracker_marker_packet(mask_packet, adapter)
@@ -137,9 +138,13 @@ class _PairPublishMixin(_DemoRuntimeContract):
         """Publish mask packet."""
         self.mask_slot.put(packet)
         if lossless_enabled(self.args):
-            if not self.lossless_pcd_mask_queue.wait_for_capacity(stop_event=self.stop_event):
+            if not self.lossless_pcd_mask_queue.wait_for_capacity(
+                stop_event=self.stop_event
+            ):
                 return
-            if not self.lossless_tracker_mask_queue.wait_for_capacity(stop_event=self.stop_event):
+            if not self.lossless_tracker_mask_queue.wait_for_capacity(
+                stop_event=self.stop_event
+            ):
                 return
             self.lossless_pcd_mask_queue.put(packet)
             self.lossless_tracker_mask_queue.put(packet)
@@ -168,7 +173,10 @@ class _PairPublishMixin(_DemoRuntimeContract):
                 ) = self._compute_external_ffs_depth_color_m(frame)
             except Exception as exc:
                 if not self.stop_event.is_set():
-                    print(f"[WARN] FFS depth profile frame {frame.seq} failed: {type(exc).__name__}: {exc}", flush=True)
+                    print(
+                        f"[WARN] FFS depth profile frame {frame.seq} failed: {type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
                 continue
             done_s = time.perf_counter()
             packet = DepthProfilePacket(
@@ -197,7 +205,9 @@ class _PairPublishMixin(_DemoRuntimeContract):
         depth_color_m, ffs_ms, ffs_align_ms = self._compute_ffs_depth_color_m(packet)
         return depth_color_m, ffs_ms, ffs_align_ms, 0.0, 0.0, 0.0, 0.0
 
-    def _get_cached_local_ffs_depth(self, seq: int) -> tuple[np.ndarray, float, float] | None:
+    def _get_cached_local_ffs_depth(
+        self, seq: int
+    ) -> tuple[np.ndarray, float, float] | None:
         """Return the get cached local FFS depth."""
         cached = self._local_ffs_depth_cache.get(int(seq))
         if cached is None:
@@ -205,14 +215,18 @@ class _PairPublishMixin(_DemoRuntimeContract):
         self._local_ffs_depth_cache.move_to_end(int(seq))
         return cached
 
-    def _put_cached_local_ffs_depth(self, seq: int, value: tuple[np.ndarray, float, float]) -> None:
+    def _put_cached_local_ffs_depth(
+        self, seq: int, value: tuple[np.ndarray, float, float]
+    ) -> None:
         """Return the put cached local FFS depth."""
         self._local_ffs_depth_cache[int(seq)] = value
         self._local_ffs_depth_cache.move_to_end(int(seq))
         while len(self._local_ffs_depth_cache) > DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES:
             self._local_ffs_depth_cache.popitem(last=False)
 
-    def _compute_ffs_depth_color_m(self, packet: MaskPacket | FramePacket) -> tuple[np.ndarray, float, float]:
+    def _compute_ffs_depth_color_m(
+        self, packet: MaskPacket | FramePacket
+    ) -> tuple[np.ndarray, float, float]:
         """Compute FFS depth color m."""
         runner = self.ffs_runner
         if runner is None:
@@ -241,7 +255,9 @@ class _PairPublishMixin(_DemoRuntimeContract):
             )
             ffs_done_s = time.perf_counter()
             depth_ir_left_m = np.asarray(output["depth_ir_left_m"], dtype=np.float32)
-            k_ir_left_used = np.asarray(output.get("K_ir_left_used", packet.k_ir_left), dtype=np.float32)
+            k_ir_left_used = np.asarray(
+                output.get("K_ir_left_used", packet.k_ir_left), dtype=np.float32
+            )
             align_start_s = time.perf_counter()
             aligner = self._get_ir_to_color_aligner(
                 depth_shape=depth_ir_left_m.shape,
@@ -250,7 +266,9 @@ class _PairPublishMixin(_DemoRuntimeContract):
                 t_ir_left_to_color=packet.t_ir_left_to_color,
                 k_color=packet.k_color,
             )
-            depth_color_m = np.ascontiguousarray(aligner.align(depth_ir_left_m), dtype=np.float32)
+            depth_color_m = np.ascontiguousarray(
+                aligner.align(depth_ir_left_m), dtype=np.float32
+            )
             align_done_s = time.perf_counter()
             result = (
                 depth_color_m,

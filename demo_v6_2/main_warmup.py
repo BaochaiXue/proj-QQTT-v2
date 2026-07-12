@@ -11,7 +11,6 @@ from typing import Any, Callable
 import numpy as np
 
 from demo_v6_2.utils.ffs_align import warm_up_numba_ffs_align
-from demo_v6_2.utils.pcd_filter import AsyncPcdFilterWorker
 from demo_v6_2.utils.projection import build_projection_grid
 from demo_v6_2.utils.render import apply_wslg_open3d_env_defaults
 
@@ -128,8 +127,7 @@ def _connected_components_by_area(mask: np.ndarray) -> list[np.ndarray]:
             components.append((area, labels == label_idx))
     components.sort(key=lambda item: item[0], reverse=True)
     return [
-        np.ascontiguousarray(component, dtype=bool)
-        for _area, component in components
+        np.ascontiguousarray(component, dtype=bool) for _area, component in components
     ]
 
 
@@ -354,7 +352,6 @@ def resolve_initial_mask_bundle(
 def prepare_runtime_services_and_source(
     demo: Any,
     *,
-    pcd_filter_enabled: Callable[[argparse.Namespace], bool],
     is_replay_input_source: Callable[[str], bool],
     recording_source_cls: type,
     start_realsense_pipeline: Callable[[argparse.Namespace], Any],
@@ -367,9 +364,6 @@ def prepare_runtime_services_and_source(
     if args.depth_source == "ffs":
         demo.ffs_runner = demo._create_ffs_runner()
         warm_up_numba_ffs_align()
-    if pcd_filter_enabled(args) and str(args.pcd_filter_mode) == "async":
-        demo.filter_worker = AsyncPcdFilterWorker(demo._filter_pcd_input)
-        demo.filter_worker.start()
     if is_replay_input_source(str(args.input_source)):
         demo.recording_source = recording_source_cls(
             args.recording_case,

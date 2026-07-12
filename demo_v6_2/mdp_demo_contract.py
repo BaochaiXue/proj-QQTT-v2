@@ -17,6 +17,7 @@ IDEs. ``_DemoRuntimeContract`` is that contract:
 When adding a new cross-mixin attribute or call, declare it here in the same
 section as its owner. State used by a single mixin should NOT be added.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -44,12 +45,15 @@ if TYPE_CHECKING:
         RealtimeCameraRuntime,
         TrackerMarkerPacket,
     )
-    from demo_v6_2.mdp_pipeline_plumbing import OrderedPacketQueue, SameSeqPairer, StageStats
+    from demo_v6_2.mdp_pipeline_plumbing import (
+        OrderedPacketQueue,
+        SameSeqPairer,
+        StageStats,
+    )
     from demo_v6_2.mdp_warmup_preview import WarmupRgbPreview
     from demo_v6_2.pipeline_status import PipelineStatusWriter
     from demo_v6_2.utils.concurrency import LatestSlot
     from demo_v6_2.utils.ffs_align import FfsIrToColorAligner
-    from demo_v6_2.utils.pcd_filter import FilterBudgetController, FilterInput, FilterOutput
 
 
 class _DemoRuntimeContract:
@@ -103,16 +107,7 @@ class _DemoRuntimeContract:
     depth_stats: StageStats
     pcd_stats: StageStats
     tracker_stats: StageStats
-    filter_submit_stats: StageStats
-    filter_output_stats: StageStats
     _status: PipelineStatusWriter
-
-    # PCD filter workers / budgets
-    filter_worker: Any | None
-    _filter_submit_skip_count: int
-    _last_filter_output_seq_recorded: int
-    object_filter_budget: FilterBudgetController
-    controller_filter_budget: FilterBudgetController
 
     # FFS depth
     ffs_runner: object | None
@@ -140,13 +135,13 @@ class _DemoRuntimeContract:
     _tracker_query_target_id: np.ndarray | None
     _tracker_query_controller_instance_id: np.ndarray | None
     _tracker_consistent_visible: np.ndarray | None
-    _tracker_query_alive_mask: np.ndarray | None
-    _tracker_query_initial_seq: int | None
 
     # ------------------------------------------------------------------
     # Implemented by _LifecycleMixin
     # ------------------------------------------------------------------
-    def _record_fatal_worker_error(self, stage: str, exc: BaseException) -> FatalWorkerError:
+    def _record_fatal_worker_error(
+        self, stage: str, exc: BaseException
+    ) -> FatalWorkerError:
         """Record the first fatal worker error and set stop_event."""
         raise NotImplementedError
 
@@ -200,7 +195,9 @@ class _DemoRuntimeContract:
         """Write the shape-prior result/profile to the headless capture once ready."""
         raise NotImplementedError
 
-    def _packet_with_shape_prior_state(self, packet: MaskedPcdPacket) -> MaskedPcdPacket:
+    def _packet_with_shape_prior_state(
+        self, packet: MaskedPcdPacket
+    ) -> MaskedPcdPacket:
         """Return the packet with shape-prior points/status/profile attached."""
         raise NotImplementedError
 
@@ -241,29 +238,8 @@ class _DemoRuntimeContract:
     def _build_pcd_packet_from_mask(
         self,
         mask_packet: MaskPacket,
-        *,
-        rng: np.random.Generator,
-        require_filter_seq: bool = False,
     ) -> PcdBuildResult:
         """Build a masked point-cloud packet from a mask/depth pair."""
-        raise NotImplementedError
-
-    def _make_filter_input(
-        self,
-        *,
-        seq: int,
-        object_xyz: np.ndarray,
-        object_colors: np.ndarray,
-        object_yx: np.ndarray | None = None,
-        controller_xyz: np.ndarray,
-        controller_colors: np.ndarray,
-        controller_yx: np.ndarray | None = None,
-    ) -> FilterInput:
-        """Create a capped PCD-filter input for the current budgets."""
-        raise NotImplementedError
-
-    def _filter_pcd_input(self, item: FilterInput) -> FilterOutput:
-        """Run the object/controller PCD filters on one input."""
         raise NotImplementedError
 
     def _write_headless_pcd_result(

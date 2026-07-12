@@ -381,9 +381,6 @@ def write_shape_prior_case(
     cleaned_masks = apply_radius_outlier_to_mask_frame(
         frame={"object": valid_object, "controller": valid_controller},
         points_grid=points_world,
-        enabled=True,
-        radius_m=0.01,
-        nb_points=40,
     )
     valid_object = _as_mask(
         cleaned_masks["object"],
