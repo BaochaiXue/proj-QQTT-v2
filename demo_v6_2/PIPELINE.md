@@ -17,6 +17,11 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 `pipeline_status.jsonl`；Q23 会区分“已经实现的状态写入”和“默认 viewer
 尚未显示的部分”。
 
+六个 `mdp_demo_*` mixin 都继承 annotation-only 的
+`mdp_demo_contract._DemoRuntimeContract`。该 contract 集中声明跨 mixin 共享的
+属性和方法签名；组装后的 MRO 把六个真实实现放在 contract stub 之前，所以它
+只改善类型检查和 IDE 导航，不增加另一条运行路径，也不创建额外状态。
+
 ## 摄像头与逐帧 I/O（Q1–Q6）
 
 1. **摄像头在哪里启动？**
@@ -46,14 +51,14 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
    **源码证据：**
 
    - [`main.main`](main.py#L132) →
-     [`build_main_data_processing_command`](main_subprocess.py#L233) →
+     [`build_main_data_processing_command`](main_subprocess.py#L255) →
      [`main_data_processing.main`](main_data_processing.py#L63) →
-     [`_LifecycleMixin.run`](mdp_demo_lifecycle.py#L487)。
+     [`_LifecycleMixin.run`](mdp_demo_lifecycle.py#L484)。
    - [`prepare_runtime_services_and_source`](main_warmup.py#L354) 包含 replay/live
-     分支；[`_start_realsense_pipeline`](mdp_capture_source.py#L381) 绑定设备并
+     分支；[`_start_realsense_pipeline`](mdp_capture_source.py#L555) 绑定设备并
      启动 RealSense pipeline。
-   - [`resolve_camera_serials`](main_options.py#L60)、
-     [`main_cli.build_parser`](main_cli.py#L75)、
+   - [`resolve_camera_serials`](main_options.py#L50)、
+     [`main_cli.build_parser`](main_cli.py#L74)、
      [`camera.camera_serials`](config/default.yaml#L52) 和
      [`table_calibrate_metadata.json`](../table_calibrate_metadata.json#L1) 共同
      证明正式路径的 serial 合同。
@@ -86,12 +91,12 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 
    **源码证据：**
 
-   - [`_LifecycleMixin._start_threads`](mdp_demo_lifecycle.py#L636) 定义 worker
+   - [`_LifecycleMixin._start_threads`](mdp_demo_lifecycle.py#L641) 定义 worker
      targets，并在一个循环里调用 `threading.Thread(..., daemon=True)`。
-   - [`_CaptureMixin._capture_worker`](mdp_demo_capture.py#L226) 的 replay 分支
+   - [`_CaptureMixin._capture_worker`](mdp_demo_capture.py#L247) 的 replay 分支
      直接调用
-     [`_capture_recording_worker`](mdp_demo_capture.py#L38) 后返回。
-   - [`ShapePriorWarmupManager.maybe_submit`](shape_prior_warmup.py#L709) 单独创建
+     [`_capture_recording_worker`](mdp_demo_capture.py#L55) 后返回。
+   - [`ShapePriorWarmupManager.maybe_submit`](shape_prior_warmup.py#L1003) 单独创建
      shape-prior warm-up 线程。
 
 3. **进程和线程如何协作？**
@@ -105,8 +110,12 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
    camera 进程内部的 strict 数据流是：capture 同时写 `capture_slot` 和
    `lossless_frame_queue`；seg 将 mask 写到 PCD/tracker 两条有序队列；
    PCD 与 tracker 结果由 `SameSeqPairer` 按相同 seq 配对，再进入
-   pair-output queue。`OrderedPacketQueue` 保序且不静默覆盖，`LatestSlot`
-   只保留最新值。`stop_event` 管理 `_LifecycleMixin._threads` 中的 workers；
+   pair-output queue。`PairedBuildResult.__post_init__` 在对象构造边界再次要求
+   PCD packet、其 source mask、tracker packet 和 pair 本身四个 seq 完全相同；
+   旧 `PairedRenderPacket/paired_render_slot` 中转层已经删除。pair-output worker
+   直接发布验证后的 build result。`OrderedPacketQueue` 保序且不静默覆盖，
+   `LatestSlot` 只保留最新值。`stop_event` 管理
+   `_LifecycleMixin._threads` 中的 workers；
    shape-prior manager thread 不检查该 event，因此不能笼统说“所有线程都由
    stop_event 退出”。
 
@@ -114,17 +123,20 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 
    - [`main.main`](main.py#L132)、
      [`launch_phystwin_shen`](phystwin_shen_launch.py) 和
-     [`ShapePriorLocalClient.request_shape_prior`](shape_prior_warmup.py#L575)
+     [`ShapePriorLocalClient.request_shape_prior`](shape_prior_warmup.py#L739)
      给出 Demo 侧进程边界；full-pipeline wrapper 的 child 顺序由外部
      `scripts/run_online_full_pipeline.py` 定义；shape-prior 阶段冷启动由
-     [`_run_stage`](shape_prior_warmup.py#L170) 调用 `subprocess.run`。
-   - [`_publish_capture_packet`](mdp_demo_capture.py#L21)、
+     [`_run_stage`](shape_prior_warmup.py#L188) 调用 `subprocess.run`。
+   - [`_publish_capture_packet`](mdp_demo_capture.py#L38)、
      [`OrderedPacketQueue`](mdp_pipeline_plumbing.py#L52)、
      [`SameSeqPairer`](mdp_pipeline_plumbing.py#L213) 和
      [`LatestSlot`](utils/concurrency.py#L25) 给出实际的线程间数据合同。
-   - [`_LifecycleMixin.stop`](mdp_demo_lifecycle.py#L539) 设置 `stop_event` 并
+   - [`PairedBuildResult.__post_init__`](mdp_packets.py#L462) 是 strict pair 的
+     最终同序号校验；
+     [`_DemoRuntimeContract`](mdp_demo_contract.py#L55) 声明跨 mixin 合同。
+   - [`_LifecycleMixin.stop`](mdp_demo_lifecycle.py#L541) 设置 `stop_event` 并
      join `_threads`；shape-prior thread 的入口是
-     [`ShapePriorWarmupManager._run`](shape_prior_warmup.py#L734)。
+     [`ShapePriorWarmupManager._run`](shape_prior_warmup.py#L1033)。
 
 4. **RealSense RGB 和 depth 的 FPS 是多少？**
    由 `main.py` 启动的正式路径默认以 **30 FPS** 采集 RealSense。
@@ -151,15 +163,15 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 
    - [`config/default.yaml`](config/default.yaml#L26) 定义
      `replay_fps: 5.0`，[`camera.camera_fps`](config/default.yaml#L45) 定义
-     `camera_fps: 30`；[`build_main_data_processing_command`](main_subprocess.py#L233)
+     `camera_fps: 30`；[`build_main_data_processing_command`](main_subprocess.py#L255)
      将后者传给子进程。
-   - [`_start_realsense_pipeline`](mdp_capture_source.py#L381) 对每个启用 stream
+   - [`_start_realsense_pipeline`](mdp_capture_source.py#L555) 对每个启用 stream
      都传 `int(args.fps)`。
-   - [`resolve_camera_source_replay_fps`](main_options.py#L80)、
-     [`_CaptureMixin._capture_worker`](mdp_demo_capture.py#L226) 和
-     [`LiveLatestFrameSampler`](mdp_capture_source.py#L25) 证明“固定 tick 取最新帧”的
+   - [`resolve_camera_source_replay_fps`](main_options.py#L70)、
+     [`_CaptureMixin._capture_worker`](mdp_demo_capture.py#L247) 和
+     [`LiveLatestFrameSampler`](mdp_capture_source.py#L23) 证明“固定 tick 取最新帧”的
      实际控制链。
-   - [`mdp_cli.build_parser`](mdp_cli.py#L48) 与
+   - [`mdp_cli.build_parser`](mdp_cli.py#L50) 与
      [`mdp_constants.DEFAULT_FPS`](mdp_constants.py#L126) 证明直接运行子入口的
      默认值是 60，而不是 30。
 
@@ -168,20 +180,25 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
    `pipeline.wait_for_frames()`；native-depth 路径先 `align.process`，FFS 路径
    读取 color 与左右 IR。replay 模式由 `_capture_recording_worker` 调用
    `RecordedRgbdFrameSource.read_packet` 加载录制 RGB-D/IR 文件。两条路径都
-   生成 `mdp_packets.FramePacket`。
+   生成 `mdp_packets.FramePacket`。fake-live 的 `make_runtime` 保留相机几何
+   和序列号，但令 `RealtimeCameraRuntime.pipeline=None`；只有 live runtime
+   持有需要停止的 RealSense pipeline。
 
    `_publish_capture_packet` 总会写 `capture_slot`；正式 strict 模式还会同时
    写 `lossless_frame_queue`，不是二选一。
 
    **源码证据：**
 
-   - [`_CaptureMixin._capture_worker`](mdp_demo_capture.py#L226) 包含 RealSense
+   - [`_CaptureMixin._capture_worker`](mdp_demo_capture.py#L247) 包含 RealSense
      读取、对齐、数组复制和 `FramePacket` 构造。
-   - [`_capture_recording_worker`](mdp_demo_capture.py#L38) →
-     [`RecordedRgbdFrameSource.read_packet`](mdp_capture_source.py#L109) 是 replay
+   - [`_capture_recording_worker`](mdp_demo_capture.py#L55) →
+     [`RecordedRgbdFrameSource.read_packet`](mdp_capture_source.py#L183) 是 replay
      读取链。
+   - [`RecordedRgbdFrameSource.make_runtime`](mdp_capture_source.py#L169) 和
+     [`RealtimeCameraRuntime`](mdp_packets.py#L40) 定义 fake-live 的无硬件
+     runtime 合同。
    - [`FramePacket`](mdp_packets.py#L53) 定义逐帧包；
-     [`_publish_capture_packet`](mdp_demo_capture.py#L21) 明确先写 slot，再在
+     [`_publish_capture_packet`](mdp_demo_capture.py#L38) 明确先写 slot，再在
      lossless 模式写 queue。
 
 6. **frame id 和 timestamp 从哪里来？**
@@ -201,15 +218,15 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 
    **源码证据：**
 
-   - [`_CaptureMixin._capture_worker`](mdp_demo_capture.py#L226) 的
+   - [`_CaptureMixin._capture_worker`](mdp_demo_capture.py#L247) 的
      `publish_output_packet` 连续重编号，且 live `FramePacket(...)` 未赋
      `source_*`。
-   - [`RecordedRgbdFrameSource._build_frame_refs`](mdp_capture_source.py#L308) 与
-     [`read_packet`](mdp_capture_source.py#L109) 分别构造 `step/timestamp`，再写
+   - [`RecordedRgbdFrameSource._build_frame_refs`](mdp_capture_source.py#L458) 与
+     [`read_packet`](mdp_capture_source.py#L183) 分别构造 `step/timestamp`，再写
      `source_timestamp_s/source_frame_index/source_step`。
    - [`HeadlessCaptureWriter.write_pcd`](mdp_headless_writer.py#L135) →
      [`prepare_phystwin_frame`](phystwin_strict_product.py#L332) 保留 provenance；
-     [`OnlineFrameArchive.archive_chunk`](online_frame_archive.py#L248) 写
+     [`OnlineFrameArchive.archive_chunk`](online_frame_archive.py#L325) 写
      online-to-source mapping。
    - [`ChunkDataWriter.commit_chunk_data_record`](chunk_data_output.py#L262) 维护
      连续 `start_frame/end_frame`；
@@ -232,9 +249,9 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
      [`resolve_initial_mask_bundle`](main_warmup.py#L332) →
      [`run_sam31_first_frame_mask_bundle`](main_warmup.py#L233) 只处理
      `first_frame.color_bgr`。
-   - [`_SegWarmupMixin._seg_worker`](mdp_demo_segwarmup.py#L193) 创建一个
+   - [`_SegWarmupMixin._seg_worker`](mdp_demo_segwarmup.py#L252) 创建一个
      `EdgeTamVideoInferenceSession`，再调用
-     [`_run_segmentation_frame`](mdp_demo_segwarmup.py#L431) 并设置
+     [`_run_segmentation_frame`](mdp_demo_segwarmup.py#L517) 并设置
      `add_prompt=True`。
 
 8. **系统如何确认拿到的是 frame 0？**
@@ -252,14 +269,14 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 
    **源码证据：**
 
-   - [`_wait_for_first_frame`](mdp_demo_segwarmup.py#L380) 展示 strict queue 与
+   - [`_wait_for_first_frame`](mdp_demo_segwarmup.py#L466) 展示 strict queue 与
      non-strict latest-slot 两条分支。
-   - [`_CaptureMixin._capture_worker`](mdp_demo_capture.py#L226) 和
-     [`_capture_recording_worker`](mdp_demo_capture.py#L38) 都先发布 seq 0，再
+   - [`_CaptureMixin._capture_worker`](mdp_demo_capture.py#L247) 和
+     [`_capture_recording_worker`](mdp_demo_capture.py#L55) 都先发布 seq 0，再
      等待首帧分割 handshake。
    - [`OrderedPacketQueue.put/get`](mdp_pipeline_plumbing.py#L52) 保持连续 FIFO；
      [`LatestSlot.get_latest_after`](utils/concurrency.py#L56) 则是 latest-wins。
-   - [`_SegWarmupMixin._seg_worker`](mdp_demo_segwarmup.py#L193) 对首帧用
+   - [`_SegWarmupMixin._seg_worker`](mdp_demo_segwarmup.py#L252) 对首帧用
      `add_prompt=True`，后续帧统一用 `False`。
 
 9. **Warm-up 期间后续到达的帧如何处理？**
@@ -274,16 +291,16 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 
    **源码证据：**
 
-   - [`_SegWarmupMixin._seg_worker`](mdp_demo_segwarmup.py#L193) 对后续帧调用
+   - [`_SegWarmupMixin._seg_worker`](mdp_demo_segwarmup.py#L252) 对后续帧调用
      `_run_segmentation_frame(..., add_prompt=False)` 后仍发布 mask。
    - [`_PairPublishMixin._publish_strict_pair`](mdp_demo_pairpublish.py#L14)
      在 PCD/tracker 已配对后只对落盘行应用 gate；
-     [`_formal_chunk_rows_gated`](mdp_packets.py#L352) 定义其状态条件。
-   - [`_PcdMixin._write_headless_pcd_result`](mdp_demo_pcd.py#L407) 在 gated 时
+     [`_formal_chunk_rows_gated`](mdp_packets.py#L345) 定义其状态条件。
+   - [`_PcdMixin._write_headless_pcd_result`](mdp_demo_pcd.py#L534) 在 gated 时
      返回；[`HeadlessCaptureWriter.write_input_frame`](mdp_headless_writer.py#L113)
      不经过该 gate。
    - [`_trim_warmup_delayed_rows`](chunk_warmup_trim.py#L31) 修剪无效 startup
-     rows；[`_headless_product_rows_gated`](mdp_demo_segwarmup.py#L550) 实现超时
+     rows；[`_headless_product_rows_gated`](mdp_demo_segwarmup.py#L636) 实现超时
      解除逻辑。
 
 10. **Warm-up 最耗时的步骤是什么？**
@@ -360,17 +377,17 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
     **源码证据：**
 
     - [`InitialMaskBundle` 与 `SegmentationWarmupState`](main_warmup.py#L25) 的
-      实例由 [`_SegWarmupMixin._seg_worker`](mdp_demo_segwarmup.py#L193) 持有；
+      实例由 [`_SegWarmupMixin._seg_worker`](mdp_demo_segwarmup.py#L252) 持有；
       同一 worker 只构造一个 session。
-    - [`ShapePriorWarmupManager._run`](shape_prior_warmup.py#L734) 成功时写
-      `self._result`，[`ready_result`](shape_prior_warmup.py#L772) 读取它。
-    - [`write_shape_prior_case`](shape_prior_warmup.py#L217) 与
-      [`ShapePriorLocalClient.request_shape_prior`](shape_prior_warmup.py#L575)
+    - [`ShapePriorWarmupManager._run`](shape_prior_warmup.py#L1033) 成功时写
+      `self._result`，[`ready_result`](shape_prior_warmup.py#L1112) 读取它。
+    - [`write_shape_prior_case`](shape_prior_warmup.py#L287) 与
+      [`ShapePriorLocalClient.request_shape_prior`](shape_prior_warmup.py#L739)
       写 case 和配置的 `points.npz`；
       [`HeadlessCaptureWriter.write_shape_prior_result`](mdp_headless_writer.py#L80)
       写 capture 副本。
-    - [`shape_prior_align.main`](shape_prior_align.py#L343) 导出
-      `final_mesh.glb`；[`shape_prior_sample.main`](shape_prior_sample.py#L149)
+    - [`shape_prior_align.main`](shape_prior_align.py#L383) 导出
+      `final_mesh.glb`；[`shape_prior_sample.main`](shape_prior_sample.py#L192)
       写 case `final_data.pkl`。
 
 12. **Warm-up 状态如何校验？**
@@ -391,7 +408,7 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
       [`_union_masks`](main_warmup.py#L85) 和
       [`split_controller_hand_instances`](main_warmup.py#L136) 给出 frame-0 mask
       校验。
-    - [`write_shape_prior_case`](shape_prior_warmup.py#L217) 调用 `_as_mask`，检查
+    - [`write_shape_prior_case`](shape_prior_warmup.py#L287) 调用 `_as_mask`，检查
       `object_mask` 与有效 depth，并在 controller 空时执行
       `controller_points = object_points[:1].copy()`。
     - [`_shape_points_for_chunk`](chunk_capture_meta.py#L129) 只检查
@@ -413,17 +430,17 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 
     **源码证据：**
 
-    - [`_run_stage`](shape_prior_warmup.py#L170) 和
-      [`_run_prewarmed_stage`](shape_prior_warmup.py#L540) 给出子阶段非零退出的
+    - [`_run_stage`](shape_prior_warmup.py#L188) 和
+      [`_run_prewarmed_stage`](shape_prior_warmup.py#L622) 给出子阶段非零退出的
       异常路径。
-    - [`ShapePriorWarmupManager.maybe_submit`](shape_prior_warmup.py#L709) 创建
-      thread；[`ShapePriorWarmupManager._run`](shape_prior_warmup.py#L734) 捕获
+    - [`ShapePriorWarmupManager.maybe_submit`](shape_prior_warmup.py#L1003) 创建
+      thread；[`ShapePriorWarmupManager._run`](shape_prior_warmup.py#L1033) 捕获
       异常并写 `STATUS_FAILED`。
-    - [`_record_fatal_worker_error`](mdp_demo_lifecycle.py#L464) 与
-      [`_LifecycleMixin.run`](mdp_demo_lifecycle.py#L487) 给出 camera worker 的
+    - [`_record_fatal_worker_error`](mdp_demo_lifecycle.py#L461) 与
+      [`_LifecycleMixin.run`](mdp_demo_lifecycle.py#L484) 给出 camera worker 的
       fatal/exit 路径。
-    - [`_formal_chunk_rows_gated`](mdp_packets.py#L352)、
-      [`_maybe_write_shape_prior_headless_result`](mdp_demo_segwarmup.py#L362) 和
+    - [`_formal_chunk_rows_gated`](mdp_packets.py#L345)、
+      [`_maybe_write_shape_prior_headless_result`](mdp_demo_segwarmup.py#L442) 和
       [`_shape_points_for_chunk`](chunk_capture_meta.py#L129) 给出 shape-prior
       failed → metadata → bridge exception 的真实传播链。
 
@@ -439,11 +456,11 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 
     **源码证据：**
 
-    - [`_formal_chunk_rows_gated`](mdp_packets.py#L352) 定义 anchor 后的 gate；
-      [`_PcdMixin._write_headless_pcd_result`](mdp_demo_pcd.py#L407) 只让
+    - [`_formal_chunk_rows_gated`](mdp_packets.py#L345) 定义 anchor 后的 gate；
+      [`_PcdMixin._write_headless_pcd_result`](mdp_demo_pcd.py#L534) 只让
       controller ≥ 30 且 object > 0 的 row 取得 anchor，并记录首次 formal seq。
     - [`_trim_warmup_delayed_rows`](chunk_warmup_trim.py#L31) 保留首个
-      chunk-ready row；[`OnlineFrameArchive.archive_chunk`](online_frame_archive.py#L248)
+      chunk-ready row；[`OnlineFrameArchive.archive_chunk`](online_frame_archive.py#L325)
       用 `online_start_frame + local_index` 连续编号。
     - [`design_spec.md`](design_spec.md#L5) 记录 frame 0/1 接缝与 hold-still
       约定，但实现依据是上述函数。
@@ -479,17 +496,17 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
     `main_options.resolve_chunk_frame_count` 优先使用显式
     `--chunk-frame-count`；否则计算
     `round(replay_fps × chunk_seconds)`，并要求结果大于 0。默认配置为
-    5 FPS × 7 秒 = **35 帧**。结果传给 chunk stream，并保存为
+    5 FPS × 1 秒 = **5 帧**。结果传给 chunk stream，并保存为
     `ChunkDataWriter.chunk_size`；writer 再次校验正数，并把它写入 manifest
     和 static metadata。
 
     **源码证据：**
 
     - [`config/default.yaml`](config/default.yaml#L26) 定义 5 FPS，
-      [`chunking.chunk_seconds`](config/default.yaml#L35) 定义 7 秒；
-      [`main_cli.build_parser`](main_cli.py#L75) 暴露 override。
-    - [`resolve_chunk_frame_count`](main_options.py#L45) 实现 override/乘法/正数
-      校验；[`main.main`](main.py#L292) 把结果传入 chunk stream。
+      [`chunking.chunk_seconds`](config/default.yaml#L35) 定义 1 秒；
+      [`main_cli.build_parser`](main_cli.py#L74) 暴露 override。
+    - [`resolve_chunk_frame_count`](main_options.py#L35) 实现 override/乘法/正数
+      校验；[`main.main`](main.py#L296) 把结果传入 chunk stream。
     - [`ChunkDataWriter.__init__`](chunk_data_output.py#L226) 再次校验并保存
       `self.chunk_size`；[`_write_manifest`](chunk_data_output.py#L432) 发布它。
 
@@ -497,7 +514,8 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
     窗口边界严格按 **row/frame 数量**：每次 append 后，buffer 未满就
     `continue`，达到 `chunk_size` 才关闭。`window_closed_wall_s` 只是遥测，
     不参与边界判断。live 路径关闭完整窗口后，通常仍需等下一帧作为 borrow
-    才 materialize/commit，因此“按帧数关闭”不等于“第 35 帧到达即发布”。
+    才 materialize/commit，因此“按帧数关闭”不等于“第 `chunk_size` 帧到达
+    即发布”。
 
     **源码证据：**
 
@@ -593,15 +611,15 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
       `chunk_{id:06d}.pkl`；
       [`_append_static_data`](chunk_data_output.py#L358) 聚合
       `data/final_data.pkl`。
-    - [`OnlineFrameArchive._archive_one_frame`](online_frame_archive.py#L206)、
-      [`_initialize_calibration`](online_frame_archive.py#L163)、
-      [`_write_metadata`](online_frame_archive.py#L352) 和
-      [`_write_enhance_metadata`](online_frame_archive.py#L367) 给出 RGB-D
+    - [`OnlineFrameArchive._archive_one_frame`](online_frame_archive.py#L221)、
+      [`_initialize_calibration`](online_frame_archive.py#L178)、
+      [`_write_metadata`](online_frame_archive.py#L434) 和
+      [`_write_enhance_metadata`](online_frame_archive.py#L449) 给出 RGB-D
       archive 布局。
     - 当前外部 checkout `5b8c071` 的
       [`OnlineFrameBuffer._validate_chunk_shapes`](https://github.com/shenchris/Phystwin_shen/blob/5b8c071/qqtt/data/online_stream.py#L163)
       将两个 ASAP key 列为 required；
-      [`main_cli.build_parser`](main_cli.py#L354) 把 `asap_augment` 默认设为 true。
+      [`main_cli.build_parser`](main_cli.py#L350) 把 `asap_augment` 默认设为 true。
 
 21. **Manifest 何时更新，如何保证读者不会看到半成品？**
     正常提交顺序是：`OnlineFrameArchive.archive_chunk` 先写本 chunk 的 RGB-D
@@ -626,11 +644,11 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
     - [`ChunkDataWriter.commit_chunk_data_record`](chunk_data_output.py#L262) 的
       顺序是 atomic chunk → aggregate → counters →
       [`_write_manifest`](chunk_data_output.py#L432)。
-    - [`OnlineFrameArchive.archive_chunk`](online_frame_archive.py#L248) 与
-      [`publish_metadata`](online_frame_archive.py#L336) 说明 frame files 与
+    - [`OnlineFrameArchive.archive_chunk`](online_frame_archive.py#L325) 与
+      [`publish_metadata`](online_frame_archive.py#L418) 说明 frame files 与
       committed metadata 的关系。
     - [`atomic_pickle_dump/atomic_json_dump`](utils/atomic_io.py#L11) 和
-      [`_atomic_write_bytes`](online_frame_archive.py#L57) 给出原子写细节；
+      [`_atomic_write_bytes`](online_frame_archive.py#L64) 给出原子写细节；
       [`stream_chunk_data_from_headless_capture`](chunk_data_stream.py#L69) 给出
       `finished/failed` 的实际覆盖边界。
 
@@ -743,9 +761,9 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
       [`read_status_events`](pipeline_status.py#L99) 容忍缺失文件和 torn last
       line。
     - [`main.main`](main.py#L132)、
-      [`_LifecycleMixin.run/_record_fatal_worker_error`](mdp_demo_lifecycle.py#L464)
+      [`_LifecycleMixin.run/_record_fatal_worker_error`](mdp_demo_lifecycle.py#L461)
       和
-      [`_maybe_start_shape_prior_from_pcd_result`](mdp_demo_segwarmup.py#L346)
+      [`_maybe_start_shape_prior_from_pcd_result`](mdp_demo_segwarmup.py#L426)
       是全仓实际 emit call sites；shape-prior stage 文件没有 writer call site。
     - [`viz_playback.run_side_by_side`](viz_playback.py#L259) 调用
       [`draw_pipeline_status`](viz_panels.py#L389)；
@@ -754,5 +772,5 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
       SAM3D viewer 绕过该绘制逻辑。
     - [`config/default.yaml`](config/default.yaml) 定义默认
       `side-by-side + sam3d-final-data`；
-      [`ShapePriorWarmupManager._run`](shape_prior_warmup.py#L734) 与
+      [`ShapePriorWarmupManager._run`](shape_prior_warmup.py#L1033) 与
       [`main.main`](main.py) 给出 terminal fatal 与 downstream PGID 清理边界。
