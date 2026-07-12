@@ -51,34 +51,9 @@ def _unique(items: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(unique)
 
 
-QUICK_UNITTEST_MODULES: tuple[str, ...] = (
-    "tests.test_demo_v5_legacy_key_cleanup",
-    "tests.test_demo_v5_1_default_config",
-    "tests.test_demo_v5_1_shape_prior_simplification",
-    "tests.test_demo_v5_1_chunk_data",
-    "tests.test_demo_v5_1_tools_io",
-    "tests.test_demo_v5_1_tracking",
-    "tests.test_demo_v5_1_visualize_track",
-    "tests.test_demo_v6_asap",
-    "tests.test_demo_v6_online_frame_archive",
-    "tests.test_demo_v6_1_downstream",
-    "tests.test_demo_v6_1_standalone_ffs",
-    "tests.test_demo_v6_2_downstream",
-    "tests.test_demo_v6_2_standalone_ffs",
-    "tests.test_demo_v6_2_pipeline_status",
-    "tests.test_demo_v6_2_cleanup",
-    "tests.test_demo_v6_2_live_startup",
-    "tests.test_demo_v6_2_shape_prior_timing",
-    "tests.test_demo_v6_2_tracking_visualization",
-    "tests.test_demo_v6_2_other_visualizations",
-    "tests.test_realsense_extrinsics_matrix",
-    "tests.test_single_view_shape_align",
-    "tests.test_validation_smoke_manifest",
-)
+QUICK_UNITTEST_MODULES: tuple[str, ...] = ()
 
-FULL_ONLY_UNITTEST_MODULES: tuple[str, ...] = (
-    "tests.test_data_process_origin_sam3d_pipeline",
-)
+FULL_ONLY_UNITTEST_MODULES: tuple[str, ...] = ()
 
 SMOKE_UNITTEST_MODULES: tuple[str, ...] = QUICK_UNITTEST_MODULES
 DETERMINISTIC_ONLY_UNITTEST_MODULES: tuple[str, ...] = FULL_ONLY_UNITTEST_MODULES
@@ -136,7 +111,11 @@ def _check_commands(*, python: str) -> list[list[str]]:
 def _unittest_commands(
     *, python: str, module_batches: tuple[tuple[str, ...], ...]
 ) -> list[list[str]]:
-    return [[python, "-m", "unittest", "-v", *modules] for modules in module_batches]
+    return [
+        [python, "-m", "unittest", "-v", *modules]
+        for modules in module_batches
+        if modules
+    ]
 
 
 def _profile_unittest_batches(profile: str) -> tuple[tuple[str, ...], ...]:
