@@ -21,6 +21,7 @@ from unittest import mock
 import numpy as np
 
 from demo_v6_2 import main as runner
+from demo_v6_2 import main_config
 from demo_v6_2 import main_subprocess
 from demo_v6_2 import phystwin_shen_launch
 from demo_v6_2 import shape_prior_warmup
@@ -56,7 +57,7 @@ def _settings(repo: Path, base: Path, **overrides) -> PhystwinShenSettings:
         conda_env="demo_2_max",
         base_path=base,
         cuda_visible_devices="1",
-        runtime_config=copy.deepcopy(runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG),
+        runtime_config=copy.deepcopy(main_config.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG),
     )
     values.update(overrides)
     return PhystwinShenSettings(**values)
@@ -67,9 +68,9 @@ class CameraSerialsConfigTests(unittest.TestCase):
     current single-camera runtime requires exactly one entry and fails fast."""
 
     def test_config_default_is_single_calibration_camera(self) -> None:
-        config = runner.load_default_config()
+        config = main_config.load_default_config()
         self.assertEqual(config["camera"]["camera_serials"], ["239222300740"])
-        self.assertEqual(runner.DEFAULT_CAMERA_SERIALS, ("239222300740",))
+        self.assertEqual(main_config.DEFAULT_CAMERA_SERIALS, ("239222300740",))
 
     def test_config_default_forwarded_to_subprocess(self) -> None:
         from demo_v6_2.main_subprocess import build_main_data_processing_command
@@ -122,16 +123,16 @@ class CameraSerialsConfigTests(unittest.TestCase):
 class DownstreamConfigTests(unittest.TestCase):
     def test_downstream_mode_enum_and_default(self) -> None:
         self.assertEqual(
-            runner.DOWNSTREAM_MODES,
+            main_config.DOWNSTREAM_MODES,
             ("disabled", "demo_visualizer", "phystwin_shen"),
         )
-        self.assertEqual(runner.DEFAULT_DOWNSTREAM_MODE, "phystwin_shen")
-        config = runner.load_default_config()
+        self.assertEqual(main_config.DEFAULT_DOWNSTREAM_MODE, "phystwin_shen")
+        config = main_config.load_default_config()
         self.assertEqual(config["downstream"]["mode"], "phystwin_shen")
         self.assertNotIn("visualizer_mode", config["visualizer"])
 
     def test_phystwin_shen_config_defaults(self) -> None:
-        config = runner.load_default_config()
+        config = main_config.load_default_config()
         section = config["phystwin_shen"]
         self.assertEqual(section["repo_path"], "/home/xinjie/Phystwin_shen")
         self.assertEqual(section["conda_env"], "demo_2_max")
@@ -186,7 +187,7 @@ class DownstreamConfigTests(unittest.TestCase):
             "visualizer_cuda_visible_devices": "0",
             "phystwin_shen_cuda_visible_devices": "0",
         }
-        config = runner.load_default_config()
+        config = main_config.load_default_config()
         actual = {key: str(config["gpu"][key]) for key in expected}
         self.assertEqual(actual, expected)
 
@@ -211,7 +212,7 @@ class DownstreamConfigTests(unittest.TestCase):
         )
 
     def test_every_local_runtime_leaf_has_an_explicit_cli_override(self) -> None:
-        runtime = runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG
+        runtime = main_config.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG
         section_names = set(SECTION_OVERRIDE_KEYS) | set(OPTIONAL_SECTION_OVERRIDE_KEYS)
         self.assertEqual(
             set(runtime),
@@ -385,7 +386,7 @@ class LauncherCommandTests(unittest.TestCase):
         self.assertEqual(value("--train_viewer_port"), "8766")
 
     def test_stop_when_finished_is_controlled_by_local_config(self) -> None:
-        runtime = copy.deepcopy(runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
+        runtime = copy.deepcopy(main_config.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
         runtime["train"]["stop_when_finished"] = True
         settings = _settings(self.repo, self.base, runtime_config=runtime)
         command = build_full_pipeline_command(
@@ -396,7 +397,7 @@ class LauncherCommandTests(unittest.TestCase):
         self.assertEqual(command[index + 1], "true")
 
     def test_common_window_values_are_inherited_by_enabled_stages(self) -> None:
-        runtime = copy.deepcopy(runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
+        runtime = copy.deepcopy(main_config.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
         runtime["common"].update(
             {
                 "batch_size": 3,
@@ -430,7 +431,7 @@ class LauncherCommandTests(unittest.TestCase):
             self.assertNotIn(f"--train_{key}", command)
 
     def test_enabled_stage_requires_effective_window_values(self) -> None:
-        runtime = copy.deepcopy(runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
+        runtime = copy.deepcopy(main_config.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
         runtime["train"].pop("segment_len")
         settings = _settings(
             self.repo,
@@ -469,7 +470,9 @@ class LauncherCommandTests(unittest.TestCase):
         )
         for section, key, invalid_value in invalid_options:
             with self.subTest(section=section, key=key):
-                runtime = copy.deepcopy(runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
+                runtime = copy.deepcopy(
+                    main_config.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG
+                )
                 runtime[section][key] = invalid_value
                 settings = _settings(
                     self.repo,
@@ -486,7 +489,7 @@ class LauncherCommandTests(unittest.TestCase):
                     )
 
     def test_two_enabled_viewers_fail_before_launch(self) -> None:
-        runtime = copy.deepcopy(runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
+        runtime = copy.deepcopy(main_config.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
         runtime["train_viewer"]["enabled"] = True
         settings = _settings(self.repo, self.base, runtime_config=runtime)
         with self.assertRaisesRegex(PhystwinShenLaunchError, "at most one"):
@@ -513,7 +516,7 @@ class LauncherCommandTests(unittest.TestCase):
         self.assertIsNotNone(listener.stdout)
         self.assertEqual(listener.stdout.readline().strip(), b"ready")
 
-        runtime = copy.deepcopy(runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
+        runtime = copy.deepcopy(main_config.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
         runtime["cma_viewer"]["port"] = port
         settings = _settings(self.repo, self.base, runtime_config=runtime)
         launch = None
@@ -555,7 +558,7 @@ class LauncherCommandTests(unittest.TestCase):
             "    time.sleep(0.01)\n",
             encoding="utf-8",
         )
-        runtime = copy.deepcopy(runner.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
+        runtime = copy.deepcopy(main_config.DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG)
         runtime["cma_viewer"]["enabled"] = False
         runtime["train_viewer"]["enabled"] = False
         settings = _settings(self.repo, self.base, runtime_config=runtime)
