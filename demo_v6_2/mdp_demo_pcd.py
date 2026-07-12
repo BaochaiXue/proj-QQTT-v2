@@ -4,10 +4,11 @@ from __future__ import annotations
 from demo_v6_2.mdp_constants import *  # noqa: F401,F403
 from demo_v6_2.mdp_cli import controller_pcd_mask_erode_pixels, controller_tracking_enabled, object_pcd_mask_erode_pixels, object_tracking_enabled, pcd_filter_enabled
 from demo_v6_2.mdp_packets import MaskedPcdPacket, PcdBuildResult, PcdFilterTelemetry
+from demo_v6_2.mdp_demo_contract import _DemoRuntimeContract
 from demo_v6_2.mdp_pcd_depth import _mask_from_yx, _select_points_by_yx_mask, _transform_points_c2w, apply_table_z_filter_with_yx, backproject_masked_rgbd_profiled, build_world_z_diagnostics, erode_binary_mask
 
 
-class _PcdMixin:
+class _PcdMixin(_DemoRuntimeContract):
     """MainDataProcessingDemo point-cloud/filter mixin."""
 
     def _lossless_pcd_worker(self) -> None:
@@ -781,7 +782,7 @@ class _PcdMixin:
             dropped_seg_frames=self.mask_slot.dropped_count,
             timing=timing,
             filter_telemetry=filter_telemetry,
-            coordinate_frame=self._pcd_coordinate_frame(),
+            coordinate_frame=pcd_coordinate_frame(self.table_c2w),
             source_timestamp_s=mask_packet.source_timestamp_s,
             source_frame_index=mask_packet.source_frame_index,
             source_step=mask_packet.source_step,

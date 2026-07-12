@@ -3,7 +3,27 @@ from __future__ import annotations
 
 from demo_v6_2.mdp_constants import *  # noqa: F401,F403
 from demo_v6_2.mdp_capture_source import RecordedRgbdFrameSource, _start_realsense_pipeline
-from demo_v6_2.mdp_cli import _is_replay_input_source, active_object_id_labels, controller_pcd_mask_erode_pixels, depth_backend_label, headless_capture_enabled, headless_capture_saved_pcd_source, object_pcd_mask_erode_pixels, pcd_filter_enabled, runtime_metadata_identity, tracker_enabled, tracker_marker_gate, tracker_marker_retirement_policy, tracker_query_source, tracker_retire_filtered_markers
+from demo_v6_2.mdp_cli import (
+    _is_replay_input_source,
+    active_object_id_labels,
+    controller_pcd_mask_erode_pixels,
+    depth_backend_label,
+    headless_capture_enabled,
+    headless_capture_saved_pcd_source,
+    lossless_enabled,
+    lossless_input_fps,
+    object_pcd_mask_erode_pixels,
+    pcd_filter_enabled,
+    runtime_metadata_identity,
+    shape_prior_profile_payload,
+    tracker_enabled,
+    tracker_marker_gate,
+    tracker_marker_retirement_policy,
+    tracker_query_source,
+    tracker_retire_filtered_markers,
+    write_shape_prior_profile_json,
+)
+from demo_v6_2.mdp_demo_contract import _DemoRuntimeContract
 from demo_v6_2.mdp_headless_writer import HeadlessCaptureWriter
 from demo_v6_2.mdp_packets import FatalWorkerError
 from demo_v6_2.mdp_pipeline_plumbing import OrderedPacketQueue, SameSeqPairer, StageStats
@@ -13,10 +33,9 @@ from demo_v6_2.pipeline_status import (
     STAGE_FATAL,
     PipelineStatusWriter,
 )
-from demo_v6_2.utils.atomic_io import atomic_json_dump
 
 
-class _LifecycleMixin:
+class _LifecycleMixin(_DemoRuntimeContract):
     """MainDataProcessingDemo lifecycle mixin (init/run/stop/threads)."""
 
     def __init__(self, args: argparse.Namespace) -> None:
@@ -25,7 +44,7 @@ class _LifecycleMixin:
         self.width, self.height = parse_profile(DEFAULT_PROFILE)
         self.lossless_max_backlog_frames = max(
             1,
-            int(round(self._lossless_input_fps() * float(args.lossless_max_backlog_seconds))),
+            int(round(lossless_input_fps(args) * float(args.lossless_max_backlog_seconds))),
         )
         self.runtime: RealtimeCameraRuntime | None = None
         self.ray_x: np.ndarray | None = None
@@ -43,7 +62,6 @@ class _LifecycleMixin:
         # Latest non-strict PCD packet; consumed only by the headless debug worker.
         self.pcd_slot: LatestSlot[MaskedPcdPacket] = LatestSlot()
         self.tracker_marker_slot: LatestSlot[TrackerMarkerPacket] = LatestSlot()
-        self.paired_render_slot: LatestSlot[PairedRenderPacket] = LatestSlot()
         self.lossless_frame_queue: OrderedPacketQueue[FramePacket] = OrderedPacketQueue(
             name="frame",
             max_backlog_frames=self.lossless_max_backlog_frames,
@@ -82,7 +100,7 @@ class _LifecycleMixin:
         self._filter_submit_skip_count = 0
         self._last_filter_output_seq_recorded = -1
         controller_filter_min_cap = int(5000)
-        if self._lossless_enabled():
+        if lossless_enabled(args):
             controller_filter_min_cap = min(controller_filter_min_cap, DEFAULT_LOSSLESS_CONTROLLER_FILTER_MIN_CAP)
         self.object_filter_budget = FilterBudgetController(
             target_ms=max(0.0, float(12.0)) * 0.5,
@@ -170,14 +188,6 @@ class _LifecycleMixin:
             return "<not-started>"
         return self.runtime.serial
 
-    def _table_world_enabled(self) -> bool:
-        """Return whether table world is enabled."""
-        return self.table_c2w is not None
-
-    def _pcd_coordinate_frame(self) -> str:
-        """Return the PCD coordinate frame."""
-        return TABLE_WORLD_FRAME_KIND if self._table_world_enabled() else COORDINATE_FRAME
-
     def _create_shape_prior_manager(self) -> shape_prior_warmup.ShapePriorWarmupManager:
         """Create the shape-prior warmup manager for the runtime."""
         enabled = bool(getattr(self.args, "shape_prior_warmup", False))
@@ -207,34 +217,6 @@ class _LifecycleMixin:
             client=client,
         )
 
-    def _shape_prior_profile(self) -> dict[str, Any]:
-        """Return the shape prior profile."""
-        manager = getattr(self, "shape_prior_manager", None)
-        if manager is None:
-            return shape_prior_warmup.default_profile(enabled=False)
-        return manager.profile()
-
-    def _shape_prior_profile_payload(self) -> dict[str, Any]:
-        """Return the shape prior profile payload."""
-        profile = self._shape_prior_profile()
-        payload = dict(profile)
-        if payload.get("input_source") is None:
-            payload["input_source"] = str(getattr(self.args, "input_source", ""))
-        if payload.get("depth_backend") is None:
-            payload["depth_backend"] = depth_backend_label(self.args)
-        if payload.get("depth_source_internal") is None:
-            payload["depth_source_internal"] = str(getattr(self.args, "depth_source", ""))
-        return payload
-
-    def _write_shape_prior_profile_json(self, profile: dict[str, Any] | None = None) -> None:
-        """Write shape prior profile JSON."""
-        path = getattr(self.args, "shape_prior_profile_json", None)
-        if path is None:
-            return
-        output_path = Path(path)
-        payload = self._shape_prior_profile_payload() if profile is None else dict(profile)
-        atomic_json_dump(payload, output_path)
-
     def _initialize_table_calibration(self) -> None:
         """Initialize table calibration."""
         if self.args.table_calibrate is None:
@@ -253,14 +235,6 @@ class _LifecycleMixin:
             f"path={path} serial={self.runtime.serial} pcd_coordinate_frame={TABLE_WORLD_FRAME_KIND}",
             flush=True,
         )
-
-    def _lossless_enabled(self) -> bool:
-        """Return whether lossless is enabled."""
-        return bool(tracker_enabled(self.args) and self.args.pcd_mode == "masked")
-
-    def _lossless_input_fps(self) -> float:
-        """Return the lossless input FPS."""
-        return float(getattr(self.args, "lossless_input_fps", DEFAULT_LOSSLESS_INPUT_FPS))
 
     def _reset_lossless_state(self) -> None:
         """Reset lossless state."""
@@ -296,7 +270,7 @@ class _LifecycleMixin:
         on_wait_tick: Callable[[], None] | None = None,
     ) -> bool:
         """Wait until frame 0 has complete PCD and tracking results."""
-        if not self._lossless_enabled() or self.args.track_mode == "none":
+        if not lossless_enabled(self.args) or self.args.track_mode == "none":
             return True
         while not self.stop_event.is_set():
             if self._lossless_first_pair_published.wait(timeout=0.01):
@@ -309,7 +283,7 @@ class _LifecycleMixin:
         """Build headless capture metadata."""
         if self.runtime is None:
             raise RuntimeError("camera runtime is not initialized")
-        shape_profile = self._shape_prior_profile_payload()
+        shape_profile = shape_prior_profile_payload(self.shape_prior_manager, self.args)
         replay_fps = None
         recording_fps = None
         frame_count = None
@@ -411,10 +385,18 @@ class _LifecycleMixin:
             ),
             "tracker_display_scope": str(DEFAULT_TRACKER_DISPLAY_SCOPE),
             "tracker_sync_policy": (
-                "strict_same_seq_lossless_5fps" if self._lossless_enabled() else "none"
+                "strict_same_seq_lossless_5fps" if lossless_enabled(self.args) else "none"
             ),
-            "lossless_input_fps": float(self._lossless_input_fps()) if self._lossless_enabled() else None,
-            "lossless_max_backlog_frames": int(self.lossless_max_backlog_frames) if self._lossless_enabled() else None,
+            "lossless_input_fps": (
+                float(lossless_input_fps(self.args))
+                if lossless_enabled(self.args)
+                else None
+            ),
+            "lossless_max_backlog_frames": (
+                int(self.lossless_max_backlog_frames)
+                if lossless_enabled(self.args)
+                else None
+            ),
             "pcd_filter_enabled": pcd_filter_enabled(self.args),
             "pcd_filter_mode": str(self.args.pcd_filter_mode if pcd_filter_enabled(self.args) else PCD_FILTER_NONE),
             "pcd_filter_preset": getattr(self.args, "pcd_filter_preset", None),
@@ -429,7 +411,7 @@ class _LifecycleMixin:
             "filter_nb_points": int(self.args.filter_nb_points),
             "filter_min_cap": int(5000),
             "lossless_controller_filter_min_cap": (
-                int(self.controller_filter_budget.min_cap) if self._lossless_enabled() else None
+                int(self.controller_filter_budget.min_cap) if lossless_enabled(self.args) else None
             ),
             "enhanced_component_voxel_size_m": float(self.args.enhanced_component_voxel_size_m),
             "pcd_max_points": int(60000),
@@ -442,12 +424,16 @@ class _LifecycleMixin:
             "serial": str(self.runtime.serial),
             "width": int(self.width),
             "height": int(self.height),
-            "coordinate_frame": self._pcd_coordinate_frame(),
-            "pcd_coordinate_frame": self._pcd_coordinate_frame(),
+            "coordinate_frame": pcd_coordinate_frame(self.table_c2w),
+            "pcd_coordinate_frame": pcd_coordinate_frame(self.table_c2w),
             "camera_coordinate_frame": COORDINATE_FRAME,
             "table_calibration_path": _repo_relative_path_text(self.table_calibration_path),
-            "table_world_frame_kind": TABLE_WORLD_FRAME_KIND if self._table_world_enabled() else None,
-            "table_z_m": TABLE_Z_M if self._table_world_enabled() else None,
+            "table_world_frame_kind": (
+                TABLE_WORLD_FRAME_KIND
+                if table_world_enabled(self.table_c2w)
+                else None
+            ),
+            "table_z_m": TABLE_Z_M if table_world_enabled(self.table_c2w) else None,
             "table_z_above_direction": TABLE_Z_ABOVE_DIRECTION,
             "camera_to_world_c2w": (
                 None
@@ -565,15 +551,15 @@ class _LifecycleMixin:
             if thread.is_alive():
                 thread.join(timeout=1.0)
         self._threads.clear()
-        if self.runtime is not None:
+        if self.runtime is not None and self.runtime.pipeline is not None:
             try:
                 self.runtime.pipeline.stop()
             except Exception:
                 pass
-            self.runtime = None
+        self.runtime = None
         self.recording_source = None
         self._run_deferred_shape_prior_after_teardown()
-        self._write_shape_prior_profile_json()
+        write_shape_prior_profile_json(self.shape_prior_manager, self.args)
         if (
             self.headless_capture_writer is not None
             and self._formal_timeline_gated_frames > 0
@@ -656,12 +642,12 @@ class _LifecycleMixin:
 
     def _start_threads(self) -> None:
         """Start threads."""
-        if self._lossless_enabled():
+        if lossless_enabled(self.args):
             self._reset_lossless_state()
         workers: list[tuple[str, Callable[[], None]]] = [("capture", self._capture_worker)]
         if self.args.track_mode != "none":
             workers.append(("seg", self._seg_worker))
-        if self._lossless_enabled():
+        if lossless_enabled(self.args):
             workers.append(("pcd", self._lossless_pcd_worker))
             workers.append(("tracker", self._lossless_tracker_worker))
             workers.append(("pair-output", self._lossless_pair_output_worker))
@@ -695,7 +681,7 @@ class _LifecycleMixin:
         self._start_threads()
         try:
             while not self.stop_event.is_set():
-                if self._lossless_enabled():
+                if lossless_enabled(self.args):
                     if self._lossless_processing_done.is_set():
                         self.stop_event.set()
                         break

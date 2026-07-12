@@ -2,11 +2,17 @@
 from __future__ import annotations
 
 from demo_v6_2.mdp_constants import *  # noqa: F401,F403
-from demo_v6_2.mdp_cli import _is_replay_input_source
-from demo_v6_2.mdp_packets import FramePacket, LiveLatestFrameSampler, PipelineTiming
+from demo_v6_2.mdp_cli import (
+    _is_replay_input_source,
+    lossless_enabled,
+    lossless_input_fps,
+)
+from demo_v6_2.mdp_capture_source import LiveLatestFrameSampler
+from demo_v6_2.mdp_demo_contract import _DemoRuntimeContract
+from demo_v6_2.mdp_packets import FramePacket, PipelineTiming
 
 
-class _CaptureMixin:
+class _CaptureMixin(_DemoRuntimeContract):
     """MainDataProcessingDemo capture-worker mixin."""
 
     def _put_preview_slot_frame(self, packet: FramePacket) -> None:
@@ -40,7 +46,7 @@ class _CaptureMixin:
         if bool(write_input_timeline):
             self._publish_input_preview_packet(packet, record_s=record_s)
         self.capture_slot.put(packet)
-        if self._lossless_enabled():
+        if lossless_enabled(self.args):
             if self.lossless_frame_queue.put_wait(packet, stop_event=self.stop_event) <= 0:
                 return
             self._lossless_offered_frames += 1
@@ -51,8 +57,8 @@ class _CaptureMixin:
         assert self.recording_source is not None
         source = self.recording_source
         fake_live_clock = str(self.args.input_source) == INPUT_SOURCE_FAKE_LIVE
-        if self._lossless_enabled():
-            frame_period_s = 1.0 / self._lossless_input_fps()
+        if lossless_enabled(self.args):
+            frame_period_s = 1.0 / lossless_input_fps(self.args)
         else:
             frame_period_s = 1.0 / float(source.effective_fps)
         try:
@@ -147,7 +153,7 @@ class _CaptureMixin:
         else:
             self._publish_capture_packet(first_packet, record_s=first_packet.receive_perf_s)
         if source.frame_count <= 1:
-            if self._lossless_enabled():
+            if lossless_enabled(self.args):
                 self._lossless_capture_done.set()
                 self.lossless_frame_queue.close()
             else:
@@ -232,7 +238,7 @@ class _CaptureMixin:
                     break
                 self._publish_capture_packet(packet, record_s=packet.receive_perf_s)
                 runtime_seq += 1
-        if self._lossless_enabled():
+        if lossless_enabled(self.args):
             self._lossless_capture_done.set()
             self.lossless_frame_queue.close()
         else:
@@ -247,11 +253,13 @@ class _CaptureMixin:
         raw_seq = 0
         output_seq = 0
         live_sampler = (
-            LiveLatestFrameSampler(self._lossless_input_fps())
-            if self._lossless_enabled()
+            LiveLatestFrameSampler(lossless_input_fps(self.args))
+            if lossless_enabled(self.args)
             else None
         )
         pipeline = self.runtime.pipeline
+        if pipeline is None:
+            raise RuntimeError("live capture requires an initialized camera pipeline")
         align = self.runtime.align
 
         def publish_output_packet(packet: FramePacket, *, record_s: float) -> None:
@@ -272,7 +280,7 @@ class _CaptureMixin:
         # shape-prior warm-up completes) is never locked out behind the pump.
         # Paced to the sampler cadence.
         last_preview_publish_s = 0.0
-        preview_period_s = 1.0 / max(1.0, self._lossless_input_fps())
+        preview_period_s = 1.0 / max(1.0, lossless_input_fps(self.args))
 
         def pump_warmup_preview() -> None:
             """Grab one live color frame and publish it to the preview slot."""
@@ -407,7 +415,7 @@ class _CaptureMixin:
                 if due_sample is not None:
                     due_packet, sample_s = due_sample
                     publish_output_packet(due_packet, record_s=sample_s)
-        if self._lossless_enabled():
+        if lossless_enabled(self.args):
             self._lossless_capture_done.set()
             self.lossless_frame_queue.close()
 

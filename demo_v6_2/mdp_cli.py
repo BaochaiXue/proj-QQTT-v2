@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from demo_v6_2.mdp_constants import *  # noqa: F401,F403
+from demo_v6_2.utils.atomic_io import atomic_json_dump
+
 
 def _parse_rgb_triplet(value: str) -> tuple[int, int, int]:
     """Parse RGB triplet."""
@@ -704,6 +706,53 @@ def tracker_enabled(args: argparse.Namespace) -> bool:
     return normalize_tracker_backend(str(getattr(args, "tracker_backend", TRACKER_BACKEND_NONE))) != TRACKER_BACKEND_NONE
 
 
+def lossless_enabled(args: argparse.Namespace) -> bool:
+    """Return whether the strict same-seq lossless pipeline is active."""
+    return bool(tracker_enabled(args) and args.pcd_mode == "masked")
+
+
+def lossless_input_fps(args: argparse.Namespace) -> float:
+    """Return the lossless input FPS."""
+    return float(getattr(args, "lossless_input_fps", DEFAULT_LOSSLESS_INPUT_FPS))
+
+
+def shape_prior_profile(
+    manager: shape_prior_warmup.ShapePriorWarmupManager | None,
+) -> dict[str, Any]:
+    """Return the shape prior profile."""
+    if manager is None:
+        return shape_prior_warmup.default_profile(enabled=False)
+    return manager.profile()
+
+
+def shape_prior_profile_payload(
+    manager: shape_prior_warmup.ShapePriorWarmupManager | None,
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    """Return the shape prior profile payload."""
+    payload = dict(shape_prior_profile(manager))
+    if payload.get("input_source") is None:
+        payload["input_source"] = str(getattr(args, "input_source", ""))
+    if payload.get("depth_backend") is None:
+        payload["depth_backend"] = depth_backend_label(args)
+    if payload.get("depth_source_internal") is None:
+        payload["depth_source_internal"] = str(getattr(args, "depth_source", ""))
+    return payload
+
+
+def write_shape_prior_profile_json(
+    manager: shape_prior_warmup.ShapePriorWarmupManager | None,
+    args: argparse.Namespace,
+    profile: dict[str, Any] | None = None,
+) -> None:
+    """Write the shape prior profile JSON to --shape-prior-profile-json."""
+    path = getattr(args, "shape_prior_profile_json", None)
+    if path is None:
+        return
+    payload = shape_prior_profile_payload(manager, args) if profile is None else dict(profile)
+    atomic_json_dump(payload, Path(path))
+
+
 def object_pcd_mask_erode_pixels(args: argparse.Namespace) -> int:
     """Return the object PCD mask erode pixels."""
     value = getattr(args, "object_pcd_mask_erode_pixels", None)
@@ -742,6 +791,11 @@ __all__ = [
     "active_object_id_labels",
     "active_object_ids",
     "tracker_enabled",
+    "lossless_enabled",
+    "lossless_input_fps",
+    "shape_prior_profile",
+    "shape_prior_profile_payload",
+    "write_shape_prior_profile_json",
     "object_pcd_mask_erode_pixels",
     "controller_pcd_mask_erode_pixels",
 ]

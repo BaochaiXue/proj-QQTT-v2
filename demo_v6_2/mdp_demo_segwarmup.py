@@ -13,7 +13,31 @@ tear the process down (surfaced on the live status band, Q23).
 from __future__ import annotations
 
 from demo_v6_2.mdp_constants import *  # noqa: F401,F403
-from demo_v6_2.mdp_cli import _is_replay_input_source, active_object_id_labels, active_object_ids, controller_pcd_mask_erode_pixels, controller_tracking_enabled, depth_backend_label, headless_capture_enabled, headless_capture_saved_pcd_source, object_pcd_mask_erode_pixels, object_tracking_enabled, pcd_filter_enabled, runtime_metadata_identity, tracker_enabled, tracker_marker_gate, tracker_marker_retirement_policy, tracker_query_source, tracker_retire_filtered_markers
+from demo_v6_2.mdp_cli import (
+    _is_replay_input_source,
+    active_object_id_labels,
+    active_object_ids,
+    controller_pcd_mask_erode_pixels,
+    controller_tracking_enabled,
+    depth_backend_label,
+    headless_capture_enabled,
+    headless_capture_saved_pcd_source,
+    lossless_enabled,
+    lossless_input_fps,
+    object_pcd_mask_erode_pixels,
+    object_tracking_enabled,
+    pcd_filter_enabled,
+    runtime_metadata_identity,
+    shape_prior_profile,
+    shape_prior_profile_payload,
+    tracker_enabled,
+    tracker_marker_gate,
+    tracker_marker_retirement_policy,
+    tracker_query_source,
+    tracker_retire_filtered_markers,
+    write_shape_prior_profile_json,
+)
+from demo_v6_2.mdp_demo_contract import _DemoRuntimeContract
 from demo_v6_2.mdp_packets import MaskPacket, _formal_chunk_rows_gated
 from demo_v6_2.mdp_segmentation import _load_hf_streaming_runtime, _time_model_forward, _time_runtime_ms, extract_object_masks_from_hf_output
 from demo_v6_2.pipeline_status import STAGE_SHAPE_PRIOR, STAGE_WARMUP_READY
@@ -25,7 +49,7 @@ WARMUP_FINISHED_BANNER = (
 )
 
 
-class _SegWarmupMixin:
+class _SegWarmupMixin(_DemoRuntimeContract):
     """MainDataProcessingDemo segmentation/warmup/shape-prior mixin."""
 
     def _init_hf_model(self) -> tuple[Any, Any, Any, Any, Any]:
@@ -109,11 +133,15 @@ class _SegWarmupMixin:
                 DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES if self.args.depth_source == "ffs" else None
             ),
             "pcd_mode": self.args.pcd_mode,
-            "pcd_coordinate_frame": self._pcd_coordinate_frame(),
+            "pcd_coordinate_frame": pcd_coordinate_frame(self.table_c2w),
             "camera_coordinate_frame": COORDINATE_FRAME,
             "table_calibration_path": _repo_relative_path_text(self.table_calibration_path),
-            "table_world_frame_kind": TABLE_WORLD_FRAME_KIND if self._table_world_enabled() else None,
-            "table_z_m": TABLE_Z_M if self._table_world_enabled() else None,
+            "table_world_frame_kind": (
+                TABLE_WORLD_FRAME_KIND
+                if table_world_enabled(self.table_c2w)
+                else None
+            ),
+            "table_z_m": TABLE_Z_M if table_world_enabled(self.table_c2w) else None,
             "table_z_above_direction": TABLE_Z_ABOVE_DIRECTION,
             "camera_to_world_c2w": (
                 None
@@ -157,7 +185,7 @@ class _SegWarmupMixin:
             "filter_budget_ms": float(12.0),
             "filter_min_cap": int(5000),
             "lossless_controller_filter_min_cap": (
-                int(self.controller_filter_budget.min_cap) if self._lossless_enabled() else None
+                int(self.controller_filter_budget.min_cap) if lossless_enabled(self.args) else None
             ),
             "tracker_backend": str(self.args.tracker_backend),
             "tracking_product_backend": str(
@@ -185,18 +213,18 @@ class _SegWarmupMixin:
             "tracker_display_scope": str(DEFAULT_TRACKER_DISPLAY_SCOPE),
             "tracker_overlay_max_points": int(self.args.tracker_overlay_max_points),
             "tracker_marker_point_size": float(DEFAULT_TRACKER_MARKER_POINT_SIZE),
-            "tracker_strict_same_seq_render": bool(tracker_enabled(self.args) and self.args.pcd_mode == "masked"),
+            "tracker_strict_same_seq_render": lossless_enabled(self.args),
             "tracker_visualization_mode": (
                 "phystwin_rainbow_identity_3d_lift" if tracker_enabled(self.args) else "none"
             ),
             "tracker_sync_policy": (
-                "strict_same_seq_lossless_5fps" if tracker_enabled(self.args) and self.args.pcd_mode == "masked" else "none"
+                "strict_same_seq_lossless_5fps" if lossless_enabled(self.args) else "none"
             ),
             "lossless_input_fps": (
-                float(self._lossless_input_fps()) if tracker_enabled(self.args) and self.args.pcd_mode == "masked" else None
+                float(lossless_input_fps(self.args)) if lossless_enabled(self.args) else None
             ),
             "lossless_max_backlog_frames": (
-                int(self.lossless_max_backlog_frames) if tracker_enabled(self.args) and self.args.pcd_mode == "masked" else None
+                int(self.lossless_max_backlog_frames) if lossless_enabled(self.args) else None
             ),
             "query_display_policy": "visible_3d_lifted_all" if tracker_enabled(self.args) else "none",
             "query_color_mode": "phystwin_rainbow_identity" if tracker_enabled(self.args) else "none",
@@ -259,7 +287,9 @@ class _SegWarmupMixin:
                 )
                 self._publish_mask_packet(first_packet)
                 self.seg_stats.record(first_packet.process_done_perf_s)
-                if self._lossless_enabled() or _is_replay_input_source(str(self.args.input_source)):
+                if lossless_enabled(self.args) or _is_replay_input_source(
+                    str(self.args.input_source)
+                ):
                     self._first_frame_segmented.set()
                 if not self.shape_prior_manager.enabled:
                     # Without shape-prior warm-up the frame-0 seed IS the whole
@@ -268,7 +298,7 @@ class _SegWarmupMixin:
                     self.warmup_rgb_preview.close()
                 last_seq = first_frame.seq
                 while not self.stop_event.is_set():
-                    if self._lossless_enabled():
+                    if lossless_enabled(self.args):
                         frame = self.lossless_frame_queue.get(stop_event=self.stop_event)
                         if frame is None:
                             break
@@ -295,13 +325,13 @@ class _SegWarmupMixin:
                         break
                     self._publish_mask_packet(packet)
                     self.seg_stats.record(packet.process_done_perf_s)
-                if self._lossless_enabled():
+                if lossless_enabled(self.args):
                     self.lossless_pcd_mask_queue.close()
                     self.lossless_tracker_mask_queue.close()
         except Exception as exc:
             if not self.stop_event.is_set():
                 self._record_fatal_worker_error("segmentation worker", exc)
-            if self._lossless_enabled():
+            if lossless_enabled(self.args):
                 self.lossless_pcd_mask_queue.close()
                 self.lossless_tracker_mask_queue.close()
 
@@ -373,7 +403,7 @@ class _SegWarmupMixin:
 
     def _packet_with_shape_prior_state(self, packet: MaskedPcdPacket) -> MaskedPcdPacket:
         """Return the packet with shape prior state."""
-        profile = self._shape_prior_profile()
+        profile = shape_prior_profile(self.shape_prior_manager)
         result = self.shape_prior_manager.ready_result()
         if result is not None and result.ready:
             return replace(
@@ -405,7 +435,7 @@ class _SegWarmupMixin:
             return False
         submitted = self.shape_prior_manager.maybe_submit(frame0_request)
         if submitted:
-            self._write_shape_prior_profile_json()
+            write_shape_prior_profile_json(self.shape_prior_manager, self.args)
             self._status.emit(STAGE_SHAPE_PRIOR, "frame-0 submitted; generating shape prior")
         return bool(submitted)
 
@@ -416,18 +446,18 @@ class _SegWarmupMixin:
             self.headless_capture_writer.write_shape_prior_result(result)
             self._shape_prior_written = True
             self.shape_prior_manager.mark_gate_open()
-            profile = self._shape_prior_profile_payload()
-            self._write_shape_prior_profile_json(profile)
+            profile = shape_prior_profile_payload(self.shape_prior_manager, self.args)
+            write_shape_prior_profile_json(self.shape_prior_manager, self.args, profile)
             self._status.emit(STAGE_WARMUP_READY, "shape prior ready; formal timeline open")
             print(WARMUP_FINISHED_BANNER, flush=True)
             # Warm-up is over: close the live RGB input preview (its
             # failure/cancel paths close via stop_event/stop() instead).
             self.warmup_rgb_preview.close()
             return
-        profile = self._shape_prior_profile_payload()
+        profile = shape_prior_profile_payload(self.shape_prior_manager, self.args)
         if self.headless_capture_writer is not None:
             self.headless_capture_writer.update_metadata(profile)
-        self._write_shape_prior_profile_json(profile)
+        write_shape_prior_profile_json(self.shape_prior_manager, self.args, profile)
 
     def _run_deferred_shape_prior_after_teardown(self) -> None:
         """Run deferred shape prior after teardown."""
@@ -435,7 +465,7 @@ class _SegWarmupMixin:
 
     def _wait_for_first_frame(self) -> FramePacket | None:
         """Wait for for first frame."""
-        if self._lossless_enabled():
+        if lossless_enabled(self.args):
             return self.lossless_frame_queue.get(stop_event=self.stop_event)
         while not self.stop_event.is_set():
             frame = self.capture_slot.get_latest_after(-1)
@@ -614,7 +644,7 @@ class _SegWarmupMixin:
         writer = self.headless_capture_writer
         if writer is None or self._formal_timeline_gate_expired:
             return False
-        profile = self._shape_prior_profile()
+        profile = shape_prior_profile(self.shape_prior_manager)
         gated = _formal_chunk_rows_gated(
             warmup_anchor_written=self._warmup_anchor_row_written,
             shape_prior_status=str(

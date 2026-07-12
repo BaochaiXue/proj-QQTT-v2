@@ -2,31 +2,24 @@
 from __future__ import annotations
 
 from demo_v6_2.mdp_constants import *  # noqa: F401,F403
-from demo_v6_2.mdp_packets import DepthProfilePacket, PairedRenderPacket
+from demo_v6_2.mdp_cli import lossless_enabled
+from demo_v6_2.mdp_demo_contract import _DemoRuntimeContract
+from demo_v6_2.mdp_packets import DepthProfilePacket
 from demo_v6_2.mdp_pipeline_plumbing import LosslessPipelineError
 
 
-class _PairPublishMixin:
+class _PairPublishMixin(_DemoRuntimeContract):
     """MainDataProcessingDemo pairing/publish/depth mixin."""
 
-    def _publish_strict_render_pair(
-        self,
-        pcd_result: PcdBuildResult,
-        tracker_packet: TrackerMarkerPacket,
-    ) -> PairedRenderPacket:
-        """Publish strict render pair."""
+    def _publish_strict_pair(self, pair: PairedBuildResult) -> None:
+        """Publish one validated same-sequence PCD and tracker result."""
+        pcd_result = pair.pcd_result
+        tracker_packet = pair.tracker_packet
         self._maybe_start_shape_prior_from_pcd_result(pcd_result, from_strict_pair=True)
         pcd_result = replace(
             pcd_result,
             packet=self._packet_with_shape_prior_state(pcd_result.packet),
         )
-        pair = PairedRenderPacket(
-            seq=int(pcd_result.packet.seq),
-            pcd_packet=pcd_result.packet,
-            tracker_packet=tracker_packet,
-            mask_packet=pcd_result.mask_packet,
-        )
-        self.paired_render_slot.put(pair)
         self.pcd_stats.record(pcd_result.packet.process_done_perf_s)
         self.tracker_stats.record(tracker_packet.process_done_perf_s)
         self._lossless_pairs_emitted += 1
@@ -42,14 +35,13 @@ class _PairPublishMixin:
             self._write_headless_pcd_result(
                 pcd_result, tracker_packet=tracker_packet, gated=rows_gated
             )
-        return pair
 
     def _publish_pairer_outputs(self, pairs: list[PairedBuildResult]) -> None:
         """Publish pairer outputs."""
         for pair in pairs:
             self.lossless_pair_output_queue.put(pair)
 
-    def _publish_ordered_lossless_pair(self, pair: PairedBuildResult) -> PairedRenderPacket | None:
+    def _publish_ordered_lossless_pair(self, pair: PairedBuildResult) -> None:
         """Publish ordered lossless pair."""
         seq = int(pair.seq)
         with self._lossless_publish_condition:
@@ -59,27 +51,26 @@ class _PairPublishMixin:
                         f"lossless publish received stale seq {seq}, expected {self._lossless_next_publish_seq}"
                     )
                 if self.stop_event.is_set():
-                    return None
+                    return
                 self._lossless_publish_condition.wait(timeout=0.05)
-        published = self._publish_strict_render_pair(pair.pcd_result, pair.tracker_packet)
+        self._publish_strict_pair(pair)
         with self._lossless_publish_condition:
             expected = self._lossless_next_publish_seq
             if seq != expected:
                 raise LosslessPipelineError(f"lossless publish expected seq {expected}, got {seq}")
             self._lossless_next_publish_seq += 1
             self._lossless_publish_condition.notify_all()
-        return published
 
     def _maybe_finish_lossless_processing(self) -> None:
         """Maybe start or update finish lossless processing."""
-        if not self._lossless_enabled():
+        if not lossless_enabled(self.args):
             return
         if self.same_seq_pairer.done and not self._lossless_processing_done.is_set():
             self.lossless_pair_output_queue.close()
 
     def _finish_lossless_output(self) -> None:
         """Finish lossless output."""
-        if not self._lossless_enabled():
+        if not lossless_enabled(self.args):
             return
         if not self._lossless_processing_done.is_set():
             self._lossless_processing_done.set()
@@ -131,7 +122,13 @@ class _PairPublishMixin:
                 tracker_packet = self._build_tracker_marker_packet(mask_packet, adapter)
                 if tracker_packet is None:
                     continue
-                self._publish_strict_render_pair(pcd_result, tracker_packet)
+                self._publish_strict_pair(
+                    PairedBuildResult(
+                        seq=int(mask_packet.seq),
+                        pcd_result=pcd_result,
+                        tracker_packet=tracker_packet,
+                    )
+                )
         except Exception as exc:
             if not self.stop_event.is_set():
                 self._record_fatal_worker_error("strict same-seq tracker/PCD", exc)
@@ -139,7 +136,7 @@ class _PairPublishMixin:
     def _publish_mask_packet(self, packet: MaskPacket) -> None:
         """Publish mask packet."""
         self.mask_slot.put(packet)
-        if self._lossless_enabled():
+        if lossless_enabled(self.args):
             if not self.lossless_pcd_mask_queue.wait_for_capacity(stop_event=self.stop_event):
                 return
             if not self.lossless_tracker_mask_queue.wait_for_capacity(stop_event=self.stop_event):

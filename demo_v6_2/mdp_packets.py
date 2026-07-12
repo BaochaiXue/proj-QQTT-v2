@@ -38,7 +38,7 @@ class PipelineTiming:
 
 @dataclass(frozen=True)
 class RealtimeCameraRuntime:
-    pipeline: object  # RealSense pipeline or fake-live no-op pipeline.
+    pipeline: object | None  # RealSense pipeline; None for fake-live replay.
     align: object | None  # Native-depth-to-color aligner when required.
     serial: str  # Physical or recorded camera serial number.
     intrinsics: CameraIntrinsics  # Color-camera fx, fy, cx, and cy in pixels.
@@ -70,43 +70,6 @@ class FramePacket:
     source_step: int | None = None  # Original recording step or filename stem.
 
 
-class LiveLatestFrameSampler:
-    """Sample the latest live camera frame on a fixed output cadence."""
-
-    def __init__(self, sample_fps: float) -> None:
-        """Initialize LiveLatestFrameSampler."""
-        fps = float(sample_fps)
-        if fps <= 0.0:
-            raise ValueError("live latest sampler FPS must be positive")
-        self.period_s = 1.0 / fps
-        self._next_sample_s: float | None = None
-        self._pending_packet: FramePacket | None = None
-
-    def start(self, *, first_publish_s: float) -> None:
-        """Start fixed-cadence sampling after the first published frame."""
-        self._next_sample_s = float(first_publish_s) + self.period_s
-        self._pending_packet = None
-
-    def put_latest(self, packet: FramePacket) -> None:
-        """Store the newest live input frame."""
-        if self._next_sample_s is None:
-            raise RuntimeError("live latest sampler must be started before use")
-        self._pending_packet = packet
-
-    def pop_due(self, *, now_s: float) -> tuple[FramePacket, float] | None:
-        """Return the pending packet if its fixed output tick is due."""
-        if self._next_sample_s is None:
-            return None
-        if self._pending_packet is None or float(now_s) < self._next_sample_s:
-            return None
-        packet = self._pending_packet
-        sample_s = self._next_sample_s
-        self._pending_packet = None
-        while self._next_sample_s <= float(now_s):
-            self._next_sample_s += self.period_s
-        return packet, sample_s
-
-
 @dataclass(frozen=True)
 class FatalWorkerError:
     stage: str  # Pipeline stage whose worker failed.
@@ -126,12 +89,6 @@ class RecordedRgbdFrameRef:
     depth_path: Path | None = None  # Path to the native uint16 depth array.
     ir_left_path: Path | None = None  # Path to the left-IR grayscale PNG.
     ir_right_path: Path | None = None  # Path to the right-IR grayscale PNG.
-
-
-class _NoopPipeline:
-    def stop(self) -> None:
-        """Stop _NoopPipeline."""
-        return
 
 
 @dataclass(frozen=True)
@@ -440,26 +397,6 @@ def _full_tracker_arrays_for_prepared_frame(packet: TrackerMarkerPacket) -> tupl
 
 
 @dataclass(frozen=True)
-class PairedRenderPacket:
-    seq: int  # Shared sequence required from every paired packet.
-    pcd_packet: MaskedPcdPacket  # Point-cloud payload for this sequence.
-    tracker_packet: TrackerMarkerPacket  # Tracker payload for this sequence.
-    mask_packet: MaskPacket | None = None  # Optional segmentation payload.
-
-    def __post_init__(self) -> None:
-        """Validate and normalize the dataclass state after initialization."""
-        pcd_seq = int(self.pcd_packet.seq)
-        tracker_seq = int(self.tracker_packet.seq)
-        mask_seq = None if self.mask_packet is None else int(self.mask_packet.seq)
-        seq = int(self.seq)
-        if pcd_seq != tracker_seq or seq != pcd_seq or (mask_seq is not None and mask_seq != seq):
-            raise ValueError(
-                "strict same-seq render packet mismatch: "
-                f"pair={seq} pcd={pcd_seq} tracker={tracker_seq} mask={mask_seq}"
-            )
-
-
-@dataclass(frozen=True)
 class PcdBuildResult:
     packet: MaskedPcdPacket  # Materialized point-cloud packet.
     depth_m: np.ndarray | None  # Metric depth image, float shape (H, W).
@@ -522,25 +459,25 @@ class PairedBuildResult:
     pcd_result: PcdBuildResult  # Point-cloud build result for this sequence.
     tracker_packet: TrackerMarkerPacket  # Tracker result for this sequence.
 
-    @property
-    def render_packet(self) -> PairedRenderPacket:
-        """Return the paired packet used by the renderer."""
-        return PairedRenderPacket(
-            seq=int(self.seq),
-            pcd_packet=self.pcd_result.packet,
-            tracker_packet=self.tracker_packet,
-            mask_packet=self.pcd_result.mask_packet,
-        )
+    def __post_init__(self) -> None:
+        """Reject PCD, mask, and tracker results from different frames."""
+        seq = int(self.seq)
+        pcd_seq = int(self.pcd_result.packet.seq)
+        mask_seq = int(self.pcd_result.mask_packet.seq)
+        tracker_seq = int(self.tracker_packet.seq)
+        if seq != pcd_seq or seq != mask_seq or seq != tracker_seq:
+            raise ValueError(
+                "strict same-seq build result mismatch: "
+                f"pair={seq} pcd={pcd_seq} mask={mask_seq} tracker={tracker_seq}"
+            )
 
 
 __all__ = [
     "PipelineTiming",
     "RealtimeCameraRuntime",
     "FramePacket",
-    "LiveLatestFrameSampler",
     "FatalWorkerError",
     "RecordedRgbdFrameRef",
-    "_NoopPipeline",
     "MaskPacket",
     "MaskedPcdPacket",
     "MarkerResidualAudit",
@@ -549,7 +486,6 @@ __all__ = [
     "TrackerMarkerPacket",
     "_formal_chunk_rows_gated",
     "_full_tracker_arrays_for_prepared_frame",
-    "PairedRenderPacket",
     "PcdBuildResult",
     "PcdFilterTelemetry",
     "DepthProfilePacket",

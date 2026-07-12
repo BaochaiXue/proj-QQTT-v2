@@ -153,7 +153,7 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
      都传 `int(args.fps)`。
    - [`resolve_camera_source_replay_fps`](main_options.py#L80)、
      [`_CaptureMixin._capture_worker`](mdp_demo_capture.py#L226) 和
-     [`LiveLatestFrameSampler`](mdp_packets.py#L73) 证明“固定 tick 取最新帧”的
+     [`LiveLatestFrameSampler`](mdp_capture_source.py#L25) 证明“固定 tick 取最新帧”的
      实际控制链。
    - [`mdp_cli.build_parser`](mdp_cli.py#L48) 与
      [`mdp_constants.DEFAULT_FPS`](mdp_constants.py#L126) 证明直接运行子入口的
@@ -272,7 +272,7 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 
    - [`_SegWarmupMixin._seg_worker`](mdp_demo_segwarmup.py#L193) 对后续帧调用
      `_run_segmentation_frame(..., add_prompt=False)` 后仍发布 mask。
-   - [`_PairPublishMixin._publish_strict_render_pair`](mdp_demo_pairpublish.py#L12)
+   - [`_PairPublishMixin._publish_strict_pair`](mdp_demo_pairpublish.py#L14)
      在 PCD/tracker 已配对后只对落盘行应用 gate；
      [`_formal_chunk_rows_gated`](mdp_packets.py#L352) 定义其状态条件。
    - [`_PcdMixin._write_headless_pcd_result`](mdp_demo_pcd.py#L407) 在 gated 时

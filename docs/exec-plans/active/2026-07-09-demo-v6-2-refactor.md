@@ -178,6 +178,67 @@ passes all 185 tests. Nothing committed (working tree, `single-camera` branch).
 Remaining optional: duplication pass 2 (query-schema 3x), product-schema cleanup
 A2-A5, and viewer renderer display check.
 
+## 2026-07-12 follow-up — config predicates out of the mixins + typing contract
+
+Motivation: the six `mdp_demo_*` mixins shared 50 cross-file method-call edges
+through `self`; about a quarter were pure config predicates that only read
+`args` (or one startup-frozen attribute), and the rest were invisible to type
+checkers because every mixin alone is an incomplete class.
+
+Step 1 — predicates become module-level pure functions (call sites rewritten
+mechanically, methods deleted from `_LifecycleMixin`; no behavior change):
+
+- `mdp_cli.py` (home of the existing `tracker_enabled`-style accessors) gains
+  `lossless_enabled(args)`, `lossless_input_fps(args)`, `shape_prior_profile(manager)`,
+  `shape_prior_profile_payload(manager, args)`, `write_shape_prior_profile_json(manager, args, profile=None)`.
+- `mdp_constants.py` gains `table_world_enabled(table_c2w)` and
+  `pcd_coordinate_frame(table_c2w)` next to the frame-kind constants.
+- `mdp_demo_segwarmup.py` metadata now uses `lossless_enabled(...)` for the four
+  keys that previously inlined `tracker_enabled(args) and args.pcd_mode == "masked"`
+  (identical expression, single name).
+
+Step 2 — `mdp_demo_contract.py` declares `_DemoRuntimeContract`, an
+annotation-only base all six mixins inherit: 71 shared attributes (everything
+constructed in `_LifecycleMixin.__init__` that ≥2 mixins touch, grouped by
+subsystem) plus `NotImplementedError` stubs for the remaining cross-mixin
+methods, each labeled with its implementing mixin. Zero runtime effect: type
+imports sit under `TYPE_CHECKING`, the assembled MRO puts every stub behind its
+real implementation (asserted programmatically), and `__init__` chains exactly
+as before.
+
+Verified: py_compile + import smoke; MRO/stub-override assertion; predicate
+truth-table equivalence vs the original expressions; scoped v6_2 tests green;
+all three harness guards green; bounded fake-live structural run: run_finished
+(max_chunks_reached), 2 chunks committed, shape_prior/points.npz, zero
+tracebacks, and every predicate-derived metadata field spot-checked
+(tracker_sync_policy=strict_same_seq_lossless_5fps, lossless_input_fps=5.0,
+backlog=15, coordinate_frame=pcd_coordinate_frame=table_world_z0,
+tracker_strict_same_seq_render=true, lossless_controller_filter_min_cap=2500).
+
+Two PRE-EXISTING environment landmines hit while verifying (not caused by the
+refactor; both will bite any future automation/headless launch):
+
+1. SAM3D `notebook/inference.py` line 5 does
+   `os.environ["CUDA_HOME"] = os.environ["CONDA_PREFIX"]` at import. With
+   base-conda `CONDA_PREFIX` (any non-interactive shell) torch regenerates
+   `~/.cache/torch_extensions/py312_cu130/nvdiffrast_plugin/build.ninja`
+   against the header-less `miniforge3/bin/nvcc` → `cuda_runtime.h: No such
+   file`. Same root cause as the 2026-07-02 v5.1 verify failures. demo_2_max's
+   conda CUDA also fails here (headers under targets/, conda-gcc sysroot
+   clash); a standard layout works: `CONDA_PREFIX=/usr/local/cuda`.
+2. The 2026-07-10 `.venv` rebuild (torch 2.10→2.11.0, nvdiffrast 0.3.3):
+   torch 2.11's `_import_module_from_library` no longer registers the JIT
+   module in `sys.modules`, so nvdiffrast ops.py's follow-up
+   `importlib.import_module("nvdiffrast_plugin")` raises ModuleNotFoundError
+   even after a successful build — generate's mesh postprocess is broken in
+   the current .venv REGARDLESS of env vars. Workaround used for the verify
+   run and available for operators until nvdiffrast is patched/pinned:
+   `PYTHONPATH=~/.cache/torch_extensions/py312_cu130/nvdiffrast_plugin`
+   (the .so imports directly by name). Also note `.venv` (uv py3.12+cu130)
+   and conda `demo_2_max` (py3.12+cu130) SHARE that torch-extensions dir and
+   rewrite each other's build.ninja; setting a per-env `TORCH_EXTENSIONS_DIR`
+   would end this class of breakage.
+
 ## Target module layout (every file <1000 lines; each is one "big step")
 
 Oversized sources and their decomposition (validated against the actual code by

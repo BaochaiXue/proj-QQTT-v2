@@ -5,10 +5,11 @@ from demo_v6_2.mdp_constants import *  # noqa: F401,F403
 from demo_v6_2.mdp_cli import controller_pcd_mask_erode_pixels, object_pcd_mask_erode_pixels, pcd_filter_enabled, tracker_marker_gate, tracker_marker_retirement_policy, tracker_query_source
 from demo_v6_2.mdp_packets import MarkerResidualAudit, TrackerMarkerPacket, _fit_bool_array, _remaining_query_class_counts
 from demo_v6_2.mdp_pcd_depth import _audit_marker_residual_subset, _classify_query_targets_yx, _latest_tracker_arrays, _mask_from_yx, _mask_packet_hand_a_mask, _mask_packet_hand_b_mask, _query_current_residual_visibility, _select_visible_spread_indices, _tracker_display_visibility, _tracker_lift_valid_mask, _tracker_per_target_visibility, _tracker_union_mask, _transform_points_c2w, apply_table_z_filter_with_yx, backproject_masked_rgbd_profiled, erode_binary_mask
+from demo_v6_2.mdp_demo_contract import _DemoRuntimeContract
 from demo_v6_2.mdp_pipeline_plumbing import LosslessPipelineError
 
 
-class _TrackerMixin:
+class _TrackerMixin(_DemoRuntimeContract):
     """MainDataProcessingDemo tracker mixin."""
 
     def _build_tracker_adapter(self) -> Any:
@@ -486,7 +487,7 @@ class _TrackerMixin:
             retired_query_count=retired_query_count,
             all_tracks_yx=np.ascontiguousarray(tracks_latest, dtype=np.float32).reshape(-1, 2),
             all_tracker_visibility=np.ascontiguousarray(visibility_latest, dtype=np.float32).reshape(-1),
-            coordinate_frame=self._pcd_coordinate_frame(),
+            coordinate_frame=pcd_coordinate_frame(self.table_c2w),
         )
         return packet
 

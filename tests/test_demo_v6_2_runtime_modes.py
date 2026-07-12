@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from contextlib import redirect_stderr
 import io
+from types import SimpleNamespace
 import unittest
 
 from demo_v6_2 import main_cli
 from demo_v6_2 import mdp_cli
+from demo_v6_2 import mdp_packets
 from demo_v6_2.main_subprocess import _contract
+from demo_v6_2.mdp_packets import PairedBuildResult
 
 
 class RuntimeInputModeTests(unittest.TestCase):
@@ -56,6 +59,29 @@ class RuntimeInputModeTests(unittest.TestCase):
         self.assertTrue(mdp_cli._is_replay_input_source("fake-live"))
         self.assertFalse(mdp_cli._is_replay_input_source("live"))
         self.assertFalse(mdp_cli._is_replay_input_source("recording"))
+
+
+class PairedBuildResultTests(unittest.TestCase):
+    def test_rejects_mixed_sequence_results(self) -> None:
+        for component in ("pcd", "mask", "tracker"):
+            sequences = {"pcd": 7, "mask": 7, "tracker": 7}
+            sequences[component] = 8
+            with self.subTest(component=component):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "strict same-seq build result mismatch",
+                ):
+                    PairedBuildResult(
+                        seq=7,
+                        pcd_result=SimpleNamespace(
+                            packet=SimpleNamespace(seq=sequences["pcd"]),
+                            mask_packet=SimpleNamespace(seq=sequences["mask"]),
+                        ),
+                        tracker_packet=SimpleNamespace(seq=sequences["tracker"]),
+                    )
+
+    def test_legacy_render_packet_is_absent(self) -> None:
+        self.assertFalse(hasattr(mdp_packets, "PairedRenderPacket"))
 
 
 if __name__ == "__main__":

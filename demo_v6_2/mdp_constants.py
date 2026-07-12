@@ -231,6 +231,16 @@ HEADLESS_CAPTURE_ALLOWED_PCD_FILTERS = (PCD_FILTER_ENHANCED_PT, PCD_FILTER_PT_FI
 DEFAULT_LOSSLESS_INPUT_FPS = 5.0
 
 
+def table_world_enabled(table_c2w: np.ndarray | None) -> bool:
+    """Return whether the run operates in the calibrated table-world frame."""
+    return table_c2w is not None
+
+
+def pcd_coordinate_frame(table_c2w: np.ndarray | None) -> str:
+    """Return the coordinate frame PCD products are expressed in."""
+    return TABLE_WORLD_FRAME_KIND if table_world_enabled(table_c2w) else COORDINATE_FRAME
+
+
 # ---------------------------------------------------------------------------
 # Shared dataclasses & packet types flowing between pipeline stages
 # ---------------------------------------------------------------------------
