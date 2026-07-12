@@ -7,6 +7,7 @@ import unittest
 
 from demo_v6_2 import main_cli
 from demo_v6_2 import mdp_cli
+from demo_v6_2 import mdp_demo_pcd
 from demo_v6_2 import mdp_packets
 from demo_v6_2.main_subprocess import _contract
 from demo_v6_2.mdp_packets import PairedBuildResult
@@ -59,6 +60,29 @@ class RuntimeInputModeTests(unittest.TestCase):
         self.assertTrue(mdp_cli._is_replay_input_source("fake-live"))
         self.assertFalse(mdp_cli._is_replay_input_source("live"))
         self.assertFalse(mdp_cli._is_replay_input_source("recording"))
+
+    def test_masked_pcd_requires_tracker(self) -> None:
+        parser = mdp_cli.build_parser()
+        defaults = parser.parse_args([])
+        self.assertEqual(defaults.pcd_mode, "masked")
+        self.assertEqual(defaults.tracker_backend, "tapnextpp")
+
+        no_tracker = parser.parse_args(["--tracker-backend", "none"])
+        with self.assertRaisesRegex(
+            ValueError,
+            "--pcd-mode masked requires --tracker-backend tapnextpp",
+        ):
+            mdp_cli.validate_args(no_tracker)
+
+        no_track_mode = parser.parse_args(["--track-mode", "none"])
+        with self.assertRaisesRegex(
+            ValueError,
+            "--pcd-mode masked requires an enabled --track-mode",
+        ):
+            mdp_cli.validate_args(no_track_mode)
+
+    def test_legacy_latest_frame_pcd_worker_is_absent(self) -> None:
+        self.assertFalse(hasattr(mdp_demo_pcd._PcdMixin, "_pcd_worker"))
 
 
 class PairedBuildResultTests(unittest.TestCase):

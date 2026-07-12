@@ -59,8 +59,6 @@ class _LifecycleMixin(_DemoRuntimeContract):
         self.capture_slot: LatestSlot[FramePacket] = LatestSlot()
         self.mask_slot: LatestSlot[MaskPacket] = LatestSlot()
         self.depth_profile_slot: LatestSlot[DepthProfilePacket] = LatestSlot()
-        # Latest non-strict PCD packet; consumed only by the headless debug worker.
-        self.pcd_slot: LatestSlot[MaskedPcdPacket] = LatestSlot()
         self.tracker_marker_slot: LatestSlot[TrackerMarkerPacket] = LatestSlot()
         self.lossless_frame_queue: OrderedPacketQueue[FramePacket] = OrderedPacketQueue(
             name="frame",
@@ -653,10 +651,7 @@ class _LifecycleMixin(_DemoRuntimeContract):
             workers.append(("pair-output", self._lossless_pair_output_worker))
         elif tracker_enabled(self.args):
             workers.append(("tracker", self._tracker_worker))
-        if self.args.pcd_mode == "masked":
-            if not tracker_enabled(self.args):
-                workers.append(("pcd", self._pcd_worker))
-        elif self.args.depth_source == "ffs":
+        if self.args.pcd_mode == "none" and self.args.depth_source == "ffs":
             workers.append(("depth", self._depth_profile_worker))
 
         def worker_runner(worker_name: str, worker_target: Callable[[], None]) -> Callable[[], None]:

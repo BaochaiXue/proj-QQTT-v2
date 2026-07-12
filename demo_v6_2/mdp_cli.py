@@ -211,7 +211,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--tracker-backend",
         choices=TRACKER_BACKENDS,
         default=DEFAULT_TRACKER_BACKEND,
-        help="Optional point-tracker overlay backend. tapnextpp adds 3D query/track markers.",
+        help=(
+            "Point-tracker backend. Masked PCD requires tapnextpp; none is "
+            "valid only when --pcd-mode none."
+        ),
     )
     parser.add_argument(
         "--tracker-device",
@@ -646,6 +649,10 @@ def validate_args(args: argparse.Namespace) -> None:
     args.tracking_product_backend = normalize_tracking_product_backend(
         getattr(args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND)
     )
+    if args.pcd_mode == "masked" and not tracker_enabled(args):
+        raise ValueError("--pcd-mode masked requires --tracker-backend tapnextpp")
+    if args.pcd_mode == "masked" and args.track_mode == TRACK_MODE_NONE:
+        raise ValueError("--pcd-mode masked requires an enabled --track-mode")
     if str(args.input_source) not in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_LIVE}:
         raise ValueError("phystwin-strict-tracking requires --input-source live or fake-live")
     if args.headless_capture_dir is None:

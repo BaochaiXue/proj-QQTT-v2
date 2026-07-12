@@ -67,6 +67,10 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
    `daemon=True` 的 `threading.Thread`。正式 strict 路径包含 capture、seg、
    lossless PCD、lossless tracker 和 pair-output worker。
 
+   `pcd_mode=masked` 只允许这条 strict 路径：参数校验要求 TAPNext++ tracker
+   且 `track_mode != none`。无 tracker 只允许 `pcd_mode=none` 的纯
+   capture/depth isolation；旧的 latest-frame `_pcd_worker` 已删除。
+
    seg 和 lossless tracker 会在同一个进程、同一个 CUDA device 上并发执行。
    EdgeTAM 的 `reduce-overhead` 会在第 2 次 model call 录制 CUDA graph；
    TAPNext++ 第一次拿到 mask 时才构造 CUDA model，并在参数初始化时使用 RNG。

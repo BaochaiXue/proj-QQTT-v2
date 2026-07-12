@@ -72,7 +72,6 @@ class _DemoRuntimeContract:
     capture_slot: LatestSlot[FramePacket]
     mask_slot: LatestSlot[MaskPacket]
     depth_profile_slot: LatestSlot[DepthProfilePacket]
-    pcd_slot: LatestSlot[MaskedPcdPacket]
     tracker_marker_slot: LatestSlot[TrackerMarkerPacket]
     _input_preview_publish_seq: int
 
@@ -235,10 +234,6 @@ class _DemoRuntimeContract:
     # ------------------------------------------------------------------
     # Implemented by _PcdMixin
     # ------------------------------------------------------------------
-    def _pcd_worker(self) -> None:
-        """Latest-frame PCD worker loop (non-lossless)."""
-        raise NotImplementedError
-
     def _lossless_pcd_worker(self) -> None:
         """Strict same-seq PCD worker loop."""
         raise NotImplementedError

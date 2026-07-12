@@ -421,3 +421,24 @@ tails the file and draws a status band via `viz_panels._draw_pipeline_status`
 (current stage, warmup ✓/✗ with the failing stage + message, chunks published,
 last stage timings). Fail display: on a fatal warmup/shape-prior line the band
 turns red and pins the error so the operator sees exactly what broke.
+
+## 2026-07-12 follow-up — remove non-lossless masked PCD
+
+Requirement: masked PCD is a strict same-sequence product and therefore
+requires the TAPNext++ tracker. A masked-PCD request without a tracker must
+fail during argument validation instead of starting the legacy latest-frame
+`_pcd_worker`.
+
+Plan:
+
+- [x] Make TAPNext++ the camera-runtime CLI default and reject
+  `pcd_mode=masked` with no tracker or `track_mode=none`.
+- [x] Delete `_pcd_worker`, its unconsumed `pcd_slot`, and the corresponding
+  mixin-contract/thread-selection branches.
+- [x] Update the pipeline documentation and add fail-fast/default regression
+  tests.
+- [x] Run scoped static/tests plus the repository smoke profile.
+
+Validation result: targeted runtime/archive suite passed 7 tests; Python
+compilation, scoped Ruff undefined-name/unused-import checks, all harness
+guards, CLI help probes, and the repository smoke profile passed.

@@ -804,28 +804,4 @@ class _PcdMixin(_DemoRuntimeContract):
             world_z_diagnostics=world_z_diagnostics,
         )
 
-    def _pcd_worker(self) -> None:
-        """Return the PCD worker."""
-        last_seq = -1
-        rng = np.random.default_rng()
-        while not self.stop_event.is_set():
-            mask_packet = self.mask_slot.get_latest_after(last_seq)
-            if mask_packet is None:
-                time.sleep(0.001)
-                continue
-            last_seq = mask_packet.seq
-            try:
-                result = self._build_pcd_packet_from_mask(mask_packet, rng=rng)
-            except Exception as exc:
-                if not self.stop_event.is_set():
-                    print(f"[WARN] PCD frame {mask_packet.seq} failed: {type(exc).__name__}: {exc}", flush=True)
-                continue
-            self._maybe_start_shape_prior_from_pcd_result(result)
-            result = replace(result, packet=self._packet_with_shape_prior_state(result.packet))
-            self.pcd_slot.put(result.packet)
-            self._maybe_write_shape_prior_headless_result()
-            self._write_headless_pcd_result(result)
-            self.pcd_stats.record(result.packet.process_done_perf_s)
-
-
 __all__ = ["_PcdMixin"]
