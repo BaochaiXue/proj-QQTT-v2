@@ -45,7 +45,7 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 
    **源码证据：**
 
-   - [`main.main`](main.py#L254) →
+   - [`main.main`](main.py#L132) →
      [`build_main_data_processing_command`](main_subprocess.py#L233) →
      [`main_data_processing.main`](main_data_processing.py#L63) →
      [`_LifecycleMixin.run`](mdp_demo_lifecycle.py#L487)。
@@ -108,7 +108,7 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 
    **源码证据：**
 
-   - [`main.main`](main.py#L254)、
+   - [`main.main`](main.py#L132)、
      [`launch_phystwin_shen`](phystwin_shen_launch.py) 和
      [`ShapePriorLocalClient.request_shape_prior`](shape_prior_warmup.py#L575)
      给出 Demo 侧进程边界；full-pipeline wrapper 的 child 顺序由外部
@@ -462,7 +462,7 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 
     **源码证据：**
 
-    - [`stream_chunk_data_from_headless_capture`](chunk_data_stream.py#L223) 负责
+    - [`stream_chunk_data_from_headless_capture`](chunk_data_stream.py#L69) 负责
       row/frame 双 buffer、`pending_window` 和 borrow-row 触发；其嵌套
       `_materialize_pending` 定义在同函数内。
     - [`_prepared_frame_from_row`](chunk_window_builder.py#L77) 要求
@@ -485,7 +485,7 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
       [`chunking.chunk_seconds`](config/default.yaml#L35) 定义 7 秒；
       [`main_cli.build_parser`](main_cli.py#L75) 暴露 override。
     - [`resolve_chunk_frame_count`](main_options.py#L45) 实现 override/乘法/正数
-      校验；[`main.main`](main.py#L254) 把结果传入 chunk stream。
+      校验；[`main.main`](main.py#L292) 把结果传入 chunk stream。
     - [`ChunkDataWriter.__init__`](chunk_data_output.py#L226) 再次校验并保存
       `self.chunk_size`；[`_write_manifest`](chunk_data_output.py#L432) 发布它。
 
@@ -497,15 +497,14 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 
     **源码证据：**
 
-    - [`write_chunk_data_from_headless_capture`](chunk_data_stream.py#L46) 和
-      [`stream_chunk_data_from_headless_capture`](chunk_data_stream.py#L223) 都用
+    - [`stream_chunk_data_from_headless_capture`](chunk_data_stream.py#L69) 用
       `len(row_buffer) < chunk_size` 判断是否继续累积。
-    - live 函数中的 `pending_window` 与 `_materialize_pending` 证明 borrow-row
+    - 该函数中的 `pending_window` 与 `_materialize_pending` 证明 borrow-row
       发布延迟；[`_write_chunk_from_rows`](chunk_materialize.py#L42) 只把
       `window_closed_wall_s` 写入 telemetry。
 
 18. **Chunk 组装后如何执行跟踪？**
-    两个公开 chunk-stream 入口各为整个 session 创建一次
+    唯一的实时 chunk-stream 入口为整个 session 创建一次
     `tracking.TrackingRuntime`，并把同一实例传过
     `_write_chunk_from_rows` 到 `_chunk_data_window_from_prepared_frames`。
     后者调用 `_track_input_with_session_query_schema` →
@@ -521,8 +520,7 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 
     **源码证据：**
 
-    - [`write_chunk_data_from_headless_capture`](chunk_data_stream.py#L46) 与
-      [`stream_chunk_data_from_headless_capture`](chunk_data_stream.py#L223) 各在
+    - [`stream_chunk_data_from_headless_capture`](chunk_data_stream.py#L69) 在
       循环外创建一个 `TrackingRuntime`。
     - [`_track_input_with_session_query_schema`](chunk_window_builder.py#L23) 调用
       [`build_window_observations`](tracking.py#L59)；
@@ -629,7 +627,7 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
       committed metadata 的关系。
     - [`atomic_pickle_dump/atomic_json_dump`](utils/atomic_io.py#L11) 和
       [`_atomic_write_bytes`](online_frame_archive.py#L57) 给出原子写细节；
-      [`stream_chunk_data_from_headless_capture`](chunk_data_stream.py#L223) 给出
+      [`stream_chunk_data_from_headless_capture`](chunk_data_stream.py#L69) 给出
       `finished/failed` 的实际覆盖边界。
 
 22. **训练侧从什么时候开始读取？**
@@ -740,7 +738,7 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
     - [`PipelineStatusWriter.emit`](pipeline_status.py#L76) 是 best-effort append；
       [`read_status_events`](pipeline_status.py#L99) 容忍缺失文件和 torn last
       line。
-    - [`main.main`](main.py#L254)、
+    - [`main.main`](main.py#L132)、
       [`_LifecycleMixin.run/_record_fatal_worker_error`](mdp_demo_lifecycle.py#L464)
       和
       [`_maybe_start_shape_prior_from_pcd_result`](mdp_demo_segwarmup.py#L346)

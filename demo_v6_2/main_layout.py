@@ -65,7 +65,6 @@ def _remove_generated_path(path: Path) -> bool:
 def prepare_realtime_output_for_new_run(
     base_path: str | Path,
     *,
-    clear_capture: bool,
     legacy_case_prefix: str,
 ) -> dict[str, object]:
     """Remove stale generated outputs before writing fixed Demo v6.1 paths."""
@@ -79,8 +78,6 @@ def prepare_realtime_output_for_new_run(
         "run_summary": resolve_run_summary_path(base),
         "legacy_chunks_manifest": base / f"{legacy_case_prefix}_chunks_manifest.json",
     }
-    if not bool(clear_capture):
-        cleanup_paths.pop("capture")
     return {
         f"removed_{name}": bool(_remove_generated_path(path))
         for name, path in cleanup_paths.items()

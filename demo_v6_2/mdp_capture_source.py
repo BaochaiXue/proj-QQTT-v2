@@ -27,7 +27,9 @@ class RecordedRgbdFrameSource:
         self.camera_index = int(camera_index)
         self.depth_source = str(depth_source)
         if self.depth_source not in DEPTH_SOURCES:
-            raise ValueError(f"recording replay depth_source must be one of {DEPTH_SOURCES}")
+            raise ValueError(
+                f"fake-live replay depth_source must be one of {DEPTH_SOURCES}"
+            )
         self.requires_depth = self.depth_source == "realsense"
         self.requires_ir = self.depth_source == "ffs"
         self.metadata_path = self.case_path / "metadata.json"
@@ -40,9 +42,13 @@ class RecordedRgbdFrameSource:
         self.metadata: dict[str, Any] = metadata
         streams_present = {str(item) for item in metadata.get("streams_present", [])}
         if "color" not in streams_present:
-            raise ValueError("recording replay requires streams_present to include color")
+            raise ValueError(
+                "fake-live replay requires streams_present to include color"
+            )
         if self.requires_depth and "depth" not in streams_present:
-            raise ValueError("RealSense recording replay requires streams_present to include depth")
+            raise ValueError(
+                "RealSense fake-live replay requires streams_present to include depth"
+            )
         if self.requires_ir and not {"ir_left", "ir_right"}.issubset(streams_present):
             raise ValueError("FFS fake-live replay requires streams_present to include ir_left and ir_right")
         recording_by_camera = metadata.get("recording")
@@ -120,7 +126,8 @@ class RecordedRgbdFrameSource:
         source_index = packet_seq if frame_index is None else int(frame_index)
         if source_index < 0 or source_index >= len(self.frames):
             raise IndexError(
-                f"recording replay frame_index {source_index} out of range for {len(self.frames)} frames"
+                f"fake-live replay frame_index {source_index} out of range for "
+                f"{len(self.frames)} frames"
             )
         ref = self.frames[source_index]
         copy_start_s = time.perf_counter()

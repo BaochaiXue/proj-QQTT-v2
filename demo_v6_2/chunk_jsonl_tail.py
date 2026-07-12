@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import time
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -47,15 +47,6 @@ def _read_jsonl_from_offset(
                 except json.JSONDecodeError:
                     return rows, int(row_offset)
         return rows, int(handle.tell())
-
-
-def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
-    """Return the iter JSONL."""
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if line:
-                yield json.loads(line)
 
 
 def _relative_wall_s(origin_s: float) -> float:

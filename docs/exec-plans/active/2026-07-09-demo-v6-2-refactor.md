@@ -11,11 +11,10 @@ that depend on removed legacy paths now fail explicitly.
 
 ## Verification protocol (run after every step)
 
-1. **Offline byte-parity** (the strong gate — the offline `--source-headless-capture`
-   path is pure-numpy & deterministic): golden ref = `demo_v6_1` offline conversion
-   of `outputs_v6_1/capture` (549 frames → 5 chunks). After a change, run the same
-   for `demo_v6_2` and deep-diff with `scratchpad/parity/compare_outputs.py` →
-   must print `PARITY OK`. Covers chunk/track/filter/schema/ASAP/manifest/archive.
+1. **Bounded fake-live product validation**: run the realtime fake-live path to
+   a fixed chunk target and validate chunk/track/filter/schema/ASAP/manifest/archive
+   products. The completed-capture conversion gate was retired with its deprecated
+   runtime mode on 2026-07-12.
 2. **Import smoke**: all core `demo_v6_2` modules import; zero `demo_v6_1` /
    `services` / `data_process` leakage (`tests/test_demo_v6_2_standalone_ffs.py`).
 3. **Unit tests**: `tests/test_demo_v6_2_downstream.py` + standalone (15 tests).
@@ -60,12 +59,11 @@ that depend on removed legacy paths now fail explicitly.
   `_normalize_mask_stack` (sam31), `utils/jsonl_io.read_jsonl_rows` (viz delegates;
   phystwin_strict correctly NOT merged — its inline loop raises on malformed lines vs
   the helper skipping them). PARITY OK + 15 tests.
-- [ ] Phase A2-A5 — remaining offline-deterministic cleanup
+- [ ] Phase A2-A5 — remaining product-schema cleanup
   (chunk_data_output/payload schema fallback ladders [careful, parity-gated],
   tracking re-validation, asap [KEEP silent-freeze]).
-- [ ] Duplication pass 2 — bigger items: write/stream chunk-setup ~90% dup →
-  ChunkStreamSession; query schema derived 3×/chunk; REPO_ROOT (mostly essential —
-  bootstrap needs inline). Each parity/smoke-gated.
+- [ ] Duplication pass 2 — bigger items: query schema derived 3×/chunk; REPO_ROOT
+  (mostly essential — bootstrap needs inline). Each fake-live/smoke-gated.
 - [x] Phase D — live pipeline-status visualization (Q23). New `pipeline_status.py`
   (best-effort append-only `pipeline_status.jsonl`, no-op on None base, never
   raises); wired into the orchestrator (run_start / chunk_committed /
@@ -116,11 +114,11 @@ that depend on removed legacy paths now fail explicitly.
   `depth/0/{k}.npy` the moment the stream bridge accepts the capture row (frame
   cadence), instead of waiting for chunk materialization. `archive_chunk` now
   VERIFIES already-streamed frames (seq identity) instead of rewriting; the
-  batch conversion path is byte-identical (safe-fixture parity: frozen v6_1 vs
-  v6_2 → PARITY OK). `metadata.json` `frame_num` stays commit-gated (strict
+  committed output remains byte-identical to the safe fixture.
+  `metadata.json` `frame_num` stays commit-gated (strict
   readers unchanged; live consumers watch the dirs). `discard_streamed_tail`
-  removes never-committed tail frames at stream end so the final tree matches
-  batch. 5 new StreamingArchiveTests. Controlled one-chunk fake-live proof:
+  removes never-committed tail frames at stream end. Controlled one-chunk
+  fake-live proof:
   frames 0..34 landed over 6.60 s at 5 FPS; the chunk committed 5.04 s after
   frame 34, and metadata then advanced to `frame_num=35`.
 - [x] Trainer finish policy reconciliation (2026-07-09 night) — local config
@@ -171,14 +169,14 @@ that depend on removed legacy paths now fail explicitly.
 
 ## Final state (2026-07-09)
 
-Every runtime `.py` in demo_v6_2 is <1000 lines (was one 6773-line file). Both
-halves verified: offline byte-parity vs frozen demo_v6_1 (`PARITY OK`) and a
-bounded fake-live smoke (exit 0, well-formed, status stream populated). 44 scoped
+Every runtime `.py` in demo_v6_2 is <1000 lines (was one 6773-line file). The
+runtime path is verified by a bounded fake-live smoke (exit 0, well-formed,
+status stream populated). 44 scoped
 tests green (29 demo_v6_2 including cleanup, standalone-no-v6_1 guard, and
 pipeline-status; 15 demo_v6_1 reference intact); the repository smoke profile
 passes all 185 tests. Nothing committed (working tree, `single-camera` branch).
-Remaining optional: duplication pass 2 (write/stream ChunkStreamSession,
-query-schema 3x), offline-file cleanup A2-A5, viewer renderer display check.
+Remaining optional: duplication pass 2 (query-schema 3x), product-schema cleanup
+A2-A5, and viewer renderer display check.
 
 ## Target module layout (every file <1000 lines; each is one "big step")
 
@@ -193,8 +191,7 @@ the mapping pass):
   thin `main_data_processing.py` (__main__).
 - `chunk_data_stream.py` (1743) → `chunk_jsonl_tail.py`, `chunk_warmup_trim.py`,
   `chunk_capture_meta.py`, `chunk_window_builder.py`, `chunk_materialize.py`, thin
-  `chunk_data_stream.py` (prepared-frame-only public entry points over a
-  shared `ChunkStreamSession` so write/stream stop duplicating ~90% of setup).
+  `chunk_data_stream.py` (one prepared-frame-only realtime entry point).
 - `visualize_track.py` (2365) → `viz_camera_model.py`, `viz_input_timeline.py`,
   `viz_panels.py` (+ new `_draw_pipeline_status`), `viz_renderers.py`,
   `viz_playback.py`, `viz_video_export.py`, thin `visualize_track.py` CLI.
@@ -226,8 +223,8 @@ realtime path always provides); `tracking._check_frozen_identity` re-validation.
 downstream-contract behavior mandated by design_spec_v6_1.md.
 
 Duplication to collapse: REPO_ROOT resolution (6 copies, inconsistent depth) →
-one helper; JSONL reader (4 copies); write/stream chunk setup (~90%); query
-schema derived up to 3×/chunk; tracking alias arrays; rainbow color helpers.
+one helper; JSONL reader (4 copies); query schema derived up to 3×/chunk;
+tracking alias arrays; rainbow color helpers.
 
 Legacy paths still pending separate proof: `ffs_depth_path`/legacy-npz fallbacks.
 The chunk stream itself is prepared-frame-only; it no longer reconstructs a

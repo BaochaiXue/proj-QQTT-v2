@@ -19,7 +19,7 @@ def _parse_rgb_triplet(value: str) -> tuple[int, int, int]:
 
 def _is_replay_input_source(input_source: str) -> bool:
     """Return whether replay input source."""
-    return str(input_source) in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_RECORDING}
+    return str(input_source) == INPUT_SOURCE_FAKE_LIVE
 
 
 def depth_backend_label(args: argparse.Namespace) -> str:
@@ -88,31 +88,26 @@ def build_parser() -> argparse.ArgumentParser:
         choices=INPUT_SOURCES,
         default=INPUT_SOURCE_LIVE,
         help=(
-            "Frame source. fake-live replays a raw single-camera data_collect case at camera cadence, "
-            "dropping source frames to preserve recording time when replay FPS is lower; recording is kept "
-            "as a compatibility alias."
+            "Frame source. fake-live replays a raw single-camera data_collect "
+            "case at camera cadence, dropping source frames to preserve "
+            "recording time when replay FPS is lower."
         ),
-    )
-    parser.add_argument(
-        "--recording-case",
-        type=Path,
-        default=None,
-        help="Raw data_collect case folder for --input-source recording or fake-live.",
     )
     parser.add_argument(
         "--fake-live-case",
         dest="recording_case",
         type=Path,
         default=None,
-        help=f"Alias for --recording-case. fake-live defaults to {DEFAULT_FAKE_LIVE_CASE}.",
+        help=f"Raw data_collect case for fake-live. Defaults to {DEFAULT_FAKE_LIVE_CASE}.",
     )
     parser.add_argument(
         "--replay-fps",
         type=float,
         default=0.0,
         help=(
-            "Replay FPS for --input-source recording or fake-live. For fake-live this is the emitted "
-            "sample cadence; lower values drop source frames rather than slow motion. Use 0 to read metadata fps."
+            "Replay FPS for --input-source fake-live. This is the emitted sample "
+            "cadence; lower values drop source frames rather than slow motion. "
+            "Use 0 to read metadata fps."
         ),
     )
     parser.add_argument(
@@ -560,9 +555,11 @@ def validate_args(args: argparse.Namespace) -> None:
         args.recording_case = DEFAULT_FAKE_LIVE_CASE
     if _is_replay_input_source(str(args.input_source)):
         if args.recording_case is None:
-            raise ValueError(f"--input-source {args.input_source} requires --recording-case or --fake-live-case")
+            raise ValueError(
+                "--input-source fake-live requires --fake-live-case"
+            )
     elif args.recording_case is not None:
-        raise ValueError("--recording-case/--fake-live-case requires --input-source recording or fake-live")
+        raise ValueError("--fake-live-case requires --input-source fake-live")
     if bool(args.shape_prior_warmup) and not str(args.shape_prior_controller_name or "").strip():
         raise ValueError(
             "--shape-prior-controller-name is required when --shape-prior-warmup "

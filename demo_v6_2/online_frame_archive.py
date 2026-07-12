@@ -14,8 +14,8 @@ does not exist, never counts an uncommitted frame, and the ``phystwin_shen``
 trainer can start reading from the first committed chunk; live consumers that
 want the sub-chunk latency watch the color/depth directories directly. When the
 stream ends, streamed frames whose chunk never committed are deleted
-(``discard_streamed_tail``), so the final tree matches the batch conversion
-path exactly. Layout::
+(``discard_streamed_tail``), so the final tree contains exactly the committed
+frames. Layout::
 
     online_data/
         color/0/{k}.png        # original RGB of the frame the chunk consumed
@@ -305,10 +305,9 @@ class OnlineFrameArchive:
     def discard_streamed_tail(self) -> int:
         """Delete streamed frames whose chunk never committed; return the count.
 
-        Called when the stream ends. Keeps the final tree identical to the
-        batch conversion path: color/depth files exist exactly for frames of
-        committed chunks, and ``frame_num`` keeps pointing only at files that
-        exist.
+        Called when the stream ends. Color/depth files remain exactly for
+        frames of committed chunks, and ``frame_num`` keeps pointing only at
+        files that exist.
         """
         discarded = 0
         for index in range(int(self.frames_written), int(self.frames_streamed)):
@@ -336,11 +335,12 @@ class OnlineFrameArchive:
     ) -> dict[str, Any]:
         """Archive every published frame of one chunk.
 
-        Frame files land here, before the caller commits the online chunk;
-        metadata.json/enhance_metadata.json only advance in
-        ``publish_metadata`` after that commit succeeds. At every
-        interruption point ``frame_num`` therefore counts only frames that
-        both exist on disk and belong to a committed chunk.
+        Frame files must already have landed through ``stream_frame``. This
+        method verifies their identity before the caller commits the online
+        chunk; metadata.json/enhance_metadata.json only advance in
+        ``publish_metadata`` after that commit succeeds. At every interruption
+        point ``frame_num`` therefore counts only frames that both exist on
+        disk and belong to a committed chunk.
         """
         if int(online_start_frame) != int(self.frames_written):
             raise OnlineFrameArchiveError(
@@ -362,7 +362,6 @@ class OnlineFrameArchive:
             self._calibration = self._initialize_calibration(
                 metadata, serial_number=serial_number
             )
-        calibration = self._calibration
         for local_index, frame in enumerate(frames):
             online_frame_index = int(online_start_frame) + local_index
             source_frame_index = int(source_frame_indices[local_index])
@@ -379,27 +378,17 @@ class OnlineFrameArchive:
                     f"{context}: prepared frame carries source_frame_index "
                     f"{frame.source_frame_index}, chunk says {source_frame_index}"
                 )
-            if online_frame_index < self.frames_streamed:
-                # Real-time path: the file already landed in stream_frame;
-                # verify the streamed identity instead of rewriting it.
-                streamed = self._streamed_info[online_frame_index]
-                if int(streamed["seq"]) != int(frame.seq):
-                    raise OnlineFrameArchiveError(
-                        f"{context}: streamed file was written for seq "
-                        f"{streamed['seq']} but the committed chunk carries "
-                        f"seq {frame.seq}"
-                    )
-            else:
-                # Batch conversion path (no real-time streaming): write the
-                # file here, keeping the streamed counter in lockstep so both
-                # paths share one continuity ledger.
-                self._archive_one_frame(
-                    online_frame_index=online_frame_index,
-                    frame=frame,
-                    calibration=calibration,
-                    context=context,
+            if online_frame_index >= self.frames_streamed:
+                raise OnlineFrameArchiveError(
+                    f"{context}: frame was not streamed before chunk commit"
                 )
-                self._record_streamed_frame(frame)
+            streamed = self._streamed_info[online_frame_index]
+            if int(streamed["seq"]) != int(frame.seq):
+                raise OnlineFrameArchiveError(
+                    f"{context}: streamed file was written for seq "
+                    f"{streamed['seq']} but the committed chunk carries "
+                    f"seq {frame.seq}"
+                )
             self._frame_mapping.append(
                 {
                     "online_frame_index": online_frame_index,

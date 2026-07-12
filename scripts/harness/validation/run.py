@@ -51,7 +51,10 @@ def _unique(items: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(unique)
 
 
-QUICK_UNITTEST_MODULES: tuple[str, ...] = ()
+QUICK_UNITTEST_MODULES: tuple[str, ...] = (
+    "tests.test_demo_v6_2_runtime_modes",
+    "tests.test_demo_v6_2_stream_archive",
+)
 
 FULL_ONLY_UNITTEST_MODULES: tuple[str, ...] = ()
 

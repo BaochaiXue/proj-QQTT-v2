@@ -39,7 +39,6 @@ sys.path.insert(0, _BOOTSTRAP_REPO_ROOT_STR)
 
 from demo_v6_2.chunk_data_stream import (
     stream_chunk_data_from_headless_capture,
-    write_chunk_data_from_headless_capture,
 )
 from demo_v6_2.phystwin_shen_launch import (
     PhystwinShenLaunch,
@@ -133,7 +132,7 @@ def _wait_for_phystwin_launch(launch: PhystwinShenLaunch) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run Demo v6.1 offline conversion or live/fake-live orchestration."""
+    """Run Demo v6.1 live/fake-live orchestration."""
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     chunk_frame_count = resolve_chunk_frame_count(args)
@@ -147,51 +146,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     base_path.mkdir(parents=True, exist_ok=True)
     startup_output_cleanup = prepare_realtime_output_for_new_run(
         base_path,
-        clear_capture=args.source_headless_capture is None,
         legacy_case_prefix=str(args.case_prefix),
     )
-    if args.source_headless_capture is not None:
-        # Offline conversion path: consume an existing capture directory and
-        # write online/static final_data products without launching camera or
-        # visualizer subprocesses.
-        manifests = write_chunk_data_from_headless_capture(
-            args.source_headless_capture,
-            base_path=base_path,
-            case_prefix=str(args.case_prefix),
-            chunk_frame_count=chunk_frame_count,
-            fps=int(round(float(args.replay_fps))),
-            max_chunks=args.max_chunks,
-            surface_points=_load_optional_points(args.surface_points_npy),
-            interior_points=_load_optional_points(args.interior_points_npy),
-            asap_augment=bool(args.asap_augment),
-            asap_mesh_path=args.asap_mesh_path,
-        )
-        summary = {
-            "demo_version": "demo_v6_1",
-            "mode": "source-headless-capture",
-            "source_headless_capture": str(args.source_headless_capture),
-            "base_path": str(base_path),
-            "case_prefix": str(args.case_prefix),
-            "output_format": "online-primary-static-case",
-            "online_dir": str(resolve_online_dir(args)),
-            "static_data_path": str(resolve_static_data_path(args)),
-            "shape_prior_case_root": str(resolve_shape_prior_case_root(args)),
-            "shape_prior_points_npz": str(resolve_shape_prior_points_npz(args)),
-            "startup_output_cleanup": startup_output_cleanup,
-            "chunk_frame_count": int(chunk_frame_count),
-            "max_chunks": args.max_chunks,
-            "chunk_count": int(len(manifests)),
-            "chunks": manifests,
-        }
-        summary.update(_runtime_chunk_summary(manifests))
-        summary_path = resolve_run_summary_path(base_path)
-        summary_path.write_text(
-            json.dumps(summary, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        print(json.dumps(summary, indent=2, sort_keys=True))
-        return 0
-
     # Live pipeline-status stream (design question 23): the orchestrator, the
     # camera process, and the SAM3D shape-prior stages all append lifecycle
     # events to <base_path>/pipeline_status.jsonl and the visualizer tails it to

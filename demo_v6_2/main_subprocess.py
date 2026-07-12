@@ -160,11 +160,6 @@ def _contract(args: argparse.Namespace) -> dict[str, object]:
         "shape_prior_chunk_wait_timeout_s": float(
             args.shape_prior_chunk_wait_timeout_s
         ),
-        "source_headless_capture": (
-            None
-            if args.source_headless_capture is None
-            else str(args.source_headless_capture)
-        ),
         "downstream_mode": resolve_downstream_mode(args),
         "visualizer_layout": resolve_visualizer_layout(args),
         "visualizer_command": build_visualizer_command(args),

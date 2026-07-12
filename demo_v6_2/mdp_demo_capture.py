@@ -59,7 +59,7 @@ class _CaptureMixin:
             first_packet = source.read_packet(seq=0)
         except Exception as exc:
             if not self.stop_event.is_set():
-                self._record_fatal_worker_error("recording replay", exc)
+                self._record_fatal_worker_error("fake-live replay", exc)
             return
         camera_start_s = float(first_packet.receive_perf_s)
         preview_seq = 0
@@ -129,7 +129,9 @@ class _CaptureMixin:
                     publish_preview_source_index(source_index=source_index)
                 except Exception as exc:
                     if not self.stop_event.is_set():
-                        self._record_fatal_worker_error("recording replay preview", exc)
+                        self._record_fatal_worker_error(
+                            "fake-live replay preview", exc
+                        )
                     return False
                 if source_index >= source.frame_count - 1:
                     break
@@ -196,7 +198,7 @@ class _CaptureMixin:
                     )
                 except Exception as exc:
                     if not self.stop_event.is_set():
-                        self._record_fatal_worker_error("recording replay", exc)
+                        self._record_fatal_worker_error("fake-live replay", exc)
                     break
                 publish_preview_packet(preview_from_packet(packet, seq=preview_seq))
                 self._publish_capture_packet(
@@ -226,7 +228,7 @@ class _CaptureMixin:
                     )
                 except Exception as exc:
                     if not self.stop_event.is_set():
-                        self._record_fatal_worker_error("recording replay", exc)
+                        self._record_fatal_worker_error("fake-live replay", exc)
                     break
                 self._publish_capture_packet(packet, record_s=packet.receive_perf_s)
                 runtime_seq += 1

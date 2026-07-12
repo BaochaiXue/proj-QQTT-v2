@@ -283,12 +283,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Headless capture directory for the Demo v6.1 realtime subprocess.",
     )
-    parser.add_argument(
-        "--source-headless-capture",
-        type=Path,
-        default=None,
-        help="Existing Demo v6.1 headless capture directory to chunk without launching capture.",
-    )
     parser.add_argument("--surface-points-npy", type=Path, default=None)
     parser.add_argument("--interior-points-npy", type=Path, default=None)
     parser.add_argument(
