@@ -19,13 +19,12 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Sequence
-
 
 # Keep this repo at the front of the import path when the script is launched
 # from another working directory. Removing the existing entry first avoids a
@@ -40,25 +39,20 @@ sys.path.insert(0, _BOOTSTRAP_REPO_ROOT_STR)
 from demo_v6_2.chunk_data_stream import (
     stream_chunk_data_from_headless_capture,
 )
-from demo_v6_2.phystwin_shen_launch import (
-    PhystwinShenLaunch,
-    PhystwinShenLaunchError,
-    launch_phystwin_shen,
-)
-from demo_v6_2.pipeline_status import (
-    STAGE_CHUNK_COMMITTED,
-    STAGE_DOWNSTREAM_START,
-    STAGE_FATAL,
-    STAGE_RUN_FINISHED,
-    STAGE_RUN_START,
-    PipelineStatusWriter,
-)
+from demo_v6_2.main_cli import build_parser
 from demo_v6_2.main_config import (
     DEFAULT_SAM31_CHECKPOINT_PATH,
     REPO_ROOT,
     SAM31_CHECKPOINT_ENV,
 )
-from demo_v6_2.main_cli import build_parser
+from demo_v6_2.main_layout import (
+    prepare_realtime_output_for_new_run,
+    resolve_online_dir,
+    resolve_run_summary_path,
+    resolve_shape_prior_case_root,
+    resolve_shape_prior_points_npz,
+    resolve_static_data_path,
+)
 from demo_v6_2.main_options import (
     _load_optional_points,
     _python_command_prefix,
@@ -77,14 +71,6 @@ from demo_v6_2.main_options import (
     visualizer_start_policy,
     visualizer_uses_side_by_side,
 )
-from demo_v6_2.main_layout import (
-    prepare_realtime_output_for_new_run,
-    resolve_online_dir,
-    resolve_run_summary_path,
-    resolve_shape_prior_case_root,
-    resolve_shape_prior_points_npz,
-    resolve_static_data_path,
-)
 from demo_v6_2.main_subprocess import (
     _contract,
     _default_capture_dir,
@@ -94,8 +80,20 @@ from demo_v6_2.main_subprocess import (
     build_visualizer_command,
     validate_runtime_args,
 )
+from demo_v6_2.phystwin_shen_launch import (
+    PhystwinShenLaunch,
+    PhystwinShenLaunchError,
+    launch_phystwin_shen,
+)
+from demo_v6_2.pipeline_status import (
+    STAGE_CHUNK_COMMITTED,
+    STAGE_DOWNSTREAM_START,
+    STAGE_FATAL,
+    STAGE_RUN_FINISHED,
+    STAGE_RUN_START,
+    PipelineStatusWriter,
+)
 from demo_v6_2.utils.runtime_summary import _runtime_chunk_summary
-
 
 # ---------------------------------------------------------------------------
 # Run summary and entrypoint
@@ -137,7 +135,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
     chunk_frame_count = resolve_chunk_frame_count(args)
     validate_runtime_args(args, chunk_frame_count=chunk_frame_count)
-
+    # check parameters
     if bool(args.dry_run):
         print(json.dumps(_contract(args), indent=2, sort_keys=True))
         return 0
@@ -148,6 +146,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         base_path,
         legacy_case_prefix=str(args.case_prefix),
     )
+
     # Live pipeline-status stream (design question 23): the orchestrator, the
     # camera process, and the SAM3D shape-prior stages all append lifecycle
     # events to <base_path>/pipeline_status.jsonl and the visualizer tails it to
@@ -158,7 +157,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     status.emit(
         STAGE_RUN_START,
         f"input={args.input_source} downstream={resolve_downstream_mode(args)}",
-    )
+    )  # time record strat
 
     capture_dir = _default_capture_dir(args, base_path)
     capture_dir.mkdir(parents=True, exist_ok=True)
@@ -166,14 +165,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         Path(args.shape_prior_profile_json)
         if args.shape_prior_profile_json is not None
         else capture_dir / "shape_prior_profile.json"
-    )
+    )  # profile files
     main_data_processing_command = build_main_data_processing_command(
         args,
         capture_dir=capture_dir,
         profile_json=profile_json,
         chunk_frame_count=chunk_frame_count,
-    )
+    )  # generate the command text
     main_data_processing_env = os.environ.copy()
+    # get SAM3.1 checkpoint path
     if not main_data_processing_env.get(SAM31_CHECKPOINT_ENV):
         # A caller-provided checkpoint env var wins. Otherwise anchor the
         # configured (possibly relative) YAML path to the repo root so launches
@@ -198,6 +198,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     phystwin_launch: PhystwinShenLaunch | None = None
     shape_prior_points_npz = resolve_shape_prior_points_npz(args)
 
+    # start Phystwin
     def _maybe_start_phystwin_shen() -> None:
         """Launch once at shape-prior readiness and enforce live health.
 
@@ -225,6 +226,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             trigger = "shape_prior_points_ready"
         else:
             trigger = "warmup_disabled_immediate"
+        # launch
         phystwin_launch = launch_phystwin_shen(
             resolve_phystwin_shen_settings(args),
             python_prefix=_python_command_prefix(args.phystwin_shen_conda_env),
@@ -238,6 +240,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         status.emit(STAGE_DOWNSTREAM_START, f"phystwin_shen ({trigger})")
 
+    # post processing of chunks
     def on_chunk_written(manifest: dict[str, object]) -> None:
         """Start downstream consumers exactly once when the first chunk commits."""
         nonlocal visualizer_process
