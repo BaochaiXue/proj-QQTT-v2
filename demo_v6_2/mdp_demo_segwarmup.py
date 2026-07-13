@@ -18,13 +18,11 @@ from demo_v6_2.mdp_cli import (
     _is_replay_input_source,
     active_object_id_labels,
     active_object_ids,
-    controller_pcd_mask_erode_pixels,
     controller_tracking_enabled,
     depth_backend_label,
     headless_capture_enabled,
     lossless_enabled,
     lossless_input_fps,
-    object_pcd_mask_erode_pixels,
     object_tracking_enabled,
     runtime_metadata_identity,
     shape_prior_profile,
@@ -167,18 +165,16 @@ class _SegWarmupMixin(_DemoRuntimeContract):
                 if self.table_c2w is None
                 else np.asarray(self.table_c2w, dtype=np.float32).reshape(4, 4).tolist()
             ),
-            "pcd_stride": int(1),
-            "pcd_mask_erode_pixels": int(DEFAULT_PCD_MASK_ERODE_PIXELS),
-            "object_pcd_mask_erode_pixels": object_pcd_mask_erode_pixels(self.args),
-            "controller_pcd_mask_erode_pixels": controller_pcd_mask_erode_pixels(
-                self.args
+            "formal_mask_source": "origin_style_processed_masks",
+            "formal_processing_fps": float(lossless_input_fps(self.args)),
+            "depth_min_m": float(PHYSTWIN_DEPTH_MIN_M),
+            "depth_max_m": float(PHYSTWIN_DEPTH_MAX_M),
+            "mask_radius_outlier_radius_m": float(
+                PHYSTWIN_RADIUS_OUTLIER_RADIUS_M
             ),
-            "world_z_diagnostic_thresholds_m": [
-                float(value) for value in DEFAULT_TABLE_Z_DIAGNOSTIC_THRESHOLDS_M
-            ],
-            "table_z_filter_enabled": bool(self.args.enable_table_z_filter),
-            "table_z_filter_threshold_m": float(DEFAULT_TABLE_Z_FILTER_THRESHOLD_M),
-            "table_z_filter_classes": str(TABLE_Z_FILTER_CLASS_BOTH),
+            "mask_radius_outlier_nb_points": int(
+                PHYSTWIN_RADIUS_OUTLIER_NB_POINTS
+            ),
             "headless_capture_enabled": headless_capture_enabled(self.args),
             "headless_prepared_only": bool(
                 getattr(self.args, "headless_prepared_only", False)
@@ -252,10 +248,6 @@ class _SegWarmupMixin(_DemoRuntimeContract):
             "query_color_mode": "phystwin_rainbow_identity"
             if tracker_enabled(self.args)
             else "none",
-            "tracker_lift_mask_erode_pixels": min(
-                object_pcd_mask_erode_pixels(self.args),
-                controller_pcd_mask_erode_pixels(self.args),
-            ),
             "tapnet_repo_dir": str(DEFAULT_TAPNET_REPO_DIR),
             "tapnextpp_checkpoint": str(DEFAULT_TAPNEXTPP_CHECKPOINT),
             "tapnextpp_image_size": str("256,256"),
@@ -352,14 +344,12 @@ class _SegWarmupMixin(_DemoRuntimeContract):
                     self._publish_mask_packet(packet)
                     self.seg_stats.record(packet.process_done_perf_s)
                 if lossless_enabled(self.args):
-                    self.lossless_pcd_mask_queue.close()
-                    self.lossless_tracker_mask_queue.close()
+                    self.lossless_mask_queue.close()
         except Exception as exc:
             if not self.stop_event.is_set():
                 self._record_fatal_worker_error("segmentation worker", exc)
             if lossless_enabled(self.args):
-                self.lossless_pcd_mask_queue.close()
-                self.lossless_tracker_mask_queue.close()
+                self.lossless_mask_queue.close()
 
     def _shape_prior_frame0_request_from_pcd_result(
         self,
@@ -369,20 +359,18 @@ class _SegWarmupMixin(_DemoRuntimeContract):
         if not bool(getattr(self.args, "shape_prior_warmup", False)):
             return None
         if self.table_c2w is None:
-            return None
-        if result.depth_m is None:
-            return None
-        mask_packet = result.mask_packet
+            raise RuntimeError(
+                "shape-prior frame 0 requires camera-to-world calibration"
+            )
+        processed_frame = result.processed_frame
+        mask_packet = processed_frame.mask_packet
         if int(result.packet.seq) != int(mask_packet.seq):
-            return None
+            raise RuntimeError("shape-prior PCD/mask sequence mismatch")
         k_color = mask_packet.k_color
         if k_color is None and self.runtime is not None:
             k_color = np.asarray(self.runtime.k_color, dtype=np.float32)
         if k_color is None:
-            return None
-        object_observation_mask = self._shape_prior_observation_mask_from_pcd_result(
-            result
-        )
+            raise RuntimeError("shape-prior frame 0 requires color intrinsics")
         return shape_prior_warmup.ShapePriorFrame0Request(
             seq=int(mask_packet.seq),
             source_timestamp_s=mask_packet.source_timestamp_s,
@@ -391,9 +379,10 @@ class _SegWarmupMixin(_DemoRuntimeContract):
             depth_source_internal=str(self.args.depth_source),
             rgb_u8=mask_packet.color_bgr[:, :, ::-1],
             object_mask=mask_packet.object_mask,
-            object_observation_mask=object_observation_mask,
             controller_mask=mask_packet.controller_mask,
-            depth_color_m=result.depth_m,
+            depth_color_m=processed_frame.depth_m,
+            depth_valid_mask=processed_frame.depth_valid_mask,
+            points_world_m=processed_frame.pcd_points[0],
             k_color=k_color,
             camera_to_world_c2w=self.table_c2w,
             table_z_m=TABLE_Z_M,
@@ -406,29 +395,6 @@ class _SegWarmupMixin(_DemoRuntimeContract):
             },
             frame0_perception_profile=dict(self._warmup_perception_profile),
         )
-
-    def _shape_prior_observation_mask_from_pcd_result(
-        self, result: PcdBuildResult
-    ) -> np.ndarray:
-        """Return the shape prior observation mask from PCD result."""
-        raw = np.asarray(result.mask_packet.object_mask, dtype=bool)
-        candidate = result.object_observation_mask
-        if candidate is None:
-            candidate = result.object_pcd_mask
-        if candidate is None:
-            return np.ascontiguousarray(raw, dtype=bool)
-
-        mask = np.asarray(candidate, dtype=bool)
-        if mask.shape == raw.shape:
-            return np.ascontiguousarray(mask, dtype=bool)
-
-        stride = max(1, int(result.pcd_stride))
-        if stride > 1 and mask.shape == raw[::stride, ::stride].shape:
-            expanded = np.zeros_like(raw, dtype=bool)
-            expanded[::stride, ::stride] = mask
-            return np.ascontiguousarray(expanded, dtype=bool)
-
-        return np.ascontiguousarray(mask, dtype=bool)
 
     def _packet_with_shape_prior_state(
         self, packet: MaskedPcdPacket

@@ -4,7 +4,9 @@ from contextlib import redirect_stderr
 import io
 import inspect
 from pathlib import Path
+import pickle
 from types import SimpleNamespace
+import tempfile
 import unittest
 
 import numpy as np
@@ -13,16 +15,64 @@ from demo_v6_2 import main_cli
 from demo_v6_2 import mdp_cli
 from demo_v6_2 import mdp_demo_pcd
 from demo_v6_2 import mdp_packets
+from demo_v6_2 import shape_prior_warmup
 from demo_v6_2.main_subprocess import _contract, build_main_data_processing_command
 from demo_v6_2.mdp_packets import PairedBuildResult
-from demo_v6_2.mdp_pcd_depth import backproject_masked_rgbd_profiled
+from demo_v6_2.mdp_packets import (
+    MaskPacket,
+    PipelineTiming,
+    _full_tracker_arrays_for_prepared_frame,
+)
+from demo_v6_2.utils.camera import CameraIntrinsics
 from demo_v6_2.phystwin_strict_product import (
+    PHYSTWIN_DEPTH_MAX_M,
+    PHYSTWIN_DEPTH_MIN_M,
+    apply_depth_validity_to_mask_frame,
     apply_radius_outlier_to_mask_frame,
     prepare_phystwin_frame,
 )
 
 
 class RuntimeInputModeTests(unittest.TestCase):
+    @staticmethod
+    def _mask_packet(
+        *, object_mask: np.ndarray, controller_mask: np.ndarray
+    ) -> MaskPacket:
+        height, width = object_mask.shape
+        return MaskPacket(
+            seq=0,
+            color_bgr=np.zeros((height, width, 3), dtype=np.uint8),
+            depth_source="realsense",
+            intrinsics=CameraIntrinsics(
+                fx=1000.0,
+                fy=1000.0,
+                cx=float(width - 1) / 2.0,
+                cy=float(height - 1) / 2.0,
+            ),
+            depth_scale_m_per_unit=0.001,
+            receive_perf_s=0.0,
+            process_done_perf_s=0.0,
+            dropped_capture_frames=0,
+            timing=PipelineTiming(),
+            controller_mask=np.ascontiguousarray(controller_mask, dtype=bool),
+            object_mask=np.ascontiguousarray(object_mask, dtype=bool),
+            hand_a_mask=np.ascontiguousarray(controller_mask, dtype=bool),
+            hand_b_mask=np.zeros_like(controller_mask, dtype=bool),
+            depth_u16=np.full((height, width), 1000, dtype=np.uint16),
+        )
+
+    @staticmethod
+    def _pcd_mixin(*, with_calibration: bool = True) -> object:
+        runtime = mdp_demo_pcd._PcdMixin()
+        runtime.table_c2w = np.eye(4, dtype=np.float32) if with_calibration else None
+        runtime.args = SimpleNamespace(
+            pcd_color_mode="rgb",
+            controller_color=(255, 0, 0),
+            object_color=(0, 0, 255),
+        )
+        runtime.mask_slot = SimpleNamespace(dropped_count=0)
+        return runtime
+
     def test_orchestrator_accepts_only_fake_live_and_live(self) -> None:
         parser = main_cli.build_parser()
         supported_modes = {"fake-live", "live"}
@@ -76,19 +126,28 @@ class RuntimeInputModeTests(unittest.TestCase):
         self.assertEqual(defaults.pcd_mode, "masked")
         self.assertEqual(defaults.tracker_backend, "tapnextpp")
 
-        no_tracker = parser.parse_args(["--tracker-backend", "none"])
+        calibration_args = ["--table-calibrate", "table_calibrate.pkl"]
+        no_tracker = parser.parse_args([*calibration_args, "--tracker-backend", "none"])
         with self.assertRaisesRegex(
             ValueError,
             "--pcd-mode masked requires --tracker-backend tapnextpp",
         ):
             mdp_cli.validate_args(no_tracker)
 
-        no_track_mode = parser.parse_args(["--track-mode", "none"])
+        no_track_mode = parser.parse_args([*calibration_args, "--track-mode", "none"])
         with self.assertRaisesRegex(
             ValueError,
             "--pcd-mode masked requires an enabled --track-mode",
         ):
             mdp_cli.validate_args(no_track_mode)
+
+    def test_formal_runtime_requires_camera_to_world_calibration(self) -> None:
+        args = mdp_cli.build_parser().parse_args([])
+        with self.assertRaisesRegex(
+            ValueError,
+            "requires --table-calibrate",
+        ):
+            mdp_cli.validate_args(args)
 
     def test_legacy_latest_frame_pcd_worker_is_absent(self) -> None:
         self.assertFalse(hasattr(mdp_demo_pcd._PcdMixin, "_pcd_worker"))
@@ -116,6 +175,10 @@ class RuntimeInputModeTests(unittest.TestCase):
             "--enhanced-component-voxel-size-m",
             "--enhanced-keep-near-main-gap-m",
             "--tracker-retire-filtered-markers",
+            "--enable-table-z-filter",
+            "--disable-table-z-filter",
+            "--object-pcd-mask-erode-pixels",
+            "--controller-pcd-mask-erode-pixels",
         }
         self.assertFalse(removed_options & options)
         self.assertFalse(hasattr(mdp_demo_pcd._PcdMixin, "_make_filter_input"))
@@ -132,42 +195,26 @@ class RuntimeInputModeTests(unittest.TestCase):
         )
         self.assertFalse(removed_options & set(command))
 
-    def test_runtime_backprojection_keeps_every_valid_masked_point(self) -> None:
-        height, width = 250, 241
-        color_bgr = np.zeros((height, width, 3), dtype=np.uint8)
-        depth_m = np.ones((height, width), dtype=np.float32)
-        mask = np.ones((height, width), dtype=bool)
-        ray_x = np.zeros_like(depth_m)
-        ray_y = np.zeros_like(depth_m)
-
-        points, colors, pixels_yx, _timing = backproject_masked_rgbd_profiled(
-            color_bgr=color_bgr,
-            depth_m=depth_m,
-            mask=mask,
-            ray_x=ray_x,
-            ray_y=ray_y,
-            depth_min_m=0.2,
-            depth_max_m=1.5,
-            color_mode="rgb",
-            class_rgb=(0, 0, 0),
-            return_yx=True,
+    def test_origin_depth_gate_uses_strict_02_to_15_meter_bounds(self) -> None:
+        depth_m = np.asarray(
+            [[PHYSTWIN_DEPTH_MIN_M, 1.0, PHYSTWIN_DEPTH_MAX_M]],
+            dtype=np.float32,
         )
-
-        expected = height * width
-        self.assertGreater(expected, 60_000)
-        self.assertEqual(len(points), expected)
-        self.assertEqual(len(colors), expected)
-        self.assertEqual(len(pixels_yx), expected)
-        self.assertNotIn(
-            "max_points",
-            inspect.signature(backproject_masked_rgbd_profiled).parameters,
+        mask = np.ones_like(depth_m, dtype=bool)
+        processed = apply_depth_validity_to_mask_frame(
+            {"object": mask, "controller": mask}, depth_m
         )
+        expected = np.asarray([[False, True, False]], dtype=bool)
+        np.testing.assert_array_equal(processed["object"], expected)
+        np.testing.assert_array_equal(processed["controller"], expected)
 
-    def test_strict_product_keeps_the_only_pt_mask_filter(self) -> None:
+    def test_canonical_stage_keeps_the_only_pt_mask_filter(self) -> None:
         prepare_parameters = inspect.signature(prepare_phystwin_frame).parameters
-        self.assertNotIn("mask_radius_outlier_filter", prepare_parameters)
-        self.assertNotIn("mask_radius_outlier_radius_m", prepare_parameters)
-        self.assertNotIn("mask_radius_outlier_nb_points", prepare_parameters)
+        self.assertIn("processed_mask_frame", prepare_parameters)
+        self.assertIn("pcd_points", prepare_parameters)
+        self.assertNotIn("mask_frame", prepare_parameters)
+        self.assertNotIn("intrinsics", prepare_parameters)
+        self.assertNotIn("c2w", prepare_parameters)
 
         points_grid = np.zeros((1, 41, 3), dtype=np.float32)
         points_grid[0, :40, 2] = 1.0
@@ -182,6 +229,151 @@ class RuntimeInputModeTests(unittest.TestCase):
 
         self.assertTrue(np.all(cleaned["object"][0, :40]))
         self.assertFalse(cleaned["object"][0, 40])
+
+    def test_processed_hands_are_subsets_of_cleaned_controller(self) -> None:
+        points_grid = np.zeros((1, 41, 3), dtype=np.float32)
+        points_grid[0, :40, 2] = 1.0
+        points_grid[0, 40] = np.asarray([1.0, 1.0, 1.0], dtype=np.float32)
+        controller = np.ones((1, 41), dtype=bool)
+        cleaned = apply_radius_outlier_to_mask_frame(
+            {
+                "object": np.ones((1, 41), dtype=bool),
+                "controller": controller,
+                "hand_a": controller,
+                "hand_b": np.zeros_like(controller),
+            },
+            points_grid,
+        )
+        self.assertFalse(cleaned["controller"][0, 40])
+        self.assertFalse(cleaned["hand_a"][0, 40])
+        self.assertTrue(np.all(~cleaned["hand_a"] | cleaned["controller"]))
+
+    def test_object_controller_overlap_keeps_origin_semantics(self) -> None:
+        points_grid = np.zeros((1, 40, 3), dtype=np.float32)
+        points_grid[0, :, 2] = 1.0
+        shared_mask = np.ones((1, 40), dtype=bool)
+        cleaned = apply_radius_outlier_to_mask_frame(
+            {"object": shared_mask, "controller": shared_mask},
+            points_grid,
+        )
+        np.testing.assert_array_equal(cleaned["object"], shared_mask)
+        np.testing.assert_array_equal(cleaned["controller"], shared_mask)
+
+    def test_runtime_pcd_uses_the_canonical_processed_masks(self) -> None:
+        object_mask = np.zeros((10, 10), dtype=bool)
+        object_mask[:, :5] = True
+        controller_mask = ~object_mask
+        result = self._pcd_mixin()._build_processed_frame_result(
+            self._mask_packet(
+                object_mask=object_mask,
+                controller_mask=controller_mask,
+            )
+        )
+
+        np.testing.assert_array_equal(
+            result.processed_frame.mask_packet.object_mask,
+            object_mask,
+        )
+        np.testing.assert_array_equal(
+            result.processed_frame.mask_packet.controller_mask,
+            controller_mask,
+        )
+        self.assertEqual(result.packet.object_point_count, 50)
+        self.assertEqual(result.packet.controller_point_count, 50)
+        self.assertEqual(result.processed_frame.pcd_points.shape, (1, 10, 10, 3))
+
+    def test_empty_processed_class_fails_without_raw_mask_fallback(self) -> None:
+        object_mask = np.zeros((10, 10), dtype=bool)
+        object_mask[0, 0] = True
+        controller_mask = np.ones((10, 10), dtype=bool)
+        with self.assertRaisesRegex(RuntimeError, "processed object mask is empty"):
+            self._pcd_mixin()._build_processed_frame_result(
+                self._mask_packet(
+                    object_mask=object_mask,
+                    controller_mask=controller_mask,
+                )
+            )
+
+    def test_processed_frame_fails_without_camera_to_world(self) -> None:
+        object_mask = np.zeros((10, 10), dtype=bool)
+        object_mask[:, :5] = True
+        controller_mask = ~object_mask
+        with self.assertRaisesRegex(RuntimeError, "camera-to-world calibration"):
+            self._pcd_mixin(with_calibration=False)._build_processed_frame_result(
+                self._mask_packet(
+                    object_mask=object_mask,
+                    controller_mask=controller_mask,
+                )
+            )
+
+    def test_prepared_visibility_uses_design_spec_observation_gate(self) -> None:
+        tracks, visibility = _full_tracker_arrays_for_prepared_frame(
+            SimpleNamespace(
+                query_points_yx=np.zeros((2, 2), dtype=np.float32),
+                all_tracks_yx=np.ones((2, 2), dtype=np.float32),
+                all_tracker_visibility=np.ones((2,), dtype=bool),
+                all_observation_visibility=np.asarray([True, False]),
+                tracks_yx=np.empty((0, 2), dtype=np.float32),
+                visibility=np.empty((0,), dtype=bool),
+                query_indices=np.empty((0,), dtype=np.int64),
+            )
+        )
+        self.assertEqual(tracks.shape, (2, 2))
+        np.testing.assert_array_equal(visibility, [True, False])
+
+    def test_prepared_tracker_arrays_do_not_fallback_to_sparse_state(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "requires full processed tracker arrays",
+        ):
+            _full_tracker_arrays_for_prepared_frame(
+                SimpleNamespace(
+                    query_points_yx=np.zeros((2, 2), dtype=np.float32),
+                    all_tracks_yx=np.empty((0, 2), dtype=np.float32),
+                    all_observation_visibility=np.empty((0,), dtype=bool),
+                    tracks_yx=np.zeros((2, 2), dtype=np.float32),
+                    visibility=np.ones((2,), dtype=bool),
+                    query_indices=np.arange(2, dtype=np.int64),
+                )
+            )
+
+    def test_shape_prior_writer_does_not_repeat_pt_mask_filtering(self) -> None:
+        object_mask = np.asarray([[True, False]], dtype=bool)
+        controller_mask = np.asarray([[False, True]], dtype=bool)
+        points_world_m = np.asarray(
+            [[[0.0, 0.0, 1.0], [0.001, 0.0, 1.0]]],
+            dtype=np.float32,
+        )
+        request = shape_prior_warmup.ShapePriorFrame0Request(
+            seq=0,
+            source_timestamp_s=0.0,
+            input_source="fake-live",
+            depth_backend="realsense",
+            depth_source_internal="realsense",
+            rgb_u8=np.zeros((1, 2, 3), dtype=np.uint8),
+            object_mask=object_mask,
+            controller_mask=controller_mask,
+            depth_color_m=np.ones((1, 2), dtype=np.float32),
+            depth_valid_mask=np.ones((1, 2), dtype=bool),
+            points_world_m=points_world_m,
+            k_color=np.eye(3, dtype=np.float32),
+            camera_to_world_c2w=np.eye(4, dtype=np.float32),
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            paths = shape_prior_warmup.write_shape_prior_case(
+                request,
+                case_root=Path(temporary_directory),
+                case_name="case",
+                object_name="stuffed animal",
+                controller_name="hand",
+            )
+            with (paths["case"] / "mask" / "processed_masks.pkl").open("rb") as handle:
+                processed_masks = pickle.load(handle)
+
+        np.testing.assert_array_equal(processed_masks[0][0]["object"], object_mask)
+        np.testing.assert_array_equal(
+            processed_masks[0][0]["controller"], controller_mask
+        )
 
 
 class PairedBuildResultTests(unittest.TestCase):
@@ -198,7 +390,9 @@ class PairedBuildResultTests(unittest.TestCase):
                         seq=7,
                         pcd_result=SimpleNamespace(
                             packet=SimpleNamespace(seq=sequences["pcd"]),
-                            mask_packet=SimpleNamespace(seq=sequences["mask"]),
+                            processed_frame=SimpleNamespace(
+                                mask_packet=SimpleNamespace(seq=sequences["mask"])
+                            ),
                         ),
                         tracker_packet=SimpleNamespace(seq=sequences["tracker"]),
                     )

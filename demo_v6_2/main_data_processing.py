@@ -38,7 +38,6 @@ from demo_v6_2.mdp_capture_source import *  # noqa: E402,F401,F403
 from demo_v6_2.mdp_headless_writer import *  # noqa: E402,F401,F403
 from demo_v6_2.mdp_pipeline_plumbing import *  # noqa: E402,F401,F403
 from demo_v6_2.mdp_cli import *  # noqa: E402,F401,F403
-from demo_v6_2.mdp_pcd_depth import *  # noqa: E402,F401,F403
 from demo_v6_2.mdp_segmentation import *  # noqa: E402,F401,F403
 
 from demo_v6_2.mdp_demo_lifecycle import _LifecycleMixin  # noqa: E402
@@ -57,7 +56,7 @@ class MainDataProcessingDemo(
     _PcdMixin,
     _PairPublishMixin,
 ):
-    """Camera -> segmentation -> tracker/pcd -> filter -> pairing -> headless capture."""
+    """Camera -> segmentation -> processed frame -> tracker/PCD -> products."""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -65,7 +64,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        apply_demo_preset(args)
         validate_args(args)
         return MainDataProcessingDemo(args).run()
     except (RuntimeError, ValueError, FileNotFoundError) as exc:

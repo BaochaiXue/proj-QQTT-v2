@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 from demo_v6_2.mdp_constants import *  # noqa: F401,F403
-from demo_v6_2.mdp_packets import _full_tracker_arrays_for_prepared_frame
-from demo_v6_2.mdp_pcd_depth import _mask_packet_hand_a_mask, _mask_packet_hand_b_mask
+from demo_v6_2.mdp_packets import (
+    ProcessedFramePacket,
+    _full_tracker_arrays_for_prepared_frame,
+)
+from demo_v6_2.mdp_tracker_geometry import (
+    _mask_packet_hand_a_mask,
+    _mask_packet_hand_b_mask,
+)
 
 
 class HeadlessCaptureWriter:
@@ -33,7 +39,6 @@ class HeadlessCaptureWriter:
         self.input_rgb_dir = self.output_dir / "input_rgb"
         self.frames_path = self.output_dir / "frames.jsonl"
         self.input_frames_path = self.output_dir / "input_frames.jsonl"
-        self.world_z_stats_path = self.output_dir / "world_z_stats.jsonl"
         self.metadata_path = self.output_dir / "metadata.json"
         self._lock = threading.Lock()
         self._saved_pcd_count = 0
@@ -47,13 +52,12 @@ class HeadlessCaptureWriter:
         self.input_rgb_dir.mkdir(parents=True, exist_ok=True)
         self.frames_path.write_text("", encoding="utf-8")
         self.input_frames_path.write_text("", encoding="utf-8")
-        self.world_z_stats_path.write_text("", encoding="utf-8")
         payload = dict(metadata)
         payload["headless_capture_enabled"] = True
         payload["headless_prepared_only"] = bool(self.prepared_only)
         payload["write_input_rgb_timeline"] = bool(self.write_input_rgb_timeline)
         payload["saved_pcd_source"] = self.saved_pcd_source
-        payload["saved_mask_source"] = "edgetam_binary_masks"
+        payload["saved_mask_source"] = "origin_style_processed_masks"
         payload["saved_rgb_source"] = "segmentation_color_bgr"
         payload["input_rgb_timeline"] = "input_frames.jsonl"
         payload["startup_hold_s"] = float(payload.get("startup_hold_s") or 0.0)
@@ -174,17 +178,9 @@ class HeadlessCaptureWriter:
         self,
         packet: MaskedPcdPacket,
         *,
-        depth_m: np.ndarray,
-        mask_packet: MaskPacket,
-        controller_pcd_mask: np.ndarray,
-        object_pcd_mask: np.ndarray,
-        pcd_stride: int,
-        pcd_mask_erode_pixels: int,
-        object_pcd_mask_erode_pixels: int,
-        controller_pcd_mask_erode_pixels: int,
+        processed_frame: ProcessedFramePacket,
         tracker_packet: TrackerMarkerPacket | None = None,
         stage_fps: dict[str, float] | None = None,
-        world_z_diagnostics: dict[str, Any] | None = None,
         startup_hold_s: float = 0.0,
     ) -> None:
         """Write RGB-D, PCD, masks, tracking, and prepared PhysTwin artifacts."""
@@ -193,6 +189,13 @@ class HeadlessCaptureWriter:
                 "prepared-only headless capture requires a tracker packet"
             )
         fps_info = stage_fps or {}
+        if int(packet.seq) != int(processed_frame.seq):
+            raise ValueError(
+                "headless PCD/processed-frame sequence mismatch: "
+                f"pcd={packet.seq} processed={processed_frame.seq}"
+            )
+        depth_m = processed_frame.depth_m
+        mask_packet = processed_frame.mask_packet
         seq_name = f"{int(packet.seq):06d}"
         pcd_path = self.pcd_dir / f"{seq_name}.npz"
         depth_path = self.depth_dir / f"{seq_name}.npy"
@@ -219,21 +222,7 @@ class HeadlessCaptureWriter:
                 hand_b_mask=np.ascontiguousarray(
                     _mask_packet_hand_b_mask(mask_packet), dtype=bool
                 ),
-                controller_pcd_mask=np.ascontiguousarray(
-                    controller_pcd_mask, dtype=bool
-                ),
-                object_pcd_mask=np.ascontiguousarray(object_pcd_mask, dtype=bool),
-                pcd_stride=np.asarray([int(pcd_stride)], dtype=np.int64),
-                pcd_mask_erode_pixels=np.asarray(
-                    [int(pcd_mask_erode_pixels)], dtype=np.int64
-                ),
-                object_pcd_mask_erode_pixels=np.asarray(
-                    [int(object_pcd_mask_erode_pixels)], dtype=np.int64
-                ),
-                controller_pcd_mask_erode_pixels=np.asarray(
-                    [int(controller_pcd_mask_erode_pixels)], dtype=np.int64
-                ),
-                mask_source=np.asarray(["edgetam_binary_masks"]),
+                mask_source=np.asarray(["origin_style_processed_masks"]),
             )
             np.savez(
                 pcd_path,
@@ -266,10 +255,6 @@ class HeadlessCaptureWriter:
             )
         prepared_phystwin_frame_path: str | None = None
         if tracker_packet is not None:
-            c2w = np.asarray(
-                self._metadata_payload.get("camera_to_world_c2w", np.eye(4)),
-                dtype=np.float32,
-            ).reshape(4, 4)
             full_tracks_yx, full_visibility = _full_tracker_arrays_for_prepared_frame(
                 tracker_packet
             )
@@ -285,14 +270,14 @@ class HeadlessCaptureWriter:
                     mask_packet.color_bgr[:, :, ::-1], dtype=np.uint8
                 ),
                 depth_m=np.asarray(depth_m, dtype=np.float32),
-                mask_frame=mask_frame,
+                processed_mask_frame=mask_frame,
+                pcd_points=processed_frame.pcd_points,
+                pcd_colors=processed_frame.pcd_colors,
                 tracks_yx=full_tracks_yx,
                 visibility=full_visibility,
                 query_points_yx=np.asarray(
                     tracker_packet.query_points_yx, dtype=np.float32
                 ),
-                intrinsics=packet.intrinsics,
-                c2w=c2w,
                 source_timestamp_s=packet.source_timestamp_s,
                 source_frame_index=packet.source_frame_index,
                 source_step=packet.source_step,
@@ -348,11 +333,6 @@ class HeadlessCaptureWriter:
             "hand_b_mask_pixels": int(
                 np.count_nonzero(_mask_packet_hand_b_mask(mask_packet))
             ),
-            "controller_pcd_mask_pixels": int(np.count_nonzero(controller_pcd_mask)),
-            "object_pcd_mask_pixels": int(np.count_nonzero(object_pcd_mask)),
-            "pcd_mask_erode_pixels": int(pcd_mask_erode_pixels),
-            "controller_pcd_mask_erode_pixels": int(controller_pcd_mask_erode_pixels),
-            "object_pcd_mask_erode_pixels": int(object_pcd_mask_erode_pixels),
             "hand_a_query_count": int(tracker_packet.hand_a_query_count)
             if tracker_packet is not None
             else 0,
@@ -378,7 +358,6 @@ class HeadlessCaptureWriter:
                     "rgb_path": self._relative(rgb_path),
                     "query_trajectory_path": self._relative(query_path),
                     "mask_path": self._relative(mask_path),
-                    "world_z_stats_path": self._relative(self.world_z_stats_path),
                 }
             )
         if prepared_phystwin_frame_path is not None:
@@ -387,11 +366,6 @@ class HeadlessCaptureWriter:
         with self._lock:
             with self.frames_path.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
-            if world_z_diagnostics is not None and not self.prepared_only:
-                z_payload = dict(world_z_diagnostics)
-                z_payload.setdefault("seq", int(packet.seq))
-                with self.world_z_stats_path.open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps(z_payload, sort_keys=True) + "\n")
             self._saved_pcd_count += 1
 
     def write_tracker(self, packet: TrackerMarkerPacket) -> None:
@@ -429,6 +403,9 @@ class HeadlessCaptureWriter:
             ).reshape(-1, 2),
             all_tracker_visibility=np.ascontiguousarray(
                 packet.all_tracker_visibility, dtype=np.float32
+            ).reshape(-1),
+            all_observation_visibility=np.ascontiguousarray(
+                packet.all_observation_visibility, dtype=bool
             ).reshape(-1),
             query_count=np.asarray([int(packet.query_count)], dtype=np.int64),
             consistent_visible_count=np.asarray(

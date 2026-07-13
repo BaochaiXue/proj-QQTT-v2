@@ -1,4 +1,4 @@
-"""CLI: build_parser, apply_demo_preset, derived-mode accessors, validate_args."""
+"""CLI: parser, derived-mode accessors, and validation."""
 
 from __future__ import annotations
 
@@ -132,15 +132,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--lossless-input-fps",
         type=float,
         default=DEFAULT_LOSSLESS_INPUT_FPS,
-        help="Strict lossless camera/fake-live cadence used by tracker-synchronized masked PCD replay.",
+        help=(
+            "Strict lossless camera/fake-live cadence used by "
+            "tracker-synchronized masked PCD replay."
+        ),
     )
     parser.add_argument(
         "--table-calibrate",
         type=Path,
         default=None,
         help=(
-            "Optional single-camera table Z=0 calibration pickle. When provided, Demo 3.x PCD "
-            "and 3D tracker markers are transformed from camera_color_frame into table_world_z0."
+            "Required single-camera calibration pickle used to transform PCD "
+            "and 3D tracker markers into table_world_z0."
         ),
     )
     parser.add_argument(
@@ -228,28 +231,39 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tracker-device",
         default="cuda:1",
-        help="Device for the point-tracker backend. Use cuda:1 on the dual-4090 demo machine.",
+        help=(
+            "Device for the point-tracker backend. Use cuda:1 on the "
+            "dual-4090 demo machine."
+        ),
     )
     parser.add_argument(
         "--tracker-overlay-max-points",
         type=int,
         default=512,
-        help="Maximum visible tracker markers rendered per frame. 0 renders all visible selected points.",
+        help=(
+            "Maximum visible tracker markers rendered per frame. "
+            "0 renders all visible selected points."
+        ),
     )
     parser.add_argument(
         "--tracking-product-backend",
         choices=TRACKING_PRODUCT_BACKENDS,
         default=DEFAULT_TRACKING_PRODUCT_BACKEND,
         help=(
-            "Final tracking product backend. realtime-overlay keeps the live marker product; "
-            "phystwin-strict-tracking writes PhysTwin-compatible headless artifacts using TAPNext++ tracks."
+            "Final tracking product backend. realtime-overlay keeps the live "
+            "marker product; phystwin-strict-tracking writes PhysTwin-compatible "
+            "headless artifacts using TAPNext++ tracks."
         ),
     )
     parser.add_argument(
         "--phystwin-strict-output-dir",
         type=Path,
         default=None,
-        help="Output directory for --tracking-product-backend phystwin-strict-tracking. Defaults to <headless-capture-dir>/phystwin_like.",
+        help=(
+            "Output directory for --tracking-product-backend "
+            "phystwin-strict-tracking. Defaults to "
+            "<headless-capture-dir>/phystwin_like."
+        ),
     )
     parser.add_argument(
         "--shape-prior-warmup",
@@ -340,32 +354,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--pcd-color-mode",
         choices=("rgb", "class"),
         default="rgb",
-        help="Point-cloud colors. rgb uses the live color frame; class uses fixed controller/object colors.",
-    )
-    parser.add_argument(
-        "--object-pcd-mask-erode-pixels",
-        type=int,
-        default=DEFAULT_OBJECT_PCD_MASK_ERODE_PIXELS,
-        help="Object-only mask erosion before RGB-D point-cloud backprojection. Defaults to --pcd-mask-erode-pixels.",
-    )
-    parser.add_argument(
-        "--controller-pcd-mask-erode-pixels",
-        type=int,
-        default=DEFAULT_CONTROLLER_PCD_MASK_ERODE_PIXELS,
-        help="Controller-only mask erosion before RGB-D point-cloud backprojection. Defaults to --pcd-mask-erode-pixels.",
-    )
-    parser.add_argument(
-        "--enable-table-z-filter",
-        action="store_true",
         help=(
-            "Enable table-world Z filter. Removes target PCD points whose "
-            "signed table clearance is <= threshold after PT filtering."
+            "Point-cloud colors. rgb uses the live color frame; class uses "
+            "fixed controller/object colors."
         ),
-    )
-    parser.add_argument(
-        "--disable-table-z-filter",
-        action="store_true",
-        help="Disable the table-world Z filter when a demo visual preset would enable it by default.",
     )
     parser.add_argument(
         "--duration-s",
@@ -378,15 +370,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help=(
-            "Save the selected sync PCD preset, color-aligned depth, and TAPNext++ query "
-            "trajectory artifacts here. "
-            "With --table-calibrate, the default demo preset uses filter none plus the 0 mm table-Z filter."
+            "Save canonical processed masks, color-aligned depth, PCD, and "
+            "TAPNext++ trajectory artifacts here."
         ),
     )
     parser.add_argument(
         "--headless-prepared-only",
         action="store_true",
-        help="For strict PhysTwin chunk preprocessing, save prepared_phystwin frames and frames.jsonl without legacy per-frame artifacts.",
+        help=(
+            "For strict PhysTwin chunk preprocessing, save prepared_phystwin "
+            "frames and frames.jsonl without legacy per-frame artifacts."
+        ),
     )
     parser.add_argument(
         "--write-input-rgb-timeline",
@@ -409,20 +403,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Object RGB color.",
     )
     return parser
-
-
-def apply_demo_preset(args: argparse.Namespace) -> argparse.Namespace:
-    """Apply demo preset."""
-    if (
-        not bool(getattr(args, "disable_table_z_filter", False))
-        and not bool(getattr(args, "enable_table_z_filter", False))
-        and getattr(args, "table_calibrate", None) is not None
-        and str(getattr(args, "demo_visual_mode", DEFAULT_DEMO_VISUAL_MODE))
-        in DEMO_VISUAL_MODES
-        and headless_capture_enabled(args)
-    ):
-        args.enable_table_z_filter = True
-    return args
 
 
 def headless_capture_enabled(args: argparse.Namespace) -> bool:
@@ -471,32 +451,10 @@ def validate_args(args: argparse.Namespace) -> None:
             "--shape-prior-controller-name is required when --shape-prior-warmup "
             "is enabled"
         )
-    if 0.2 < 0:
-        raise ValueError("--depth-min-m must be >= 0")
-    if 1.5 > 0 and 1.5 <= 0.2:
-        raise ValueError("--depth-max-m must be <=0 or greater than --depth-min-m")
-    if 60000 < 0:
-        raise ValueError("--pcd-max-points must be >= 0")
-    if 1 < 1:
-        raise ValueError("--pcd-stride must be >= 1")
-    if int(DEFAULT_PCD_MASK_ERODE_PIXELS) < 0:
-        raise ValueError("--pcd-mask-erode-pixels must be >= 0")
-    if (
-        args.object_pcd_mask_erode_pixels is not None
-        and int(args.object_pcd_mask_erode_pixels) < 0
-    ):
-        raise ValueError("--object-pcd-mask-erode-pixels must be >= 0")
-    if (
-        args.controller_pcd_mask_erode_pixels is not None
-        and int(args.controller_pcd_mask_erode_pixels) < 0
-    ):
-        raise ValueError("--controller-pcd-mask-erode-pixels must be >= 0")
     if int(DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES) < 0:
         raise ValueError("--edgetam-live-session-keep-frames must be >= 0")
     if not np.isfinite(float(args.edgetam_mask_logit_threshold)):
         raise ValueError("--edgetam-mask-logit-threshold must be finite")
-    if float(DEFAULT_TABLE_Z_FILTER_THRESHOLD_M) < 0:
-        raise ValueError("--table-z-filter-threshold-m must be >= 0")
     if (
         int(
             getattr(
@@ -508,17 +466,8 @@ def validate_args(args: argparse.Namespace) -> None:
         <= 0
     ):
         raise ValueError("--shape-prior-timeout-ms must be positive")
-    if bool(getattr(args, "shape_prior_warmup", False)) and not getattr(
-        args, "table_calibrate", None
-    ):
-        # Without the table world frame the frame-0 shape-prior request can
-        # never be built, so the prior would sit in 'pending' forever and the
-        # formal chunk timeline would never start.
-        raise ValueError("--shape-prior-warmup requires --table-calibrate")
-    if str(TABLE_Z_FILTER_CLASS_BOTH) not in TABLE_Z_FILTER_CLASSES:
-        raise ValueError(
-            f"--table-z-filter-classes must be one of {', '.join(TABLE_Z_FILTER_CLASSES)}"
-        )
+    if args.table_calibrate is None:
+        raise ValueError("phystwin-strict-tracking requires --table-calibrate")
     if args.depth_source == "none" and args.pcd_mode == "masked":
         raise ValueError("--depth-source none requires --pcd-mode none")
     if headless_capture_enabled(args):
@@ -671,29 +620,12 @@ def write_shape_prior_profile_json(
     atomic_json_dump(payload, Path(path))
 
 
-def object_pcd_mask_erode_pixels(args: argparse.Namespace) -> int:
-    """Return the object PCD mask erode pixels."""
-    value = getattr(args, "object_pcd_mask_erode_pixels", None)
-    if value is None:
-        value = getattr(args, "pcd_mask_erode_pixels", DEFAULT_PCD_MASK_ERODE_PIXELS)
-    return int(value)
-
-
-def controller_pcd_mask_erode_pixels(args: argparse.Namespace) -> int:
-    """Return the controller PCD mask erode pixels."""
-    value = getattr(args, "controller_pcd_mask_erode_pixels", None)
-    if value is None:
-        value = getattr(args, "pcd_mask_erode_pixels", DEFAULT_PCD_MASK_ERODE_PIXELS)
-    return int(value)
-
-
 __all__ = [
     "_parse_rgb_triplet",
     "_is_replay_input_source",
     "depth_backend_label",
     "runtime_metadata_identity",
     "build_parser",
-    "apply_demo_preset",
     "headless_capture_enabled",
     "validate_args",
     "controller_tracking_enabled",
@@ -707,6 +639,4 @@ __all__ = [
     "shape_prior_profile",
     "shape_prior_profile_payload",
     "write_shape_prior_profile_json",
-    "object_pcd_mask_erode_pixels",
-    "controller_pcd_mask_erode_pixels",
 ]

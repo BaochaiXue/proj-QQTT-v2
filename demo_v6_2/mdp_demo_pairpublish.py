@@ -49,7 +49,8 @@ class _PairPublishMixin(_DemoRuntimeContract):
             while seq != self._lossless_next_publish_seq:
                 if seq < self._lossless_next_publish_seq:
                     raise LosslessPipelineError(
-                        f"lossless publish received stale seq {seq}, expected {self._lossless_next_publish_seq}"
+                        f"lossless publish received stale seq {seq}, expected "
+                        f"{self._lossless_next_publish_seq}"
                     )
                 if self.stop_event.is_set():
                     return
@@ -91,63 +92,15 @@ class _PairPublishMixin(_DemoRuntimeContract):
             if not self.stop_event.is_set():
                 self._record_fatal_worker_error("lossless pair output worker", exc)
 
-    def _strict_paired_worker(self) -> None:
-        """Return the strict paired worker."""
-        try:
-            adapter = self._build_tracker_adapter()
-            print(
-                "[tapnextpp-tracker] "
-                f"backend={adapter.name} device={self.args.tracker_device} "
-                f"repo={DEFAULT_TAPNET_REPO_DIR} checkpoint={DEFAULT_TAPNEXTPP_CHECKPOINT} "
-                f"image_size={'256,256'} overlay_max={int(self.args.tracker_overlay_max_points)} "
-                "strict_sync=1",
-                flush=True,
-            )
-            last_seq = -1
-            while not self.stop_event.is_set():
-                mask_packet = self.mask_slot.get_latest_after(last_seq)
-                if mask_packet is None:
-                    time.sleep(0.001)
-                    continue
-                last_seq = mask_packet.seq
-                try:
-                    pcd_result = self._build_pcd_packet_from_mask(mask_packet)
-                except Exception as exc:
-                    if not self.stop_event.is_set():
-                        print(
-                            f"[WARN] strict PCD frame {mask_packet.seq} failed: {type(exc).__name__}: {exc}",
-                            flush=True,
-                        )
-                    continue
-                self._maybe_start_shape_prior_from_pcd_result(pcd_result)
-                tracker_packet = self._build_tracker_marker_packet(mask_packet, adapter)
-                if tracker_packet is None:
-                    continue
-                self._publish_strict_pair(
-                    PairedBuildResult(
-                        seq=int(mask_packet.seq),
-                        pcd_result=pcd_result,
-                        tracker_packet=tracker_packet,
-                    )
-                )
-        except Exception as exc:
-            if not self.stop_event.is_set():
-                self._record_fatal_worker_error("strict same-seq tracker/PCD", exc)
-
     def _publish_mask_packet(self, packet: MaskPacket) -> None:
-        """Publish mask packet."""
+        """Publish raw masks to diagnostics and the canonical formal stage."""
         self.mask_slot.put(packet)
         if lossless_enabled(self.args):
-            if not self.lossless_pcd_mask_queue.wait_for_capacity(
+            if not self.lossless_mask_queue.wait_for_capacity(
                 stop_event=self.stop_event
             ):
                 return
-            if not self.lossless_tracker_mask_queue.wait_for_capacity(
-                stop_event=self.stop_event
-            ):
-                return
-            self.lossless_pcd_mask_queue.put(packet)
-            self.lossless_tracker_mask_queue.put(packet)
+            self.lossless_mask_queue.put(packet)
             self._lossless_segmented_frames += 1
 
     def _depth_profile_worker(self) -> None:
@@ -174,7 +127,8 @@ class _PairPublishMixin(_DemoRuntimeContract):
             except Exception as exc:
                 if not self.stop_event.is_set():
                     print(
-                        f"[WARN] FFS depth profile frame {frame.seq} failed: {type(exc).__name__}: {exc}",
+                        f"[WARN] FFS depth profile frame {frame.seq} failed: "
+                        f"{type(exc).__name__}: {exc}",
                         flush=True,
                     )
                 continue

@@ -39,6 +39,8 @@ QUERY_SEMANTIC_OBJECT = np.int8(1)
 QUERY_SEMANTIC_CONTROLLER = np.int8(2)
 PHYSTWIN_RADIUS_OUTLIER_RADIUS_M = 0.01
 PHYSTWIN_RADIUS_OUTLIER_NB_POINTS = 40
+PHYSTWIN_DEPTH_MIN_M = 0.2
+PHYSTWIN_DEPTH_MAX_M = 1.5
 
 
 @dataclass(frozen=True)
@@ -94,7 +96,8 @@ def normalize_tracking_product_backend(value: str | None) -> str:
     normalized = aliases.get(normalized, normalized)
     if normalized not in TRACKING_PRODUCT_BACKENDS:
         raise ValueError(
-            f"unsupported tracking product backend {value!r}; expected one of {TRACKING_PRODUCT_BACKENDS}"
+            f"unsupported tracking product backend {value!r}; expected one of "
+            f"{TRACKING_PRODUCT_BACKENDS}"
         )
     return normalized
 
@@ -140,8 +143,9 @@ def normalize_processed_mask_frame(frame: Mapping[str, Any]) -> dict[str, np.nda
         "object": np.ascontiguousarray(obj, dtype=bool),
         "controller": np.ascontiguousarray(ctrl, dtype=bool),
     }
-    # Raw per-hand masks ride along when present so downstream consumers can
-    # still tell the hands apart; they stay optional in the processed frame.
+    # Per-hand identity masks ride along when present so downstream consumers
+    # can still tell the hands apart. The canonical PT step later intersects
+    # them with the cleaned combined-controller mask.
     if "hand_a" in frame and frame["hand_a"] is not None:
         out["hand_a"] = np.ascontiguousarray(
             np.asarray(frame["hand_a"], dtype=bool), dtype=bool
@@ -206,8 +210,6 @@ def dense_world_pcd_grid(
     color_rgb_u8: np.ndarray,
     intrinsics: Any,
     c2w: np.ndarray,
-    depth_min_m: float = 0.0,
-    depth_max_m: float = float("inf"),
 ) -> tuple[np.ndarray, np.ndarray]:
     # Demo v6.1 offline parity: data_process_sam3d/data_process_pcd.py:L84-L149
     # lifts RGB-D pixels through intrinsics and camera_to_world into a
@@ -221,14 +223,22 @@ def dense_world_pcd_grid(
         raise ValueError("color_rgb_u8 must have shape HxWx3 matching depth_m")
     height, width = depth.shape
     K = _intrinsics_to_matrix(intrinsics)
+    c2w_matrix = np.asarray(c2w, dtype=np.float32).reshape(4, 4)
+    if not np.isfinite(K).all():
+        raise ValueError("camera intrinsics must be finite")
+    if float(K[0, 0]) == 0.0 or float(K[1, 1]) == 0.0:
+        raise ValueError("camera focal lengths must be nonzero")
+    if not np.isfinite(c2w_matrix).all():
+        raise ValueError("camera-to-world transform must be finite")
     ray_x, ray_y = build_projection_grid_from_matrix(width=width, height=height, K=K)
-    finite = np.isfinite(depth)
-    valid = finite & (depth > 0.0) & (depth >= np.float32(float(depth_min_m)))
-    if np.isfinite(float(depth_max_m)):
-        valid &= depth <= np.float32(float(depth_max_m))
+    valid = (
+        np.isfinite(depth)
+        & (depth > np.float32(PHYSTWIN_DEPTH_MIN_M))
+        & (depth < np.float32(PHYSTWIN_DEPTH_MAX_M))
+    )
 
-    # Invalid pixels stay exactly (0, 0, 0); downstream filters use that zero
-    # norm as the "no depth" sentinel.
+    # Invalid pixels stay exactly (0, 0, 0) to preserve the origin dense-grid
+    # layout. Canonical processed masks exclude them through the depth gate.
     points = np.zeros((height, width, 3), dtype=np.float32)
     if np.any(valid):
         rows, cols = np.nonzero(valid)
@@ -241,9 +251,7 @@ def dense_world_pcd_grid(
             ],
             axis=1,
         ).astype(np.float32)
-        points_world = transform_points(
-            points_camera, np.asarray(c2w, dtype=np.float32).reshape(4, 4)
-        ).astype(np.float32)
+        points_world = transform_points(points_camera, c2w_matrix).astype(np.float32)
         points[rows, cols] = points_world
     # Leading axis is the camera axis (single camera here), matching the
     # origin per-frame pcd layout of (num_cameras, H, W, 3).
@@ -260,7 +268,11 @@ def apply_depth_validity_to_mask_frame(
     # intersects semantic masks with valid depth support.
     """Apply depth validity to mask frame."""
     depth = np.asarray(depth_m, dtype=np.float32)
-    valid = np.isfinite(depth) & (depth > 0.0)
+    valid = (
+        np.isfinite(depth)
+        & (depth > np.float32(PHYSTWIN_DEPTH_MIN_M))
+        & (depth < np.float32(PHYSTWIN_DEPTH_MAX_M))
+    )
     normalized = normalize_processed_mask_frame(frame)
     filtered: dict[str, np.ndarray] = {}
     for key, mask in normalized.items():
@@ -289,8 +301,10 @@ def apply_radius_outlier_to_mask_frame(
             f"points_grid must have shape H,W,3 or 1,H,W,3; got {grid.shape}"
         )
 
-    # Only the object/controller classes are filtered; optional per-hand masks
-    # pass through unchanged.
+    # Origin filters object and the combined controller independently. It does
+    # not resolve pixels shared by both masks; preserving that behavior avoids
+    # inventing a class-priority rule, although overlapping pixels make tracker
+    # identity ambiguous and should remain visible in diagnostics.
     filtered = {
         key: np.asarray(value, dtype=bool).copy() for key, value in normalized.items()
     }
@@ -304,10 +318,10 @@ def apply_radius_outlier_to_mask_frame(
         if len(yy) == 0:
             continue
         class_points = grid[yy, xx]
-        # Zero-norm points are the "no depth" sentinel from dense_world_pcd_grid.
-        finite = np.isfinite(class_points).all(axis=1) & (
-            np.linalg.norm(class_points, axis=1) > 1e-9
-        )
+        # Depth-invalid pixels were removed before this function. A legitimate
+        # world-space point may be exactly at the world origin, so zero norm is
+        # not an invalidity test here.
+        finite = np.isfinite(class_points).all(axis=1)
         if not np.all(finite):
             invalid_rows = yy[~finite]
             invalid_cols = xx[~finite]
@@ -325,6 +339,19 @@ def apply_radius_outlier_to_mask_frame(
         outlier_indices = np.asarray(result["outlier_indices"], dtype=np.int64)
         if len(outlier_indices):
             filtered[key][yy[outlier_indices], xx[outlier_indices]] = False
+
+    # EdgeTAM tracks each hand separately, while origin/PT treats their union
+    # as the controller. Preserve the per-hand identity by intersecting each
+    # hand with the one canonical cleaned controller mask.
+    for key in ("hand_a", "hand_b"):
+        if key not in filtered:
+            continue
+        if filtered[key].shape != filtered["controller"].shape:
+            raise ValueError(
+                f"mask {key!r} shape {filtered[key].shape} does not match "
+                f"controller mask shape {filtered['controller'].shape}"
+            )
+        filtered[key] &= filtered["controller"]
     return normalize_processed_mask_frame(filtered)
 
 
@@ -361,32 +388,58 @@ def prepare_phystwin_frame(
     seq: int,
     rgb_frame: np.ndarray,
     depth_m: np.ndarray,
-    mask_frame: Mapping[str, np.ndarray],
+    processed_mask_frame: Mapping[str, np.ndarray],
+    pcd_points: np.ndarray,
+    pcd_colors: np.ndarray,
     tracks_yx: np.ndarray,
     visibility: np.ndarray,
     query_points_yx: np.ndarray,
-    intrinsics: Any,
-    c2w: np.ndarray,
     source_timestamp_s: float | None = None,
     source_frame_index: int | None = None,
     source_step: int | None = None,
 ) -> PreparedPhysTwinFrame:
-    """Prepare phystwin frame."""
+    """Validate and package one already-processed canonical frame."""
     rgb = np.ascontiguousarray(np.asarray(rgb_frame, dtype=np.uint8))
     depth = np.asarray(depth_m, dtype=np.float32)
-    points, colors = dense_world_pcd_grid(
-        depth_m=depth,
-        color_rgb_u8=rgb,
-        intrinsics=intrinsics,
-        c2w=c2w,
+    if depth.ndim != 2:
+        raise ValueError(f"depth_m must have shape HxW; got {depth.shape}")
+    if rgb.shape != (*depth.shape, 3):
+        raise ValueError(
+            f"rgb_frame shape {rgb.shape} does not match depth shape {depth.shape}"
+        )
+    points = np.ascontiguousarray(np.asarray(pcd_points, dtype=np.float32))
+    colors = np.ascontiguousarray(np.asarray(pcd_colors, dtype=np.uint8))
+    expected_grid_shape = (1, *depth.shape, 3)
+    if points.shape != expected_grid_shape:
+        raise ValueError(
+            f"pcd_points must have shape {expected_grid_shape}; got {points.shape}"
+        )
+    if colors.shape != expected_grid_shape:
+        raise ValueError(
+            f"pcd_colors must have shape {expected_grid_shape}; got {colors.shape}"
+        )
+    processed = normalize_processed_mask_frame(processed_mask_frame)
+    depth_valid = (
+        np.isfinite(depth)
+        & (depth > np.float32(PHYSTWIN_DEPTH_MIN_M))
+        & (depth < np.float32(PHYSTWIN_DEPTH_MAX_M))
     )
-    # Mask post-processing runs in origin order: depth-validity intersection
-    # first, then the 3D radius-outlier filter on the lifted grid.
-    depth_valid_masks = apply_depth_validity_to_mask_frame(mask_frame, depth)
-    processed = apply_radius_outlier_to_mask_frame(
-        depth_valid_masks,
-        points,
-    )
+    points_grid = points[0]
+    for key, mask in processed.items():
+        mask_bool = np.asarray(mask, dtype=bool)
+        if mask_bool.shape != depth.shape:
+            raise ValueError(
+                f"processed mask {key!r} shape {mask_bool.shape} "
+                f"does not match depth shape {depth.shape}"
+            )
+        if np.any(mask_bool & ~depth_valid):
+            raise ValueError(f"processed mask {key!r} contains depth-invalid pixels")
+        if not np.isfinite(points_grid[mask_bool]).all():
+            raise ValueError(f"processed mask {key!r} contains non-finite 3D points")
+    if not np.any(processed["object"]):
+        raise ValueError("processed object mask is empty")
+    if not np.any(processed["controller"]):
+        raise ValueError("processed controller mask is empty")
     tracks = np.ascontiguousarray(
         np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
     )
@@ -634,12 +687,12 @@ def _write_pcd_frames(
     """Write PCD frames."""
     pcd_dir = output_dir / "pcd"
     pcd_dir.mkdir(parents=True, exist_ok=True)
-    # Captures without table calibration carry no camera_to_world_c2w; identity
-    # keeps the product in camera space.
-    c2w = np.asarray(
-        metadata.get("camera_to_world_c2w") or np.eye(4, dtype=np.float32),
-        dtype=np.float32,
-    ).reshape(4, 4)
+    c2w_payload = metadata.get("camera_to_world_c2w")
+    if c2w_payload is None:
+        raise RuntimeError("strict product requires camera_to_world_c2w metadata")
+    c2w = np.asarray(c2w_payload, dtype=np.float32).reshape(4, 4)
+    if not np.isfinite(c2w).all():
+        raise RuntimeError("camera_to_world_c2w metadata must be finite")
     intrinsics = metadata["intrinsics"]
     all_points: list[np.ndarray] = []
     all_colors: list[np.ndarray] = []
@@ -976,21 +1029,23 @@ def finalize_headless_capture(
     tracks: list[np.ndarray] = []
     visibility: list[np.ndarray] = []
     for payload in trajectory_payloads:
-        # Prefer the all_* keys: they carry the full per-query arrays, whereas
-        # tracks_yx/visibility may hold only the currently-alive subset. The
-        # length check below enforces the full-array requirement either way.
-        track_key = "all_tracks_yx" if "all_tracks_yx" in payload.files else "tracks_yx"
-        vis_key = (
-            "all_tracker_visibility"
-            if "all_tracker_visibility" in payload.files
-            else "visibility"
+        if "all_tracks_yx" not in payload.files:
+            raise RuntimeError("strict product requires full per-query tracks")
+        if "all_observation_visibility" not in payload.files:
+            raise RuntimeError(
+                "strict product requires processed-mask/depth-gated visibility"
+            )
+        current_tracks = np.asarray(payload["all_tracks_yx"], dtype=np.float32).reshape(
+            -1, 2
         )
-        current_tracks = np.asarray(payload[track_key], dtype=np.float32).reshape(-1, 2)
-        current_vis = np.asarray(payload[vis_key], dtype=bool).reshape(-1)
+        current_vis = np.asarray(
+            payload["all_observation_visibility"], dtype=bool
+        ).reshape(-1)
         if current_tracks.shape[0] != len(query_points_yx):
             raise RuntimeError(
                 "strict PhysTwin product requires full per-query tracks; "
-                f"got {current_tracks.shape[0]} tracks for {len(query_points_yx)} queries at seq={int(payload['seq'][0])}"
+                f"got {current_tracks.shape[0]} tracks for "
+                f"{len(query_points_yx)} queries at seq={int(payload['seq'][0])}"
             )
         tracks.append(current_tracks)
         visibility.append(current_vis)

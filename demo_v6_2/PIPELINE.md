@@ -70,14 +70,15 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 2. **摄像头线程在哪里创建？**
    `_LifecycleMixin._start_threads` 组装 worker 列表，并统一创建
    `daemon=True` 的 `threading.Thread`。正式 strict 路径包含 capture、seg、
-   lossless PCD、lossless tracker 和 pair-output worker。
+   processed-frame、lossless tracker 和 pair-output worker。
 
    `pcd_mode=masked` 只允许这条 strict 路径：参数校验要求 TAPNext++ tracker
    且 `track_mode != none`。无 tracker 只允许 `pcd_mode=none` 的纯
    capture/depth isolation；旧的 latest-frame `_pcd_worker` 已删除。
-   lossless PCD worker 对 mask 内全部 `0.2 < depth < 1.5 m` 的有效像素反投影，
-   不执行点数 cap 或 runtime PCD filter。原始 PhysTwin 的 3D radius-outlier
-   过滤只在 canonical prepared frame 中执行一次并回写 processed mask。
+   processed-frame worker 对正式 5 FPS 帧建立完整 world-space dense grid，按
+   `0.2 < depth < 1.5 m` 与固定 PT radius rule 清理二维 mask，再从同一份
+   processed mask 选择 runtime PCD。它不执行点数 cap、table-Z 删除或 mask
+   erosion；prepared writer 只打包该结果，不再次运行 PT。
 
    seg 和 lossless tracker 会在同一个进程、同一个 CUDA device 上并发执行。
    EdgeTAM 的 `reduce-overhead` 会在第 2 次 model call 录制 CUDA graph；
@@ -111,8 +112,10 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
    `ShapePriorLocalClient.request_shape_prior` 再顺序调用各阶段子进程。
 
    camera 进程内部的 strict 数据流是：capture 同时写 `capture_slot` 和
-   `lossless_frame_queue`；seg 将 mask 写到 PCD/tracker 两条有序队列；
-   PCD 与 tracker 结果由 `SameSeqPairer` 按相同 seq 配对，再进入
+   `lossless_frame_queue`；seg 将 raw mask 写到唯一 `lossless_mask_queue`；
+   processed-frame worker 完成 depth/world-grid/PT 后，把同一 canonical frame
+   交给 runtime PCD 与 `lossless_processed_frame_queue` 中的 tracker。PCD 与
+   tracker 结果由 `SameSeqPairer` 按相同 seq 配对，再进入
    pair-output queue。`PairedBuildResult.__post_init__` 在对象构造边界再次要求
    PCD packet、其 source mask、tracker packet 和 pair 本身四个 seq 完全相同；
    旧 `PairedRenderPacket/paired_render_slot` 中转层已经删除。pair-output worker
@@ -161,6 +164,9 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
    `dt: 5e-5`、`num_substeps: 4000`，即每个数据帧模拟
    `5e-5 × 4000 = 0.2 s = 1/5 s`。因此不存在原先 30 FPS 物理时间比 Demo
    快 6 倍的问题；RealSense 仍可在 30 FPS 获取最新输入。
+
+   PT mask refinement 同样位于这个 5 FPS formal 边界之后，所以 30 FPS 相机
+   帧只负责提供最新输入，不会逐帧承担 dense world-grid/PT 计算。
 
    **源码证据：**
 
@@ -399,11 +405,9 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
     但不会把“一张全 false mask”自动视为缺失。
     `split_controller_hand_instances` 必须得到两只非空、可分离的手。
 
-    `write_shape_prior_case` 校验 RGB/depth/mask 形状，拒绝空 object mask，并在
-    radius 清理后没有有效 object depth 点时失败。当前源码没有通用的“点数
-    不足”阈值；controller 没有有效点时甚至会借用一个 object point。chunk
-    边界只要求 surface+interior 总数大于 0。因此原文应收窄为“完全没有有效
-    object depth 点或 shape-prior 点时失败”。
+    canonical processed-frame 边界校验 c2w，并在固定 PT 后立即拒绝空 object
+    或 controller mask。`write_shape_prior_case` 只校验并写入同一份 cleaned
+    mask/dense grid，不重算 PT，也不会借用 object point 伪造 controller。
 
     **源码证据：**
 
@@ -411,9 +415,9 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
       [`_union_masks`](main_warmup.py#L85) 和
       [`split_controller_hand_instances`](main_warmup.py#L136) 给出 frame-0 mask
       校验。
-    - [`write_shape_prior_case`](shape_prior_warmup.py#L287) 调用 `_as_mask`，检查
-      `object_mask` 与有效 depth，并在 controller 空时执行
-      `controller_points = object_points[:1].copy()`。
+    - [`_PcdMixin._build_processed_frame_result`](mdp_demo_pcd.py) 构建 canonical
+      frame 并对空类别 fail fast；
+      [`write_shape_prior_case`](shape_prior_warmup.py) 直接消费该 frame。
     - [`_shape_points_for_chunk`](chunk_capture_meta.py#L129) 只检查
       surface+interior 总数是否大于 0；不存在更高的通用最小点数门槛。
 
@@ -561,9 +565,10 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
     邻居（radius query 未排除自身）、相似阈值 0.005 m，至少 50% 邻居同意。
 
     depth-validity **mask refinement** 与固定的 3D radius-outlier mask
-    refinement（`radius=0.01 m`、`nb_points=40`）在
-    camera 写 canonical prepared frame 时按顺序执行一次；chunk 侧只加载结果，
-    不再次做 radius refinement。不过 `tracking.build_window_observations` 仍会在
+    refinement（`radius=0.01 m`、`nb_points=40`）在 processed-frame worker
+    中按顺序执行一次；tracker、runtime PCD、shape prior、prepared writer 和
+    chunk 侧只消费同一结果，不再次做 radius refinement。不过
+    `tracking.build_window_observations` 仍会在
     track pixel 采样时重新计算逐 query 的 depth-valid，因此不能泛称“所有
     depth-validity 判断只执行一次”。
 
@@ -576,9 +581,10 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 
     - [`tracking.py` 常量](tracking.py#L39) 与
       [`motion_consistency`](tracking.py#L196) 给出 0.01/5/0.005/50% 规则。
-    - [`prepare_phystwin_frame`](phystwin_strict_product.py#L332) 依次调用
-      [`apply_depth_validity_to_mask_frame`](phystwin_strict_product.py#L232) 和
-      [`apply_radius_outlier_to_mask_frame`](phystwin_strict_product.py#L251)；
+    - [`_PcdMixin._build_processed_frame_result`](mdp_demo_pcd.py) 依次调用
+      [`apply_depth_validity_to_mask_frame`](phystwin_strict_product.py) 和
+      [`apply_radius_outlier_to_mask_frame`](phystwin_strict_product.py)；
+      [`prepare_phystwin_frame`](phystwin_strict_product.py) 只验证和打包；
       [`build_window_observations`](tracking.py#L59) 另做 query-level depth-valid。
     - [`AsapRuntime.augment_window`](asap.py#L356) 计算 `valid_now` 并回填；
       [`AsapRuntime._deform_frame`](asap.py#L328) 实现 silent freeze。

@@ -17,9 +17,6 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from demo_v6_2.phystwin_strict_product import (
-    apply_radius_outlier_to_mask_frame,
-)
 from demo_v6_2.shape_prior_timing import (
     build_critical_path_analysis,
     critical_path_entry,
@@ -72,9 +69,10 @@ class ShapePriorFrame0Request:
     depth_source_internal: str
     rgb_u8: np.ndarray
     object_mask: np.ndarray
-    object_observation_mask: np.ndarray | None
     controller_mask: np.ndarray
     depth_color_m: np.ndarray
+    depth_valid_mask: np.ndarray
+    points_world_m: np.ndarray
     k_color: np.ndarray
     camera_to_world_c2w: np.ndarray
     table_z_m: float | None = None
@@ -143,32 +141,6 @@ def _require_name(value: str, *, field_name: str) -> str:
     if not name:
         raise ValueError(f"shape prior {field_name} must be non-empty")
     return name
-
-
-def _camera_points_world(
-    depth_m: np.ndarray,
-    k_color: np.ndarray,
-    c2w: np.ndarray,
-) -> np.ndarray:
-    """Backproject a dense depth map (meters) to an HxWx3 world-point grid.
-
-    Uses the color pinhole intrinsics ``k_color`` (3x3) and the row-major
-    camera-to-world extrinsics ``c2w`` (4x4). Pixels keep their grid position
-    so downstream masks can index the result directly.
-    """
-    height, width = depth_m.shape
-    rows, cols = np.indices((height, width), dtype=np.float32)
-    k = np.asarray(k_color, dtype=np.float32).reshape(3, 3)
-    z = np.asarray(depth_m, dtype=np.float32)
-    x = (cols - np.float32(k[0, 2])) * z / np.float32(k[0, 0])
-    y = (rows - np.float32(k[1, 2])) * z / np.float32(k[1, 1])
-    points_cam = np.stack([x, y, z], axis=-1)
-    points_h = np.concatenate(
-        [points_cam, np.ones((height, width, 1), dtype=np.float32)],
-        axis=-1,
-    )
-    points_world = points_h @ np.asarray(c2w, dtype=np.float32).reshape(4, 4).T
-    return np.ascontiguousarray(points_world[:, :, :3], dtype=np.float32)
 
 
 def _write_mask(mask: np.ndarray, path: Path) -> None:
@@ -312,16 +284,6 @@ def write_shape_prior_case(
     object_mask = _as_mask(frame0.object_mask, shape=image_shape, name="object_mask")
     if not np.any(object_mask):
         raise ValueError("shape prior object_mask is empty")
-    # Without an explicit observation mask the segmentation mask doubles as
-    # the depth-observation gate.
-    observation_mask = frame0.object_observation_mask
-    if observation_mask is None:
-        observation_mask = object_mask
-    observation_mask = _as_mask(
-        observation_mask,
-        shape=image_shape,
-        name="object_observation_mask",
-    )
     controller_mask = _as_mask(
         frame0.controller_mask,
         shape=image_shape,
@@ -333,8 +295,30 @@ def write_shape_prior_case(
             f"depth shape {depth_m.shape} does not match RGB shape {image_shape}"
         )
     depth_m = np.ascontiguousarray(depth_m)
+    depth_valid = _as_mask(
+        frame0.depth_valid_mask,
+        shape=image_shape,
+        name="depth_valid_mask",
+    )
+    points_world = np.asarray(frame0.points_world_m, dtype=np.float32)
+    if points_world.shape != (*image_shape, 3):
+        raise ValueError(
+            "shape prior points_world_m must have shape "
+            f"{(*image_shape, 3)}; got {points_world.shape}"
+        )
+    points_world = np.ascontiguousarray(points_world)
+    if np.any(object_mask & ~depth_valid):
+        raise ValueError("shape prior object mask contains depth-invalid pixels")
+    if np.any(controller_mask & ~depth_valid):
+        raise ValueError("shape prior controller mask contains depth-invalid pixels")
     k_color = np.asarray(frame0.k_color, dtype=np.float32).reshape(3, 3)
     c2w = np.asarray(frame0.camera_to_world_c2w, dtype=np.float32).reshape(4, 4)
+    if not np.isfinite(k_color).all():
+        raise ValueError("shape prior color intrinsics must be finite")
+    if not np.isfinite(c2w).all():
+        raise ValueError("shape prior camera-to-world transform must be finite")
+    if not np.isfinite(points_world[object_mask | controller_mask]).all():
+        raise ValueError("shape prior processed masks contain non-finite 3D points")
 
     case = Path(case_root) / str(case_name)
     color_path = case / "color" / "0" / "0.png"
@@ -369,39 +353,14 @@ def write_shape_prior_case(
     with (case / "calibrate.pkl").open("wb") as handle:
         pickle.dump([c2w], handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-    points_world = _camera_points_world(depth_m, k_color, c2w)
-    depth_valid = np.isfinite(depth_m) & (depth_m > 0)
-    valid_object = object_mask & observation_mask & depth_valid
-    valid_controller = controller_mask & depth_valid
-
-    # Intentional parity with data_process_origin/data_process_mask.py: original
-    # PhysTwin removes unsupported 3D radius outliers by clearing pixels in
-    # processed_masks.pkl, while pcd/0.npz stays as the dense point grid. The
-    # align stage then filters with points[processed_mask].
-    cleaned_masks = apply_radius_outlier_to_mask_frame(
-        frame={"object": valid_object, "controller": valid_controller},
-        points_grid=points_world,
-    )
-    valid_object = _as_mask(
-        cleaned_masks["object"],
-        shape=image_shape,
-        name="processed object mask",
-    )
-    valid_controller = _as_mask(
-        cleaned_masks["controller"],
-        shape=image_shape,
-        name="processed controller mask",
-    )
-    object_points = points_world[valid_object]
-    object_colors = rgb[valid_object].astype(np.float32) / 255.0
+    object_points = points_world[object_mask]
+    object_colors = rgb[object_mask].astype(np.float32) / 255.0
     if object_points.size == 0:
         raise ValueError("shape prior object observation has no valid depth points")
 
-    controller_points = points_world[valid_controller]
+    controller_points = points_world[controller_mask]
     if controller_points.size == 0:
-        # Downstream stages require at least one controller point; borrow an
-        # object point rather than failing the whole warmup.
-        controller_points = object_points[:1].copy()
+        raise ValueError("shape prior controller observation has no valid points")
 
     # pcd/0.npz keeps the dense HxW grid (leading axis = camera index) so the
     # align stage can index it with the processed masks.
@@ -414,7 +373,7 @@ def write_shape_prior_case(
     )
     with (case / "mask" / "processed_masks.pkl").open("wb") as handle:
         pickle.dump(
-            [[{"object": valid_object, "controller": valid_controller}]],
+            [[{"object": object_mask, "controller": controller_mask}]],
             handle,
             protocol=pickle.HIGHEST_PROTOCOL,
         )

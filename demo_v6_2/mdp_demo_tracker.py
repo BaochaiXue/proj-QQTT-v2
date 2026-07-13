@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 from demo_v6_2.mdp_constants import *  # noqa: F401,F403
-from demo_v6_2.mdp_cli import (
-    controller_pcd_mask_erode_pixels,
-    object_pcd_mask_erode_pixels,
-)
 from demo_v6_2.mdp_packets import TrackerMarkerPacket
-from demo_v6_2.mdp_pcd_depth import (
+from demo_v6_2.mdp_tracker_geometry import (
     _classify_query_targets_yx,
     _latest_tracker_arrays,
     _mask_packet_hand_a_mask,
@@ -18,7 +14,6 @@ from demo_v6_2.mdp_pcd_depth import (
     _tracker_lift_valid_mask,
     _tracker_per_target_visibility,
     _tracker_union_mask,
-    erode_binary_mask,
 )
 from demo_v6_2.mdp_demo_contract import _DemoRuntimeContract
 from demo_v6_2.mdp_pipeline_plumbing import LosslessPipelineError
@@ -110,12 +105,24 @@ class _TrackerMixin(_DemoRuntimeContract):
             query_controller_instance_id, dtype=np.int64
         )
         self._tracker_consistent_visible = np.ones((len(query_points),), dtype=bool)
+        hand_a_query_count = int(
+            np.count_nonzero(
+                query_controller_instance_id == QUERY_CONTROLLER_INSTANCE_HAND_A
+            )
+        )
+        hand_b_query_count = int(
+            np.count_nonzero(
+                query_controller_instance_id == QUERY_CONTROLLER_INSTANCE_HAND_B
+            )
+        )
         print(
             "[tapnextpp-tracker] "
-            f"initialized query_count={len(query_points)} requested={requested or 'phystwin_dense'} "
-            f"union_pixels={union_pixels} object_pixels={object_pixels} controller_pixels={controller_pixels} "
-            f"hand_a_queries={int(np.count_nonzero(query_controller_instance_id == QUERY_CONTROLLER_INSTANCE_HAND_A))} "
-            f"hand_b_queries={int(np.count_nonzero(query_controller_instance_id == QUERY_CONTROLLER_INSTANCE_HAND_B))} "
+            f"initialized query_count={len(query_points)} "
+            f"requested={requested or 'phystwin_dense'} "
+            f"union_pixels={union_pixels} object_pixels={object_pixels} "
+            f"controller_pixels={controller_pixels} "
+            f"hand_a_queries={hand_a_query_count} "
+            f"hand_b_queries={hand_b_query_count} "
             f"query_source={TRACKER_QUERY_SOURCE_UNION_MASK} "
             f"display_scope={DEFAULT_TRACKER_DISPLAY_SCOPE} "
             f"device={self.args.tracker_device}",
@@ -147,22 +154,19 @@ class _TrackerMixin(_DemoRuntimeContract):
         scope = str(DEFAULT_TRACKER_DISPLAY_SCOPE)
         if scope == TRACKER_DISPLAY_SCOPE_CONTROLLER:
             mask = np.asarray(mask_packet.controller_mask, dtype=bool)
-            erode_pixels = controller_pcd_mask_erode_pixels(self.args)
         elif scope == TRACKER_DISPLAY_SCOPE_OBJECT:
             mask = np.asarray(mask_packet.object_mask, dtype=bool)
-            erode_pixels = object_pcd_mask_erode_pixels(self.args)
         else:
             mask = _tracker_union_mask(mask_packet)
-            erode_pixels = min(
-                object_pcd_mask_erode_pixels(self.args),
-                controller_pcd_mask_erode_pixels(self.args),
-            )
-        if erode_pixels > 0:
-            return erode_binary_mask(mask, erode_pixels=erode_pixels)
         return np.ascontiguousarray(mask)
 
     def _build_tracker_marker_packet(
-        self, mask_packet: MaskPacket, adapter: Any
+        self,
+        mask_packet: MaskPacket,
+        adapter: Any,
+        *,
+        depth_for_lift: np.ndarray,
+        depth_scale_m_per_unit: float,
     ) -> TrackerMarkerPacket | None:
         """Build tracker marker packet."""
         query_points = self._ensure_tracker_queries(mask_packet, adapter)
@@ -234,16 +238,14 @@ class _TrackerMixin(_DemoRuntimeContract):
         selected_query_controller_instance_id = query_controller_instance_id[selected]
 
         lift_start_s = time.perf_counter()
-        depth_for_lift, depth_scale = self._tracker_depth_for_lift(mask_packet)
-        depth_max_m = float("inf") if float(1.5) <= 0.0 else float(1.5)
         current_lift_valid = _tracker_lift_valid_mask(
             tracks_yx=tracks_latest,
             visibility=display_visibility,
             depth=depth_for_lift,
-            depth_scale_m_per_unit=float(depth_scale),
+            depth_scale_m_per_unit=float(depth_scale_m_per_unit),
             mask=lift_mask,
-            depth_min_m=float(0.2),
-            depth_max_m=depth_max_m,
+            depth_min_m=float(PHYSTWIN_DEPTH_MIN_M),
+            depth_max_m=float(PHYSTWIN_DEPTH_MAX_M),
         )
         if self._tracker_consistent_visible is None or len(
             self._tracker_consistent_visible
@@ -266,10 +268,10 @@ class _TrackerMixin(_DemoRuntimeContract):
             c2w=self.table_c2w
             if self.table_c2w is not None
             else np.eye(4, dtype=np.float32),
-            depth_scale_m_per_unit=float(depth_scale),
+            depth_scale_m_per_unit=float(depth_scale_m_per_unit),
             mask=lift_mask,
-            depth_min_m=float(0.2),
-            depth_max_m=depth_max_m,
+            depth_min_m=float(PHYSTWIN_DEPTH_MIN_M),
+            depth_max_m=float(PHYSTWIN_DEPTH_MAX_M),
         )
         lift_ms = _elapsed_ms(lift_start_s, time.perf_counter())
         source_indices = lifted.source_indices
@@ -351,6 +353,9 @@ class _TrackerMixin(_DemoRuntimeContract):
             all_tracker_visibility=np.ascontiguousarray(
                 visibility_latest, dtype=np.float32
             ).reshape(-1),
+            all_observation_visibility=np.ascontiguousarray(
+                current_lift_valid, dtype=bool
+            ).reshape(-1),
             coordinate_frame=pcd_coordinate_frame(self.table_c2w),
         )
         return packet
@@ -373,7 +378,13 @@ class _TrackerMixin(_DemoRuntimeContract):
                     time.sleep(0.001)
                     continue
                 last_seq = mask_packet.seq
-                packet = self._build_tracker_marker_packet(mask_packet, adapter)
+                depth_for_lift, depth_scale = self._tracker_depth_for_lift(mask_packet)
+                packet = self._build_tracker_marker_packet(
+                    mask_packet,
+                    adapter,
+                    depth_for_lift=depth_for_lift,
+                    depth_scale_m_per_unit=depth_scale,
+                )
                 if packet is None:
                     continue
                 self.tracker_marker_slot.put(packet)
@@ -400,12 +411,18 @@ class _TrackerMixin(_DemoRuntimeContract):
                 flush=True,
             )
             while not self.stop_event.is_set():
-                mask_packet = self.lossless_tracker_mask_queue.get(
+                processed_frame = self.lossless_processed_frame_queue.get(
                     stop_event=self.stop_event
                 )
-                if mask_packet is None:
+                if processed_frame is None:
                     break
-                packet = self._build_tracker_marker_packet(mask_packet, adapter)
+                mask_packet = processed_frame.mask_packet
+                packet = self._build_tracker_marker_packet(
+                    mask_packet,
+                    adapter,
+                    depth_for_lift=processed_frame.depth_m,
+                    depth_scale_m_per_unit=1.0,
+                )
                 if packet is None:
                     raise LosslessPipelineError(
                         f"tracker did not produce packet for seq {mask_packet.seq}"

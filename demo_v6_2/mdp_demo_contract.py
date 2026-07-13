@@ -42,6 +42,7 @@ if TYPE_CHECKING:
         MaskPacket,
         PairedBuildResult,
         PcdBuildResult,
+        ProcessedFramePacket,
         RealtimeCameraRuntime,
         TrackerMarkerPacket,
     )
@@ -66,8 +67,6 @@ class _DemoRuntimeContract:
     args: argparse.Namespace
     runtime: RealtimeCameraRuntime | None
     recording_source: RecordedRgbdFrameSource | None
-    ray_x: np.ndarray | None
-    ray_y: np.ndarray | None
     table_c2w: np.ndarray | None
     table_calibration_path: Path | None
 
@@ -82,8 +81,8 @@ class _DemoRuntimeContract:
     # Lossless (strict same-seq) pipeline plumbing
     lossless_max_backlog_frames: int
     lossless_frame_queue: OrderedPacketQueue[FramePacket]
-    lossless_pcd_mask_queue: OrderedPacketQueue[MaskPacket]
-    lossless_tracker_mask_queue: OrderedPacketQueue[MaskPacket]
+    lossless_mask_queue: OrderedPacketQueue[MaskPacket]
+    lossless_processed_frame_queue: OrderedPacketQueue[ProcessedFramePacket]
     lossless_pair_output_queue: OrderedPacketQueue[PairedBuildResult]
     same_seq_pairer: SameSeqPairer
     _lossless_pairer_lock: threading.Lock
@@ -94,7 +93,7 @@ class _DemoRuntimeContract:
     _lossless_first_pair_published: threading.Event
     _lossless_offered_frames: int
     _lossless_segmented_frames: int
-    _lossless_pcd_results: int
+    _lossless_processed_frames: int
     _lossless_tracker_results: int
     _lossless_pairs_emitted: int
 
@@ -224,6 +223,9 @@ class _DemoRuntimeContract:
         self,
         mask_packet: MaskPacket,
         adapter: Any,
+        *,
+        depth_for_lift: np.ndarray,
+        depth_scale_m_per_unit: float,
     ) -> TrackerMarkerPacket | None:
         """Track one mask packet and build its marker packet."""
         raise NotImplementedError
@@ -231,15 +233,15 @@ class _DemoRuntimeContract:
     # ------------------------------------------------------------------
     # Implemented by _PcdMixin
     # ------------------------------------------------------------------
-    def _lossless_pcd_worker(self) -> None:
-        """Strict same-seq PCD worker loop."""
+    def _lossless_processed_frame_worker(self) -> None:
+        """Build canonical processed frames before tracker/PCD consumption."""
         raise NotImplementedError
 
-    def _build_pcd_packet_from_mask(
+    def _build_processed_frame_result(
         self,
         mask_packet: MaskPacket,
     ) -> PcdBuildResult:
-        """Build a masked point-cloud packet from a mask/depth pair."""
+        """Build one canonical processed frame and its runtime PCD."""
         raise NotImplementedError
 
     def _write_headless_pcd_result(
@@ -260,7 +262,7 @@ class _DemoRuntimeContract:
         raise NotImplementedError
 
     def _publish_mask_packet(self, packet: MaskPacket) -> None:
-        """Publish a mask packet to the slot and, when lossless, both queues."""
+        """Publish raw masks to diagnostics and the canonical formal queue."""
         raise NotImplementedError
 
     def _maybe_finish_lossless_processing(self) -> None:

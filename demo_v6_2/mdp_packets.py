@@ -26,11 +26,7 @@ class PipelineTiming:
     post_sync_wait_ms: float = 0.0  # Synchronization wait after model execution.
     postprocess_ms: float = 0.0  # Model output postprocessing time.
     mask_ms: float = 0.0  # Time constructing semantic masks.
-    pcd_mask_intersection_ms: float = 0.0  # Time intersecting PCD masks.
-    pcd_select_ms: float = 0.0  # Time selecting masked depth pixels.
-    pcd_backproject_ms: float = 0.0  # Time back-projecting pixels into 3D.
-    pcd_color_gather_ms: float = 0.0  # Time gathering RGB values for 3D points.
-    pcd_ms: float = 0.0  # Total point-cloud construction time.
+    pcd_ms: float = 0.0  # Canonical geometry + PT mask + class PCD time.
     receive_to_render_ms: float = 0.0  # End-to-end receive-to-render latency.
 
 
@@ -114,6 +110,75 @@ class MaskPacket:
     source_timestamp_s: float | None = None  # Original capture timestamp in seconds.
     source_frame_index: int | None = None  # Zero-based index in the source stream.
     source_step: int | None = None  # Original recording step or filename stem.
+
+
+@dataclass(frozen=True)
+class ProcessedFramePacket:
+    """Canonical origin-style geometry and masks for one formal frame."""
+
+    seq: int
+    mask_packet: MaskPacket  # Contains the canonical processed masks.
+    depth_m: np.ndarray  # Color-aligned metric depth, shape (H, W).
+    depth_valid_mask: np.ndarray  # Origin depth gate, shape (H, W).
+    pcd_points: np.ndarray  # Dense world grid, shape (1, H, W, 3).
+    pcd_colors: np.ndarray  # Dense RGB grid, shape (1, H, W, 3).
+
+    def __post_init__(self) -> None:
+        """Reject mixed-sequence or shape-inconsistent canonical frames."""
+        if int(self.seq) != int(self.mask_packet.seq):
+            raise ValueError(
+                "processed frame sequence mismatch: "
+                f"frame={self.seq} mask={self.mask_packet.seq}"
+            )
+        depth_shape = np.asarray(self.depth_m).shape
+        if len(depth_shape) != 2:
+            raise ValueError(f"processed depth must have shape HxW; got {depth_shape}")
+        if np.asarray(self.depth_valid_mask).shape != depth_shape:
+            raise ValueError("processed depth-valid mask must match depth shape")
+        depth_valid = np.asarray(self.depth_valid_mask, dtype=bool)
+        expected_grid_shape = (1, *depth_shape, 3)
+        if np.asarray(self.pcd_points).shape != expected_grid_shape:
+            raise ValueError(
+                f"processed PCD points must have shape {expected_grid_shape}"
+            )
+        if np.asarray(self.pcd_colors).shape != expected_grid_shape:
+            raise ValueError(
+                f"processed PCD colors must have shape {expected_grid_shape}"
+            )
+        points_grid = np.asarray(self.pcd_points, dtype=np.float32)[0]
+        for name, mask in (
+            ("object", self.mask_packet.object_mask),
+            ("controller", self.mask_packet.controller_mask),
+        ):
+            mask_bool = np.asarray(mask, dtype=bool)
+            if mask_bool.shape != depth_shape:
+                raise ValueError(
+                    f"processed {name} mask shape {mask_bool.shape} "
+                    f"does not match depth shape {depth_shape}"
+                )
+            if not np.any(mask_bool):
+                raise ValueError(f"processed {name} mask is empty")
+            if np.any(mask_bool & ~depth_valid):
+                raise ValueError(f"processed {name} mask contains depth-invalid pixels")
+            if not np.isfinite(points_grid[mask_bool]).all():
+                raise ValueError(f"processed {name} mask contains non-finite 3D points")
+        controller = np.asarray(self.mask_packet.controller_mask, dtype=bool)
+        for name, hand_mask in (
+            ("hand_a", self.mask_packet.hand_a_mask),
+            ("hand_b", self.mask_packet.hand_b_mask),
+        ):
+            if hand_mask is None:
+                continue
+            hand = np.asarray(hand_mask, dtype=bool)
+            if hand.shape != depth_shape:
+                raise ValueError(
+                    f"processed {name} mask shape {hand.shape} does not match "
+                    f"depth shape {depth_shape}"
+                )
+            if np.any(hand & ~controller):
+                raise ValueError(
+                    f"processed {name} mask must be a controller-mask subset"
+                )
 
 
 @dataclass(frozen=True)
@@ -209,6 +274,9 @@ class TrackerMarkerPacket:
     all_tracker_visibility: np.ndarray = field(
         default_factory=lambda: np.empty((0,), dtype=np.float32)
     )  # Current visibility values for the complete query table.
+    all_observation_visibility: np.ndarray = field(
+        default_factory=lambda: np.empty((0,), dtype=bool)
+    )  # Full-query visibility after processed-mask and depth gates.
     coordinate_frame: str = COORDINATE_FRAME  # Coordinate frame of marker_xyz_m.
 
     @property
@@ -250,58 +318,25 @@ def _full_tracker_arrays_for_prepared_frame(
         np.asarray(packet.query_points_yx, dtype=np.float32).reshape(-1, 2).shape[0]
     )
     all_tracks = np.asarray(packet.all_tracks_yx, dtype=np.float32).reshape(-1, 2)
-    all_visibility = np.asarray(packet.all_tracker_visibility, dtype=bool).reshape(-1)
-    if all_tracks.shape[0] == query_count and all_visibility.shape[0] == query_count:
-        return (
-            np.ascontiguousarray(all_tracks, dtype=np.float32),
-            np.ascontiguousarray(all_visibility, dtype=bool),
-        )
-
-    active_tracks = np.asarray(packet.tracks_yx, dtype=np.float32).reshape(-1, 2)
-    active_visibility = np.asarray(packet.visibility, dtype=bool).reshape(-1)
-    if (
-        active_tracks.shape[0] == query_count
-        and active_visibility.shape[0] == query_count
-    ):
-        return (
-            np.ascontiguousarray(active_tracks, dtype=np.float32),
-            np.ascontiguousarray(active_visibility, dtype=bool),
-        )
-
-    indices = np.asarray(packet.query_indices, dtype=np.int64).reshape(-1)
-    if (
-        indices.shape[0] != active_tracks.shape[0]
-        or active_tracks.shape[0] != active_visibility.shape[0]
-    ):
+    all_visibility = np.asarray(packet.all_observation_visibility, dtype=bool).reshape(
+        -1
+    )
+    if all_tracks.shape[0] != query_count or all_visibility.shape[0] != query_count:
         raise ValueError(
-            "sparse tracker packet must have query_indices, tracks_yx, and visibility with matching lengths"
+            "prepared frame requires full processed tracker arrays: "
+            f"queries={query_count} tracks={all_tracks.shape[0]} "
+            f"visibility={all_visibility.shape[0]}"
         )
-    if np.any(indices < 0) or np.any(indices >= query_count):
-        raise ValueError("tracker packet query_indices contains out-of-range values")
-    tracks = np.zeros((query_count, 2), dtype=np.float32)
-    visibility = np.zeros((query_count,), dtype=bool)
-    tracks[indices] = active_tracks
-    visibility[indices] = active_visibility
-    return np.ascontiguousarray(tracks, dtype=np.float32), np.ascontiguousarray(
-        visibility, dtype=bool
+    return (
+        np.ascontiguousarray(all_tracks, dtype=np.float32),
+        np.ascontiguousarray(all_visibility, dtype=bool),
     )
 
 
 @dataclass(frozen=True)
 class PcdBuildResult:
     packet: MaskedPcdPacket  # Materialized point-cloud packet.
-    depth_m: np.ndarray | None  # Metric depth image, float shape (H, W).
-    mask_packet: MaskPacket  # Segmentation packet used to build the PCD.
-    controller_pcd_mask: np.ndarray | None = None  # Final controller PCD mask.
-    object_pcd_mask: np.ndarray | None = None  # Final object PCD mask.
-    object_observation_mask: np.ndarray | None = None  # Pre-PCD object mask.
-    pcd_stride: int = 1  # Pixel sampling stride used for PCD construction.
-    pcd_mask_erode_pixels: int = 0  # Shared PCD-mask erosion radius in pixels.
-    object_pcd_mask_erode_pixels: int = 0  # Object erosion radius in pixels.
-    controller_pcd_mask_erode_pixels: int = 0  # Controller erosion radius.
-    world_z_diagnostics: dict[str, Any] = field(
-        default_factory=dict
-    )  # Table-world Z filtering measurements.
+    processed_frame: ProcessedFramePacket  # Shared canonical frame.
 
 
 @dataclass(frozen=True)
@@ -323,7 +358,7 @@ class PairedBuildResult:
         """Reject PCD, mask, and tracker results from different frames."""
         seq = int(self.seq)
         pcd_seq = int(self.pcd_result.packet.seq)
-        mask_seq = int(self.pcd_result.mask_packet.seq)
+        mask_seq = int(self.pcd_result.processed_frame.mask_packet.seq)
         tracker_seq = int(self.tracker_packet.seq)
         if seq != pcd_seq or seq != mask_seq or seq != tracker_seq:
             raise ValueError(
@@ -339,6 +374,7 @@ __all__ = [
     "FatalWorkerError",
     "RecordedRgbdFrameRef",
     "MaskPacket",
+    "ProcessedFramePacket",
     "MaskedPcdPacket",
     "TrackerMarkerPacket",
     "_formal_chunk_rows_gated",

@@ -335,7 +335,6 @@ def build_main_data_processing_command(
         str(args.tracker_device),
         "--table-calibrate",
         str(DEFAULT_TABLE_CALIBRATE_PATH),
-        "--enable-table-z-filter",
         "--runtime-product-name",
         "demo_v6_1_main_data_processing",
         "--metadata-demo-version",

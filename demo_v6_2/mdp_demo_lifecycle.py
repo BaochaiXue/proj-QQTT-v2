@@ -10,12 +10,10 @@ from demo_v6_2.mdp_capture_source import (
 from demo_v6_2.mdp_cli import (
     _is_replay_input_source,
     active_object_id_labels,
-    controller_pcd_mask_erode_pixels,
     depth_backend_label,
     headless_capture_enabled,
     lossless_enabled,
     lossless_input_fps,
-    object_pcd_mask_erode_pixels,
     runtime_metadata_identity,
     shape_prior_profile_payload,
     tracker_enabled,
@@ -23,7 +21,13 @@ from demo_v6_2.mdp_cli import (
 )
 from demo_v6_2.mdp_demo_contract import _DemoRuntimeContract
 from demo_v6_2.mdp_headless_writer import HeadlessCaptureWriter
-from demo_v6_2.mdp_packets import FatalWorkerError
+from demo_v6_2.mdp_packets import (
+    FatalWorkerError,
+    FramePacket,
+    MaskPacket,
+    PairedBuildResult,
+    ProcessedFramePacket,
+)
 from demo_v6_2.mdp_pipeline_plumbing import (
     OrderedPacketQueue,
     SameSeqPairer,
@@ -53,8 +57,6 @@ class _LifecycleMixin(_DemoRuntimeContract):
             ),
         )
         self.runtime: RealtimeCameraRuntime | None = None
-        self.ray_x: np.ndarray | None = None
-        self.ray_y: np.ndarray | None = None
         self.input_preview_slot: LatestSlot[FramePacket] = LatestSlot()
         # Dedicated monotonic seq for EVERY put into input_preview_slot (frame 0,
         # the warm-up preview pump, and resumed live output alike). The slot's
@@ -70,17 +72,15 @@ class _LifecycleMixin(_DemoRuntimeContract):
             name="frame",
             max_backlog_frames=self.lossless_max_backlog_frames,
         )
-        self.lossless_pcd_mask_queue: OrderedPacketQueue[MaskPacket] = (
-            OrderedPacketQueue(
-                name="mask-pcd",
-                max_backlog_frames=self.lossless_max_backlog_frames,
-            )
+        self.lossless_mask_queue: OrderedPacketQueue[MaskPacket] = OrderedPacketQueue(
+            name="raw-mask",
+            max_backlog_frames=self.lossless_max_backlog_frames,
         )
-        self.lossless_tracker_mask_queue: OrderedPacketQueue[MaskPacket] = (
-            OrderedPacketQueue(
-                name="mask-tracker",
-                max_backlog_frames=self.lossless_max_backlog_frames,
-            )
+        self.lossless_processed_frame_queue: OrderedPacketQueue[
+            ProcessedFramePacket
+        ] = OrderedPacketQueue(
+            name="processed-frame",
+            max_backlog_frames=self.lossless_max_backlog_frames,
         )
         self.lossless_pair_output_queue: OrderedPacketQueue[PairedBuildResult] = (
             OrderedPacketQueue(
@@ -156,7 +156,7 @@ class _LifecycleMixin(_DemoRuntimeContract):
         self._first_frame_segmented = threading.Event()
         self._lossless_offered_frames = 0
         self._lossless_segmented_frames = 0
-        self._lossless_pcd_results = 0
+        self._lossless_processed_frames = 0
         self._lossless_tracker_results = 0
         self._lossless_pairs_emitted = 0
         self._tracker_query_points_yx: np.ndarray | None = None
@@ -215,7 +215,9 @@ class _LifecycleMixin(_DemoRuntimeContract):
     def _initialize_table_calibration(self) -> None:
         """Initialize table calibration."""
         if self.args.table_calibrate is None:
-            return
+            raise RuntimeError(
+                "formal runtime requires camera-to-world table calibration"
+            )
         if self.runtime is None:
             raise RuntimeError("camera runtime is not initialized")
         path = Path(self.args.table_calibrate)
@@ -231,15 +233,16 @@ class _LifecycleMixin(_DemoRuntimeContract):
         self.table_calibration_path = path
         print(
             "[table-calibrate] "
-            f"path={path} serial={self.runtime.serial} pcd_coordinate_frame={TABLE_WORLD_FRAME_KIND}",
+            f"path={path} serial={self.runtime.serial} "
+            f"pcd_coordinate_frame={TABLE_WORLD_FRAME_KIND}",
             flush=True,
         )
 
     def _reset_lossless_state(self) -> None:
         """Reset lossless state."""
         self.lossless_frame_queue.reset()
-        self.lossless_pcd_mask_queue.reset()
-        self.lossless_tracker_mask_queue.reset()
+        self.lossless_mask_queue.reset()
+        self.lossless_processed_frame_queue.reset()
         self.lossless_pair_output_queue.reset()
         self.same_seq_pairer.reset()
         with self._lossless_publish_condition:
@@ -252,15 +255,15 @@ class _LifecycleMixin(_DemoRuntimeContract):
         self._lossless_pipeline_active = True
         self._lossless_offered_frames = 0
         self._lossless_segmented_frames = 0
-        self._lossless_pcd_results = 0
+        self._lossless_processed_frames = 0
         self._lossless_tracker_results = 0
         self._lossless_pairs_emitted = 0
 
     def _close_lossless_queues(self) -> None:
         """Close lossless queues."""
         self.lossless_frame_queue.close()
-        self.lossless_pcd_mask_queue.close()
-        self.lossless_tracker_mask_queue.close()
+        self.lossless_mask_queue.close()
+        self.lossless_processed_frame_queue.close()
         self.lossless_pair_output_queue.close()
         self._lossless_pipeline_active = False
 
@@ -419,14 +422,12 @@ class _LifecycleMixin(_DemoRuntimeContract):
                 if headless_capture_enabled(self.args)
                 else None
             ),
-            "pcd_stride": int(1),
-            "pcd_mask_erode_pixels": int(DEFAULT_PCD_MASK_ERODE_PIXELS),
-            "object_pcd_mask_erode_pixels": object_pcd_mask_erode_pixels(self.args),
-            "controller_pcd_mask_erode_pixels": controller_pcd_mask_erode_pixels(
-                self.args
-            ),
-            "depth_min_m": float(0.2),
-            "depth_max_m": float(1.5),
+            "formal_mask_source": "origin_style_processed_masks",
+            "formal_processing_fps": float(lossless_input_fps(self.args)),
+            "depth_min_m": float(PHYSTWIN_DEPTH_MIN_M),
+            "depth_max_m": float(PHYSTWIN_DEPTH_MAX_M),
+            "mask_radius_outlier_radius_m": float(PHYSTWIN_RADIUS_OUTLIER_RADIUS_M),
+            "mask_radius_outlier_nb_points": int(PHYSTWIN_RADIUS_OUTLIER_NB_POINTS),
             "serial": str(self.runtime.serial),
             "width": int(self.width),
             "height": int(self.height),
@@ -446,12 +447,6 @@ class _LifecycleMixin(_DemoRuntimeContract):
                 if self.table_c2w is None
                 else np.asarray(self.table_c2w, dtype=np.float32).reshape(4, 4).tolist()
             ),
-            "world_z_diagnostic_thresholds_m": [
-                float(value) for value in DEFAULT_TABLE_Z_DIAGNOSTIC_THRESHOLDS_M
-            ],
-            "table_z_filter_enabled": bool(self.args.enable_table_z_filter),
-            "table_z_filter_threshold_m": float(DEFAULT_TABLE_Z_FILTER_THRESHOLD_M),
-            "table_z_filter_classes": str(TABLE_Z_FILTER_CLASS_BOTH),
             "intrinsics": {
                 "fx": float(self.runtime.intrinsics.fx),
                 "fy": float(self.runtime.intrinsics.fy),
@@ -510,7 +505,7 @@ class _LifecycleMixin(_DemoRuntimeContract):
             fake_live_frame_selection_policy=FAKE_LIVE_FRAME_SELECTION_POLICY,
         )
         try:
-            main_warmup.prepare_runtime_projection_and_capture(
+            main_warmup.prepare_runtime_calibration_and_capture(
                 self,
                 headless_capture_enabled=headless_capture_enabled,
                 headless_capture_writer_cls=HeadlessCaptureWriter,
@@ -666,7 +661,7 @@ class _LifecycleMixin(_DemoRuntimeContract):
         if self.args.track_mode != "none":
             workers.append(("seg", self._seg_worker))
         if lossless_enabled(self.args):
-            workers.append(("pcd", self._lossless_pcd_worker))
+            workers.append(("processed-frame", self._lossless_processed_frame_worker))
             workers.append(("tracker", self._lossless_tracker_worker))
             workers.append(("pair-output", self._lossless_pair_output_worker))
         elif tracker_enabled(self.args):

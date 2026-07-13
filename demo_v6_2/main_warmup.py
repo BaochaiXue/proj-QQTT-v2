@@ -11,7 +11,6 @@ from typing import Any, Callable
 import numpy as np
 
 from demo_v6_2.utils.ffs_align import warm_up_numba_ffs_align
-from demo_v6_2.utils.projection import build_projection_grid
 from demo_v6_2.utils.render import apply_wslg_open3d_env_defaults
 
 TRACK_MODE_CONTROLLER_OBJECT = "controller-object"
@@ -400,20 +399,14 @@ def prepare_runtime_services_and_source(
         demo.runtime = start_realsense_pipeline(args)
 
 
-def prepare_runtime_projection_and_capture(
+def prepare_runtime_calibration_and_capture(
     demo: Any,
     *,
     headless_capture_enabled: Callable[[argparse.Namespace], bool],
     headless_capture_writer_cls: type,
 ) -> None:
-    """Prepare runtime projection and capture."""
+    """Load camera-to-world calibration and create the capture writer."""
     demo._initialize_table_calibration()
-    demo.ray_x, demo.ray_y = build_projection_grid(
-        width=demo.width,
-        height=demo.height,
-        stride=1,
-        intrinsics=demo.runtime.intrinsics,
-    )
     if headless_capture_enabled(demo.args):
         demo.headless_capture_writer = headless_capture_writer_cls(
             demo.args.headless_capture_dir,
