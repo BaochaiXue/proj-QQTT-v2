@@ -133,15 +133,6 @@ class PhystwinShenLaunchError(RuntimeError):
     """Phystwin_shen could not be validated, launched, or kept healthy."""
 
 
-def _write_pipeline_console_line(raw_line: bytes) -> None:
-    """Write one combined supervisor output line to the Demo terminal."""
-    text = raw_line.decode("utf-8", errors="replace")
-    sys.stdout.write(f"{PIPELINE_OUTPUT_PREFIX}{text}")
-    if text and not text.endswith(("\n", "\r")):
-        sys.stdout.write("\n")
-    sys.stdout.flush()
-
-
 class _PipelineOutputRelay:
     """Tee one supervisor's combined output to its log and the Demo terminal."""
 
@@ -174,7 +165,13 @@ class _PipelineOutputRelay:
             for raw_line in iter(output.readline, b""):
                 self._pipeline_log.write(raw_line)
                 self._pipeline_log.flush()
-                _write_pipeline_console_line(raw_line)
+                # Write the combined supervisor output line to the Demo
+                # terminal.
+                text = raw_line.decode("utf-8", errors="replace")
+                sys.stdout.write(f"{PIPELINE_OUTPUT_PREFIX}{text}")
+                if text and not text.endswith(("\n", "\r")):
+                    sys.stdout.write("\n")
+                sys.stdout.flush()
         except Exception as error:
             self._failure = error
             if self._process.poll() is None:
@@ -276,17 +273,6 @@ def _connection_laddr(conn: Any) -> tuple[str, int] | None:
         return str(conn.laddr[0]), int(conn.laddr[1])
 
 
-def _listener_blocks_bind_host(
-    listener_host: str,
-    *,
-    bind_hosts: set[str],
-    bind_is_wildcard: bool,
-) -> bool:
-    if bind_is_wildcard or listener_host in WILDCARD_LISTENER_HOSTS:
-        return True
-    return listener_host in bind_hosts
-
-
 def _listening_pids(host: str, port: int) -> list[int | None]:
     """Return PIDs of listeners that block ``host:port``."""
     import psutil  # noqa: PLC0415
@@ -302,10 +288,10 @@ def _listening_pids(host: str, port: int) -> list[int | None]:
         listener_host, listener_port = local
         if listener_port != int(port):
             continue
-        if _listener_blocks_bind_host(
-            listener_host,
-            bind_hosts=bind_hosts,
-            bind_is_wildcard=bind_is_wildcard,
+        if (
+            bind_is_wildcard
+            or listener_host in WILDCARD_LISTENER_HOSTS
+            or listener_host in bind_hosts
         ):
             pids.append(conn.pid)
     return pids
@@ -586,13 +572,6 @@ def validate_phystwin_shen_settings(
     return command
 
 
-def _free_viewer_ports(settings: PhystwinShenSettings) -> dict[str, Any]:
-    takeover: dict[str, Any] = {}
-    for section, host, port in _viewer_endpoints(settings):
-        takeover[section] = ensure_port_free(host, port)
-    return takeover
-
-
 @dataclass
 class PhystwinShenLaunch:
     """Handle and provenance for one full-pipeline supervisor."""
@@ -653,7 +632,9 @@ def launch_phystwin_shen(
         settings.repo_path,
         settings.pipeline_config,
     )
-    port_takeover = _free_viewer_ports(settings)
+    port_takeover: dict[str, Any] = {}
+    for section, host, port in _viewer_endpoints(settings):
+        port_takeover[section] = ensure_port_free(host, port)
     logs = Path(log_dir)
     logs.mkdir(parents=True, exist_ok=True)
     pipeline_log_path = logs / "online_full_pipeline.log"

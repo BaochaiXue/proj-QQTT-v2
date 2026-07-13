@@ -26,7 +26,7 @@ class _CaptureMixin(_DemoRuntimeContract):
         self._input_preview_publish_seq += 1
         self.input_preview_slot.put(replace(packet, seq=self._input_preview_publish_seq))
 
-    def _publish_input_preview_packet(self, packet: FramePacket, *, record_s: float | None = None) -> None:
+    def _publish_input_preview_packet(self, packet: FramePacket) -> None:
         """Publish input preview packet."""
         self._put_preview_slot_frame(packet)
         should_write_timeline = _is_replay_input_source(str(self.args.input_source)) or bool(
@@ -44,12 +44,12 @@ class _CaptureMixin(_DemoRuntimeContract):
     ) -> None:
         """Publish capture packet."""
         if bool(write_input_timeline):
-            self._publish_input_preview_packet(packet, record_s=record_s)
+            self._publish_input_preview_packet(packet)
         self.capture_slot.put(packet)
-        if lossless_enabled(self.args):
-            if self.lossless_frame_queue.put_wait(packet, stop_event=self.stop_event) <= 0:
-                return
-            self._lossless_offered_frames += 1
+        if lossless_enabled(self.args) and not self.lossless.offer_frame(
+            packet, stop_event=self.stop_event
+        ):
+            return
         self.capture_stats.record(packet.receive_perf_s if record_s is None else float(record_s))
 
     def _capture_recording_worker(self) -> None:
@@ -65,7 +65,7 @@ class _CaptureMixin(_DemoRuntimeContract):
             first_packet = source.read_packet(seq=0)
         except Exception as exc:
             if not self.stop_event.is_set():
-                self._record_fatal_worker_error("fake-live replay", exc)
+                self.fatal.record("fake-live replay", exc)
             return
         camera_start_s = float(first_packet.receive_perf_s)
         preview_seq = 0
@@ -101,7 +101,7 @@ class _CaptureMixin(_DemoRuntimeContract):
         def publish_preview_packet(packet: FramePacket) -> None:
             """Publish preview packet."""
             nonlocal preview_seq, last_preview_source_index
-            self._publish_input_preview_packet(packet, record_s=packet.receive_perf_s)
+            self._publish_input_preview_packet(packet)
             preview_seq += 1
             if packet.source_frame_index is not None:
                 last_preview_source_index = max(last_preview_source_index, int(packet.source_frame_index))
@@ -135,7 +135,7 @@ class _CaptureMixin(_DemoRuntimeContract):
                     publish_preview_source_index(source_index=source_index)
                 except Exception as exc:
                     if not self.stop_event.is_set():
-                        self._record_fatal_worker_error(
+                        self.fatal.record(
                             "fake-live replay preview", exc
                         )
                     return False
@@ -154,8 +154,7 @@ class _CaptureMixin(_DemoRuntimeContract):
             self._publish_capture_packet(first_packet, record_s=first_packet.receive_perf_s)
         if source.frame_count <= 1:
             if lossless_enabled(self.args):
-                self._lossless_capture_done.set()
-                self.lossless_frame_queue.close()
+                self.lossless.finish_capture()
             else:
                 self.stop_event.set()
             return
@@ -204,7 +203,7 @@ class _CaptureMixin(_DemoRuntimeContract):
                     )
                 except Exception as exc:
                     if not self.stop_event.is_set():
-                        self._record_fatal_worker_error("fake-live replay", exc)
+                        self.fatal.record("fake-live replay", exc)
                     break
                 publish_preview_packet(preview_from_packet(packet, seq=preview_seq))
                 self._publish_capture_packet(
@@ -234,13 +233,12 @@ class _CaptureMixin(_DemoRuntimeContract):
                     )
                 except Exception as exc:
                     if not self.stop_event.is_set():
-                        self._record_fatal_worker_error("fake-live replay", exc)
+                        self.fatal.record("fake-live replay", exc)
                     break
                 self._publish_capture_packet(packet, record_s=packet.receive_perf_s)
                 runtime_seq += 1
         if lossless_enabled(self.args):
-            self._lossless_capture_done.set()
-            self.lossless_frame_queue.close()
+            self.lossless.finish_capture()
         else:
             self.stop_event.set()
 
@@ -314,7 +312,7 @@ class _CaptureMixin(_DemoRuntimeContract):
                 frames = pipeline.wait_for_frames()
             except Exception as exc:
                 if not self.stop_event.is_set():
-                    self._record_fatal_worker_error("RealSense capture", exc)
+                    self.fatal.record("RealSense capture", exc)
                 break
             receive_perf_s = time.perf_counter()
             published_sample_before_current = False
@@ -416,8 +414,7 @@ class _CaptureMixin(_DemoRuntimeContract):
                     due_packet, sample_s = due_sample
                     publish_output_packet(due_packet, record_s=sample_s)
         if lossless_enabled(self.args):
-            self._lossless_capture_done.set()
-            self.lossless_frame_queue.close()
+            self.lossless.finish_capture()
 
 
 __all__ = ["_CaptureMixin"]

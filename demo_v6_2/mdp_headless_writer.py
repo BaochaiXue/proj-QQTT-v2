@@ -41,7 +41,6 @@ class HeadlessCaptureWriter:
         self.input_frames_path = self.output_dir / "input_frames.jsonl"
         self.metadata_path = self.output_dir / "metadata.json"
         self._lock = threading.Lock()
-        self._saved_pcd_count = 0
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.pcd_dir.mkdir(parents=True, exist_ok=True)
         self.depth_dir.mkdir(parents=True, exist_ok=True)
@@ -366,7 +365,6 @@ class HeadlessCaptureWriter:
         with self._lock:
             with self.frames_path.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
-            self._saved_pcd_count += 1
 
     def write_tracker(self, packet: TrackerMarkerPacket) -> None:
         """Write tracker."""
@@ -427,12 +425,6 @@ class HeadlessCaptureWriter:
                 [str(packet.coordinate_frame or self.pcd_coordinate_frame)]
             ),
         )
-
-    @property
-    def saved_pcd_count(self) -> int:
-        """Return the saved PCD count."""
-        with self._lock:
-            return int(self._saved_pcd_count)
 
 
 __all__ = [

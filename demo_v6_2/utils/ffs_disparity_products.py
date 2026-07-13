@@ -187,29 +187,3 @@ def finalize_tensorrt_disparity_batch_outputs(
             )
         )
     return outputs
-
-
-def finalize_single_engine_tensorrt_output(
-    disparity_raw: np.ndarray,
-    *,
-    transform: dict[str, int | float | str],
-    K_ir_left: np.ndarray,
-    baseline_m: float,
-    valid_iters: int,
-    max_disp: int,
-    audit_mode: bool,
-) -> dict[str, np.ndarray | float | list[list[float]]]:
-    outputs = finalize_tensorrt_disparity_batch_outputs(
-        disparity_raw,
-        transform=transform,
-        batch_samples=[
-            {
-                "K_ir_left": np.asarray(K_ir_left, dtype=np.float32),
-                "baseline_m": float(baseline_m),
-                "audit_mode": bool(audit_mode),
-            }
-        ],
-        valid_iters=valid_iters,
-        max_disp=max_disp,
-    )
-    return outputs[0]

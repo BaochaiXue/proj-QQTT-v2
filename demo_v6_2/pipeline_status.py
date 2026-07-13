@@ -35,7 +35,6 @@ STATUS_FILENAME = "pipeline_status.jsonl"
 # error message); ``ok=False`` marks a failure the renderer paints red.
 STAGE_RUN_START = "run_start"
 STAGE_CAPTURE_START = "capture_start"
-STAGE_FIRST_FRAME = "first_frame_seeded"
 STAGE_SHAPE_PRIOR = "shape_prior"
 STAGE_WARMUP_READY = "warmup_ready"
 STAGE_CHUNK_COMMITTED = "chunk_committed"
@@ -47,7 +46,6 @@ STAGE_FATAL = "fatal_error"
 STAGE_LABELS = {
     STAGE_RUN_START: "starting",
     STAGE_CAPTURE_START: "capturing",
-    STAGE_FIRST_FRAME: "frame-0 seeded",
     STAGE_SHAPE_PRIOR: "shape-prior",
     STAGE_WARMUP_READY: "warm-up ready",
     STAGE_CHUNK_COMMITTED: "streaming chunks",

@@ -21,6 +21,12 @@ import numpy as np
 from demo_v6_2.utils.depth_geometry import transform_points
 from demo_v6_2.utils.pcd_postprocess import detect_radius_outlier_indices
 from demo_v6_2.utils.projection import build_projection_grid_from_matrix
+from demo_v6_2.utils.render import (
+    _load_rgb,
+    _render_empty_video,
+    _render_tracking_2d_video,
+    _render_world_track_video,
+)
 
 
 TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY = "realtime-overlay"
@@ -34,9 +40,6 @@ DEFAULT_TRACKING_PRODUCT_BACKEND = TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY
 COMPATIBILITY_TARGET_PHYSTWIN = "PhysTwin"
 PHYSTWIN_STRICT_EXECUTION_MODE = "workstation_strict"
 PHYSTWIN_COMPATIBILITY_PATH_NAME = "cotracker"
-QUERY_SEMANTIC_NONE = np.int8(0)
-QUERY_SEMANTIC_OBJECT = np.int8(1)
-QUERY_SEMANTIC_CONTROLLER = np.int8(2)
 PHYSTWIN_RADIUS_OUTLIER_RADIUS_M = 0.01
 PHYSTWIN_RADIUS_OUTLIER_NB_POINTS = 40
 PHYSTWIN_DEPTH_MIN_M = 0.2
@@ -100,14 +103,6 @@ def normalize_tracking_product_backend(value: str | None) -> str:
             f"{TRACKING_PRODUCT_BACKENDS}"
         )
     return normalized
-
-
-def tracking_product_backend_is_strict(value: str | None) -> bool:
-    """Return the tracking product backend is strict."""
-    return (
-        normalize_tracking_product_backend(value)
-        == TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +173,15 @@ def write_processed_masks(
 # ---------------------------------------------------------------------------
 
 
+def _depth_validity_mask(depth: np.ndarray) -> np.ndarray:
+    """Origin depth gate: finite and strictly inside (MIN, MAX) meters."""
+    return (
+        np.isfinite(depth)
+        & (depth > np.float32(PHYSTWIN_DEPTH_MIN_M))
+        & (depth < np.float32(PHYSTWIN_DEPTH_MAX_M))
+    )
+
+
 def _intrinsics_to_matrix(intrinsics: Any) -> np.ndarray:
     """Coerce intrinsics to a 3x3 pinhole K matrix (float32).
 
@@ -231,11 +235,7 @@ def dense_world_pcd_grid(
     if not np.isfinite(c2w_matrix).all():
         raise ValueError("camera-to-world transform must be finite")
     ray_x, ray_y = build_projection_grid_from_matrix(width=width, height=height, K=K)
-    valid = (
-        np.isfinite(depth)
-        & (depth > np.float32(PHYSTWIN_DEPTH_MIN_M))
-        & (depth < np.float32(PHYSTWIN_DEPTH_MAX_M))
-    )
+    valid = _depth_validity_mask(depth)
 
     # Invalid pixels stay exactly (0, 0, 0) to preserve the origin dense-grid
     # layout. Canonical processed masks exclude them through the depth gate.
@@ -268,11 +268,7 @@ def apply_depth_validity_to_mask_frame(
     # intersects semantic masks with valid depth support.
     """Apply depth validity to mask frame."""
     depth = np.asarray(depth_m, dtype=np.float32)
-    valid = (
-        np.isfinite(depth)
-        & (depth > np.float32(PHYSTWIN_DEPTH_MIN_M))
-        & (depth < np.float32(PHYSTWIN_DEPTH_MAX_M))
-    )
+    valid = _depth_validity_mask(depth)
     normalized = normalize_processed_mask_frame(frame)
     filtered: dict[str, np.ndarray] = {}
     for key, mask in normalized.items():
@@ -419,11 +415,7 @@ def prepare_phystwin_frame(
             f"pcd_colors must have shape {expected_grid_shape}; got {colors.shape}"
         )
     processed = normalize_processed_mask_frame(processed_mask_frame)
-    depth_valid = (
-        np.isfinite(depth)
-        & (depth > np.float32(PHYSTWIN_DEPTH_MIN_M))
-        & (depth < np.float32(PHYSTWIN_DEPTH_MAX_M))
-    )
+    depth_valid = _depth_validity_mask(depth)
     points_grid = points[0]
     for key, mask in processed.items():
         mask_bool = np.asarray(mask, dtype=bool)
@@ -578,13 +570,6 @@ def load_prepared_phystwin_frame(path: str | Path) -> PreparedPhysTwinFrame:
 # ---------------------------------------------------------------------------
 
 
-def _load_rgb(path: Path) -> np.ndarray:
-    """Load RGB."""
-    from PIL import Image
-
-    return np.asarray(Image.open(path).convert("RGB"), dtype=np.uint8)
-
-
 def _load_frame_masks(path: Path) -> dict[str, np.ndarray]:
     """Map a headless capture mask npz (``*_mask`` keys) to a mask frame dict."""
     payload = np.load(path, allow_pickle=False)
@@ -623,6 +608,32 @@ def _write_tracking_npz(
         )
 
 
+def _manifest_shared_fields(
+    metadata: Mapping[str, Any], *, frame_count: int, query_count: int
+) -> dict[str, Any]:
+    """Manifest keys shared by the full and prepared-only finalize paths."""
+    return {
+        "compatibility_target": COMPATIBILITY_TARGET_PHYSTWIN,
+        "tracking_product_backend": TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT,
+        "tracker_backend": "tapnextpp",
+        "mask_backend": "edgetam",
+        "depth_backend": str(
+            metadata.get("depth_backend") or metadata.get("depth_source", "")
+        ),
+        "depth_source_internal": str(
+            metadata.get("depth_source_internal")
+            or metadata.get("depth_source")
+            or metadata.get("depth_backend", "")
+        ),
+        "execution_mode": PHYSTWIN_STRICT_EXECUTION_MODE,
+        "compatibility_path_name": PHYSTWIN_COMPATIBILITY_PATH_NAME,
+        "not_actual_cotracker": True,
+        "camera_count": 1,
+        "frame_count": int(frame_count),
+        "query_count": int(query_count),
+    }
+
+
 def _finalize_prepared_only_headless_capture(
     capture: Path,
     out: Path,
@@ -642,27 +653,12 @@ def _finalize_prepared_only_headless_capture(
             f"missing row indices={missing[:5]}"
         )
     first_frame = load_prepared_phystwin_frame(capture / str(prepared_paths[0]))
-    # Keep the shared keys in sync with the full-capture manifest at the end
-    # of finalize_headless_capture.
     manifest = {
-        "compatibility_target": COMPATIBILITY_TARGET_PHYSTWIN,
-        "tracking_product_backend": TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT,
-        "tracker_backend": "tapnextpp",
-        "mask_backend": "edgetam",
-        "depth_backend": str(
-            metadata.get("depth_backend") or metadata.get("depth_source", "")
+        **_manifest_shared_fields(
+            metadata,
+            frame_count=len(rows),
+            query_count=first_frame.query_points_yx.shape[0],
         ),
-        "depth_source_internal": str(
-            metadata.get("depth_source_internal")
-            or metadata.get("depth_source")
-            or metadata.get("depth_backend", "")
-        ),
-        "execution_mode": PHYSTWIN_STRICT_EXECUTION_MODE,
-        "compatibility_path_name": PHYSTWIN_COMPATIBILITY_PATH_NAME,
-        "not_actual_cotracker": True,
-        "camera_count": 1,
-        "frame_count": int(len(rows)),
-        "query_count": int(first_frame.query_points_yx.shape[0]),
         "headless_prepared_only": True,
         "chunk_materialization_source": "prepared_phystwin_frame",
         "prepared_frame_count": int(len(prepared_paths)),
@@ -717,262 +713,9 @@ def _write_pcd_frames(
         np.savez(pcd_dir / f"{idx}.npz", points=points, colors=colors)
         all_points.append(points)
         all_colors.append(colors)
-    if not all_points:
-        return np.empty((0, 1, 0, 0, 3), dtype=np.float32), np.empty(
-            (0, 1, 0, 0, 3), dtype=np.uint8
-        )
+    # rows is never empty here: finalize_headless_capture raises before this
+    # call when the capture holds no frames.
     return np.stack(all_points, axis=0), np.stack(all_colors, axis=0)
-
-
-# ---------------------------------------------------------------------------
-# Headless capture finalize: diagnostic video rendering
-# ---------------------------------------------------------------------------
-
-
-def _open_video_writer(path: Path, *, size: tuple[int, int], fps: float = 30.0):
-    """Open video writer."""
-    import cv2
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    width, height = int(size[0]), int(size[1])
-    writer = cv2.VideoWriter(
-        str(path), cv2.VideoWriter_fourcc(*"mp4v"), float(fps), (width, height)
-    )
-    if not writer.isOpened():
-        raise RuntimeError(f"failed to open video writer for {path}")
-    return writer
-
-
-def _render_tracking_2d_video(
-    path: Path,
-    *,
-    capture_dir: Path,
-    rows: Sequence[Mapping[str, Any]],
-    tracks_yx: np.ndarray,
-    visibility: np.ndarray,
-    query_is_object: np.ndarray,
-    query_is_controller: np.ndarray,
-    size: tuple[int, int] = (848, 480),
-) -> None:
-    """Render tracking 2d video."""
-    import cv2
-
-    writer = _open_video_writer(path, size=size)
-    width, height = int(size[0]), int(size[1])
-    is_object = np.asarray(query_is_object, dtype=bool).reshape(-1)
-    is_controller = np.asarray(query_is_controller, dtype=bool).reshape(-1)
-    for frame_idx, row in enumerate(rows):
-        rgb = _load_rgb(capture_dir / str(row["rgb_path"]))
-        frame = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-        src_h, src_w = frame.shape[:2]
-        if (src_w, src_h) != (width, height):
-            frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
-        # Track coordinates are in source pixels; scale them into the output size.
-        sx = float(width) / max(1.0, float(src_w))
-        sy = float(height) / max(1.0, float(src_h))
-        tracks = np.asarray(tracks_yx[frame_idx], dtype=np.float32)
-        vis = np.asarray(visibility[frame_idx], dtype=bool)
-        finite = np.isfinite(tracks).all(axis=1)
-        visible = np.flatnonzero(vis & finite)
-        for idx in visible:
-            y = int(round(float(tracks[idx, 0]) * sy))
-            x = int(round(float(tracks[idx, 1]) * sx))
-            if x < 0 or x >= width or y < 0 or y >= height:
-                continue
-            # BGR color code: green = object query, red = controller query,
-            # light gray = neither semantic class.
-            color = (
-                (60, 220, 60)
-                if idx < len(is_object) and is_object[idx]
-                else (40, 80, 255)
-            )
-            if (
-                idx < len(is_controller)
-                and not is_object[idx]
-                and not is_controller[idx]
-            ):
-                color = (220, 220, 220)
-            cv2.circle(frame, (x, y), 2, color, -1, lineType=cv2.LINE_AA)
-        cv2.putText(
-            frame,
-            f"tracking_2d frame={frame_idx} visible={len(visible)}",
-            (16, 28),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA,
-        )
-        writer.write(frame)
-    writer.release()
-
-
-def _world_xy_bounds(*arrays: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Padded world-XY bounds over all finite, non-zero points.
-
-    Zero-norm points (the "no depth" sentinel) are excluded so they do not
-    drag the view toward the origin; an 8% margin keeps dots off the frame
-    edge, and a unit box is the fallback when nothing is valid.
-    """
-    chunks: list[np.ndarray] = []
-    for arr in arrays:
-        pts = np.asarray(arr, dtype=np.float32).reshape(-1, 3)
-        finite = np.isfinite(pts).all(axis=1) & (np.linalg.norm(pts, axis=1) > 0.0)
-        if np.any(finite):
-            chunks.append(pts[finite, :2])
-    if not chunks:
-        return np.array([-1.0, -1.0], dtype=np.float32), np.array(
-            [1.0, 1.0], dtype=np.float32
-        )
-    xy = np.concatenate(chunks, axis=0)
-    lo = np.min(xy, axis=0)
-    hi = np.max(xy, axis=0)
-    span = np.maximum(hi - lo, np.float32(1e-3))
-    pad = span * np.float32(0.08)
-    return lo - pad, hi + pad
-
-
-def _draw_world_points(
-    frame: np.ndarray,
-    points: np.ndarray,
-    *,
-    bounds: tuple[np.ndarray, np.ndarray],
-    color_bgr: tuple[int, int, int],
-    radius: int,
-) -> int:
-    """Scatter world points onto a top-down XY view; returns the drawn count."""
-    import cv2
-
-    pts = np.asarray(points, dtype=np.float32).reshape(-1, 3)
-    finite = np.isfinite(pts).all(axis=1) & (np.linalg.norm(pts, axis=1) > 0.0)
-    pts = pts[finite]
-    if len(pts) == 0:
-        return 0
-    lo, hi = bounds
-    height, width = frame.shape[:2]
-    span = np.maximum(hi - lo, np.float32(1e-6))
-    # Fixed pixel margins leave room for the HUD text; world +Y points up, so
-    # flip the row axis after mapping.
-    px = np.clip(
-        ((pts[:, 0] - lo[0]) / span[0] * (width - 60) + 30).astype(np.int64),
-        0,
-        width - 1,
-    )
-    py = np.clip(
-        ((pts[:, 1] - lo[1]) / span[1] * (height - 80) + 50).astype(np.int64),
-        0,
-        height - 1,
-    )
-    py = height - 1 - py
-    for x, y in zip(px, py):
-        cv2.circle(
-            frame, (int(x), int(y)), int(radius), color_bgr, -1, lineType=cv2.LINE_AA
-        )
-    return int(len(pts))
-
-
-def _render_world_track_video(
-    path: Path,
-    *,
-    object_points: np.ndarray,
-    object_valid: np.ndarray,
-    controller_points: np.ndarray,
-    title: str,
-    size: tuple[int, int] = (640, 480),
-) -> None:
-    """Render world track video."""
-    import cv2
-
-    writer = _open_video_writer(path, size=size)
-    frame_count = max(
-        int(np.asarray(object_points).shape[0]),
-        int(np.asarray(controller_points).shape[0]),
-        1,
-    )
-    # Bounds are computed once over the whole clip so the view does not jitter
-    # frame to frame.
-    bounds = _world_xy_bounds(object_points, controller_points)
-    width, height = int(size[0]), int(size[1])
-    for frame_idx in range(frame_count):
-        frame = np.zeros((height, width, 3), dtype=np.uint8)
-        # Indices clamp to the last frame so a shorter object/controller/valid
-        # array simply holds its final state.
-        obj = np.asarray(
-            object_points[min(frame_idx, max(0, object_points.shape[0] - 1))],
-            dtype=np.float32,
-        ).reshape(-1, 3)
-        valid = np.asarray(
-            object_valid[min(frame_idx, max(0, object_valid.shape[0] - 1))], dtype=bool
-        ).reshape(-1)
-        if len(valid) == len(obj):
-            obj = obj[valid]
-        ctrl = np.asarray(
-            controller_points[min(frame_idx, max(0, controller_points.shape[0] - 1))],
-            dtype=np.float32,
-        ).reshape(-1, 3)
-        obj_count = _draw_world_points(
-            frame, obj, bounds=bounds, color_bgr=(50, 220, 80), radius=2
-        )
-        ctrl_count = _draw_world_points(
-            frame, ctrl, bounds=bounds, color_bgr=(40, 40, 255), radius=5
-        )
-        cv2.putText(
-            frame,
-            title,
-            (18, 32),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.72,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA,
-        )
-        cv2.putText(
-            frame,
-            f"frame={frame_idx} object={obj_count} controller={ctrl_count}",
-            (18, 64),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.62,
-            (210, 230, 255),
-            2,
-            cv2.LINE_AA,
-        )
-        writer.write(frame)
-    writer.release()
-
-
-def _render_empty_video(
-    path: Path, *, frame_count: int, label: str, size: tuple[int, int] = (640, 360)
-) -> None:
-    """Render empty video."""
-    import cv2
-
-    writer = _open_video_writer(path, size=size)
-    width, height = int(size[0]), int(size[1])
-    count = max(1, int(frame_count))
-    for frame_idx in range(count):
-        frame = np.zeros((height, width, 3), dtype=np.uint8)
-        cv2.putText(
-            frame,
-            label,
-            (24, 48),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA,
-        )
-        cv2.putText(
-            frame,
-            f"frame={frame_idx}",
-            (24, 86),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            (180, 220, 255),
-            2,
-            cv2.LINE_AA,
-        )
-        writer.write(frame)
-    writer.release()
 
 
 # ---------------------------------------------------------------------------
@@ -1147,27 +890,10 @@ def finalize_headless_capture(
             out / "final_pcd.mp4", frame_count=len(rows), label="final_pcd empty"
         )
 
-    # Keep the shared keys in sync with the prepared-only manifest in
-    # _finalize_prepared_only_headless_capture.
     manifest = {
-        "compatibility_target": COMPATIBILITY_TARGET_PHYSTWIN,
-        "tracking_product_backend": TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT,
-        "tracker_backend": "tapnextpp",
-        "mask_backend": "edgetam",
-        "depth_backend": str(
-            metadata.get("depth_backend") or metadata.get("depth_source", "")
+        **_manifest_shared_fields(
+            metadata, frame_count=len(rows), query_count=len(query_points_yx)
         ),
-        "depth_source_internal": str(
-            metadata.get("depth_source_internal")
-            or metadata.get("depth_source")
-            or metadata.get("depth_backend", "")
-        ),
-        "execution_mode": PHYSTWIN_STRICT_EXECUTION_MODE,
-        "compatibility_path_name": PHYSTWIN_COMPATIBILITY_PATH_NAME,
-        "not_actual_cotracker": True,
-        "camera_count": 1,
-        "frame_count": int(len(rows)),
-        "query_count": int(len(query_points_yx)),
         "processed_masks_path": str(processed_mask_path.relative_to(out)),
         "track_process_data_path": str(track_process_path.relative_to(out)),
         "final_data_path": str(final_data_path.relative_to(out)),

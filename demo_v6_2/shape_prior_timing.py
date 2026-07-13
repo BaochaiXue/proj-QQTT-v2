@@ -124,6 +124,62 @@ def load_completed_stage_profile(
     return payload
 
 
+def _pre_submit_timing(
+    frame0: Any,
+    *,
+    request_start_s: float,
+) -> dict[str, Any]:
+    """Describe the camera-process critical path before shape-prior submit.
+
+    ``frame0`` is a ``shape_prior_warmup.ShapePriorFrame0Request``; it is
+    typed loosely so this timing module needs no warmup import.
+    """
+    milestones = (
+        frame0.warmup_runtime_start_perf_s,
+        frame0.frame_receive_perf_s,
+        frame0.frame_mask_ready_perf_s,
+        frame0.frame_pcd_ready_perf_s,
+    )
+    if all(value is None for value in milestones):
+        return {
+            "available": False,
+            "reason": "standalone request has no camera warm-up milestones",
+        }
+    if any(value is None for value in milestones):
+        raise ValueError("shape-prior pre-submit milestones must be all present")
+    runtime_start_s, receive_s, mask_ready_s, pcd_ready_s = (
+        float(value) for value in milestones if value is not None
+    )
+    ordered = (
+        runtime_start_s,
+        receive_s,
+        mask_ready_s,
+        pcd_ready_s,
+        float(request_start_s),
+    )
+    if any(current < previous for previous, current in zip(ordered, ordered[1:])):
+        raise ValueError("shape-prior pre-submit milestones are not monotonic")
+    return {
+        "available": True,
+        "runtime_start_to_frame0_receive_ms": elapsed_ms(
+            runtime_start_s,
+            receive_s,
+        ),
+        "frame0_receive_to_mask_ready_ms": elapsed_ms(receive_s, mask_ready_s),
+        "mask_ready_to_pcd_ready_ms": elapsed_ms(mask_ready_s, pcd_ready_s),
+        "pcd_ready_to_shape_prior_submit_ms": elapsed_ms(
+            pcd_ready_s,
+            request_start_s,
+        ),
+        "runtime_start_to_shape_prior_submit_ms": elapsed_ms(
+            runtime_start_s,
+            request_start_s,
+        ),
+        "frame0_pipeline_timing_ms": dict(frame0.frame0_pipeline_timing_ms),
+        "perception_profile": dict(frame0.frame0_perception_profile),
+    }
+
+
 def critical_path_entry(
     *,
     stage: str,

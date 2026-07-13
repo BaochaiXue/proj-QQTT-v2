@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import argparse
     import threading
-    from collections import OrderedDict
     from collections.abc import Callable
     from pathlib import Path
 
@@ -36,25 +35,22 @@ if TYPE_CHECKING:
     from demo_v6_2.mdp_headless_writer import HeadlessCaptureWriter
     from demo_v6_2.mdp_packets import (
         DepthProfilePacket,
-        FatalWorkerError,
         FramePacket,
         MaskedPcdPacket,
         MaskPacket,
-        PairedBuildResult,
         PcdBuildResult,
-        ProcessedFramePacket,
         RealtimeCameraRuntime,
         TrackerMarkerPacket,
     )
     from demo_v6_2.mdp_pipeline_plumbing import (
-        OrderedPacketQueue,
-        SameSeqPairer,
+        FatalErrorLatch,
+        LosslessPipeline,
         StageStats,
     )
     from demo_v6_2.visualization.mdp_warmup_preview import WarmupRgbPreview
     from demo_v6_2.pipeline_status import PipelineStatusWriter
     from demo_v6_2.utils.concurrency import LatestSlot
-    from demo_v6_2.utils.ffs_align import FfsIrToColorAligner
+    from demo_v6_2.utils.ffs_align import FfsDepthEngine
 
 
 class _DemoRuntimeContract:
@@ -78,27 +74,12 @@ class _DemoRuntimeContract:
     tracker_marker_slot: LatestSlot[TrackerMarkerPacket]
     _input_preview_publish_seq: int
 
-    # Lossless (strict same-seq) pipeline plumbing
-    lossless_max_backlog_frames: int
-    lossless_frame_queue: OrderedPacketQueue[FramePacket]
-    lossless_mask_queue: OrderedPacketQueue[MaskPacket]
-    lossless_processed_frame_queue: OrderedPacketQueue[ProcessedFramePacket]
-    lossless_pair_output_queue: OrderedPacketQueue[PairedBuildResult]
-    same_seq_pairer: SameSeqPairer
-    _lossless_pairer_lock: threading.Lock
-    _lossless_publish_condition: threading.Condition
-    _lossless_next_publish_seq: int
-    _lossless_capture_done: threading.Event
-    _lossless_processing_done: threading.Event
-    _lossless_first_pair_published: threading.Event
-    _lossless_offered_frames: int
-    _lossless_segmented_frames: int
-    _lossless_processed_frames: int
-    _lossless_tracker_results: int
-    _lossless_pairs_emitted: int
+    # Strict same-seq lossless pipeline (queues, pairer, ordered publish)
+    lossless: LosslessPipeline
 
     # Run control / stage telemetry
     stop_event: threading.Event
+    fatal: FatalErrorLatch
     _first_frame_segmented: threading.Event
     _startup_hold_s: float
     capture_stats: StageStats
@@ -108,10 +89,8 @@ class _DemoRuntimeContract:
     tracker_stats: StageStats
     _status: PipelineStatusWriter
 
-    # FFS depth
-    ffs_runner: object | None
-    _local_ffs_lock: threading.Lock
-    _local_ffs_depth_cache: OrderedDict[int, tuple[np.ndarray, float, float]]
+    # FFS depth (constructed in main_warmup when --depth-source ffs)
+    depth_engine: FfsDepthEngine | None
 
     # Headless capture / warm-up / shape prior
     headless_capture_writer: HeadlessCaptureWriter | None
@@ -138,29 +117,11 @@ class _DemoRuntimeContract:
     # ------------------------------------------------------------------
     # Implemented by _LifecycleMixin
     # ------------------------------------------------------------------
-    def _record_fatal_worker_error(
-        self, stage: str, exc: BaseException
-    ) -> FatalWorkerError:
-        """Record the first fatal worker error and set stop_event."""
-        raise NotImplementedError
-
     def _wait_for_lossless_startup_pair(
         self,
         on_wait_tick: Callable[[], None] | None = None,
     ) -> bool:
         """Wait until frame 0 has complete PCD and tracking results."""
-        raise NotImplementedError
-
-    def _get_ir_to_color_aligner(
-        self,
-        *,
-        depth_shape: tuple[int, int],
-        color_shape: tuple[int, int],
-        k_ir_left: np.ndarray,
-        t_ir_left_to_color: np.ndarray,
-        k_color: np.ndarray,
-    ) -> FfsIrToColorAligner:
-        """Return the cached IR-to-color depth aligner for these calibrations."""
         raise NotImplementedError
 
     # ------------------------------------------------------------------
@@ -257,16 +218,8 @@ class _DemoRuntimeContract:
     # ------------------------------------------------------------------
     # Implemented by _PairPublishMixin
     # ------------------------------------------------------------------
-    def _publish_pairer_outputs(self, pairs: list[PairedBuildResult]) -> None:
-        """Enqueue completed same-seq pairs for ordered publishing."""
-        raise NotImplementedError
-
     def _publish_mask_packet(self, packet: MaskPacket) -> None:
         """Publish raw masks to diagnostics and the canonical formal queue."""
-        raise NotImplementedError
-
-    def _maybe_finish_lossless_processing(self) -> None:
-        """Close the pair-output queue once the same-seq pairer drained."""
         raise NotImplementedError
 
     def _lossless_pair_output_worker(self) -> None:
@@ -275,13 +228,6 @@ class _DemoRuntimeContract:
 
     def _depth_profile_worker(self) -> None:
         """FFS depth profiling worker loop (pcd_mode=none)."""
-        raise NotImplementedError
-
-    def _compute_external_ffs_depth_color_m(
-        self,
-        packet: MaskPacket | FramePacket,
-    ) -> tuple[np.ndarray, float, float, float, float, float, float]:
-        """Compute color-aligned FFS depth plus timing/transfer telemetry."""
         raise NotImplementedError
 
 

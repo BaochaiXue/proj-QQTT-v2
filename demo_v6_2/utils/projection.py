@@ -9,34 +9,6 @@ from typing import Any
 import numpy as np
 
 from demo_v6_2.utils.depth_geometry import transform_points
-from demo_v6_2.utils.camera import CameraIntrinsics
-
-
-def build_pixel_grid(*, width: int, height: int, stride: int) -> tuple[np.ndarray, np.ndarray]:
-    """Build pixel grid."""
-    if width <= 0 or height <= 0:
-        raise ValueError("width and height must be positive")
-    if stride < 1:
-        raise ValueError("stride must be >= 1")
-    xs = np.arange(0, width, stride, dtype=np.float32)
-    ys = np.arange(0, height, stride, dtype=np.float32)
-    return np.meshgrid(xs, ys, indexing="xy")
-
-
-def build_projection_grid(
-    *,
-    width: int,
-    height: int,
-    stride: int,
-    intrinsics: CameraIntrinsics,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Build projection grid."""
-    if intrinsics.fx <= 0 or intrinsics.fy <= 0:
-        raise ValueError("intrinsics fx/fy must be positive")
-    grid_x, grid_y = build_pixel_grid(width=width, height=height, stride=stride)
-    ray_x = (grid_x - np.float32(intrinsics.cx)) / np.float32(intrinsics.fx)
-    ray_y = (grid_y - np.float32(intrinsics.cy)) / np.float32(intrinsics.fy)
-    return np.ascontiguousarray(ray_x, dtype=np.float32), np.ascontiguousarray(ray_y, dtype=np.float32)
 
 
 def build_projection_grid_from_matrix(

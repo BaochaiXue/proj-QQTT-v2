@@ -90,31 +90,3 @@ class LatestSlot(Generic[T]):
         """Return the total dropped count."""
         with self._lock:
             return self._dropped_total
-
-
-class CoalescedPostGate:
-    """Allow at most one queued GUI post callback at a time."""
-
-    def __init__(self) -> None:
-        """Initialize CoalescedPostGate."""
-        self._lock = threading.Lock()
-        self._pending = False
-
-    def try_mark_pending(self) -> bool:
-        """Return the try mark pending."""
-        with self._lock:
-            if self._pending:
-                return False
-            self._pending = True
-            return True
-
-    def mark_done(self) -> None:
-        """Return the mark done."""
-        with self._lock:
-            self._pending = False
-
-    @property
-    def pending(self) -> bool:
-        """Return the pending."""
-        with self._lock:
-            return self._pending

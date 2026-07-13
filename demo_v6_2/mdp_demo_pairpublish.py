@@ -6,7 +6,6 @@ from demo_v6_2.mdp_constants import *  # noqa: F401,F403
 from demo_v6_2.mdp_cli import lossless_enabled
 from demo_v6_2.mdp_demo_contract import _DemoRuntimeContract
 from demo_v6_2.mdp_packets import DepthProfilePacket
-from demo_v6_2.mdp_pipeline_plumbing import LosslessPipelineError
 
 
 class _PairPublishMixin(_DemoRuntimeContract):
@@ -23,9 +22,8 @@ class _PairPublishMixin(_DemoRuntimeContract):
         )
         self.pcd_stats.record(pcd_result.packet.process_done_perf_s)
         self.tracker_stats.record(tracker_packet.process_done_perf_s)
-        self._lossless_pairs_emitted += 1
         if pair.seq == 0:
-            self._lossless_first_pair_published.set()
+            self.lossless.first_pair_published.set()
         if self.headless_capture_writer is not None:
             self._maybe_write_shape_prior_headless_result()
             # One gate decision per frame: the row and its query_trajectory
@@ -37,71 +35,32 @@ class _PairPublishMixin(_DemoRuntimeContract):
                 pcd_result, tracker_packet=tracker_packet, gated=rows_gated
             )
 
-    def _publish_pairer_outputs(self, pairs: list[PairedBuildResult]) -> None:
-        """Publish pairer outputs."""
-        for pair in pairs:
-            self.lossless_pair_output_queue.put(pair)
-
     def _publish_ordered_lossless_pair(self, pair: PairedBuildResult) -> None:
         """Publish ordered lossless pair."""
         seq = int(pair.seq)
-        with self._lossless_publish_condition:
-            while seq != self._lossless_next_publish_seq:
-                if seq < self._lossless_next_publish_seq:
-                    raise LosslessPipelineError(
-                        f"lossless publish received stale seq {seq}, expected "
-                        f"{self._lossless_next_publish_seq}"
-                    )
-                if self.stop_event.is_set():
-                    return
-                self._lossless_publish_condition.wait(timeout=0.05)
+        if not self.lossless.wait_publish_turn(seq, stop_event=self.stop_event):
+            return
         self._publish_strict_pair(pair)
-        with self._lossless_publish_condition:
-            expected = self._lossless_next_publish_seq
-            if seq != expected:
-                raise LosslessPipelineError(
-                    f"lossless publish expected seq {expected}, got {seq}"
-                )
-            self._lossless_next_publish_seq += 1
-            self._lossless_publish_condition.notify_all()
-
-    def _maybe_finish_lossless_processing(self) -> None:
-        """Maybe start or update finish lossless processing."""
-        if not lossless_enabled(self.args):
-            return
-        if self.same_seq_pairer.done and not self._lossless_processing_done.is_set():
-            self.lossless_pair_output_queue.close()
-
-    def _finish_lossless_output(self) -> None:
-        """Finish lossless output."""
-        if not lossless_enabled(self.args):
-            return
-        if not self._lossless_processing_done.is_set():
-            self._lossless_processing_done.set()
+        self.lossless.finish_publish_turn(seq)
 
     def _lossless_pair_output_worker(self) -> None:
         """Return the lossless pair output worker."""
         try:
             while not self.stop_event.is_set():
-                pair = self.lossless_pair_output_queue.get(stop_event=self.stop_event)
+                pair = self.lossless.pair_output_queue.get(stop_event=self.stop_event)
                 if pair is None:
                     break
                 self._publish_ordered_lossless_pair(pair)
-            self._finish_lossless_output()
+            self.lossless.finish_output()
         except Exception as exc:
             if not self.stop_event.is_set():
-                self._record_fatal_worker_error("lossless pair output worker", exc)
+                self.fatal.record("lossless pair output worker", exc)
 
     def _publish_mask_packet(self, packet: MaskPacket) -> None:
         """Publish raw masks to diagnostics and the canonical formal stage."""
         self.mask_slot.put(packet)
         if lossless_enabled(self.args):
-            if not self.lossless_mask_queue.wait_for_capacity(
-                stop_event=self.stop_event
-            ):
-                return
-            self.lossless_mask_queue.put(packet)
-            self._lossless_segmented_frames += 1
+            self.lossless.publish_mask(packet, stop_event=self.stop_event)
 
     def _depth_profile_worker(self) -> None:
         """Return the depth profile worker."""
@@ -112,18 +71,12 @@ class _PairPublishMixin(_DemoRuntimeContract):
                 time.sleep(0.001)
                 continue
             last_seq = frame.seq
-            if frame.depth_source != "ffs":
+            if frame.depth_source != "ffs" or self.depth_engine is None:
                 continue
             try:
-                (
-                    _depth_m,
-                    ffs_ms,
-                    ffs_align_ms,
-                    remote_rtt_ms,
-                    remote_server_total_ms,
-                    remote_request_kb,
-                    remote_response_kb,
-                ) = self._compute_external_ffs_depth_color_m(frame)
+                _depth_m, ffs_ms, ffs_align_ms = self.depth_engine.compute_color_depth(
+                    frame
+                )
             except Exception as exc:
                 if not self.stop_event.is_set():
                     print(
@@ -142,95 +95,10 @@ class _PairPublishMixin(_DemoRuntimeContract):
                     frame.timing,
                     ffs_ms=ffs_ms,
                     ffs_align_ms=ffs_align_ms,
-                    remote_rtt_ms=remote_rtt_ms,
-                    remote_server_total_ms=remote_server_total_ms,
-                    remote_request_kb=remote_request_kb,
-                    remote_response_kb=remote_response_kb,
                 ),
             )
             self.depth_profile_slot.put(packet)
             self.depth_stats.record(done_s)
-
-    def _compute_external_ffs_depth_color_m(
-        self,
-        packet: MaskPacket | FramePacket,
-    ) -> tuple[np.ndarray, float, float, float, float, float, float]:
-        """Compute external FFS depth color m."""
-        depth_color_m, ffs_ms, ffs_align_ms = self._compute_ffs_depth_color_m(packet)
-        return depth_color_m, ffs_ms, ffs_align_ms, 0.0, 0.0, 0.0, 0.0
-
-    def _get_cached_local_ffs_depth(
-        self, seq: int
-    ) -> tuple[np.ndarray, float, float] | None:
-        """Return the get cached local FFS depth."""
-        cached = self._local_ffs_depth_cache.get(int(seq))
-        if cached is None:
-            return None
-        self._local_ffs_depth_cache.move_to_end(int(seq))
-        return cached
-
-    def _put_cached_local_ffs_depth(
-        self, seq: int, value: tuple[np.ndarray, float, float]
-    ) -> None:
-        """Return the put cached local FFS depth."""
-        self._local_ffs_depth_cache[int(seq)] = value
-        self._local_ffs_depth_cache.move_to_end(int(seq))
-        while len(self._local_ffs_depth_cache) > DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES:
-            self._local_ffs_depth_cache.popitem(last=False)
-
-    def _compute_ffs_depth_color_m(
-        self, packet: MaskPacket | FramePacket
-    ) -> tuple[np.ndarray, float, float]:
-        """Compute FFS depth color m."""
-        runner = self.ffs_runner
-        if runner is None:
-            raise RuntimeError("FFS runner is not initialized")
-        if (
-            packet.ir_left_u8 is None
-            or packet.ir_right_u8 is None
-            or packet.k_ir_left is None
-            or packet.t_ir_left_to_color is None
-            or packet.k_color is None
-            or packet.ir_baseline_m <= 0
-        ):
-            raise RuntimeError("FFS packet is missing IR stereo calibration/data")
-
-        with self._local_ffs_lock:
-            cached = self._get_cached_local_ffs_depth(int(packet.seq))
-            if cached is not None:
-                return cached
-
-            ffs_start_s = time.perf_counter()
-            output = runner.run_pair(
-                packet.ir_left_u8,
-                packet.ir_right_u8,
-                K_ir_left=packet.k_ir_left,
-                baseline_m=float(packet.ir_baseline_m),
-            )
-            ffs_done_s = time.perf_counter()
-            depth_ir_left_m = np.asarray(output["depth_ir_left_m"], dtype=np.float32)
-            k_ir_left_used = np.asarray(
-                output.get("K_ir_left_used", packet.k_ir_left), dtype=np.float32
-            )
-            align_start_s = time.perf_counter()
-            aligner = self._get_ir_to_color_aligner(
-                depth_shape=depth_ir_left_m.shape,
-                color_shape=packet.color_bgr.shape[:2],
-                k_ir_left=k_ir_left_used,
-                t_ir_left_to_color=packet.t_ir_left_to_color,
-                k_color=packet.k_color,
-            )
-            depth_color_m = np.ascontiguousarray(
-                aligner.align(depth_ir_left_m), dtype=np.float32
-            )
-            align_done_s = time.perf_counter()
-            result = (
-                depth_color_m,
-                _elapsed_ms(ffs_start_s, ffs_done_s),
-                _elapsed_ms(align_start_s, align_done_s),
-            )
-            self._put_cached_local_ffs_depth(int(packet.seq), result)
-            return result
 
 
 __all__ = ["_PairPublishMixin"]

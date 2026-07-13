@@ -82,7 +82,6 @@ def stream_chunk_data_from_headless_capture(
     require_shape_prior: bool = False,
     shape_prior_wait_timeout_s: float = 300.0,
     on_chunk_written: Callable[[dict[str, Any]], None] | None = None,
-    write_online_output: bool = True,
     online_case_name: str | None = None,
     asap_augment: bool = True,
     asap_mesh_path: str | Path | None = None,
@@ -111,28 +110,25 @@ def stream_chunk_data_from_headless_capture(
     chunk_size = int(chunk_frame_count)
     wall_time_origin_s = time.monotonic()
     warmup_start_filter = _WarmupStartFilterState()
-    online_writer = None
-    frame_archive = None
     online_case = str(online_case_name or case_prefix)
-    if bool(write_online_output):
-        online_writer = ChunkDataWriter(
-            base_path=base_path,
-            case_name=online_case,
-            chunk_size=chunk_size,
-            num_frames_total=(
-                None if max_chunks is None else int(max_chunks) * int(chunk_size)
-            ),
-        )
-        frame_archive = OnlineFrameArchive(
-            base_path=base_path,
-            case_name=online_case,
-            fps=int(fps),
-        )
-        # Seed calibrate.pkl/metadata.json (frame_num=0) as soon as capture
-        # metadata is known: phystwin_shen downstream consumers start at
-        # shape-prior-ready time and read the case dir before the first
-        # chunk commits (design_spec_v6_1.md, downstream.mode).
-        frame_archive.initialize_case(metadata, serial_number=serial_number)
+    online_writer = ChunkDataWriter(
+        base_path=base_path,
+        case_name=online_case,
+        chunk_size=chunk_size,
+        num_frames_total=(
+            None if max_chunks is None else int(max_chunks) * int(chunk_size)
+        ),
+    )
+    frame_archive = OnlineFrameArchive(
+        base_path=base_path,
+        case_name=online_case,
+        fps=int(fps),
+    )
+    # Seed calibrate.pkl/metadata.json (frame_num=0) as soon as capture
+    # metadata is known: phystwin_shen downstream consumers start at
+    # shape-prior-ready time and read the case dir before the first
+    # chunk commits (design_spec_v6_1.md, downstream.mode).
+    frame_archive.initialize_case(metadata, serial_number=serial_number)
     # One stateful tracking runtime spans the realtime session so chunk N+1
     # continues the identity frozen by chunk 0.
     tracking_runtime = tracking.TrackingRuntime()

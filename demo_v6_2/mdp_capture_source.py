@@ -133,7 +133,10 @@ class RecordedRgbdFrameSource:
         )
         self.width, self.height = self._resolve_dimensions(metadata)
         self.recording_fps = self._resolve_recording_fps(metadata)
-        self.effective_fps = self._resolve_replay_fps(float(replay_fps))
+        # Effective replay FPS for fake-live playback: metadata fps unless overridden.
+        self.effective_fps = (
+            float(replay_fps) if float(replay_fps) > 0.0 else float(self.recording_fps)
+        )
         self.k_ir_left: np.ndarray | None = None
         self.t_ir_left_to_color: np.ndarray | None = None
         self.ir_baseline_m = 0.0
@@ -421,12 +424,6 @@ class RecordedRgbdFrameSource:
             fps = 0.0
         return fps if fps > 0.0 else 30.0
 
-    def _resolve_replay_fps(self, replay_fps: float) -> float:
-        """Resolve the effective replay FPS for fake-live playback."""
-        return (
-            float(replay_fps) if float(replay_fps) > 0.0 else float(self.recording_fps)
-        )
-
     def _build_recording_elapsed_s(
         self, frames: list[RecordedRgbdFrameRef]
     ) -> np.ndarray:
@@ -609,19 +606,6 @@ def _start_realsense_pipeline(args: argparse.Namespace) -> RealtimeCameraRuntime
             ).as_video_stream_profile()
             ir_left_to_right = ir_left_profile.get_extrinsics_to(ir_right_profile)
             ir_left_to_color = ir_left_profile.get_extrinsics_to(color_stream)
-            if args.depth_source == "realsense":
-                align = rs.align(rs.stream.color)
-                return RealtimeCameraRuntime(
-                    pipeline=pipeline,
-                    align=align,
-                    serial=serial,
-                    intrinsics=intrinsics,
-                    depth_scale_m_per_unit=depth_scale,
-                    k_color=k_color,
-                    k_ir_left=rs_intrinsics_to_matrix(ir_left_profile.get_intrinsics()),
-                    t_ir_left_to_color=rs_extrinsics_to_matrix(ir_left_to_color),
-                    ir_baseline_m=rs_translation_norm(ir_left_to_right),
-                )
             return RealtimeCameraRuntime(
                 pipeline=pipeline,
                 align=None,

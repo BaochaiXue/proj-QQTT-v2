@@ -6,11 +6,12 @@ import argparse
 import gc
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
 
-from demo_v6_2.utils.ffs_align import warm_up_numba_ffs_align
+from demo_v6_2.utils.ffs_align import FfsDepthEngine, warm_up_numba_ffs_align
 from demo_v6_2.utils.render import apply_wslg_open3d_env_defaults
 
 TRACK_MODE_CONTROLLER_OBJECT = "controller-object"
@@ -166,8 +167,9 @@ def split_controller_hand_instances(
 # SAM3.1 runtime cleanup
 # ---------------------------------------------------------------------------
 # Two levels of cleanup: release_* drops the cached model runtime and
-# empties the CUDA allocator; trim_* keeps the cached model alive (for the next
-# camera or shape-prior warmup) and only returns freed blocks to CUDA.
+# empties the CUDA allocator; a plain allocator trim (_reclaim_cuda_memory)
+# keeps the cached model alive (for the next camera or shape-prior warmup) and
+# only returns freed blocks to CUDA.
 
 
 def _reclaim_cuda_memory(
@@ -217,11 +219,6 @@ def release_sam31_runtime_resources(device: str = DEFAULT_SAM31_DEVICE) -> float
     return (time.perf_counter() - started_s) * 1000.0
 
 
-def trim_sam31_cuda_allocator(device: str = DEFAULT_SAM31_DEVICE) -> float:
-    """Return the trim sam31 CUDA allocator."""
-    return _reclaim_cuda_memory(device, warn_context="CUDA trim")
-
-
 # ---------------------------------------------------------------------------
 # SAM3.1 frame-0 segmentation and initial-mask resolution
 # ---------------------------------------------------------------------------
@@ -252,13 +249,9 @@ def run_sam31_first_frame_mask_bundle(
     text_prompt = ",".join(prompt_labels)
     # Shape-prior warmup re-runs SAM3.1 on frame 0, so it needs the model kept
     # in the cache (reuse) and only an allocator trim afterwards.
-    reuse_sam31_runtime = bool(
-        getattr(args, "sam31_cache_init_model", False)
-        or getattr(args, "shape_prior_warmup", False)
-    )
+    reuse_sam31_runtime = bool(getattr(args, "shape_prior_warmup", False))
     keep_runtime_until_all_cameras_init = bool(
-        getattr(args, "sam31_keep_runtime_until_all_cameras_init", False)
-        or getattr(args, "shape_prior_warmup", False)
+        getattr(args, "shape_prior_warmup", False)
     )
     try:
         result = run_image_segmentation(
@@ -275,7 +268,7 @@ def run_sam31_first_frame_mask_bundle(
         setattr(args, "_sam31_last_timing_ms", result.get("timing_ms", {}))
     finally:
         if keep_runtime_until_all_cameras_init:
-            trim_ms = trim_sam31_cuda_allocator(str(args.device))
+            trim_ms = _reclaim_cuda_memory(str(args.device), warn_context="CUDA trim")
             setattr(args, "_sam31_last_trim_cleanup_ms", float(trim_ms))
         else:
             release_ms = release_sam31_runtime_resources(str(args.device))
@@ -326,21 +319,6 @@ def run_sam31_first_frame_mask_bundle(
     )
 
 
-def resolve_initial_mask_bundle(
-    frame: Any,
-    args: argparse.Namespace,
-) -> InitialMaskBundle:
-    """Resolve initial mask bundle by running SAM3.1 on the live first frame."""
-    expected_shape = tuple(frame.color_bgr.shape[:2])
-    bundle = run_sam31_first_frame_mask_bundle(frame.color_bgr, args)
-    if (
-        bundle.controller_mask.shape != expected_shape
-        or bundle.object_mask.shape != expected_shape
-    ):
-        raise RuntimeError("SAM3.1 frame-0 masks do not match captured frame shape")
-    return bundle
-
-
 # ---------------------------------------------------------------------------
 # Warmup orchestration (called by MainDataProcessingDemo)
 # ---------------------------------------------------------------------------
@@ -361,7 +339,16 @@ def prepare_runtime_services_and_source(
     args = demo.args
     apply_wslg_open3d_env_defaults()
     if args.depth_source == "ffs":
-        demo.ffs_runner = demo._create_ffs_runner()
+        # Lazy: mdp_constants imports this module, so the constant cannot be a
+        # top-level import without a cycle.
+        from demo_v6_2.mdp_constants import DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES  # noqa: PLC0415
+
+        demo.depth_engine = FfsDepthEngine(
+            ffs_repo=Path(args.ffs_repo),
+            model_dir=Path(args.ffs_trt_model_dir),
+            trt_root=None if args.ffs_trt_root is None else Path(args.ffs_trt_root),
+            cache_frames=DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES,
+        )
         warm_up_numba_ffs_align()
     if is_replay_input_source(str(args.input_source)):
         demo.recording_source = recording_source_cls(
@@ -445,10 +432,14 @@ def prepare_segmentation_warmup(demo: Any) -> SegmentationWarmupState:
             initial_masks=None,
         )
     initial_masks_start_s = time.perf_counter()
-    initial_masks = resolve_initial_mask_bundle(
-        first_frame,
-        demo.args,
-    )
+    # Resolve the initial mask bundle by running SAM3.1 on the live first frame.
+    expected_shape = tuple(first_frame.color_bgr.shape[:2])
+    initial_masks = run_sam31_first_frame_mask_bundle(first_frame.color_bgr, demo.args)
+    if (
+        initial_masks.controller_mask.shape != expected_shape
+        or initial_masks.object_mask.shape != expected_shape
+    ):
+        raise RuntimeError("SAM3.1 frame-0 masks do not match captured frame shape")
     initial_masks_end_s = time.perf_counter()
     initial_sam31_timing = getattr(demo.args, "_sam31_last_timing_ms", {})
     if not isinstance(initial_sam31_timing, dict):

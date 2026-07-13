@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+import time
+from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
@@ -186,3 +189,126 @@ def validate_ffs_paths(*, ffs_repo: Path, model_dir: Path) -> None:
     ]
     if missing:
         raise ValueError("missing required two-stage TensorRT FFS artifact files: " + ", ".join(missing))
+
+
+class FfsDepthEngine:
+    """FFS TensorRT depth for color frames.
+
+    Owns the runner, a bounded per-seq LRU of computed depth (at most one FFS
+    inference per seq, checked and filled under one lock), and the IR-to-color
+    aligner, which is rebuilt only when the calibration/shape key changes.
+    """
+
+    def __init__(
+        self,
+        *,
+        ffs_repo: Path,
+        model_dir: Path,
+        trt_root: Path | None,
+        cache_frames: int,
+    ) -> None:
+        """Build the TensorRT runner; wraps startup failures in RuntimeError."""
+        try:
+            from demo_v6_2.utils.ffs_runner_two_stage import (  # noqa: PLC0415
+                FastFoundationStereoTensorRTRunner,
+            )
+
+            self._runner = FastFoundationStereoTensorRTRunner(
+                ffs_repo=Path(ffs_repo),
+                model_dir=Path(model_dir),
+                trt_root=None if trt_root is None else Path(trt_root),
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"failed to start FFS TensorRT runner: {type(exc).__name__}: {exc}"
+            ) from exc
+        self._cache_frames = max(1, int(cache_frames))
+        self._lock = threading.Lock()
+        self._depth_cache: OrderedDict[int, tuple[np.ndarray, float, float]] = (
+            OrderedDict()
+        )
+        self._aligner: FfsIrToColorAligner | None = None
+        self._aligner_key: tuple | None = None
+
+    def compute_color_depth(self, packet) -> tuple[np.ndarray, float, float]:
+        """Return (color-aligned depth_m, ffs_ms, align_ms) for one packet."""
+        if (
+            packet.ir_left_u8 is None
+            or packet.ir_right_u8 is None
+            or packet.k_ir_left is None
+            or packet.t_ir_left_to_color is None
+            or packet.k_color is None
+            or packet.ir_baseline_m <= 0
+        ):
+            raise RuntimeError("FFS packet is missing IR stereo calibration/data")
+
+        with self._lock:
+            cached = self._depth_cache.get(int(packet.seq))
+            if cached is not None:
+                self._depth_cache.move_to_end(int(packet.seq))
+                return cached
+
+            ffs_start_s = time.perf_counter()
+            output = self._runner.run_pair(
+                packet.ir_left_u8,
+                packet.ir_right_u8,
+                K_ir_left=packet.k_ir_left,
+                baseline_m=float(packet.ir_baseline_m),
+            )
+            ffs_done_s = time.perf_counter()
+            depth_ir_left_m = np.asarray(output["depth_ir_left_m"], dtype=np.float32)
+            k_ir_left_used = np.asarray(
+                output.get("K_ir_left_used", packet.k_ir_left), dtype=np.float32
+            )
+            align_start_s = time.perf_counter()
+            aligner = self._aligner_for(
+                depth_shape=depth_ir_left_m.shape,
+                color_shape=packet.color_bgr.shape[:2],
+                k_ir_left=k_ir_left_used,
+                t_ir_left_to_color=packet.t_ir_left_to_color,
+                k_color=packet.k_color,
+            )
+            depth_color_m = np.ascontiguousarray(
+                aligner.align(depth_ir_left_m), dtype=np.float32
+            )
+            result = (
+                depth_color_m,
+                (ffs_done_s - ffs_start_s) * 1000.0,
+                (time.perf_counter() - align_start_s) * 1000.0,
+            )
+            self._depth_cache[int(packet.seq)] = result
+            self._depth_cache.move_to_end(int(packet.seq))
+            while len(self._depth_cache) > self._cache_frames:
+                self._depth_cache.popitem(last=False)
+            return result
+
+    def _aligner_for(
+        self,
+        *,
+        depth_shape: tuple[int, int],
+        color_shape: tuple[int, int],
+        k_ir_left: np.ndarray,
+        t_ir_left_to_color: np.ndarray,
+        k_color: np.ndarray,
+    ) -> FfsIrToColorAligner:
+        """Return the aligner for these calibrations, rebuilding on key change."""
+        k_ir = np.asarray(k_ir_left, dtype=np.float32).reshape(3, 3)
+        transform = np.asarray(t_ir_left_to_color, dtype=np.float32).reshape(4, 4)
+        k_col = np.asarray(k_color, dtype=np.float32).reshape(3, 3)
+        key = (
+            (int(depth_shape[0]), int(depth_shape[1])),
+            (int(color_shape[0]), int(color_shape[1])),
+            tuple(float(v) for v in k_ir.ravel()),
+            tuple(float(v) for v in transform.ravel()),
+            tuple(float(v) for v in k_col.ravel()),
+        )
+        if self._aligner_key != key or self._aligner is None:
+            self._aligner = FfsIrToColorAligner(
+                k_ir_left=k_ir,
+                t_ir_left_to_color=transform,
+                k_color=k_col,
+                ir_shape=depth_shape,
+                color_shape=color_shape,
+            )
+            self._aligner_key = key
+        return self._aligner

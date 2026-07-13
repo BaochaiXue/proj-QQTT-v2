@@ -21,24 +21,15 @@ from demo_v6_2.mdp_cli import (
 )
 from demo_v6_2.mdp_demo_contract import _DemoRuntimeContract
 from demo_v6_2.mdp_headless_writer import HeadlessCaptureWriter
-from demo_v6_2.mdp_packets import (
-    FatalWorkerError,
-    FramePacket,
-    MaskPacket,
-    PairedBuildResult,
-    ProcessedFramePacket,
-)
+from demo_v6_2.utils.ffs_align import FfsDepthEngine
+from demo_v6_2.mdp_packets import FramePacket, MaskPacket
 from demo_v6_2.mdp_pipeline_plumbing import (
-    OrderedPacketQueue,
-    SameSeqPairer,
+    FatalErrorLatch,
+    LosslessPipeline,
     StageStats,
 )
 from demo_v6_2.visualization.mdp_warmup_preview import WarmupRgbPreview
-from demo_v6_2.pipeline_status import (
-    STAGE_CAPTURE_START,
-    STAGE_FATAL,
-    PipelineStatusWriter,
-)
+from demo_v6_2.pipeline_status import STAGE_CAPTURE_START, PipelineStatusWriter
 
 
 class _LifecycleMixin(_DemoRuntimeContract):
@@ -48,14 +39,6 @@ class _LifecycleMixin(_DemoRuntimeContract):
         """Initialize MainDataProcessingDemo."""
         self.args = args
         self.width, self.height = parse_profile(DEFAULT_PROFILE)
-        self.lossless_max_backlog_frames = max(
-            1,
-            int(
-                round(
-                    lossless_input_fps(args) * float(args.lossless_max_backlog_seconds)
-                )
-            ),
-        )
         self.runtime: RealtimeCameraRuntime | None = None
         self.input_preview_slot: LatestSlot[FramePacket] = LatestSlot()
         # Dedicated monotonic seq for EVERY put into input_preview_slot (frame 0,
@@ -68,60 +51,26 @@ class _LifecycleMixin(_DemoRuntimeContract):
         self.mask_slot: LatestSlot[MaskPacket] = LatestSlot()
         self.depth_profile_slot: LatestSlot[DepthProfilePacket] = LatestSlot()
         self.tracker_marker_slot: LatestSlot[TrackerMarkerPacket] = LatestSlot()
-        self.lossless_frame_queue: OrderedPacketQueue[FramePacket] = OrderedPacketQueue(
-            name="frame",
-            max_backlog_frames=self.lossless_max_backlog_frames,
-        )
-        self.lossless_mask_queue: OrderedPacketQueue[MaskPacket] = OrderedPacketQueue(
-            name="raw-mask",
-            max_backlog_frames=self.lossless_max_backlog_frames,
-        )
-        self.lossless_processed_frame_queue: OrderedPacketQueue[
-            ProcessedFramePacket
-        ] = OrderedPacketQueue(
-            name="processed-frame",
-            max_backlog_frames=self.lossless_max_backlog_frames,
-        )
-        self.lossless_pair_output_queue: OrderedPacketQueue[PairedBuildResult] = (
-            OrderedPacketQueue(
-                name="pair-output",
-                max_backlog_frames=self.lossless_max_backlog_frames,
+        self.lossless = LosslessPipeline(
+            max_backlog_frames=max(
+                1,
+                int(
+                    round(
+                        lossless_input_fps(args)
+                        * float(args.lossless_max_backlog_seconds)
+                    )
+                ),
             )
         )
-        self.same_seq_pairer = SameSeqPairer(
-            max_backlog_frames=self.lossless_max_backlog_frames
-        )
-        self._lossless_pairer_lock = threading.Lock()
-        self._lossless_publish_condition = threading.Condition()
-        self._lossless_next_publish_seq = 0
         self._startup_hold_s = 0.0
         self.stop_event = threading.Event()
-        self._lossless_capture_done = threading.Event()
-        self._lossless_processing_done = threading.Event()
-        self._lossless_first_pair_published = threading.Event()
-        self._lossless_pipeline_active = False
         self._threads: list[threading.Thread] = []
         self.capture_stats = StageStats()
         self.seg_stats = StageStats()
         self.depth_stats = StageStats()
         self.pcd_stats = StageStats()
         self.tracker_stats = StageStats()
-        self.ffs_runner: object | None = None
-        self._local_ffs_lock = threading.Lock()
-        self._local_ffs_depth_cache: OrderedDict[
-            int, tuple[np.ndarray, float, float]
-        ] = OrderedDict()
-        self.ir_to_color_aligner: FfsIrToColorAligner | None = None
-        self._ir_to_color_aligner_key: (
-            tuple[
-                tuple[int, int],
-                tuple[int, int],
-                tuple[float, ...],
-                tuple[float, ...],
-                tuple[float, ...],
-            ]
-            | None
-        ) = None
+        self.depth_engine: FfsDepthEngine | None = None
         self.recording_source: RecordedRgbdFrameSource | None = None
         self.headless_capture_writer: HeadlessCaptureWriter | None = None
         # Live pipeline-status stream (design question 25), shared with the
@@ -134,6 +83,7 @@ class _LifecycleMixin(_DemoRuntimeContract):
             else None,
             "camera",
         )
+        self.fatal = FatalErrorLatch(status=self._status, stop_event=self.stop_event)
         self.shape_prior_manager = self._create_shape_prior_manager()
         # Live RGB input preview shown ONLY during warm-up, in every downstream
         # mode; closes at warm-up end and immediately on failure/cancel/early
@@ -154,11 +104,6 @@ class _LifecycleMixin(_DemoRuntimeContract):
         self.table_c2w: np.ndarray | None = None
         self.table_calibration_path: Path | None = None
         self._first_frame_segmented = threading.Event()
-        self._lossless_offered_frames = 0
-        self._lossless_segmented_frames = 0
-        self._lossless_processed_frames = 0
-        self._lossless_tracker_results = 0
-        self._lossless_pairs_emitted = 0
         self._tracker_query_points_yx: np.ndarray | None = None
         self._tracker_query_rgb_u8: np.ndarray | None = None
         self._tracker_query_is_object: np.ndarray | None = None
@@ -166,22 +111,6 @@ class _LifecycleMixin(_DemoRuntimeContract):
         self._tracker_query_target_id: np.ndarray | None = None
         self._tracker_query_controller_instance_id: np.ndarray | None = None
         self._tracker_consistent_visible: np.ndarray | None = None
-        self._fatal_error_lock = threading.Lock()
-        self._fatal_error: FatalWorkerError | None = None
-
-    @property
-    def intrinsics(self) -> CameraIntrinsics:
-        """Return the intrinsics."""
-        if self.runtime is None:
-            raise RuntimeError("camera runtime is not initialized")
-        return self.runtime.intrinsics
-
-    @property
-    def serial(self) -> str:
-        """Return the serial."""
-        if self.runtime is None:
-            return "<not-started>"
-        return self.runtime.serial
 
     def _create_shape_prior_manager(self) -> shape_prior_warmup.ShapePriorWarmupManager:
         """Create the shape-prior warmup manager for the runtime."""
@@ -238,35 +167,6 @@ class _LifecycleMixin(_DemoRuntimeContract):
             flush=True,
         )
 
-    def _reset_lossless_state(self) -> None:
-        """Reset lossless state."""
-        self.lossless_frame_queue.reset()
-        self.lossless_mask_queue.reset()
-        self.lossless_processed_frame_queue.reset()
-        self.lossless_pair_output_queue.reset()
-        self.same_seq_pairer.reset()
-        with self._lossless_publish_condition:
-            self._lossless_next_publish_seq = 0
-            self._lossless_publish_condition.notify_all()
-        self._lossless_capture_done.clear()
-        self._lossless_processing_done.clear()
-        self._lossless_first_pair_published.clear()
-        self._first_frame_segmented.clear()
-        self._lossless_pipeline_active = True
-        self._lossless_offered_frames = 0
-        self._lossless_segmented_frames = 0
-        self._lossless_processed_frames = 0
-        self._lossless_tracker_results = 0
-        self._lossless_pairs_emitted = 0
-
-    def _close_lossless_queues(self) -> None:
-        """Close lossless queues."""
-        self.lossless_frame_queue.close()
-        self.lossless_mask_queue.close()
-        self.lossless_processed_frame_queue.close()
-        self.lossless_pair_output_queue.close()
-        self._lossless_pipeline_active = False
-
     def _wait_for_lossless_startup_pair(
         self,
         on_wait_tick: Callable[[], None] | None = None,
@@ -275,7 +175,7 @@ class _LifecycleMixin(_DemoRuntimeContract):
         if not lossless_enabled(self.args) or self.args.track_mode == "none":
             return True
         while not self.stop_event.is_set():
-            if self._lossless_first_pair_published.wait(timeout=0.01):
+            if self.lossless.first_pair_published.wait(timeout=0.01):
                 return True
             if on_wait_tick is not None:
                 on_wait_tick()
@@ -413,7 +313,7 @@ class _LifecycleMixin(_DemoRuntimeContract):
                 else None
             ),
             "lossless_max_backlog_frames": (
-                int(self.lossless_max_backlog_frames)
+                int(self.lossless.max_backlog_frames)
                 if lossless_enabled(self.args)
                 else None
             ),
@@ -456,38 +356,6 @@ class _LifecycleMixin(_DemoRuntimeContract):
             "k_color": np.asarray(self.runtime.k_color, dtype=np.float32).tolist(),
         }
 
-    def _fatal_error_snapshot(self) -> FatalWorkerError | None:
-        """Return the fatal error snapshot."""
-        with self._fatal_error_lock:
-            return self._fatal_error
-
-    def _record_fatal_worker_error(
-        self, stage: str, exc: BaseException
-    ) -> FatalWorkerError:
-        """Record fatal worker error."""
-        fatal = FatalWorkerError(
-            stage=str(stage), exc_type=type(exc).__name__, message=str(exc)
-        )
-        should_notify = False
-        with self._fatal_error_lock:
-            if self._fatal_error is None:
-                self._fatal_error = fatal
-                should_notify = True
-            else:
-                fatal = self._fatal_error
-        if should_notify:
-            print(f"[FATAL] {fatal.log_message()}", flush=True)
-            # Surface the failure (e.g. warm-up / shape-prior errors) on the live
-            # status band so the operator sees exactly what broke.
-            self._status.emit(
-                STAGE_FATAL,
-                f"{fatal.stage}: {fatal.message}",
-                ok=False,
-                exc_type=fatal.exc_type,
-            )
-            self.stop_event.set()
-        return fatal
-
     def run(self) -> int:
         """Run MainDataProcessingDemo."""
         self._warmup_runtime_start_perf_s = time.perf_counter()
@@ -514,11 +382,11 @@ class _LifecycleMixin(_DemoRuntimeContract):
             self._finalize_headless_tracking_product()
         finally:
             self.stop()
-        return 2 if self._fatal_error_snapshot() is not None else 0
+        return 2 if self.fatal.snapshot() is not None else 0
 
     def _finalize_headless_tracking_product(self) -> None:
         """Finalize headless tracking product."""
-        if self._fatal_error_snapshot() is not None:
+        if self.fatal.snapshot() is not None:
             return
         if self.headless_capture_writer is None:
             raise RuntimeError(
@@ -556,7 +424,7 @@ class _LifecycleMixin(_DemoRuntimeContract):
         # Warm-up failure, cancellation, or early exit must close the live RGB
         # preview immediately (the render loop also watches stop_event).
         self.warmup_rgb_preview.close()
-        self._close_lossless_queues()
+        self.lossless.close_queues()
         for thread in list(self._threads):
             if thread.is_alive():
                 thread.join(timeout=1.0)
@@ -593,68 +461,18 @@ class _LifecycleMixin(_DemoRuntimeContract):
                     ),
                 }
             )
-            self._record_fatal_worker_error(
+            self.fatal.record(
                 "formal chunk timeline",
                 RuntimeError(error_message),
             )
         self.headless_capture_writer = None
-        with self._local_ffs_lock:
-            self._local_ffs_depth_cache.clear()
-
-    def _create_ffs_runner(self) -> object:
-        """Create the configured FFS runner."""
-        try:
-            from demo_v6_2.utils.fast_foundation_stereo import (
-                FastFoundationStereoTensorRTRunner,
-            )
-
-            return FastFoundationStereoTensorRTRunner(
-                ffs_repo=Path(self.args.ffs_repo),
-                model_dir=Path(self.args.ffs_trt_model_dir),
-                trt_root=None
-                if self.args.ffs_trt_root is None
-                else Path(self.args.ffs_trt_root),
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                f"failed to start FFS TensorRT runner: {type(exc).__name__}: {exc}"
-            ) from exc
-
-    def _get_ir_to_color_aligner(
-        self,
-        *,
-        depth_shape: tuple[int, int],
-        color_shape: tuple[int, int],
-        k_ir_left: np.ndarray,
-        t_ir_left_to_color: np.ndarray,
-        k_color: np.ndarray,
-    ) -> FfsIrToColorAligner:
-        """Return the get IR to color aligner."""
-        k_ir = np.asarray(k_ir_left, dtype=np.float32).reshape(3, 3)
-        transform = np.asarray(t_ir_left_to_color, dtype=np.float32).reshape(4, 4)
-        k_col = np.asarray(k_color, dtype=np.float32).reshape(3, 3)
-        key = (
-            (int(depth_shape[0]), int(depth_shape[1])),
-            (int(color_shape[0]), int(color_shape[1])),
-            tuple(float(v) for v in k_ir.ravel()),
-            tuple(float(v) for v in transform.ravel()),
-            tuple(float(v) for v in k_col.ravel()),
-        )
-        if self._ir_to_color_aligner_key != key or self.ir_to_color_aligner is None:
-            self.ir_to_color_aligner = FfsIrToColorAligner(
-                k_ir_left=k_ir,
-                t_ir_left_to_color=transform,
-                k_color=k_col,
-                ir_shape=depth_shape,
-                color_shape=color_shape,
-            )
-            self._ir_to_color_aligner_key = key
-        return self.ir_to_color_aligner
+        self.depth_engine = None
 
     def _start_threads(self) -> None:
         """Start threads."""
         if lossless_enabled(self.args):
-            self._reset_lossless_state()
+            self.lossless.reset()
+            self._first_frame_segmented.clear()
         workers: list[tuple[str, Callable[[], None]]] = [
             ("capture", self._capture_worker)
         ]
@@ -680,7 +498,7 @@ class _LifecycleMixin(_DemoRuntimeContract):
                     worker_target()
                 except Exception as exc:
                     if not self.stop_event.is_set():
-                        self._record_fatal_worker_error(f"{worker_name} worker", exc)
+                        self.fatal.record(f"{worker_name} worker", exc)
 
             return run_worker
 
@@ -699,7 +517,7 @@ class _LifecycleMixin(_DemoRuntimeContract):
         try:
             while not self.stop_event.is_set():
                 if lossless_enabled(self.args):
-                    if self._lossless_processing_done.is_set():
+                    if self.lossless.processing_done.is_set():
                         self.stop_event.set()
                         break
                     time.sleep(0.05)

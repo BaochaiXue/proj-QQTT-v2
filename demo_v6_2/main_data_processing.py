@@ -78,7 +78,6 @@ def main(argv: list[str] | None = None) -> int:
             "camera",
         ).emit(STAGE_FATAL, f"startup: {exc}", ok=False, exc_type=type(exc).__name__)
         parser.exit(2, f"{parser.prog}: error: {exc}\n")
-    return 2
 
 
 if __name__ == "__main__":

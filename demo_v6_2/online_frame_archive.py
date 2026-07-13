@@ -285,11 +285,7 @@ class OnlineFrameArchive:
             calibration=self._calibration,
             context=f"streamed frame (online frame {online_frame_index})",
         )
-        self._record_streamed_frame(frame)
-        return online_frame_index
-
-    def _record_streamed_frame(self, frame: PreparedPhysTwinFrame) -> None:
-        """Advance the streamed counter with the frame's identity record."""
+        # Advance the streamed counter with the frame's identity record.
         self._streamed_info.append(
             {
                 "seq": int(frame.seq),
@@ -301,6 +297,7 @@ class OnlineFrameArchive:
             }
         )
         self.frames_streamed += 1
+        return online_frame_index
 
     def discard_streamed_tail(self) -> int:
         """Delete streamed frames whose chunk never committed; return the count.

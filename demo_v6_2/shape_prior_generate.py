@@ -112,17 +112,6 @@ def default_config_for_root(root):
     return root / "checkpoints" / "hf" / "pipeline.yaml"
 
 
-def load_inference_class(root):
-    """Load inference class."""
-    for path in (root, root / "notebook"):
-        path_str = str(path)
-        if path_str not in sys.path:
-            sys.path.insert(0, path_str)
-    from inference import Inference  # type: ignore
-
-    return Inference
-
-
 def rgba_to_sam3d_inputs(image):
     """Return the RGBA to SAM3D inputs."""
     final_im = image.convert("RGBA")
@@ -173,14 +162,13 @@ def resolve_inference_inputs(args):
     config = config or default_config_for_root(sam3d_root)
     if not config.exists():
         raise FileNotFoundError(f"SAM3D config not found: {config}")
-    Inference = load_inference_class(sam3d_root)
+    for path in (sam3d_root, sam3d_root / "notebook"):
+        path_str = str(path)
+        if path_str not in sys.path:
+            sys.path.insert(0, path_str)
+    from inference import Inference  # type: ignore
+
     return Inference, config
-
-
-def load_sam3d_inference(args):
-    """Resolve the SAM3D checkout and load its inference pipeline (the slow part)."""
-    Inference, config = resolve_inference_inputs(args)
-    return Inference(str(config), compile=False)
 
 
 def run_sam3d_shape_prior(args, infer=None, *, timing_ms=None):
@@ -248,20 +236,6 @@ def run_sam3d_shape_prior(args, infer=None, *, timing_ms=None):
     return timings
 
 
-def _new_timing_record(*, module_import_ms: float) -> dict[str, float]:
-    """Return all generate timing fields with explicit zero values."""
-    timing_ms = {field: 0.0 for field in _ACTIVE_TIMING_FIELDS}
-    timing_ms.update(
-        {
-            "go_wait_ms": 0.0,
-            "total_ms": 0.0,
-            "process_lifetime_ms": 0.0,
-        }
-    )
-    timing_ms["module_import_ms"] = float(module_import_ms)
-    return timing_ms
-
-
 def _active_total_ms(timing_ms: dict[str, float]) -> float:
     """Return active stage time, intentionally excluding the GO idle wait."""
     return float(sum(timing_ms[field] for field in _ACTIVE_TIMING_FIELDS))
@@ -272,7 +246,12 @@ def main(argv=None):
     module_import_ms = elapsed_ms(_MODULE_IMPORT_START_S)
     args = build_parser().parse_args(argv)
     execution_mode = "prewarmed" if args.wait_signal else "cold"
-    timing_ms = _new_timing_record(module_import_ms=module_import_ms)
+    # All generate timing fields start with explicit zero values.
+    timing_ms = dict.fromkeys(
+        (*_ACTIVE_TIMING_FIELDS, "go_wait_ms", "total_ms", "process_lifetime_ms"),
+        0.0,
+    )
+    timing_ms["module_import_ms"] = float(module_import_ms)
     ready_wall_time_s = None
 
     if args.wait_signal:

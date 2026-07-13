@@ -535,8 +535,9 @@ def object_tracking_enabled(args_or_track_mode: argparse.Namespace | str) -> boo
     return str(track_mode) in {TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_OBJECT_ONLY}
 
 
-def object_id_labels(track_mode: str = DEFAULT_TRACK_MODE) -> dict[int, str]:
-    """Return the object id labels."""
+def active_object_id_labels(args: argparse.Namespace) -> dict[int, str]:
+    """Return the active object id labels."""
+    track_mode = str(args.track_mode)
     if track_mode == TRACK_MODE_NONE:
         return {}
     if track_mode == TRACK_MODE_OBJECT_ONLY:
@@ -549,11 +550,6 @@ def object_id_labels(track_mode: str = DEFAULT_TRACK_MODE) -> dict[int, str]:
     if track_mode == TRACK_MODE_CONTROLLER_OBJECT:
         return dict(EDGE_TAM_OBJECT_LABELS)
     raise ValueError(f"unsupported track mode: {track_mode}")
-
-
-def active_object_id_labels(args: argparse.Namespace) -> dict[int, str]:
-    """Return the active object id labels."""
-    return object_id_labels(str(args.track_mode))
 
 
 def active_object_ids(args: argparse.Namespace) -> list[int]:
@@ -630,7 +626,6 @@ __all__ = [
     "validate_args",
     "controller_tracking_enabled",
     "object_tracking_enabled",
-    "object_id_labels",
     "active_object_id_labels",
     "active_object_ids",
     "tracker_enabled",

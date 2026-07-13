@@ -137,15 +137,11 @@ class _TrackerMixin(_DemoRuntimeContract):
         if mask_packet.depth_u16 is not None:
             return mask_packet.depth_u16, float(mask_packet.depth_scale_m_per_unit)
         if mask_packet.depth_source == "ffs":
-            (
-                depth_m,
-                _ffs_ms,
-                _ffs_align_ms,
-                _remote_rtt_ms,
-                _server_total_ms,
-                _request_kb,
-                _response_kb,
-            ) = self._compute_external_ffs_depth_color_m(mask_packet)
+            if self.depth_engine is None:
+                raise RuntimeError("FFS depth engine is not initialized")
+            depth_m, _ffs_ms, _align_ms = self.depth_engine.compute_color_depth(
+                mask_packet
+            )
             return np.ascontiguousarray(depth_m, dtype=np.float32), 1.0
         raise RuntimeError("tracker lift requires RGB-D depth")
 
@@ -396,7 +392,7 @@ class _TrackerMixin(_DemoRuntimeContract):
                 self.tracker_stats.record(packet.process_done_perf_s)
         except Exception as exc:
             if not self.stop_event.is_set():
-                self._record_fatal_worker_error("TAPNext++ tracker worker", exc)
+                self.fatal.record("TAPNext++ tracker worker", exc)
 
     def _lossless_tracker_worker(self) -> None:
         """Return the lossless tracker worker."""
@@ -411,7 +407,7 @@ class _TrackerMixin(_DemoRuntimeContract):
                 flush=True,
             )
             while not self.stop_event.is_set():
-                processed_frame = self.lossless_processed_frame_queue.get(
+                processed_frame = self.lossless.processed_frame_queue.get(
                     stop_event=self.stop_event
                 )
                 if processed_frame is None:
@@ -427,23 +423,14 @@ class _TrackerMixin(_DemoRuntimeContract):
                     raise LosslessPipelineError(
                         f"tracker did not produce packet for seq {mask_packet.seq}"
                     )
-                self._lossless_tracker_results += 1
-                if not self.same_seq_pairer.wait_for_side_capacity(
-                    "tracker", stop_event=self.stop_event
+                if not self.lossless.submit_tracker_packet(
+                    packet, stop_event=self.stop_event
                 ):
                     break
-                with self._lossless_pairer_lock:
-                    pairs = self.same_seq_pairer.add_tracker_packet(packet)
-                    self._publish_pairer_outputs(pairs)
-            with self._lossless_pairer_lock:
-                pairs = self.same_seq_pairer.close_tracker()
-                self._publish_pairer_outputs(pairs)
-                self._maybe_finish_lossless_processing()
+            self.lossless.close_tracker_side()
         except Exception as exc:
             if not self.stop_event.is_set():
-                self._record_fatal_worker_error(
-                    "lossless TAPNext++ tracker worker", exc
-                )
+                self.fatal.record("lossless TAPNext++ tracker worker", exc)
 
 
 __all__ = ["_TrackerMixin"]

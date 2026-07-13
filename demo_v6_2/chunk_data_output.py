@@ -259,16 +259,31 @@ class ChunkDataWriter:
         self.static_case_dir.mkdir(parents=True, exist_ok=True)
         self._write_manifest(status="recording")
 
-    def commit_chunk_data_record(
+    def commit_chunk_data(
         self,
-        data: Mapping[str, Any],
+        final_data: Mapping[str, Any],
+        track_process: Mapping[str, Any],
         *,
         source_frame_indices: Sequence[int] | None = None,
         source_timestamps_s: Sequence[float] | None = None,
         status: str = "recording",
     ) -> dict[str, Any]:
-        """Append one final_data chunk and rewrite online metadata atomically."""
-        data = dict(data)
+        """Commit one in-memory final_data window plus track diagnostics.
+
+        Appends one final_data chunk and rewrites online metadata atomically.
+        """
+        data = dict(final_data)
+        # Only the small TRACK_DIAGNOSTIC_KEYS subset of track_process rides
+        # along; the full track payload is not republished per chunk.
+        for key in TRACK_DIAGNOSTIC_KEYS:
+            if key not in track_process:
+                continue
+            value = track_process[key]
+            data[key] = (
+                str(value)
+                if key == "track_process_status"
+                else np.ascontiguousarray(np.asarray(value))
+            )
         # Chunk length is the leading (frame) axis of whichever per-frame
         # tensor is present.
         for key in ("object_points", "controller_points"):
@@ -320,35 +335,6 @@ class ChunkDataWriter:
             "online_latest_committed_frame": int(self.latest_committed_frame),
             "online_manifest": manifest,
         }
-
-    def commit_chunk_data(
-        self,
-        final_data: Mapping[str, Any],
-        track_process: Mapping[str, Any],
-        *,
-        source_frame_indices: Sequence[int] | None = None,
-        source_timestamps_s: Sequence[float] | None = None,
-        status: str = "recording",
-    ) -> dict[str, Any]:
-        """Commit one in-memory final_data window plus track diagnostics."""
-        online_data = dict(final_data)
-        # Only the small TRACK_DIAGNOSTIC_KEYS subset of track_process rides
-        # along; the full track payload is not republished per chunk.
-        for key in TRACK_DIAGNOSTIC_KEYS:
-            if key not in track_process:
-                continue
-            value = track_process[key]
-            online_data[key] = (
-                str(value)
-                if key == "track_process_status"
-                else np.ascontiguousarray(np.asarray(value))
-            )
-        return self.commit_chunk_data_record(
-            online_data,
-            source_frame_indices=source_frame_indices,
-            source_timestamps_s=source_timestamps_s,
-            status=status,
-        )
 
     def finish(self, *, status: str = "finished") -> dict[str, Any]:
         """Publish a terminal online manifest (``finished`` or ``failed``)."""
@@ -477,10 +463,6 @@ class ChunkDataWriter:
 
 
 __all__ = [
-    "TIME_KEYS",
-    "STATIC_KEYS",
     "ChunkDataWriter",
-    "atomic_json_dump",
-    "atomic_pickle_dump",
     "build_chunk_data_record",
 ]

@@ -1,8 +1,22 @@
-"""Lossless pipeline plumbing: StageStats, OrderedPacketQueue, SameSeqPairer."""
+"""Lossless pipeline plumbing: StageStats, OrderedPacketQueue, SameSeqPairer,
+LosslessPipeline, FatalErrorLatch."""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from demo_v6_2.mdp_constants import *  # noqa: F401,F403
-from demo_v6_2.mdp_packets import PairedBuildResult
+from demo_v6_2.mdp_packets import FatalWorkerError, PairedBuildResult
+from demo_v6_2.pipeline_status import STAGE_FATAL
+
+if TYPE_CHECKING:
+    from demo_v6_2.mdp_packets import (
+        FramePacket,
+        MaskPacket,
+        PcdBuildResult,
+        ProcessedFramePacket,
+        TrackerMarkerPacket,
+    )
+    from demo_v6_2.pipeline_status import PipelineStatusWriter
 
 class StageStats:
     def __init__(self, window_s: float = 1.0) -> None:
@@ -37,16 +51,6 @@ PacketT = TypeVar("PacketT")
 
 class LosslessPipelineError(RuntimeError):
     """Fatal contract violation in the lossless Demo 3.x pipeline."""
-
-
-@dataclass(frozen=True)
-class OrderedQueueStats:
-    name: str
-    size: int
-    max_size: int
-    last_put_seq: int
-    last_get_seq: int
-    closed: bool
 
 
 class OrderedPacketQueue(Generic[PacketT]):
@@ -139,22 +143,6 @@ class OrderedPacketQueue(Generic[PacketT]):
             self._condition.notify_all()
             return packet
 
-    def get_nowait(self) -> PacketT | None:
-        """Return the get nowait."""
-        with self._condition:
-            if not self._items:
-                return None
-            packet = self._items.popleft()
-            seq = int(_packet_seq(packet))
-            expected = self._last_get_seq + 1
-            if seq != expected:
-                raise LosslessPipelineError(
-                    f"{self.name} queue consumer expected seq {expected}, got {seq}"
-                )
-            self._last_get_seq = seq
-            self._condition.notify_all()
-            return packet
-
     def close(self) -> None:
         """Close OrderedPacketQueue."""
         with self._condition:
@@ -170,44 +158,6 @@ class OrderedPacketQueue(Generic[PacketT]):
             self._closed = False
             self._max_size_seen = 0
             self._condition.notify_all()
-
-    @property
-    def stats(self) -> OrderedQueueStats:
-        """Return the stats."""
-        with self._condition:
-            return OrderedQueueStats(
-                name=self.name,
-                size=len(self._items),
-                max_size=int(self._max_size_seen),
-                last_put_seq=int(self._last_put_seq),
-                last_get_seq=int(self._last_get_seq),
-                closed=bool(self._closed),
-            )
-
-    def latest_seq(self) -> int:
-        """Return the latest seq."""
-        with self._condition:
-            return int(self._last_put_seq)
-
-    def pending_count(self) -> int:
-        """Return the pending count."""
-        with self._condition:
-            return len(self._items)
-
-    def is_closed_and_empty(self) -> bool:
-        """Return whether closed and empty."""
-        with self._condition:
-            return bool(self._closed and not self._items)
-
-
-@dataclass(frozen=True)
-class PairerStats:
-    expected_seq: int
-    pending_pcd: int
-    pending_tracker: int
-    emitted_seq: int
-    pcd_closed: bool
-    tracker_closed: bool
 
 
 class SameSeqPairer:
@@ -325,19 +275,6 @@ class SameSeqPairer:
                 and not self._pending_tracker
             )
 
-    @property
-    def stats(self) -> PairerStats:
-        """Return the stats."""
-        with self._condition:
-            return PairerStats(
-                expected_seq=int(self._expected_seq),
-                pending_pcd=len(self._pending_pcd),
-                pending_tracker=len(self._pending_tracker),
-                emitted_seq=int(self._emitted_seq),
-                pcd_closed=bool(self._pcd_closed),
-                tracker_closed=bool(self._tracker_closed),
-            )
-
     def _flush_ready_locked(self) -> list[PairedBuildResult]:
         """Return the flush ready locked."""
         pairs: list[PairedBuildResult] = []
@@ -373,12 +310,215 @@ class SameSeqPairer:
             )
 
 
+class LosslessPipeline:
+    """Strict same-seq lossless pipeline state and its ordering protocol.
+
+    Owns the four gap-free queues (frame -> raw mask -> processed frame ->
+    paired output), the same-seq pairer, and the ordered-publish cursor.
+    Invariants enforced here:
+    - every queue carries contiguous seqs (OrderedPacketQueue rejects gaps);
+    - pairer sides mutate only under ``pairer_lock``, and completed pairs are
+      enqueued under that same lock so pair order matches pairing order;
+    - a pair for seq N is published only after N-1 (stale/skipped seq raises
+      LosslessPipelineError);
+    - ``first_pair_published`` releases the capture replay clock exactly once.
+    """
+
+    def __init__(self, *, max_backlog_frames: int) -> None:
+        """Initialize LosslessPipeline."""
+        self.max_backlog_frames = max(1, int(max_backlog_frames))
+        self.frame_queue: OrderedPacketQueue[FramePacket] = OrderedPacketQueue(
+            name="frame", max_backlog_frames=self.max_backlog_frames
+        )
+        self.mask_queue: OrderedPacketQueue[MaskPacket] = OrderedPacketQueue(
+            name="raw-mask", max_backlog_frames=self.max_backlog_frames
+        )
+        self.processed_frame_queue: OrderedPacketQueue[ProcessedFramePacket] = (
+            OrderedPacketQueue(
+                name="processed-frame", max_backlog_frames=self.max_backlog_frames
+            )
+        )
+        self.pair_output_queue: OrderedPacketQueue[PairedBuildResult] = (
+            OrderedPacketQueue(
+                name="pair-output", max_backlog_frames=self.max_backlog_frames
+            )
+        )
+        self.pairer = SameSeqPairer(max_backlog_frames=self.max_backlog_frames)
+        self._pairer_lock = threading.Lock()
+        self._publish_condition = threading.Condition()
+        self._next_publish_seq = 0
+        self.capture_done = threading.Event()
+        self.processing_done = threading.Event()
+        self.first_pair_published = threading.Event()
+
+    def reset(self) -> None:
+        """Reset every queue, the pairer, the publish cursor, and the events."""
+        self.frame_queue.reset()
+        self.mask_queue.reset()
+        self.processed_frame_queue.reset()
+        self.pair_output_queue.reset()
+        self.pairer.reset()
+        with self._publish_condition:
+            self._next_publish_seq = 0
+            self._publish_condition.notify_all()
+        self.capture_done.clear()
+        self.processing_done.clear()
+        self.first_pair_published.clear()
+
+    def close_queues(self) -> None:
+        """Close every queue (teardown path)."""
+        self.frame_queue.close()
+        self.mask_queue.close()
+        self.processed_frame_queue.close()
+        self.pair_output_queue.close()
+
+    # ---- capture side -----------------------------------------------------
+    def offer_frame(self, packet: FramePacket, *, stop_event: threading.Event) -> bool:
+        """Enqueue one capture frame; False when stopped while at capacity."""
+        return self.frame_queue.put_wait(packet, stop_event=stop_event) > 0
+
+    def finish_capture(self) -> None:
+        """Mark the capture side complete and close the frame queue."""
+        self.capture_done.set()
+        self.frame_queue.close()
+
+    # ---- segmentation side ------------------------------------------------
+    def publish_mask(self, packet: MaskPacket, *, stop_event: threading.Event) -> bool:
+        """Enqueue one raw mask packet; False when stopped while at capacity."""
+        if not self.mask_queue.wait_for_capacity(stop_event=stop_event):
+            return False
+        self.mask_queue.put(packet)
+        return True
+
+    # ---- pairer sides -----------------------------------------------------
+    def submit_pcd_result(
+        self, result: PcdBuildResult, *, stop_event: threading.Event
+    ) -> bool:
+        """Feed the PCD side of the pairer; False when stopped at capacity."""
+        if not self.pairer.wait_for_side_capacity("pcd", stop_event=stop_event):
+            return False
+        with self._pairer_lock:
+            self._enqueue_pairs(self.pairer.add_pcd_result(result))
+        return True
+
+    def close_pcd_side(self) -> None:
+        """Close the PCD side, flushing any pairs it completes."""
+        with self._pairer_lock:
+            self._enqueue_pairs(self.pairer.close_pcd())
+            self.maybe_finish()
+
+    def submit_tracker_packet(
+        self, packet: TrackerMarkerPacket, *, stop_event: threading.Event
+    ) -> bool:
+        """Feed the tracker side of the pairer; False when stopped at capacity."""
+        if not self.pairer.wait_for_side_capacity("tracker", stop_event=stop_event):
+            return False
+        with self._pairer_lock:
+            self._enqueue_pairs(self.pairer.add_tracker_packet(packet))
+        return True
+
+    def close_tracker_side(self) -> None:
+        """Close the tracker side, flushing any pairs it completes."""
+        with self._pairer_lock:
+            self._enqueue_pairs(self.pairer.close_tracker())
+            self.maybe_finish()
+
+    def _enqueue_pairs(self, pairs: list[PairedBuildResult]) -> None:
+        """Enqueue completed same-seq pairs for ordered publishing."""
+        for pair in pairs:
+            self.pair_output_queue.put(pair)
+
+    # ---- ordered publish side ----------------------------------------------
+    def wait_publish_turn(self, seq: int, *, stop_event: threading.Event) -> bool:
+        """Block until ``seq`` is next to publish; False when stopped first."""
+        with self._publish_condition:
+            while seq != self._next_publish_seq:
+                if seq < self._next_publish_seq:
+                    raise LosslessPipelineError(
+                        f"lossless publish received stale seq {seq}, expected "
+                        f"{self._next_publish_seq}"
+                    )
+                if stop_event.is_set():
+                    return False
+                self._publish_condition.wait(timeout=0.05)
+        return True
+
+    def finish_publish_turn(self, seq: int) -> None:
+        """Advance the publish cursor past ``seq``."""
+        with self._publish_condition:
+            if seq != self._next_publish_seq:
+                raise LosslessPipelineError(
+                    f"lossless publish expected seq {self._next_publish_seq}, got {seq}"
+                )
+            self._next_publish_seq += 1
+            self._publish_condition.notify_all()
+
+    def maybe_finish(self) -> None:
+        """Close the pair-output queue once the pairer fully drained."""
+        if self.pairer.done and not self.processing_done.is_set():
+            self.pair_output_queue.close()
+
+    def finish_output(self) -> None:
+        """Mark the ordered-publish side complete (ends the run loop)."""
+        if not self.processing_done.is_set():
+            self.processing_done.set()
+
+
+class FatalErrorLatch:
+    """First-error-wins fatal latch shared by every pipeline worker.
+
+    The first recorded error is printed, surfaced on the live status band,
+    and sets ``stop_event``; later errors return the original without side
+    effects, so teardown noise never masks the root cause.
+    """
+
+    def __init__(
+        self, *, status: PipelineStatusWriter, stop_event: threading.Event
+    ) -> None:
+        """Initialize FatalErrorLatch."""
+        self._status = status
+        self._stop_event = stop_event
+        self._lock = threading.Lock()
+        self._fatal: FatalWorkerError | None = None
+
+    def record(self, stage: str, exc: BaseException) -> FatalWorkerError:
+        """Record the first fatal worker error and set stop_event."""
+        fatal = FatalWorkerError(
+            stage=str(stage), exc_type=type(exc).__name__, message=str(exc)
+        )
+        first = False
+        with self._lock:
+            if self._fatal is None:
+                self._fatal = fatal
+                first = True
+            else:
+                fatal = self._fatal
+        if first:
+            print(
+                f"[FATAL] {fatal.stage} failed: {fatal.exc_type}: {fatal.message}",
+                flush=True,
+            )
+            self._status.emit(
+                STAGE_FATAL,
+                f"{fatal.stage}: {fatal.message}",
+                ok=False,
+                exc_type=fatal.exc_type,
+            )
+            self._stop_event.set()
+        return fatal
+
+    def snapshot(self) -> FatalWorkerError | None:
+        """Return the first recorded fatal error, if any."""
+        with self._lock:
+            return self._fatal
+
+
 __all__ = [
     "StageStats",
     "PacketT",
     "LosslessPipelineError",
-    "OrderedQueueStats",
     "OrderedPacketQueue",
-    "PairerStats",
     "SameSeqPairer",
+    "LosslessPipeline",
+    "FatalErrorLatch",
 ]

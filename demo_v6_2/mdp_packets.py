@@ -70,10 +70,6 @@ class FatalWorkerError:
     exc_type: str  # Exception class name.
     message: str  # Human-readable exception message.
 
-    def log_message(self) -> str:
-        """Format the worker failure for logs and HUD output."""
-        return f"{self.stage} failed: {self.exc_type}: {self.message}"
-
 
 @dataclass(frozen=True)
 class RecordedRgbdFrameRef:
@@ -220,20 +216,6 @@ class MaskedPcdPacket:
     def object_point_count(self) -> int:
         """Return the object point count."""
         return int(self.object_xyz_m.shape[0])
-
-    @property
-    def point_count(self) -> int:
-        """Return the point count."""
-        return self.controller_point_count + self.object_point_count
-
-    @property
-    def shape_prior_point_count(self) -> int:
-        """Return the shape prior point count."""
-        return int(
-            np.asarray(self.shape_prior_points_m, dtype=np.float32)
-            .reshape(-1, 3)
-            .shape[0]
-        )
 
 
 @dataclass(frozen=True)

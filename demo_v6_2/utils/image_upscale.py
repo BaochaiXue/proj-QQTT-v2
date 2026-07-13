@@ -107,24 +107,6 @@ def _upscale_image_with_timing(
     }
 
 
-def upscale_image(
-    pipeline: StableDiffusionUpscalePipeline,
-    *,
-    img_path: str,
-    mask_path: str | None,
-    output_path: str,
-    category: str,
-) -> None:
-    """Crop to the mask bbox and upscale, mirroring the original stage."""
-    _upscale_image_with_timing(
-        pipeline,
-        img_path=img_path,
-        mask_path=mask_path,
-        output_path=output_path,
-        category=category,
-    )
-
-
 def _active_total_ms(timing_ms: dict[str, float]) -> float:
     """Return active stage time, intentionally excluding the GO idle wait."""
     return float(sum(timing_ms[field] for field in _ACTIVE_TIMING_FIELDS))

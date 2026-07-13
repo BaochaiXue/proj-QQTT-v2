@@ -1,17 +1,12 @@
-"""Open3D GUI helpers: WSLG env setup, module loading, tensor point-cloud layer."""
+"""Rendering helpers: WSLG Open3D env setup and diagnostic video writers."""
 
 from __future__ import annotations
 
-from collections import deque
-from dataclasses import dataclass
 import os
 from pathlib import Path
-import time
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 import numpy as np
-
-from demo_v6_2.utils.concurrency import elapsed_ms
 
 WSLG_OPEN3D_ENV_UNSET_KEYS = (
     "VK_ICD_FILENAMES",
@@ -61,213 +56,259 @@ def apply_wslg_open3d_env_defaults() -> dict[str, str]:
     return applied
 
 
-def load_open3d_modules():
-    """Load open3d modules."""
-    apply_wslg_open3d_env_defaults()
-    try:
-        import open3d as o3d  # type: ignore
-        from open3d.visualization import gui, rendering  # type: ignore
-    except ImportError as exc:
-        raise RuntimeError("open3d is required to render the realtime point cloud") from exc
-    return o3d, gui, rendering
+# ---------------------------------------------------------------------------
+# Diagnostic video rendering (PhysTwin strict-product headless finalize)
+# ---------------------------------------------------------------------------
 
 
-class RenderStats:
-    def __init__(self, window_s: float = 1.0) -> None:
-        """Initialize RenderStats."""
-        if window_s <= 0:
-            raise ValueError("window_s must be positive")
-        self.window_s = float(window_s)
-        self._samples: deque[tuple[float, float]] = deque()
-        self.latest_latency_ms = 0.0
+def _load_rgb(path: Path) -> np.ndarray:
+    """Load RGB."""
+    from PIL import Image
 
-    def record_render(self, *, render_time_s: float, latency_ms: float) -> None:
-        """Record render."""
-        self.latest_latency_ms = float(latency_ms)
-        self._samples.append((float(render_time_s), float(latency_ms)))
-        cutoff = float(render_time_s) - self.window_s
-        while len(self._samples) > 1 and self._samples[0][0] < cutoff:
-            self._samples.popleft()
-
-    @property
-    def render_fps(self) -> float:
-        """Return the recent render FPS."""
-        if len(self._samples) < 2:
-            return 0.0
-        elapsed = self._samples[-1][0] - self._samples[0][0]
-        if elapsed <= 0:
-            return 0.0
-        return float((len(self._samples) - 1) / elapsed)
-
-    @property
-    def mean_latency_ms(self) -> float:
-        """Return the mean render latency in milliseconds."""
-        if not self._samples:
-            return 0.0
-        return float(sum(latency for _, latency in self._samples) / len(self._samples))
+    return np.asarray(Image.open(path).convert("RGB"), dtype=np.uint8)
 
 
-@dataclass(frozen=True)
-class RenderLayerUpdate:
-    points_count: int
-    colors_count: int
-    cpu_format_ms: float
-    open3d_points_update_ms: float
-    open3d_colors_update_ms: float
-    open3d_update_geometry_ms: float
-    open3d_add_geometry_ms: float = 0.0
-    open3d_remove_geometry_ms: float = 0.0
-    geometry_recreated: bool = False
-    tensor_rebound: bool = False
+def _open_video_writer(path: Path, *, size: tuple[int, int], fps: float = 30.0):
+    """Open video writer."""
+    import cv2
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    width, height = int(size[0]), int(size[1])
+    writer = cv2.VideoWriter(
+        str(path), cv2.VideoWriter_fourcc(*"mp4v"), float(fps), (width, height)
+    )
+    if not writer.isOpened():
+        raise RuntimeError(f"failed to open video writer for {path}")
+    return writer
 
 
-class _Float32Buffer:
-    """Reusable Nx3 float32 buffer for in-place point/color updates."""
+def _render_tracking_2d_video(
+    path: Path,
+    *,
+    capture_dir: Path,
+    rows: Sequence[Mapping[str, Any]],
+    tracks_yx: np.ndarray,
+    visibility: np.ndarray,
+    query_is_object: np.ndarray,
+    query_is_controller: np.ndarray,
+    size: tuple[int, int] = (848, 480),
+) -> None:
+    """Render tracking 2d video."""
+    import cv2
 
-    def __init__(self) -> None:
-        """Initialize _Float32Buffer."""
-        self.array: np.ndarray | None = None
-
-    def ensure(self, n_points: int) -> np.ndarray:
-        """Return the ensure."""
-        if self.array is None or self.array.shape != (n_points, 3):
-            self.array = np.empty((n_points, 3), dtype=np.float32)
-        return self.array
-
-
-class Open3DSceneTensorLayer:
-    """Open3D GUI Scene tensor point-cloud layer with an in-place no-recreate fast path."""
-
-    def __init__(
-        self,
-        *,
-        name: str,
-        o3d_module: Any,
-        o3c_module: Any,
-        rendering_module: Any,
-        scene: Any,
-        material: Any,
-        device: Any,
-        min_capacity: int = 0,
-    ) -> None:
-        """Initialize Open3DSceneTensorLayer."""
-        if int(min_capacity) < 0:
-            raise ValueError("min_capacity must be >= 0")
-        self.name = str(name)
-        self.o3d = o3d_module
-        self.o3c = o3c_module
-        self.rendering = rendering_module
-        self.scene = scene
-        self.material = material
-        self.pcd = self.o3d.t.geometry.PointCloud(device)
-        self.added = False
-        self.point_count = 0
-        self.capacity = 0
-        self.min_capacity = int(min_capacity)
-        self._points_buffer = _Float32Buffer()
-        self._colors_buffer = _Float32Buffer()
-        self._refs: dict[str, np.ndarray | None] = {"points": None, "colors": None}
-
-    def update(self, points_xyz_m: np.ndarray, colors_rgb_u8: np.ndarray) -> RenderLayerUpdate:
-        """Update Open3DSceneTensorLayer."""
-        format_start_s = time.perf_counter()
-        if points_xyz_m.ndim != 2 or points_xyz_m.shape[1] != 3:
-            raise ValueError("points_xyz_m must be an Nx3 array")
-        if colors_rgb_u8.ndim != 2 or colors_rgb_u8.shape[1] != 3:
-            raise ValueError("colors_rgb_u8 must be an Nx3 array")
-        n_points = int(points_xyz_m.shape[0])
-        # Empty update: drop the geometry entirely (Open3D cannot render a
-        # zero-point tensor cloud) and reset capacity so the next non-empty
-        # update rebuilds buffers from scratch.
-        if n_points == 0:
-            remove_ms = 0.0
-            if self.added:
-                remove_start_s = time.perf_counter()
-                self.scene.remove_geometry(self.name)
-                remove_ms = elapsed_ms(remove_start_s)
-            self.added = False
-            self.point_count = 0
-            self.capacity = 0
-            self._refs["points"] = None
-            self._refs["colors"] = None
-            return RenderLayerUpdate(
-                points_count=0,
-                colors_count=int(colors_rgb_u8.shape[0]),
-                cpu_format_ms=elapsed_ms(format_start_s),
-                open3d_points_update_ms=0.0,
-                open3d_colors_update_ms=0.0,
-                open3d_update_geometry_ms=0.0,
-                open3d_remove_geometry_ms=remove_ms,
-                geometry_recreated=remove_ms > 0.0,
+    writer = _open_video_writer(path, size=size)
+    width, height = int(size[0]), int(size[1])
+    is_object = np.asarray(query_is_object, dtype=bool).reshape(-1)
+    is_controller = np.asarray(query_is_controller, dtype=bool).reshape(-1)
+    for frame_idx, row in enumerate(rows):
+        rgb = _load_rgb(capture_dir / str(row["rgb_path"]))
+        frame = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        src_h, src_w = frame.shape[:2]
+        if (src_w, src_h) != (width, height):
+            frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_LINEAR)
+        # Track coordinates are in source pixels; scale them into the output size.
+        sx = float(width) / max(1.0, float(src_w))
+        sy = float(height) / max(1.0, float(src_h))
+        tracks = np.asarray(tracks_yx[frame_idx], dtype=np.float32)
+        vis = np.asarray(visibility[frame_idx], dtype=bool)
+        finite = np.isfinite(tracks).all(axis=1)
+        visible = np.flatnonzero(vis & finite)
+        for idx in visible:
+            y = int(round(float(tracks[idx, 0]) * sy))
+            x = int(round(float(tracks[idx, 1]) * sx))
+            if x < 0 or x >= width or y < 0 or y >= height:
+                continue
+            # BGR color code: green = object query, red = controller query,
+            # light gray = neither semantic class.
+            color = (
+                (60, 220, 60)
+                if idx < len(is_object) and is_object[idx]
+                else (40, 80, 255)
             )
-
-        if colors_rgb_u8.shape[0] != n_points:
-            raise ValueError("points and colors must have the same length")
-
-        # Capacity only grows (monotonic high-water mark): the Open3D tensors wrap
-        # the numpy buffers without copying, so as long as capacity is unchanged we
-        # can write in place and skip rebinding entirely.
-        old_capacity = int(self.capacity)
-        next_capacity = max(old_capacity, n_points, int(self.min_capacity))
-        capacity_changed = next_capacity != old_capacity
-
-        points_update_start_s = time.perf_counter()
-        points = self._points_buffer.ensure(next_capacity)
-        np.copyto(points[:n_points], points_xyz_m, casting="unsafe")
-        if next_capacity > n_points:
-            # Park unused slots at z=-1 (behind the camera) so they never render.
-            points[n_points:, 0:2] = np.float32(0.0)
-            points[n_points:, 2] = np.float32(-1.0)
-        tensor_rebound = capacity_changed or self._refs["points"] is None
-        if tensor_rebound:
-            self._refs["points"] = points
-            self.pcd.point.positions = self.o3c.Tensor.from_numpy(points)
-        points_update_ms = elapsed_ms(points_update_start_s)
-
-        colors_update_start_s = time.perf_counter()
-        colors = self._colors_buffer.ensure(next_capacity)
-        np.multiply(colors_rgb_u8, np.float32(1.0 / 255.0), out=colors[:n_points], casting="unsafe")
-        if next_capacity > n_points:
-            colors[n_points:] = np.float32(0.0)
-        colors_rebound = capacity_changed or self._refs["colors"] is None
-        if colors_rebound:
-            self._refs["colors"] = colors
-            self.pcd.point.colors = self.o3c.Tensor.from_numpy(colors)
-        tensor_rebound = tensor_rebound or colors_rebound
-        colors_update_ms = elapsed_ms(colors_update_start_s)
-
-        cpu_format_ms = elapsed_ms(format_start_s)
-        update_start_s = time.perf_counter()
-        add_ms = 0.0
-        remove_ms = 0.0
-        recreated = False
-        # Slow path (first frame or capacity growth): re-add the geometry so the
-        # scene picks up the rebound tensors. Fast path: flag-based in-place update.
-        if not self.added or capacity_changed:
-            if self.added:
-                remove_start_s = time.perf_counter()
-                self.scene.remove_geometry(self.name)
-                remove_ms = elapsed_ms(remove_start_s)
-            add_start_s = time.perf_counter()
-            self.scene.add_geometry(self.name, self.pcd, self.material)
-            add_ms = elapsed_ms(add_start_s)
-            self.added = True
-            recreated = True
-        else:
-            flags = self.rendering.Scene.UPDATE_POINTS_FLAG | self.rendering.Scene.UPDATE_COLORS_FLAG
-            self.scene.scene.update_geometry(self.name, self.pcd, flags)
-        update_ms = elapsed_ms(update_start_s)
-        self.point_count = n_points
-        self.capacity = next_capacity
-        return RenderLayerUpdate(
-            points_count=n_points,
-            colors_count=int(colors_rgb_u8.shape[0]),
-            cpu_format_ms=cpu_format_ms,
-            open3d_points_update_ms=points_update_ms,
-            open3d_colors_update_ms=colors_update_ms,
-            open3d_update_geometry_ms=update_ms,
-            open3d_add_geometry_ms=add_ms,
-            open3d_remove_geometry_ms=remove_ms,
-            geometry_recreated=recreated,
-            tensor_rebound=tensor_rebound,
+            if (
+                idx < len(is_controller)
+                and not is_object[idx]
+                and not is_controller[idx]
+            ):
+                color = (220, 220, 220)
+            cv2.circle(frame, (x, y), 2, color, -1, lineType=cv2.LINE_AA)
+        cv2.putText(
+            frame,
+            f"tracking_2d frame={frame_idx} visible={len(visible)}",
+            (16, 28),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
         )
+        writer.write(frame)
+    writer.release()
+
+
+def _world_xy_bounds(*arrays: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Padded world-XY bounds over all finite, non-zero points.
+
+    Zero-norm points (the "no depth" sentinel) are excluded so they do not
+    drag the view toward the origin; an 8% margin keeps dots off the frame
+    edge, and a unit box is the fallback when nothing is valid.
+    """
+    chunks: list[np.ndarray] = []
+    for arr in arrays:
+        pts = np.asarray(arr, dtype=np.float32).reshape(-1, 3)
+        finite = np.isfinite(pts).all(axis=1) & (np.linalg.norm(pts, axis=1) > 0.0)
+        if np.any(finite):
+            chunks.append(pts[finite, :2])
+    if not chunks:
+        return np.array([-1.0, -1.0], dtype=np.float32), np.array(
+            [1.0, 1.0], dtype=np.float32
+        )
+    xy = np.concatenate(chunks, axis=0)
+    lo = np.min(xy, axis=0)
+    hi = np.max(xy, axis=0)
+    span = np.maximum(hi - lo, np.float32(1e-3))
+    pad = span * np.float32(0.08)
+    return lo - pad, hi + pad
+
+
+def _draw_world_points(
+    frame: np.ndarray,
+    points: np.ndarray,
+    *,
+    bounds: tuple[np.ndarray, np.ndarray],
+    color_bgr: tuple[int, int, int],
+    radius: int,
+) -> int:
+    """Scatter world points onto a top-down XY view; returns the drawn count."""
+    import cv2
+
+    pts = np.asarray(points, dtype=np.float32).reshape(-1, 3)
+    finite = np.isfinite(pts).all(axis=1) & (np.linalg.norm(pts, axis=1) > 0.0)
+    pts = pts[finite]
+    if len(pts) == 0:
+        return 0
+    lo, hi = bounds
+    height, width = frame.shape[:2]
+    span = np.maximum(hi - lo, np.float32(1e-6))
+    # Fixed pixel margins leave room for the HUD text; world +Y points up, so
+    # flip the row axis after mapping.
+    px = np.clip(
+        ((pts[:, 0] - lo[0]) / span[0] * (width - 60) + 30).astype(np.int64),
+        0,
+        width - 1,
+    )
+    py = np.clip(
+        ((pts[:, 1] - lo[1]) / span[1] * (height - 80) + 50).astype(np.int64),
+        0,
+        height - 1,
+    )
+    py = height - 1 - py
+    for x, y in zip(px, py):
+        cv2.circle(
+            frame, (int(x), int(y)), int(radius), color_bgr, -1, lineType=cv2.LINE_AA
+        )
+    return int(len(pts))
+
+
+def _render_world_track_video(
+    path: Path,
+    *,
+    object_points: np.ndarray,
+    object_valid: np.ndarray,
+    controller_points: np.ndarray,
+    title: str,
+    size: tuple[int, int] = (640, 480),
+) -> None:
+    """Render world track video."""
+    import cv2
+
+    writer = _open_video_writer(path, size=size)
+    frame_count = max(
+        int(np.asarray(object_points).shape[0]),
+        int(np.asarray(controller_points).shape[0]),
+        1,
+    )
+    # Bounds are computed once over the whole clip so the view does not jitter
+    # frame to frame.
+    bounds = _world_xy_bounds(object_points, controller_points)
+    width, height = int(size[0]), int(size[1])
+    for frame_idx in range(frame_count):
+        frame = np.zeros((height, width, 3), dtype=np.uint8)
+        # Indices clamp to the last frame so a shorter object/controller/valid
+        # array simply holds its final state.
+        obj = np.asarray(
+            object_points[min(frame_idx, max(0, object_points.shape[0] - 1))],
+            dtype=np.float32,
+        ).reshape(-1, 3)
+        valid = np.asarray(
+            object_valid[min(frame_idx, max(0, object_valid.shape[0] - 1))], dtype=bool
+        ).reshape(-1)
+        if len(valid) == len(obj):
+            obj = obj[valid]
+        ctrl = np.asarray(
+            controller_points[min(frame_idx, max(0, controller_points.shape[0] - 1))],
+            dtype=np.float32,
+        ).reshape(-1, 3)
+        obj_count = _draw_world_points(
+            frame, obj, bounds=bounds, color_bgr=(50, 220, 80), radius=2
+        )
+        ctrl_count = _draw_world_points(
+            frame, ctrl, bounds=bounds, color_bgr=(40, 40, 255), radius=5
+        )
+        cv2.putText(
+            frame,
+            title,
+            (18, 32),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.72,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            f"frame={frame_idx} object={obj_count} controller={ctrl_count}",
+            (18, 64),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.62,
+            (210, 230, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        writer.write(frame)
+    writer.release()
+
+
+def _render_empty_video(
+    path: Path, *, frame_count: int, label: str, size: tuple[int, int] = (640, 360)
+) -> None:
+    """Render empty video."""
+    import cv2
+
+    writer = _open_video_writer(path, size=size)
+    width, height = int(size[0]), int(size[1])
+    count = max(1, int(frame_count))
+    for frame_idx in range(count):
+        frame = np.zeros((height, width, 3), dtype=np.uint8)
+        cv2.putText(
+            frame,
+            label,
+            (24, 48),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            frame,
+            f"frame={frame_idx}",
+            (24, 86),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            (180, 220, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        writer.write(frame)
+    writer.release()

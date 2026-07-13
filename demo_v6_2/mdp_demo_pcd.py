@@ -25,37 +25,30 @@ class _PcdMixin(_DemoRuntimeContract):
         """Build canonical frames, then fan them out to PCD pairing and tracker."""
         try:
             while not self.stop_event.is_set():
-                raw_mask_packet = self.lossless_mask_queue.get(
+                raw_mask_packet = self.lossless.mask_queue.get(
                     stop_event=self.stop_event
                 )
                 if raw_mask_packet is None:
                     break
                 result = self._build_processed_frame_result(raw_mask_packet)
                 self._maybe_start_shape_prior_from_pcd_result(result)
-                self._lossless_processed_frames += 1
 
-                if not self.lossless_processed_frame_queue.wait_for_capacity(
+                if not self.lossless.processed_frame_queue.wait_for_capacity(
                     stop_event=self.stop_event
                 ):
                     break
-                self.lossless_processed_frame_queue.put(result.processed_frame)
+                self.lossless.processed_frame_queue.put(result.processed_frame)
 
-                if not self.same_seq_pairer.wait_for_side_capacity(
-                    "pcd", stop_event=self.stop_event
+                if not self.lossless.submit_pcd_result(
+                    result, stop_event=self.stop_event
                 ):
                     break
-                with self._lossless_pairer_lock:
-                    pairs = self.same_seq_pairer.add_pcd_result(result)
-                    self._publish_pairer_outputs(pairs)
 
-            self.lossless_processed_frame_queue.close()
-            with self._lossless_pairer_lock:
-                pairs = self.same_seq_pairer.close_pcd()
-                self._publish_pairer_outputs(pairs)
-                self._maybe_finish_lossless_processing()
+            self.lossless.processed_frame_queue.close()
+            self.lossless.close_pcd_side()
         except Exception as exc:
             if not self.stop_event.is_set():
-                self._record_fatal_worker_error("processed-frame worker", exc)
+                self.fatal.record("processed-frame worker", exc)
 
     def _write_headless_pcd_result(
         self,
@@ -109,22 +102,18 @@ class _PcdMixin(_DemoRuntimeContract):
     ) -> tuple[np.ndarray, dict[str, float]]:
         """Resolve one color-aligned metric depth frame and timing values."""
         if mask_packet.depth_source == "ffs":
-            (
-                depth_m,
-                ffs_ms,
-                ffs_align_ms,
-                remote_rtt_ms,
-                remote_server_total_ms,
-                remote_request_kb,
-                remote_response_kb,
-            ) = self._compute_external_ffs_depth_color_m(mask_packet)
+            if self.depth_engine is None:
+                raise RuntimeError("FFS depth engine is not initialized")
+            depth_m, ffs_ms, ffs_align_ms = self.depth_engine.compute_color_depth(
+                mask_packet
+            )
             return np.ascontiguousarray(depth_m, dtype=np.float32), {
                 "ffs_ms": float(ffs_ms),
                 "ffs_align_ms": float(ffs_align_ms),
-                "remote_rtt_ms": float(remote_rtt_ms),
-                "remote_server_total_ms": float(remote_server_total_ms),
-                "remote_request_kb": float(remote_request_kb),
-                "remote_response_kb": float(remote_response_kb),
+                "remote_rtt_ms": 0.0,
+                "remote_server_total_ms": 0.0,
+                "remote_request_kb": 0.0,
+                "remote_response_kb": 0.0,
                 "depth_convert_ms": 0.0,
             }
         if mask_packet.depth_u16 is None:

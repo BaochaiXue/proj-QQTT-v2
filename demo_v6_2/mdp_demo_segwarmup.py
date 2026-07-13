@@ -7,7 +7,7 @@ formal gate lifts. The dominant warm-up cost is the SAM3D shape-prior chain
 (submitted here, generated in ``shape_prior_warmup``); warm-up produces the frozen
 frame-0 masks + seeded EdgeTAM session + shape-prior artifacts. The formal timeline
 starts at output frame 1, one frame after the warm-up frame-0 anchor, once
-shape-prior is READY. Warm-up failures route to ``_record_fatal_worker_error`` and
+shape-prior is READY. Warm-up failures route to the shared ``fatal`` latch and
 tear the process down (surfaced on the live status band, Q23).
 """
 
@@ -238,7 +238,7 @@ class _SegWarmupMixin(_DemoRuntimeContract):
                 else None
             ),
             "lossless_max_backlog_frames": (
-                int(self.lossless_max_backlog_frames)
+                int(self.lossless.max_backlog_frames)
                 if lossless_enabled(self.args)
                 else None
             ),
@@ -315,7 +315,7 @@ class _SegWarmupMixin(_DemoRuntimeContract):
                 last_seq = first_frame.seq
                 while not self.stop_event.is_set():
                     if lossless_enabled(self.args):
-                        frame = self.lossless_frame_queue.get(
+                        frame = self.lossless.frame_queue.get(
                             stop_event=self.stop_event
                         )
                         if frame is None:
@@ -339,17 +339,17 @@ class _SegWarmupMixin(_DemoRuntimeContract):
                             add_prompt=False,
                         )
                     except Exception as exc:
-                        self._record_fatal_worker_error("EdgeTAM segmentation", exc)
+                        self.fatal.record("EdgeTAM segmentation", exc)
                         break
                     self._publish_mask_packet(packet)
                     self.seg_stats.record(packet.process_done_perf_s)
                 if lossless_enabled(self.args):
-                    self.lossless_mask_queue.close()
+                    self.lossless.mask_queue.close()
         except Exception as exc:
             if not self.stop_event.is_set():
-                self._record_fatal_worker_error("segmentation worker", exc)
+                self.fatal.record("segmentation worker", exc)
             if lossless_enabled(self.args):
-                self.lossless_mask_queue.close()
+                self.lossless.mask_queue.close()
 
     def _shape_prior_frame0_request_from_pcd_result(
         self,
@@ -476,7 +476,7 @@ class _SegWarmupMixin(_DemoRuntimeContract):
     def _wait_for_first_frame(self) -> FramePacket | None:
         """Wait for for first frame."""
         if lossless_enabled(self.args):
-            return self.lossless_frame_queue.get(stop_event=self.stop_event)
+            return self.lossless.frame_queue.get(stop_event=self.stop_event)
         while not self.stop_event.is_set():
             frame = self.capture_slot.get_latest_after(-1)
             if frame is not None:

@@ -405,11 +405,6 @@ class TrackingRuntime:
         self._query_ids: np.ndarray | None = None
         self._query_semantic_labels: np.ndarray | None = None
 
-    @property
-    def initialized(self) -> bool:
-        """Return the initialized."""
-        return self._anchor_indices is not None
-
     def _freeze_identity(
         self,
         window: Mapping[str, np.ndarray],
@@ -521,13 +516,6 @@ class TrackingRuntime:
                 tiers.append(tier)
         return tiers
 
-    def _recovery_tier(self, valid_count: int) -> int | None:
-        """Return the recovery tier."""
-        for tier in self._recovery_tiers():
-            if int(valid_count) >= tier:
-                return tier
-        return None
-
     def _fallback_anchor_donors(
         self, anchor_column: int, usable_frame: np.ndarray
     ) -> np.ndarray | None:
@@ -581,7 +569,9 @@ class TrackingRuntime:
                     valid_neighbors.append(int(neighbor_idx))
                     if len(valid_neighbors) >= self.recovery_neighbor_count:
                         break
-        tier = self._recovery_tier(len(valid_neighbors))
+        tier = next(
+            (t for t in self._recovery_tiers() if len(valid_neighbors) >= t), None
+        )
         if tier is not None:
             donors = np.asarray(valid_neighbors[:tier], dtype=np.int64)
         else:
@@ -644,7 +634,7 @@ class TrackingRuntime:
         # tail-row motion (window last -> next window first) a real test in
         # the publishing chunk, which is origin's own indexing for boundary
         # jumps.
-        if not self.initialized:
+        if self._anchor_indices is None:
             object_motions_valid, _ = motion_consistency(
                 obj_points, obj_vis, once_false_mask=False
             )

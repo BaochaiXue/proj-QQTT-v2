@@ -12,12 +12,13 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any
+from typing import Any, Callable, Mapping
 
 import numpy as np
 from PIL import Image
 
 from demo_v6_2.shape_prior_timing import (
+    _pre_submit_timing,
     build_critical_path_analysis,
     critical_path_entry,
     elapsed_ms,
@@ -183,58 +184,6 @@ def _points_array(value: np.ndarray, *, name: str) -> np.ndarray:
     return np.ascontiguousarray(points, dtype=np.float32)
 
 
-def _pre_submit_timing(
-    frame0: ShapePriorFrame0Request,
-    *,
-    request_start_s: float,
-) -> dict[str, Any]:
-    """Describe the camera-process critical path before shape-prior submit."""
-    milestones = (
-        frame0.warmup_runtime_start_perf_s,
-        frame0.frame_receive_perf_s,
-        frame0.frame_mask_ready_perf_s,
-        frame0.frame_pcd_ready_perf_s,
-    )
-    if all(value is None for value in milestones):
-        return {
-            "available": False,
-            "reason": "standalone request has no camera warm-up milestones",
-        }
-    if any(value is None for value in milestones):
-        raise ValueError("shape-prior pre-submit milestones must be all present")
-    runtime_start_s, receive_s, mask_ready_s, pcd_ready_s = (
-        float(value) for value in milestones if value is not None
-    )
-    ordered = (
-        runtime_start_s,
-        receive_s,
-        mask_ready_s,
-        pcd_ready_s,
-        float(request_start_s),
-    )
-    if any(current < previous for previous, current in zip(ordered, ordered[1:])):
-        raise ValueError("shape-prior pre-submit milestones are not monotonic")
-    return {
-        "available": True,
-        "runtime_start_to_frame0_receive_ms": elapsed_ms(
-            runtime_start_s,
-            receive_s,
-        ),
-        "frame0_receive_to_mask_ready_ms": elapsed_ms(receive_s, mask_ready_s),
-        "mask_ready_to_pcd_ready_ms": elapsed_ms(mask_ready_s, pcd_ready_s),
-        "pcd_ready_to_shape_prior_submit_ms": elapsed_ms(
-            pcd_ready_s,
-            request_start_s,
-        ),
-        "runtime_start_to_shape_prior_submit_ms": elapsed_ms(
-            runtime_start_s,
-            request_start_s,
-        ),
-        "frame0_pipeline_timing_ms": dict(frame0.frame0_pipeline_timing_ms),
-        "perception_profile": dict(frame0.frame0_perception_profile),
-    }
-
-
 def write_shape_prior_points_npz(
     path: str | Path,
     *,
@@ -307,10 +256,8 @@ def write_shape_prior_case(
             f"{(*image_shape, 3)}; got {points_world.shape}"
         )
     points_world = np.ascontiguousarray(points_world)
-    if np.any(object_mask & ~depth_valid):
-        raise ValueError("shape prior object mask contains depth-invalid pixels")
-    if np.any(controller_mask & ~depth_valid):
-        raise ValueError("shape prior controller mask contains depth-invalid pixels")
+    # Masks are guaranteed depth-valid subsets upstream by
+    # ProcessedFramePacket.__post_init__ (mdp_packets), so no re-check here.
     k_color = np.asarray(frame0.k_color, dtype=np.float32).reshape(3, 3)
     c2w = np.asarray(frame0.camera_to_world_c2w, dtype=np.float32).reshape(4, 4)
     if not np.isfinite(k_color).all():
@@ -571,10 +518,6 @@ class ShapePriorLocalClient:
                     worker.kill()
                     worker.wait()
 
-    def _take_prewarmed_worker(self, stage: str) -> subprocess.Popen[str] | None:
-        with self._prewarm_lock:
-            return self._prewarm_workers.pop(stage, None)
-
     def _run_prewarmed_stage(
         self, worker: subprocess.Popen[str], *, stage_name: str
     ) -> tuple[float, float]:
@@ -604,7 +547,8 @@ class ShapePriorLocalClient:
         prewarmed_stages: list[str],
     ) -> tuple[float, dict[str, Any]]:
         """Run a stage via its pre-warmed worker when present, else cold."""
-        worker = self._take_prewarmed_worker(stage)
+        with self._prewarm_lock:
+            worker = self._prewarm_workers.pop(stage, None)
         if worker is None:
             stage_ms = _run_stage(command, env=env)
             return stage_ms, {
@@ -721,95 +665,69 @@ class ShapePriorLocalClient:
         high_resolution_path = paths["shape"] / "high_resolution.png"
         masked_image_path = paths["shape"] / "masked_image.png"
 
-        upscale_start_s = time.perf_counter()
-        _upscale_ms, upscale_orchestration = self._run_stage_maybe_prewarmed(
-            PREWARM_STAGE_UPSCALE,
-            commands[PREWARM_STAGE_UPSCALE],
-            env=env,
-            prewarmed_stages=prewarmed_stages,
-        )
-        upscale_end_s = time.perf_counter()
-        _require_stage_file(high_resolution_path, stage_name="shape-prior upscale")
-        critical_path.append(
-            critical_path_entry(
-                stage="upscale",
-                path_start_s=request_start_s,
-                stage_start_s=upscale_start_s,
-                stage_end_s=upscale_end_s,
-                details=self._completed_stage_details(
-                    PREWARM_STAGE_UPSCALE,
-                    orchestration=upscale_orchestration,
-                ),
+        def record_stage(
+            stage: str,
+            run: Callable[[], Any],
+            build_details: Callable[[Any], Mapping[str, Any]],
+            *,
+            require_file: tuple[Path, str] | None = None,
+        ) -> None:
+            """Run one stage, then append its validated critical-path entry."""
+            stage_start_s = time.perf_counter()
+            outcome = run()
+            stage_end_s = time.perf_counter()
+            if require_file is not None:
+                _require_stage_file(require_file[0], stage_name=require_file[1])
+            critical_path.append(
+                critical_path_entry(
+                    stage=stage,
+                    path_start_s=request_start_s,
+                    stage_start_s=stage_start_s,
+                    stage_end_s=stage_end_s,
+                    details=build_details(outcome),
+                )
             )
+
+        def record_subprocess_stage(
+            stage: str,
+            *,
+            require_file: tuple[Path, str] | None = None,
+        ) -> None:
+            """Record one cold-or-prewarmed subprocess stage run."""
+            record_stage(
+                stage,
+                lambda: self._run_stage_maybe_prewarmed(
+                    stage, commands[stage], env=env, prewarmed_stages=prewarmed_stages
+                ),
+                lambda outcome: self._completed_stage_details(
+                    stage, orchestration=outcome[1]
+                ),
+                require_file=require_file,
+            )
+
+        record_subprocess_stage(
+            PREWARM_STAGE_UPSCALE,
+            require_file=(high_resolution_path, "shape-prior upscale"),
         )
 
         from demo_v6_2.perception import (  # noqa: PLC0415
             sam31_image_segmentation,
         )
 
-        segment_start_s = time.perf_counter()
-        _masked_image, segment_details = (
-            sam31_image_segmentation.segment_image_to_origin_rgba(
+        record_stage(
+            "segment_image",
+            lambda: sam31_image_segmentation.segment_image_to_origin_rgba(
                 img_path=high_resolution_path,
                 text_prompt=self.object_name,
                 output_path=masked_image_path,
                 device=self.sam31_device,
                 reuse_model=self.reuse_sam31_model,
-            )
+            ),
+            lambda outcome: outcome[1],
+            require_file=(masked_image_path, "shape-prior segment"),
         )
-        segment_end_s = time.perf_counter()
-        _require_stage_file(masked_image_path, stage_name="shape-prior segment")
-        critical_path.append(
-            critical_path_entry(
-                stage="segment_image",
-                path_start_s=request_start_s,
-                stage_start_s=segment_start_s,
-                stage_end_s=segment_end_s,
-                details=segment_details,
-            )
-        )
-
-        generate_start_s = time.perf_counter()
-        _generate_ms, generate_orchestration = self._run_stage_maybe_prewarmed(
-            PREWARM_STAGE_GENERATE,
-            commands[PREWARM_STAGE_GENERATE],
-            env=env,
-            prewarmed_stages=prewarmed_stages,
-        )
-        generate_end_s = time.perf_counter()
-        critical_path.append(
-            critical_path_entry(
-                stage="generate",
-                path_start_s=request_start_s,
-                stage_start_s=generate_start_s,
-                stage_end_s=generate_end_s,
-                details=self._completed_stage_details(
-                    PREWARM_STAGE_GENERATE,
-                    orchestration=generate_orchestration,
-                ),
-            )
-        )
-
-        align_start_s = time.perf_counter()
-        _align_ms, align_orchestration = self._run_stage_maybe_prewarmed(
-            PREWARM_STAGE_ALIGN,
-            commands[PREWARM_STAGE_ALIGN],
-            env=env,
-            prewarmed_stages=prewarmed_stages,
-        )
-        align_end_s = time.perf_counter()
-        critical_path.append(
-            critical_path_entry(
-                stage="align",
-                path_start_s=request_start_s,
-                stage_start_s=align_start_s,
-                stage_end_s=align_end_s,
-                details=self._completed_stage_details(
-                    PREWARM_STAGE_ALIGN,
-                    orchestration=align_orchestration,
-                ),
-            )
-        )
+        record_subprocess_stage(PREWARM_STAGE_GENERATE)
+        record_subprocess_stage(PREWARM_STAGE_ALIGN)
 
         sample_command = [
             sys.executable,
@@ -827,32 +745,22 @@ class ShapePriorLocalClient:
             "--profile-json",
             str(self._stage_profile_path("sample")),
         ]
-        sample_start_s = time.perf_counter()
-        sample_ms = _run_stage(sample_command, env=env)
-        sample_end_s = time.perf_counter()
-        critical_path.append(
-            critical_path_entry(
-                stage="sample",
-                path_start_s=request_start_s,
-                stage_start_s=sample_start_s,
-                stage_end_s=sample_end_s,
-                details=self._completed_stage_details(
-                    "sample",
-                    orchestration={
-                        "execution_mode": "cold",
-                        "critical_path_ms": float(sample_ms),
-                        "go_wall_time_s": None,
-                    },
-                ),
-            )
+        record_stage(
+            "sample",
+            lambda: _run_stage(sample_command, env=env),
+            lambda sample_ms: self._completed_stage_details(
+                "sample",
+                orchestration={
+                    "execution_mode": "cold",
+                    "critical_path_ms": float(sample_ms),
+                    "go_wall_time_s": None,
+                },
+            ),
         )
 
         finalize_start_s = time.perf_counter()
         final_data_path = paths["case"] / "final_data.pkl"
-        if not final_data_path.is_file():
-            raise FileNotFoundError(
-                f"shape-prior sample did not write {final_data_path}"
-            )
+        _require_stage_file(final_data_path, stage_name="shape-prior sample")
         load_start_s = time.perf_counter()
         with final_data_path.open("rb") as handle:
             final_data = pickle.load(handle)
@@ -974,11 +882,7 @@ class ShapePriorWarmupManager:
                     "shape_prior_source_time_s": frame0.source_timestamp_s,
                 }
             )
-            self._warmup_runtime_start_perf_s = (
-                None
-                if frame0.warmup_runtime_start_perf_s is None
-                else float(frame0.warmup_runtime_start_perf_s)
-            )
+            self._warmup_runtime_start_perf_s = frame0.warmup_runtime_start_perf_s
             self._thread = threading.Thread(
                 target=self._run,
                 args=(frame0,),
@@ -1059,13 +963,6 @@ class ShapePriorWarmupManager:
                     self._warmup_runtime_start_perf_s,
                     gate_open_perf_s,
                 )
-
-    def wait(self, timeout_s: float | None = None) -> ShapePriorResult | None:
-        """Wait for ShapePriorWarmupManager."""
-        thread = self._thread
-        if thread is not None:
-            thread.join(timeout=None if timeout_s is None else float(timeout_s))
-        return self.ready_result()
 
     def ready_result(self) -> ShapePriorResult | None:
         """Return the ready result."""
