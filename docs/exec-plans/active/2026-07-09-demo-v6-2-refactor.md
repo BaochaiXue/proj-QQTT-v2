@@ -178,6 +178,58 @@ passes all 185 tests. Nothing committed (working tree, `single-camera` branch).
 Remaining optional: duplication pass 2 (query-schema 3x), product-schema cleanup
 A2-A5, and viewer renderer display check.
 
+## 2026-07-12 cleanup pass — inline wrappers, kill dead code, aggregate objects
+
+Principles applied (owner-directed): keep business-rule functions; inline
+one-call thin wrappers with no independent rule; aggregate state+invariant
+clusters into explicit objects instead of more mixins/helpers; trim
+over-defensive code; every file <1000 lines. Net: 34 files, +979/−1886
+(−907 lines), zero behavior change intended.
+
+Sweep (analysis by 7 parallel readers + adversarial cross-check of all 90
+inline/delete candidates; 71 verified safe, 19 blocked and kept):
+- Dead code deleted: utils/depth_geometry (9 fns; kept transform_points +
+  disparity_to_metric_depth), utils/render Open3D scene-layer cluster,
+  projection build_*_grid pair, CoalescedPostGate, upscale_image wrapper,
+  10 DEFAULT_FFS_* constants, finalize_single_engine_tensorrt_output, the
+  fast_foundation_stereo re-export facade (last import redirected), dead
+  OrderedPacketQueue/SameSeqPairer stats+peek members, dead packet properties,
+  unreachable realsense branch in _start_realsense_pipeline, 6 dead constants,
+  STAGE_FIRST_FRAME, FatalWorkerError.log_message, write-only lossless
+  counters, dead intrinsics/serial properties.
+- Thin wrappers inlined across phystwin_shen_launch, main_warmup,
+  chunk_data_output.commit_chunk_data_record, online_frame_archive,
+  tracking (_recovery_tier, initialized), shape_prior_generate, mdp_cli.
+- Oversize fixed WITHOUT new modules: shape_prior_warmup 1100→997 (stage
+  orchestration collapsed to one recorder loop; _pre_submit_timing moved to
+  shape_prior_timing); phystwin_strict_product 1178→904 (diagnostic-video
+  block moved to utils/render.py — which the dead-code sweep had emptied —
+  plus manifest/depth-gate dedup).
+
+Object aggregation (mdp runtime; state+invariant clusters -> explicit objects):
+- `LosslessPipeline` (mdp_pipeline_plumbing): owns the 4 gap-free queues, the
+  SameSeqPairer + its lock, the ordered-publish cursor/condition, and the
+  capture/processing/first-pair events. The seq-ordering invariant (publish N
+  only after N-1), the enqueue-under-pairer-lock rule, and the close cascade
+  now live in ONE class instead of being smeared across 4 mixins. 17 shared
+  contract attrs collapsed into `demo.lossless`.
+- `FfsDepthEngine` (utils/ffs_align): runner + per-seq LRU + calibration-keyed
+  IR->color aligner (one FFS inference per seq under one lock). Replaces 5
+  attrs + 5 methods split between lifecycle and pairpublish; constructed in
+  main_warmup only when --depth-source ffs.
+- `FatalErrorLatch` (mdp_pipeline_plumbing): first-error-wins latch (print +
+  status band + stop_event) shared by all workers; replaces the lifecycle
+  lock/field pair and its contract stub; 14 call sites now `self.fatal.record`.
+_DemoRuntimeContract shrank from 288 to 234 lines (attrs 45→28, stubs 21→16).
+
+Verified: py_compile all touched; import smoke + MRO/stub-override assertion;
+20 scoped tests green; all three guards green; bounded fake-live product run:
+run_finished(max_chunks_reached), 2 chunks committed, shape_prior/points.npz,
+zero tracebacks. Note: chunk 1 reported track_status=degraded — matches the
+owner's own latest production run on this code (113/115 chunks degraded in
+outputs/pipeline_status.jsonl), i.e. recording-quality state, not a
+refactor regression.
+
 ## 2026-07-12 follow-up — config predicates out of the mixins + typing contract
 
 Motivation: the six `mdp_demo_*` mixins shared 50 cross-file method-call edges
