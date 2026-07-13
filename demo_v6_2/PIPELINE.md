@@ -1,6 +1,6 @@
-# Demo v6.2 流水线：23 个设计问题的代码答案
+# Demo v6.2 流水线：24 个设计问题的代码答案
 
-本文按设计评审中的 23 个问题，说明 Demo v6.2 每个阶段由哪个模块负责、
+本文按设计评审中的 24 个问题，说明 Demo v6.2 每个阶段由哪个模块负责、
 数据如何流动，以及出错时在哪里终止。每个答案末尾都给出“源码证据”，
 引用格式为 `文件::函数/类/方法`；设计文档只作为语义补充，不替代实现证据。
 行号链接对应当前 `single-camera` 工作区源码。
@@ -14,7 +14,7 @@
 `scripts/run_online_full_pipeline.py` supervisor。Demo 只直接管理这个
 supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外部 wrapper
 创建并继承同一个进程组。生命周期事件写入
-`pipeline_status.jsonl`；Q23 会区分“已经实现的状态写入”和“默认 viewer
+`pipeline_status.jsonl`；Q24 会区分“已经实现的状态写入”和“默认 viewer
 尚未显示的部分”。
 
 六个 `mdp_demo_*` mixin 都继承 annotation-only 的
@@ -712,61 +712,115 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
       `finished/failed` 的实际覆盖边界。
 
 22. **训练侧从什么时候开始读取？**
-    `main.main` 内嵌的 `_maybe_start_phystwin_shen` 在 warm-up 启用时等待
-    `shape_prior/points.npz` 出现后启动；warm-up 禁用时以
-    `warmup_disabled_immediate` 立即启动。Demo 只启动一个
-    `scripts/run_online_full_pipeline.py` supervisor，并显式传入
-    `--online_dir <base_path>/online_data` 以及本地
-    `config/default.yaml::phystwin_shen` 的每个 runtime 叶子。外部 pipeline
-    YAML 不再是 Demo 参数的维护源。Stage 1/2 各自的
-    `max_online_chunks`、`cma_popsize`、`zero_order_backend` 和
-    `sim_force_mode` 也由本地 YAML 显式传入；当前 Stage 1 是
-    `2/4/boba/gather`，Stage 2 是 `10/4/boba/gather`。
-    `batch_size/segment_len/segment_stride` 遵循 Phystwin 原生的
-    common-then-stage 继承语义，并通过 stage-specific CLI 显式传递。当前
-    `common` 不提供这三个默认值，Stage 1 使用 `2/10/10`，train 使用
-    `5/30/30`；禁用的 Stage 2 可省略，若启用且没有自身值或 common 默认值，
-    Demo 会在 camera 启动前失败。
+    supervisor 可以在第一个 chunk 之前启动，但 Stage 1/train 不会对空数据创建
+    simulator/trainer。每个 stage 构造自己的 `OnlineChunkReader`，先等待
+    `online_data/manifest.json`，再通过 `wait_for_initial_frames` 循环读取，直到
+    `OnlineFrameBuffer.frame_len >= segment_len`。当前 chunk 是 5 帧，Stage 1
+    的 `segment_len=10`，所以至少等 2 chunks；train 的 `segment_len=30`，所以
+    至少等 6 chunks。wrapper 按 Stage 1 → 可选 Stage 2 → train 顺序执行，
+    因此 train 还必须等前面的启用阶段返回。
 
-    supervisor 在 `demo_2_max` 中运行；外部 YAML 的 `python: null` 令 Stage 1、
-    Stage 2、train 和 viewer 继承 supervisor 的同一个 Python。wrapper 先启动
-    `cma_viewer.source=all` 的单个合并 viewer，再顺序运行 Stage 1、可选
-    Stage 2 和 train；独立 `train_viewer` 保持关闭。Demo 在启动 supervisor
-    前只清理这个 viewer 的 endpoint，默认是 `127.0.0.1:8765`。当前正式
-    `base_path=outputs` 时，viewer 的 origin、Stage 1 和 train 输入分别是
-    `outputs/online_data`、`experiments_online_cma/outputs/realtime` 和
-    `experiments_online_train/outputs/realtime`。
-
-    supervisor、Stage 1/2 和 train 的合并 stdout/stderr 同时实时转发到 Demo
-    启动终端（每行前缀 `[phystwin_shen]`）并保留到
-    `<base_path>/phystwin_shen/online_full_pipeline.log`。Demo 显式设置
-    `PYTHONUNBUFFERED=1`，避免外部 Python stage 因 pipe 重定向延迟输出。
-    当前默认 viewer 使用 `--quiet`，它们自己的输出仍由外部 wrapper 静默处理。
-
-    顺序读取逻辑位于外部 Phystwin_shen checkout：
-    `OnlineChunkReader.load_new_chunks` 从 `last_loaded_chunk + 1` 顺序读到
-    manifest 的 `latest_committed_chunk`；`wait_for_initial_frames` 会先等到至少
-    各 stage 自己的 `segment_len` 帧才创建 simulator/trainer。当前 chunk 是
-    5 帧，Stage 1 需要 10 帧（2 chunks），train 需要 30 帧（6 chunks）。
-    `train.stop_when_finished: true` 时，trainer 以 manifest 的 `finished` 为停止
-    条件，完成并保存观察到 finished 的 terminal iteration；设为 false 时严格
-    跑 `iterations`。无论是哪一种，Demo 正常路径最终都会等待 supervisor
-    返回，只有 return code 0 才算完整 pipeline 成功。
+    开始运行后，`OnlineChunkReader.load_new_chunks` 每次从
+    `last_loaded_chunk + 1` 顺序读到 manifest 的
+    `latest_committed_chunk`，再追加到 session-lived `OnlineFrameBuffer`；它不跳
+    chunk，也不把“最新一个”当作完整历史。`train.stop_when_finished: true` 时，
+    trainer 以 manifest 的 `finished` 为停止条件，完成并保存观察到 finished 的
+    terminal iteration；设为 false 时严格跑 `iterations`。
 
     **源码证据：**
 
-    - [`main.main::_maybe_start_phystwin_shen`](main.py) 给出
-      points-ready/disabled 两个 trigger；
-      [`launch_phystwin_shen`](phystwin_shen_launch.py) 只执行一次 `Popen`，
-      [`build_full_pipeline_command`](phystwin_shen_launch.py) 给出完整显式 CLI。
-    - 外部 checkout 的 `train_online_warp.py::wait_for_initial_frames`、
-      `qqtt/data/online_stream.py::OnlineChunkReader.load_new_chunks` 和
+    - 外部 checkout 的 `optimize_online_cma.py::wait_for_initial_frames` 和
+      `train_online_warp.py::wait_for_initial_frames` 给出初始帧数 gate。
+    - 外部 `qqtt/data/online_stream.py::OnlineChunkReader.load_new_chunks` 与
+      `OnlineFrameBuffer.append_chunks` 给出连续游标和 growing buffer；
       `qqtt/engine/trainer_warp.py::InvPhyTrainerWarp.train_online_batched`
-      给出等待、顺序读取、terminal save 和 stop-when-finished 行为。
+      给出持续刷新与 terminal save 行为。
 
-## 在线流水线状态可视化（Q23）
+## Phystwin_shen 启动与数据交接（Q23）
 
-23. **如何看到流水线当前在做什么，以及 warm-up 是否失败？**
+23. **Phystwin_shen 如何启动，我们如何把数据传给它？**
+    **启动条件。** 只有 `downstream.mode=phystwin_shen` 才进入这条路径。
+    `validate_runtime_args` 在 camera 启动前校验外部 checkout、pipeline config、
+    conda env、stage window 参数和 viewer endpoint。运行中，
+    `main.main::_maybe_start_phystwin_shen` 在每次 stream poll 前以及 chunk commit
+    callback 中被调用：shape-prior warm-up 开启时，它等待
+    `<base_path>/shape_prior/points.npz`；该文件同时表示 prior 已完成且 SAM3D
+    stage 子进程已释放 GPU。warm-up 关闭时则使用
+    `warmup_disabled_immediate` trigger。函数用 `phystwin_launch is not None`
+    保证整场只启动一次，后续调用只检查 supervisor 与 stdout relay 是否健康。
+
+    `launch_phystwin_shen` 在外部 repo 目录中用一个 `Popen` 启动
+    `scripts/run_online_full_pipeline.py`，设置 `CUDA_VISIBLE_DEVICES`、
+    `PYTHONUNBUFFERED=1` 和 `start_new_session=True`。Demo 显式传入
+    `--online_dir <base_path>/online_data`，以及本地
+    `config/default.yaml::phystwin_shen` 的全部 runtime 叶子；外部 pipeline YAML
+    不再是这些 override 的维护源。当前 Stage 1 是
+    `batch/segment/stride=2/10/10`、`max_iter=2`、`cma_popsize=4`、
+    `boba/gather`；train 是 `5/30/30`、100 iterations。wrapper 先启动
+    `cma_viewer.source=all` 的 combined HTML viewer，再顺序启动 Stage 1、可选
+    Stage 2 和 train。supervisor 及 children 继承同一进程组；Demo 保存 PGID，
+    用于异常或取消时整体停止。
+
+    **数据交接。** 这里没有 socket、HTTP upload、RPC、stdin pickle 或跨进程
+    Python queue。两个仓库通过同一台机器上的共享目录协议交接：
+
+    ```text
+    camera process
+      -> capture/frames.jsonl + capture/prepared_phystwin/*.npz
+      -> Demo chunk bridge（跟踪、ASAP、5 帧 window）
+      -> outputs/online_data/
+           chunks/chunk_000000.pkl, chunk_000001.pkl, ...
+           manifest.json
+           color/0/*.png + depth/0/*.npy
+           calibrate.pkl + metadata.json + enhance_metadata.json
+      -> Phystwin_shen OnlineChunkReader
+      -> OnlineFrameBuffer -> Stage 1 / Stage 2 / train GPU tensors
+    ```
+
+    每个 window 完成后，Demo 先归档 RGB-D，再原子写
+    `chunks/chunk_{id:06d}.pkl` 和聚合 `data/final_data.pkl`，最后原子推进
+    `online_data/manifest.json::latest_committed_chunk`。因此 manifest 是 commit
+    point：Phystwin 只读取它已经公布的连续 chunk，不会看到半写 pickle；若
+    manifest 声称某个 chunk 已提交但文件缺失，reader 立即抛错，而不是跳过。
+    producer 不等待 consumer ACK；下游变慢时，chunk 保留在磁盘，reader 之后按
+    游标补读。
+
+    chunk 中传递给 `OnlineFrameBuffer` 的时间序列字段是 `object_points`、
+    `object_colors`、`object_visibilities`、`object_motions_valid`、
+    `controller_points`、`asap_surface_points`、`asap_interior_points` 和
+    `source_frame_indices`。buffer 校验 frame range 连续、每帧 shape 稳定，再
+    concatenate 并转成目标 GPU tensor；`structure_points` 由首帧的 object、
+    ASAP surface 和 ASAP interior 拼接。相机内外参与 `calibrate.pkl` 和
+    `metadata.json` 独立读取。触发启动的 `shape_prior/points.npz` **不是**主
+    传输通道；正式 shape-prior trajectory 已经以每帧 ASAP 字段进入 chunk。
+
+    supervisor、Stage 1/2 和 train 的 stdout/stderr 由 Demo relay 同时写到启动
+    终端（每行前缀 `[phystwin_shen]`）和
+    `<base_path>/phystwin_shen/online_full_pipeline.log`。producer 结束后 Demo
+    还会等待 supervisor；只有其 return code 0 才算完整 pipeline 成功，非零
+    退出、relay failure 或上游异常都会终止整个保存的进程组。
+
+    **源码证据：**
+
+    - [`main.main::_maybe_start_phystwin_shen`](main.py) 给出唯一启动 gate、
+      health check 与 points-ready trigger。
+    - [`build_full_pipeline_command`](phystwin_shen_launch.py) 构造显式
+      `--online_dir`/runtime CLI；
+      [`launch_phystwin_shen`](phystwin_shen_launch.py) 给出 cwd、env、process
+      group 和 output relay。
+    - [`_write_chunk_from_rows`](chunk_materialize.py) 组装正式 window；
+      [`ChunkDataWriter.commit_chunk_data_record`](chunk_data_output.py) 和
+      [`OnlineFrameArchive.archive_chunk`](online_frame_archive.py) 给出
+      chunk/archive/manifest 的生产端提交协议。
+    - 外部 checkout 的
+      `qqtt/data/online_stream.py::OnlineChunkReader/OnlineFrameBuffer` 给出消费端
+      poll、连续性/shape 校验、补读与 CPU→GPU 转换；
+      `optimize_online_cma.py::load_camera_metadata` 和
+      `train_online_warp.py::load_camera_metadata` 读取相机 metadata。
+
+## 在线流水线状态可视化（Q24）
+
+24. **如何看到流水线当前在做什么，以及 warm-up 是否失败？**
     `PipelineStatusWriter.emit` 把 `t/source/stage/detail/ok` 追加到
     `<base_path>/pipeline_status.jsonl`，并吞掉所有写入异常，所以 telemetry
     失败不会改变正式产品。当前实际 writer 只有两类：orchestrator 写 run
