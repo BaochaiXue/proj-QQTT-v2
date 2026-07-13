@@ -352,7 +352,7 @@ def run_side_by_side(args: argparse.Namespace) -> int:
                 input_to_display_latency_s=input_to_display_latency_s,
                 show_latency_overlay=bool(args.latency_overlay),
             )
-            # Live pipeline-status band (design question 23): show what the
+            # Live pipeline-status band (design question 25): show what the
             # pipeline is doing right now / whether warm-up failed, tailed from
             # <base_path>/pipeline_status.jsonl (online_dir's parent).
             image = draw_pipeline_status(

@@ -1,6 +1,6 @@
 """Per-frame RGB-D archive for the published online stream.
 
-Pipeline questions Q20-Q22 (see PIPELINE.md): this is the raw RGB-D side of the
+Pipeline questions Q21-Q23 (see PIPELINE.md): this is the raw RGB-D side of the
 schema the training side reads. Alongside ``online_data/chunks`` (which stays
 byte-identical to the existing contract), every published online frame k also
 lands as raw sensor products in the offline PhysTwin case layout

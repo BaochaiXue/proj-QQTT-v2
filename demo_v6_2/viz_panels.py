@@ -394,7 +394,7 @@ def draw_pipeline_status(
 ) -> np.ndarray:
     """Draw the live pipeline-status band along the bottom of ``image``.
 
-    Answers design question 23: shows what the pipeline is doing right now
+    Answers design question 25: shows what the pipeline is doing right now
     (capturing / shape-prior / warm-up ready / streaming chunks / finished) from
     the ``pipeline_status.jsonl`` events the orchestrator, camera, and shape-prior
     stages emit, and turns the band red when a fatal warm-up/shape-prior error was

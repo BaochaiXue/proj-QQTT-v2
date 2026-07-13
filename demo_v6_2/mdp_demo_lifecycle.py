@@ -124,7 +124,7 @@ class _LifecycleMixin(_DemoRuntimeContract):
         ) = None
         self.recording_source: RecordedRgbdFrameSource | None = None
         self.headless_capture_writer: HeadlessCaptureWriter | None = None
-        # Live pipeline-status stream (design question 23), shared with the
+        # Live pipeline-status stream (design question 25), shared with the
         # orchestrator + shape-prior stages under
         # <base_path>/pipeline_status.jsonl. base_path is the parent of the
         # headless capture dir; a None capture dir yields a no-op writer.

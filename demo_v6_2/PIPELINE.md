@@ -1,6 +1,6 @@
-# Demo v6.2 流水线：24 个设计问题的代码答案
+# Demo v6.2 流水线：25 个设计问题的代码答案
 
-本文按设计评审中的 24 个问题，说明 Demo v6.2 每个阶段由哪个模块负责、
+本文按设计评审中的 25 个问题，说明 Demo v6.2 每个阶段由哪个模块负责、
 数据如何流动，以及出错时在哪里终止。每个答案末尾都给出“源码证据”，
 引用格式为 `文件::函数/类/方法`；设计文档只作为语义补充，不替代实现证据。
 行号链接对应当前 `single-camera` 工作区源码。
@@ -14,7 +14,7 @@
 `scripts/run_online_full_pipeline.py` supervisor。Demo 只直接管理这个
 supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外部 wrapper
 创建并继承同一个进程组。生命周期事件写入
-`pipeline_status.jsonl`；Q24 会区分“已经实现的状态写入”和“默认 viewer
+`pipeline_status.jsonl`；Q25 会区分“已经实现的状态写入”和“默认 viewer
 尚未显示的部分”。
 
 六个 `mdp_demo_*` mixin 都继承 annotation-only 的
@@ -52,9 +52,95 @@ viewer 返回 HTTP 200，Stage 1 读到在线 chunk 并导出首个 realtime can
 replay 和 100-iteration train 误报为已经终态成功。精确命令与观测记录在
 [`2026-07-12-demo-v6-2-fake-camera-phystwin-proof.md`](../docs/generated/2026-07-12-demo-v6-2-fake-camera-phystwin-proof.md)。
 
-## 摄像头与逐帧 I/O（Q1–Q6）
+## 总体流水线与并发边界（Q1）
 
-1. **摄像头在哪里启动？**
+1. **总体 pipeline 是什么？各阶段是线程还是进程，为什么这样设计？**
+   正式 fake-live 与 live 使用同一张并发拓扑；差别只在 capture thread 的数据源
+   是录制文件还是 RealSense。默认 `phystwin_shen` 下游可以概括为：
+
+   ```text
+   OS process P0: demo_v6_2/main.py（orchestrator 主进程）
+     main thread:
+       启动/监控 P1 -> tail frames.jsonl -> 组装/原子提交 chunk
+       -> 等待 P2 结束 -> 写 run summary/status
+     optional thread:
+       Phystwin supervisor stdout/log relay
+     |
+     +-- OS process P1: main_data_processing.py（camera/perception 进程）
+     |     formal strict threads:
+     |       capture -> seg -> processed-frame -> tracker -> pair-output
+     |     auxiliary threads:
+     |       shape-prior manager；可选 warm-up RGB preview
+     |     temporary OS processes:
+     |       prewarmed upscale / SAM3D generate / align；cold sample
+     |     output:
+     |       capture/prepared_phystwin/*.npz + frames.jsonl
+     |
+     +-- OS process P2: Phystwin_shen full-pipeline supervisor
+           child processes:
+             combined HTML viewer（与计算并发）
+             Stage 1 -> optional Stage 2 -> train（按顺序执行）
+   ```
+
+   P0 的 chunk bridge **不是线程池**：
+   `stream_chunk_data_from_headless_capture` 就运行在 orchestrator main thread，
+   同步完成 tail、window tracking/ASAP、archive、chunk 和 manifest commit。这样
+   online stream 只有一个 writer 和一个 commit 顺序，不需要在多个 writer 间
+   协调 chunk id/manifest。`SameSeqPairer`、`OrderedPacketQueue` 和
+   `LatestSlot` 也只是 P1 内的同步/缓冲对象，不是隐藏线程。
+
+   P1 的正式 masked path 使用 5 条 daemon thread。capture 生成
+   `FramePacket`；seg 维护一个 session-lived EdgeTAM state；processed-frame 对
+   正式 5 FPS 帧执行 depth、camera-to-world、固定 PT mask refinement 和 runtime
+   PCD；tracker 维护 session-lived TAPNext++ state；pair-output 只发布同 seq 的
+   PCD/tracker 结果。`_capture_recording_worker` 名字里虽然有 worker，但它由
+   capture thread 同步调用，不是第 6 条 thread。无 tracker 的 profile-only
+   路径可以有不同 worker 列表，但不属于正式 masked pipeline。
+
+   **为什么 hot path 用线程？** 这五个阶段需要共享模型/session、NumPy/Torch
+   buffer、CUDA context 和 frame packet。线程让 packet 保持内存传递，避免每帧
+   pickle/copy，也避免为每阶段复制大模型。主要计算在 OpenCV/PyTorch/CUDA 中，
+   不依赖纯 Python CPU 并行；bounded `OrderedPacketQueue` 提供 backpressure、
+   连续 seq 和禁止静默覆盖。共享 CUDA 的代价是首帧编译/模型初始化可能互相
+   干扰，所以 capture 在 frame 0 后等待首个完整 PCD/tracker pair，再释放
+   frame 1；任何 thread 异常都记录为 fatal 并设置统一 `stop_event`。
+
+   **为什么重模型和下游用进程？** camera/perception、shape-prior、viewer 和
+   Phystwin 属于不同生命周期与故障域。进程边界可以：
+
+   - 给 camera 和 Phystwin 建立独立 process group，异常时杀掉全部 descendants；
+   - 让 SAM3D 临时子进程退出后真正释放 GPU 0，再把 GPU 0 交给 Phystwin；
+   - 让主 camera 热路径固定使用 GPU 1，避免大模型在同一 CUDA context 中残留；
+   - 允许外部 Phystwin checkout/CLI 保持自己的工作目录和 stage 生命周期；
+   - 隔离 GUI、模型加载或外部 stage crash，不让它直接破坏 camera 内存状态。
+
+   代价是 process startup 与磁盘交接更重，因此只有生命周期/资源边界使用进程；
+   高频逐帧阶段留在线程内。P1→P0 用 prepared NPZ/JSONL，P0→P2 用原子
+   `online_data/chunks + manifest` 文件协议：它比内存 queue 慢，但能跨仓库、让
+   生产者和训练侧解耦速率、保留可检查/可补读的 committed history。总体原则是：
+   **同一实时状态和 CUDA hot path 用线程；需要独立 GPU 释放、故障清理、外部
+   runtime 或持久化交接的边界用进程/文件协议。**
+
+   **源码证据：**
+
+   - [`main.main`](main.py) 用 `Popen(..., start_new_session=True)` 启动 P1，
+     并在 main thread 运行
+     [`stream_chunk_data_from_headless_capture`](chunk_data_stream.py)。
+   - [`MainDataProcessingDemo`](main_data_processing.py) 给出六个 mixin 组装；
+     [`_LifecycleMixin._start_threads`](mdp_demo_lifecycle.py) 是 P1 正式 thread
+     列表的唯一创建点。
+   - [`OrderedPacketQueue`](mdp_pipeline_plumbing.py)、
+     [`SameSeqPairer`](mdp_pipeline_plumbing.py) 与
+     [`_publish_capture_packet`](mdp_demo_capture.py) 给出内存队列和 seq 合同。
+   - [`ShapePriorWarmupManager.maybe_submit`](shape_prior_warmup.py) 创建 manager
+     thread；`ShapePriorLocalClient` 创建/调用各 stage 子进程；
+     [`WarmupRgbPreview.start`](mdp_warmup_preview.py) 创建可选 preview thread。
+   - [`launch_phystwin_shen`](phystwin_shen_launch.py) 创建 P2 和 output-relay
+     thread；外部 `scripts/run_online_full_pipeline.py` 创建 viewer/stage children。
+
+## 摄像头与逐帧 I/O（Q2–Q7）
+
+2. **摄像头在哪里启动？**
    正式编排路径中，`main.py::main` 先调用
    `main_subprocess.build_main_data_processing_command`，再用
    `subprocess.Popen` 启动 `main_data_processing.py`。子进程入口构造
@@ -97,7 +183,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
      结果记录在
      [`2026-07-09-demo-v6-2-refactor.md`](../docs/exec-plans/active/2026-07-09-demo-v6-2-refactor.md#L89)。
 
-2. **摄像头线程在哪里创建？**
+3. **摄像头线程在哪里创建？**
    `_LifecycleMixin._start_threads` 组装 worker 列表，并统一创建
    `daemon=True` 的 `threading.Thread`。正式 strict 路径包含 capture、seg、
    processed-frame、lossless tracker 和 pair-output worker。
@@ -133,7 +219,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
    - [`ShapePriorWarmupManager.maybe_submit`](shape_prior_warmup.py#L1003) 单独创建
      shape-prior warm-up 线程。
 
-3. **进程和线程如何协作？**
+4. **进程和线程如何协作？**
    外层是多进程：总控进程启动 camera 子进程；可选 visualizer、
    Phystwin_shen full-pipeline supervisor 也是总控的直接子进程。supervisor
    再按配置启动一个合并 HTML viewer、Stage 1、可选 Stage 2 和 train；这些 child
@@ -174,7 +260,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
      join `_threads`；shape-prior thread 的入口是
      [`ShapePriorWarmupManager._run`](shape_prior_warmup.py#L1033)。
 
-4. **RealSense RGB 和 depth 的 FPS 是多少？**
+5. **RealSense RGB 和 depth 的 FPS 是多少？**
    由 `main.py` 启动的正式路径默认以 **30 FPS** 采集 RealSense。
    `build_main_data_processing_command` 把外层 `--camera-fps` 传成子进程
    `--fps`，`_start_realsense_pipeline` 对所有启用的 color、IR 或 depth
@@ -214,7 +300,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
      [`mdp_constants.DEFAULT_FPS`](mdp_constants.py#L126) 证明直接运行子入口的
      默认值是 60，而不是 30。
 
-5. **每帧在哪里读取？**
+6. **每帧在哪里读取？**
    live 模式由 `_CaptureMixin._capture_worker` 调用
    `pipeline.wait_for_frames()`；native-depth 路径先 `align.process`，FFS 路径
    读取 color 与左右 IR。replay 模式由 `_capture_recording_worker` 调用
@@ -240,7 +326,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
      [`_publish_capture_packet`](mdp_demo_capture.py#L38) 明确先写 slot，再在
      lossless 模式写 queue。
 
-6. **frame id 和 timestamp 从哪里来？**
+7. **frame id 和 timestamp 从哪里来？**
    `FramePacket.seq` 是 Demo 内部逻辑序号。live 路径用 `output_seq` 从 0
    连续重编号；replay 路径把 `runtime_seq` 作为内部 seq。
 
@@ -272,9 +358,9 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
      [`_write_chunk_from_rows`](chunk_materialize.py#L42) 用 `row_start/fps` 和
      `row_end/fps` 生成均匀窗口时间。
 
-## Warm-up（Q7–Q14）
+## Warm-up（Q8–Q15）
 
-7. **Warm-up 使用单帧还是一段视频？**
+8. **Warm-up 使用单帧还是一段视频？**
    初始化使用一张帧。`prepare_segmentation_warmup` 取得一张
    `first_frame`，`resolve_initial_mask_bundle` 只把这张图交给 SAM3.1，生成
    object、hand A、hand B 的 `InitialMaskBundle`。随后 `_seg_worker` 创建一个
@@ -293,7 +379,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
      [`_run_segmentation_frame`](mdp_demo_segwarmup.py#L517) 并设置
      `add_prompt=True`。
 
-8. **系统如何确认拿到的是 frame 0？**
+9. **系统如何确认拿到的是 frame 0？**
    正式 strict 路径不是靠 sentinel 单独保证，而是靠 producer handshake
    加 FIFO：live 首次发布时 `output_seq == 0`，replay 首次显式调用
    `read_packet(seq=0)`；两者在发布首帧后都会等待
@@ -318,7 +404,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
    - [`_SegWarmupMixin._seg_worker`](mdp_demo_segwarmup.py#L252) 对首帧用
      `add_prompt=True`，后续帧统一用 `False`。
 
-9. **Warm-up 期间后续到达的帧如何处理？**
+10. **Warm-up 期间后续到达的帧如何处理？**
    后续帧继续进入同一个 EdgeTAM session，使用 `add_prompt=False`，并继续生成
    mask、PCD、tracker 结果和 input preview。只有正式 product row 受 gate
    控制：chunk-ready anchor 已写且 shape-prior 仍为 `pending/running` 时，
@@ -342,7 +428,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
      rows；[`_headless_product_rows_gated`](mdp_demo_segwarmup.py#L636) 实现超时
      解除逻辑。
 
-10. **Warm-up 最耗时的步骤是什么？**
+11. **Warm-up 最耗时的步骤是什么？**
     权威产物是 `capture/shape_prior_profile.json`。现在它把操作员等待时间拆成
     三层，而不是只报告 submit 后的五个粗阶段：
 
@@ -411,7 +497,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
     - [`2026-07-12-demo-v6-2-fake-camera-phystwin-proof.md`](../docs/generated/2026-07-12-demo-v6-2-fake-camera-phystwin-proof.md)
       固化了本轮命令、profile 数字、viewer HTTP 检查和验证边界。
 
-11. **Warm-up 完成后保留哪些状态和文件？**
+12. **Warm-up 完成后保留哪些状态和文件？**
     `_seg_worker` 在其生命周期内保留 `SegmentationWarmupState`、
     `InitialMaskBundle` 和唯一的 EdgeTAM session；三个 identity 在同一次
     `add_inputs_to_inference_session` 中注册。shape-prior manager 成功后还在
@@ -438,7 +524,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
       `final_mesh.glb`；[`shape_prior_sample.main`](shape_prior_sample.py#L192)
       写 case `final_data.pkl`。
 
-12. **Warm-up 状态如何校验？**
+13. **Warm-up 状态如何校验？**
     `resolve_initial_mask_bundle` 校验 controller/object mask 与输入帧尺寸；
     `_union_masks` 拒绝“没有任何 instance mask”和同一 label 内形状不一致，
     但不会把“一张全 false mask”自动视为缺失。
@@ -460,7 +546,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
     - [`_shape_points_for_chunk`](chunk_capture_meta.py#L129) 只检查
       surface+interior 总数是否大于 0；不存在更高的通用最小点数门槛。
 
-13. **Warm-up 出错后如何处理？**
+14. **Warm-up 出错后如何处理？**
     冷启动 shape-prior stage 由 `_run_stage` 使用
     `subprocess.run(..., check=True)`；预热 worker 也会在非零 return code 时
     抛 `CalledProcessError`。但 shape-prior 总控本身是 camera 进程内的 daemon
@@ -490,7 +576,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
       [`_shape_points_for_chunk`](chunk_capture_meta.py#L129) 给出 shape-prior
       failed → metadata → bridge exception 的真实传播链。
 
-14. **正式时间线从哪里开始？**
+15. **正式时间线从哪里开始？**
     成功路径中，第一个 chunk-ready row 占据 online/output frame 0 的 warm-up
     anchor；anchor 后、shape prior 尚为 `pending/running` 的 rows 被扣留。
     shape prior 进入 READY 后第一条未被 gate 的 row 紧接为 online frame 1。
@@ -511,9 +597,9 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
     - [`design_spec.md`](design_spec.md#L5) 记录 frame 0/1 接缝与 hold-still
       约定，但实现依据是上述函数。
 
-## Chunk 组装、跟踪与过滤（Q15–Q19）
+## Chunk 组装、跟踪与过滤（Q16–Q20）
 
-15. **Chunk 如何组装？**
+16. **Chunk 如何组装？**
     `stream_chunk_data_from_headless_capture` 每读到一条 `frames.jsonl` row，
     就用 `_prepared_frame_from_row` 加载它引用的 canonical prepared NPZ，并将
     row/frame 同步追加到两个 buffer。达到 `chunk_size` 后先形成
@@ -538,7 +624,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
       检查 query 一致性、收集 mask，并 stack track/visibility/PCD；
       [`_write_chunk_from_rows`](chunk_materialize.py#L42) 将 RGB-D 交给 archive。
 
-16. **Chunk 大小在哪里配置？**
+17. **Chunk 大小在哪里配置？**
     `main_options.resolve_chunk_frame_count` 优先使用显式
     `--chunk-frame-count`；否则计算
     `round(replay_fps × chunk_seconds)`，并要求结果大于 0。默认配置为
@@ -556,7 +642,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
     - [`ChunkDataWriter.__init__`](chunk_data_output.py#L226) 再次校验并保存
       `self.chunk_size`；[`_write_manifest`](chunk_data_output.py#L432) 发布它。
 
-17. **Chunk 按时间还是按帧数关闭？**
+18. **Chunk 按时间还是按帧数关闭？**
     窗口边界严格按 **row/frame 数量**：每次 append 后，buffer 未满就
     `continue`，达到 `chunk_size` 才关闭。`window_closed_wall_s` 只是遥测，
     不参与边界判断。live 路径关闭完整窗口后，通常仍需等下一帧作为 borrow
@@ -571,7 +657,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
       发布延迟；[`_write_chunk_from_rows`](chunk_materialize.py#L42) 只把
       `window_closed_wall_s` 写入 telemetry。
 
-18. **Chunk 组装后如何执行跟踪？**
+19. **Chunk 组装后如何执行跟踪？**
     唯一的实时 chunk-stream 入口为整个 session 创建一次
     `tracking.TrackingRuntime`，并把同一实例传过
     `_write_chunk_from_rows` 到 `_chunk_data_window_from_prepared_frames`。
@@ -609,7 +695,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
       写 `TRACK_STATUS_DEGRADED`；[`main.main::on_chunk_written`](main.py) 只把该
       值写入 chunk-committed status event。
 
-19. **跟踪后还会做哪些过滤？**
+20. **跟踪后还会做哪些过滤？**
     `tracking.motion_consistency` 执行动作一致性过滤：半径 0.01 m、至少 5 个
     邻居（radius query 未排除自身）、相似阈值 0.005 m，至少 50% 邻居同意。
 
@@ -638,9 +724,9 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
     - [`AsapRuntime.augment_window`](asap.py#L356) 计算 `valid_now` 并回填；
       [`AsapRuntime._deform_frame`](asap.py#L328) 实现 silent freeze。
 
-## 训练侧 schema、manifest 与读取起点（Q20–Q22）
+## 训练侧 schema、manifest 与读取起点（Q21–Q23）
 
-20. **训练侧会收到什么数据？**
+21. **训练侧会收到什么数据？**
     Demo 生产端把每个窗口写成
     `online_data/chunks/chunk_{id:06d}.pkl`。固定 metadata 包括
     `case_name`、`chunk_id`、`start_frame`、`end_frame`、
@@ -680,7 +766,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
       将两个 ASAP key 列为 required；
       [`main_cli.build_parser`](main_cli.py#L350) 把 `asap_augment` 默认设为 true。
 
-21. **Manifest 何时更新，如何保证读者不会看到半成品？**
+22. **Manifest 何时更新，如何保证读者不会看到半成品？**
     正常提交顺序是：`OnlineFrameArchive.archive_chunk` 先写本 chunk 的 RGB-D
     帧文件；`ChunkDataWriter.commit_chunk_data_record` 再原子写 chunk pickle，
     原子更新聚合 `final_data/metadata`，最后原子更新
@@ -711,7 +797,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
       [`stream_chunk_data_from_headless_capture`](chunk_data_stream.py#L69) 给出
       `finished/failed` 的实际覆盖边界。
 
-22. **训练侧从什么时候开始读取？**
+23. **训练侧从什么时候开始读取？**
     supervisor 可以在第一个 chunk 之前启动，但 Stage 1/train 不会对空数据创建
     simulator/trainer。每个 stage 构造自己的 `OnlineChunkReader`，先等待
     `online_data/manifest.json`，再通过 `wait_for_initial_frames` 循环读取，直到
@@ -736,9 +822,9 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
       `qqtt/engine/trainer_warp.py::InvPhyTrainerWarp.train_online_batched`
       给出持续刷新与 terminal save 行为。
 
-## Phystwin_shen 启动与数据交接（Q23）
+## Phystwin_shen 启动与数据交接（Q24）
 
-23. **Phystwin_shen 如何启动，我们如何把数据传给它？**
+24. **Phystwin_shen 如何启动，我们如何把数据传给它？**
     **启动条件。** 只有 `downstream.mode=phystwin_shen` 才进入这条路径。
     `validate_runtime_args` 在 camera 启动前校验外部 checkout、pipeline config、
     conda env、stage window 参数和 viewer endpoint。运行中，
@@ -818,9 +904,9 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
       `optimize_online_cma.py::load_camera_metadata` 和
       `train_online_warp.py::load_camera_metadata` 读取相机 metadata。
 
-## 在线流水线状态可视化（Q24）
+## 在线流水线状态可视化（Q25）
 
-24. **如何看到流水线当前在做什么，以及 warm-up 是否失败？**
+25. **如何看到流水线当前在做什么，以及 warm-up 是否失败？**
     `PipelineStatusWriter.emit` 把 `t/source/stage/detail/ok` 追加到
     `<base_path>/pipeline_status.jsonl`，并吞掉所有写入异常，所以 telemetry
     失败不会改变正式产品。当前实际 writer 只有两类：orchestrator 写 run

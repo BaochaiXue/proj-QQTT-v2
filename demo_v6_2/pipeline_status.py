@@ -1,6 +1,6 @@
 """Live pipeline-status event stream shared by every Demo v6.2 process.
 
-This module answers design question 23 — "visualize, in the real demo, what the
+This module answers design question 25 — "visualize, in the real demo, what the
 pipeline is doing right now (and whether warm-up failed)". The three cooperating
 processes (the orchestrator ``main.py``, the camera/tracker/warm-up runtime
 ``main_data_processing.py``, and the SAM3D shape-prior stages) each append one

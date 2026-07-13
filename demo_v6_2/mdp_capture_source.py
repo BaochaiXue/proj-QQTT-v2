@@ -1,6 +1,6 @@
 """Recorded RGB-D replay source and RealSense capture startup.
 
-Pipeline questions Q1-Q6 (see PIPELINE.md): the camera starts here via
+Pipeline questions Q2-Q7 (see PIPELINE.md): the camera starts here via
 ``_start_realsense_pipeline`` (live) or ``RecordedRgbdFrameSource`` (fake-live
 replay); ``_start_realsense_pipeline`` applies a single ``--camera-fps`` (default
 30) to every enabled RGB/depth stream, while the output/chunk cadence is the

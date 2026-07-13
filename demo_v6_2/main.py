@@ -147,7 +147,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         legacy_case_prefix=str(args.case_prefix),
     )
 
-    # Live pipeline-status stream (design question 23): the orchestrator, the
+    # Live pipeline-status stream (design question 25): the orchestrator, the
     # camera process, and the SAM3D shape-prior stages all append lifecycle
     # events to <base_path>/pipeline_status.jsonl and the visualizer tails it to
     # show what the pipeline is doing right now / whether warm-up failed. Writing

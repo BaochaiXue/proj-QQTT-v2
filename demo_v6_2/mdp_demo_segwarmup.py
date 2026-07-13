@@ -1,6 +1,6 @@
 """MainDataProcessingDemo segmentation/warmup/shape-prior mixin.
 
-Pipeline questions Q7-Q14 (see PIPELINE.md): warm-up anchors on the FIRST single
+Pipeline questions Q8-Q15 (see PIPELINE.md): warm-up anchors on the FIRST single
 frame (``_wait_for_first_frame`` reads it with a sentinel seq of -1 and seeds
 EdgeTAM once); later frames are consumed by the tracker but not chunked until the
 formal gate lifts. The dominant warm-up cost is the SAM3D shape-prior chain

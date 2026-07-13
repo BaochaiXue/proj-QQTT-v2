@@ -1,6 +1,6 @@
 """Chunk materialization and publish for Demo v6.2 chunk streaming.
 
-Pipeline questions Q15-Q21 (see PIPELINE.md): a chunk closes strictly by frame/row
+Pipeline questions Q16-Q22 (see PIPELINE.md): a chunk closes strictly by frame/row
 COUNT (``chunk_size`` = ``round(replay_fps * chunk_seconds)``, default 35), its
 per-frame arrays are stacked, tracked through the session-lived
 ``tracking.TrackingRuntime`` (frozen chunk-0 identity + motion-consistency filter +

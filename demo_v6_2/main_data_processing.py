@@ -69,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     except (RuntimeError, ValueError, FileNotFoundError) as exc:
         # Startup errors (camera/device selection, arg validation) never reach
         # the worker-thread fatal hook, so surface them on the live status band
-        # too (design question 23). Best-effort: a None capture dir is a no-op.
+        # too (design question 25). Best-effort: a None capture dir is a no-op.
         from demo_v6_2.pipeline_status import STAGE_FATAL, PipelineStatusWriter  # noqa: PLC0415
 
         capture_dir = args.headless_capture_dir
