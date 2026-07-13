@@ -11,7 +11,7 @@ import time
 
 import numpy as np
 
-from demo_v6_2.main_config import (
+from demo_v6_2.orchestration.main_config import (
     CAPTURE_DIR_NAME,
     DEFAULT_CAMERA_SOURCE_REPLAY_FPS,
     DEFAULT_TABLE_CALIBRATE_PATH,
@@ -19,7 +19,7 @@ from demo_v6_2.main_config import (
     REPO_ROOT,
     VISUALIZER_LAYOUT_SIDE_BY_SIDE,
 )
-from demo_v6_2.main_layout import (
+from demo_v6_2.orchestration.main_layout import (
     resolve_online_dir,
     resolve_shape_prior_case_root,
     resolve_shape_prior_points_npz,
@@ -63,7 +63,7 @@ def build_visualizer_command(
     )
     command = [
         *_python_command_prefix(getattr(args, "visualizer_conda_env", None)),
-        str(Path("demo_v6_2") / "visualize_track.py"),
+        str(Path("demo_v6_2") / "visualization" / "visualize_track.py"),
         "--layout",
         layout,
         "--online-dir",

@@ -11,7 +11,7 @@ import sys
 
 import numpy as np
 
-from demo_v6_2.main_config import (
+from demo_v6_2.orchestration.main_config import (
     DEFAULT_CAMERA_SERIALS,
     DEFAULT_DOWNSTREAM_MODE,
     DEFAULT_PHYSTWIN_SHEN_CUDA_VISIBLE_DEVICES,

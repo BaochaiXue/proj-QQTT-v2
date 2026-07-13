@@ -1,6 +1,6 @@
 """Input RGB timeline, playback state, chunk timing/latency, and throughput.
 
-Extracted verbatim from ``visualize_track.py`` as part of a behavior-preserving
+Extracted from ``visualization/visualize_track.py`` as part of a behavior-preserving
 file split. Low-level module: depends only on ``viz_camera_model``.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from demo_v6_2.utils.jsonl_io import read_jsonl_rows
-from demo_v6_2.viz_camera_model import (
+from demo_v6_2.visualization.viz_camera_model import (
     _require_cv2,
     load_pickle,
     normalize_online_dir,

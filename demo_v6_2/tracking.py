@@ -34,7 +34,7 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from demo_v6_2 import ffs, segment
+from demo_v6_2.perception import ffs, segment
 
 MOTION_NEIGHBOR_DIST_M = 0.01
 MOTION_MIN_NEIGHBORS = 5

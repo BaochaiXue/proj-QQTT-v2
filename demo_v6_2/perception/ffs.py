@@ -3,7 +3,8 @@
 This module owns the "PCD/depth 是否有效" half of the per-frame observation
 gate: sampling the dense world PCD grid at track pixels and deciding whether
 the lifted 3D point is a usable measurement. Semantic-mask gating lives in
-``demo_v6_1/segment.py``; the state machine lives in ``demo_v6_1/tracking.py``.
+``demo_v6_2/perception/segment.py``; the state machine lives in
+``demo_v6_2/tracking.py``.
 """
 
 from __future__ import annotations

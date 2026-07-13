@@ -743,7 +743,9 @@ class ShapePriorLocalClient:
             )
         )
 
-        from demo_v6_2 import sam31_image_segmentation  # noqa: PLC0415
+        from demo_v6_2.perception import (  # noqa: PLC0415
+            sam31_image_segmentation,
+        )
 
         segment_start_s = time.perf_counter()
         _masked_image, segment_details = (

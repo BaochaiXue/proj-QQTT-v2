@@ -31,3 +31,12 @@ As in `data_process_origin`, object and controller masks are filtered
 independently and overlap is not subtracted from either class. Such overlap is
 therefore preserved, but it makes tracker class identity ambiguous; operators
 should treat visible overlap as a segmentation-quality warning.
+
+## Package facade
+
+The `demo_v6_2/` root is intentionally limited to Python modules directly
+named by answers Q2-Q25 in `PIPELINE.md`; an introduction/Q1 mention alone does
+not qualify. Other modules live under five internal packages:
+`orchestration/`, `streaming/`, `perception/`, `shape_prior/`, and
+`visualization/`. There are no root compatibility wrappers or duplicate import
+paths; import the canonical subpackage module directly.

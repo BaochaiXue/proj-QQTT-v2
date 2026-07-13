@@ -7,7 +7,7 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from demo_v6_2.chunk_data_payload import ChunkDataWindow
+from demo_v6_2.streaming.chunk_data_payload import ChunkDataWindow
 from demo_v6_2.online_frame_archive import OnlineFrameArchiveError
 from demo_v6_2 import phystwin_strict_product as strict
 from demo_v6_2 import tracking

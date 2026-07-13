@@ -17,7 +17,9 @@ import numpy as np  # noqa: E402
 import open3d as o3d  # noqa: E402
 import torch  # noqa: E402
 import trimesh  # noqa: E402
-from demo_v6_2.shape_prior_match_pairs import image_pair_matching  # noqa: E402
+from demo_v6_2.shape_prior.shape_prior_match_pairs import (  # noqa: E402
+    image_pair_matching,
+)
 from demo_v6_2.shape_prior_timing import (  # noqa: E402
     STAGE_PROFILE_STATUS_COMPLETED,
     STAGE_PROFILE_STATUS_WAITING,
@@ -375,7 +377,9 @@ def _prewarm_models():
     """
     if torch.cuda.is_available():
         torch.zeros(1, device="cuda")
-    from demo_v6_2.shape_prior_match_pairs import get_matching_model  # noqa: PLC0415
+    from demo_v6_2.shape_prior.shape_prior_match_pairs import (  # noqa: PLC0415
+        get_matching_model,
+    )
 
     get_matching_model()
 

@@ -18,7 +18,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
-from demo_v6_2.chunk_data_payload import build_chunk_data_payload
+from demo_v6_2.streaming.chunk_data_payload import build_chunk_data_payload
 from demo_v6_2.chunk_data_output import ChunkDataWriter
 from demo_v6_2.online_frame_archive import (
     OnlineFrameArchive,
@@ -27,7 +27,7 @@ from demo_v6_2.online_frame_archive import (
 from demo_v6_2 import asap
 from demo_v6_2 import phystwin_strict_product as strict
 from demo_v6_2 import tracking
-from demo_v6_2.chunk_jsonl_tail import (
+from demo_v6_2.streaming.chunk_jsonl_tail import (
     _relative_wall_s,
     _rows_source_frame_indices,
     _rows_source_timestamps,

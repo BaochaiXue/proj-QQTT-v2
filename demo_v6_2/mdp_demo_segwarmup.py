@@ -32,7 +32,7 @@ from demo_v6_2.mdp_cli import (
 )
 from demo_v6_2.mdp_demo_contract import _DemoRuntimeContract
 from demo_v6_2.mdp_packets import MaskPacket, _formal_chunk_rows_gated
-from demo_v6_2.mdp_segmentation import (
+from demo_v6_2.perception.mdp_segmentation import (
     _load_hf_streaming_runtime,
     _time_model_forward,
     _time_runtime_ms,

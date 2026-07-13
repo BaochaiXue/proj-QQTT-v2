@@ -6,20 +6,27 @@ side-by-side mode the left panel follows camera RGB input while the right panel
 chooses the final_data frame whose source timestamp best matches the desired
 camera-to-output latency.
 
-This module is the thin CLI entry point. The implementation was split into the
-``demo_v6_2.viz_*`` modules; this file keeps the module constants it owns plus
-the CLI surface (``build_parser`` / ``validate_args`` / ``run`` / ``main``) and
-re-imports everything those functions need.
+This module is the thin CLI entry point. The implementation lives in the
+``demo_v6_2.visualization`` package plus the pipeline-cited root panel/playback
+modules. This file keeps the module constants it owns and the CLI surface.
 """
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import sys
 from typing import Sequence
 
 import numpy as np
 
-from demo_v6_2.viz_camera_model import (
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT_STR = str(REPO_ROOT)
+if REPO_ROOT_STR in sys.path:
+    sys.path.remove(REPO_ROOT_STR)
+sys.path.insert(0, REPO_ROOT_STR)
+
+from demo_v6_2.visualization.viz_camera_model import (
     _require_cv2,
     infer_case_dir,
     load_camera_model,
@@ -37,12 +44,12 @@ from demo_v6_2.viz_playback import (
     use_interactive_side_by_side,
     wait_for_chunk,
 )
-from demo_v6_2.viz_renderers import (
+from demo_v6_2.visualization.viz_renderers import (
     RENDER_MODE_RGB_OVERLAY,
     RENDER_MODES,
     build_frame_renderer,
 )
-from demo_v6_2.viz_video_export import render_output_video
+from demo_v6_2.visualization.viz_video_export import render_output_video
 
 
 DEFAULT_WINDOW_NAME = "Demo v6.1 visualize track"

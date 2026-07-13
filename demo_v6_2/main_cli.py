@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from demo_v6_2.main_config import (
+from demo_v6_2.orchestration.main_config import (
     CAMERA_FPS_CHOICES,
     CONFIG_SHAPE_PRIOR_CONTROLLER_NAME,
     DEFAULT_CAMERA_COLOR_EXPOSURE,

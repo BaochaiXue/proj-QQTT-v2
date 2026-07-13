@@ -10,7 +10,7 @@
 摄像头、分割、跟踪和 warm-up。总控进程持续读取摄像头进程写出的
 `frames.jsonl`，通过 `chunk_*` 模块生成在线 chunk，同时通过
 `shape_prior_*` 模块生成 SAM3D shape prior，最后启动一个下游消费者：
-`visualize_track.py`，或 Phystwin_shen 的
+`visualization/visualize_track.py`，或 Phystwin_shen 的
 `scripts/run_online_full_pipeline.py` supervisor。Demo 只直接管理这个
 supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外部 wrapper
 创建并继承同一个进程组。生命周期事件写入
@@ -121,6 +121,12 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
    **同一实时状态和 CUDA hot path 用线程；需要独立 GPU 释放、故障清理、外部
    runtime 或持久化交接的边界用进程/文件协议。**
 
+   目录门面遵循同一个边界原则：`demo_v6_2/` 根目录只保留 Q2–Q25 直接点名的
+   Python facade/证据模块；只在前言/Q1 出现或只服务内部实现的模块分别进入
+   `orchestration/`、
+   `streaming/`、`perception/`、`shape_prior/` 和 `visualization/`。没有在根目录
+   保留 import forwarding wrapper；调用方必须使用唯一 canonical package path。
+
    **源码证据：**
 
    - [`main.main`](main.py) 用 `Popen(..., start_new_session=True)` 启动 P1，
@@ -134,7 +140,8 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
      [`_publish_capture_packet`](mdp_demo_capture.py) 给出内存队列和 seq 合同。
    - [`ShapePriorWarmupManager.maybe_submit`](shape_prior_warmup.py) 创建 manager
      thread；`ShapePriorLocalClient` 创建/调用各 stage 子进程；
-     [`WarmupRgbPreview.start`](mdp_warmup_preview.py) 创建可选 preview thread。
+     [`WarmupRgbPreview.start`](visualization/mdp_warmup_preview.py) 创建可选
+     preview thread。
    - [`launch_phystwin_shen`](phystwin_shen_launch.py) 创建 P2 和 output-relay
      thread；外部 `scripts/run_online_full_pipeline.py` 创建 viewer/stage children。
 
@@ -918,7 +925,7 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
     `viz_playback.run_side_by_side` 会读取最近 200 条事件，并调用
     `viz_panels.draw_pipeline_status` 绘制状态条；任一 `ok=False` 或
     `STAGE_FATAL` 事件会令状态条变红并显示错误。但当前默认配置是
-    `side-by-side + sam3d-final-data`，`visualize_track.run` 会分派到
+    `side-by-side + sam3d-final-data`，`visualization.visualize_track.run` 会分派到
     `run_interactive_side_by_side`；该函数目前没有读取状态日志，也没有绘制状态
     条。因此当前可核验的查看方式是：直接查看 `pipeline_status.jsonl`，或使用
     会进入 OpenCV `run_side_by_side` 的 `rgb-overlay` 路径；不能声称默认正式
@@ -949,7 +956,8 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
     这个 banner 只表示采集完成，不表示整个 Demo 进程已经退出；Phystwin_shen
     尚未训练完时，主进程会继续等待它。
 
-    **Warm-up 实时 RGB 输入预览**（`mdp_warmup_preview.WarmupRgbPreview`，
+    **Warm-up 实时 RGB 输入预览**
+    （`visualization.mdp_warmup_preview.WarmupRgbPreview`，
     不是 tracking-chunk viewer）：无论 `downstream.mode` 选什么，camera 进程
     在 capture 启动时打开一个实时 RGB 输入窗口（直接读内存里的
     `input_preview_slot`，零磁盘 IO），供操作员在 hold-still 期间确认取景/

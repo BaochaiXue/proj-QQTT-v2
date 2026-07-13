@@ -33,7 +33,7 @@ from demo_v6_2.mdp_pipeline_plumbing import (
     SameSeqPairer,
     StageStats,
 )
-from demo_v6_2.mdp_warmup_preview import WarmupRgbPreview
+from demo_v6_2.visualization.mdp_warmup_preview import WarmupRgbPreview
 from demo_v6_2.pipeline_status import (
     STAGE_CAPTURE_START,
     STAGE_FATAL,

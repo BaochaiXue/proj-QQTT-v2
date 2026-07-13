@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from demo_v6_2.mdp_constants import *  # noqa: F401,F403
 from demo_v6_2.mdp_packets import TrackerMarkerPacket
-from demo_v6_2.mdp_tracker_geometry import (
+from demo_v6_2.perception.mdp_tracker_geometry import (
     _classify_query_targets_yx,
     _latest_tracker_arrays,
     _mask_packet_hand_a_mask,

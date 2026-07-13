@@ -19,7 +19,7 @@ from demo_v6_2 import asap
 from demo_v6_2 import phystwin_strict_product as strict
 from demo_v6_2 import tracking
 
-from demo_v6_2.chunk_jsonl_tail import (
+from demo_v6_2.streaming.chunk_jsonl_tail import (
     _complete_chunk_backlog,
     _read_jsonl_from_offset,
     _relative_wall_s,

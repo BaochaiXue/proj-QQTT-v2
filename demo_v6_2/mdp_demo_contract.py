@@ -51,7 +51,7 @@ if TYPE_CHECKING:
         SameSeqPairer,
         StageStats,
     )
-    from demo_v6_2.mdp_warmup_preview import WarmupRgbPreview
+    from demo_v6_2.visualization.mdp_warmup_preview import WarmupRgbPreview
     from demo_v6_2.pipeline_status import PipelineStatusWriter
     from demo_v6_2.utils.concurrency import LatestSlot
     from demo_v6_2.utils.ffs_align import FfsIrToColorAligner

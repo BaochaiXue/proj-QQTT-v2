@@ -202,7 +202,7 @@ def _reclaim_cuda_memory(
 
 def release_sam31_runtime_resources(device: str = DEFAULT_SAM31_DEVICE) -> float:
     """Return the release sam31 runtime resources."""
-    from demo_v6_2 import sam31_image_segmentation
+    from demo_v6_2.perception import sam31_image_segmentation
 
     started_s = time.perf_counter()
     try:
@@ -232,7 +232,7 @@ def run_sam31_first_frame_mask_bundle(
     args: argparse.Namespace,
 ) -> InitialMaskBundle:
     """Run sam31 first frame mask bundle."""
-    from demo_v6_2.sam31_image_segmentation import (
+    from demo_v6_2.perception.sam31_image_segmentation import (
         parse_text_prompts,
         run_image_segmentation,
     )

@@ -7,7 +7,7 @@ from demo_v6_2.mdp_packets import (
     ProcessedFramePacket,
     _full_tracker_arrays_for_prepared_frame,
 )
-from demo_v6_2.mdp_tracker_geometry import (
+from demo_v6_2.perception.mdp_tracker_geometry import (
     _mask_packet_hand_a_mask,
     _mask_packet_hand_b_mask,
 )

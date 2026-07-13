@@ -1,6 +1,6 @@
 """Camera model loading, projection, and shared IO helpers for the viewer.
 
-Extracted verbatim from ``visualize_track.py`` as part of a behavior-preserving
+Extracted from ``visualization/visualize_track.py`` as part of a behavior-preserving
 file split. Foundational module: it defines the low-level pickle/JSON IO helpers
 and camera calibration parsers shared by the other ``viz_*`` modules.
 """

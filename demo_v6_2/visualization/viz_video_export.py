@@ -1,6 +1,6 @@
 """Offline MP4 export for output-only and side-by-side layouts.
 
-Extracted verbatim from ``visualize_track.py`` as part of a behavior-preserving
+Extracted from ``visualization/visualize_track.py`` as part of a behavior-preserving
 file split. Depends on the other ``viz_*`` modules.
 """
 from __future__ import annotations
@@ -9,14 +9,14 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from demo_v6_2.viz_camera_model import (
+from demo_v6_2.visualization.viz_camera_model import (
     _require_cv2,
     infer_case_dir,
     load_camera_model,
     load_pickle,
     normalize_online_dir,
 )
-from demo_v6_2.viz_input_timeline import (
+from demo_v6_2.visualization.viz_input_timeline import (
     _chunk_frame_count,
     _resolve_capture_dir,
     _resolve_input_rgb_timeline,
@@ -32,7 +32,7 @@ from demo_v6_2.viz_playback import (
     _render_output_timeline_frame,
     resolve_playback_fps,
 )
-from demo_v6_2.viz_renderers import build_frame_renderer
+from demo_v6_2.visualization.viz_renderers import build_frame_renderer
 
 
 def render_side_by_side_output_video(args: argparse.Namespace) -> int:

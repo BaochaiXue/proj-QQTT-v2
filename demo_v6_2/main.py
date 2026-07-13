@@ -40,12 +40,12 @@ from demo_v6_2.chunk_data_stream import (
     stream_chunk_data_from_headless_capture,
 )
 from demo_v6_2.main_cli import build_parser
-from demo_v6_2.main_config import (
+from demo_v6_2.orchestration.main_config import (
     DEFAULT_SAM31_CHECKPOINT_PATH,
     REPO_ROOT,
     SAM31_CHECKPOINT_ENV,
 )
-from demo_v6_2.main_layout import (
+from demo_v6_2.orchestration.main_layout import (
     prepare_realtime_output_for_new_run,
     resolve_online_dir,
     resolve_run_summary_path,

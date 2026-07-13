@@ -13,7 +13,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from demo_v6_2.data_keys import TIME_KEYS
-from demo_v6_2.chunk_data_payload import (
+from demo_v6_2.streaming.chunk_data_payload import (
     DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
     DATA_PROCESS_QUERY_SCHEMA_KEYS,
     build_query_schema_payload,

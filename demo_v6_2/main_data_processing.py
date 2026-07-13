@@ -38,12 +38,12 @@ from demo_v6_2.mdp_capture_source import *  # noqa: E402,F401,F403
 from demo_v6_2.mdp_headless_writer import *  # noqa: E402,F401,F403
 from demo_v6_2.mdp_pipeline_plumbing import *  # noqa: E402,F401,F403
 from demo_v6_2.mdp_cli import *  # noqa: E402,F401,F403
-from demo_v6_2.mdp_segmentation import *  # noqa: E402,F401,F403
+from demo_v6_2.perception.mdp_segmentation import *  # noqa: E402,F401,F403
 
 from demo_v6_2.mdp_demo_lifecycle import _LifecycleMixin  # noqa: E402
 from demo_v6_2.mdp_demo_capture import _CaptureMixin  # noqa: E402
 from demo_v6_2.mdp_demo_segwarmup import _SegWarmupMixin  # noqa: E402
-from demo_v6_2.mdp_demo_tracker import _TrackerMixin  # noqa: E402
+from demo_v6_2.perception.mdp_demo_tracker import _TrackerMixin  # noqa: E402
 from demo_v6_2.mdp_demo_pcd import _PcdMixin  # noqa: E402
 from demo_v6_2.mdp_demo_pairpublish import _PairPublishMixin  # noqa: E402
 

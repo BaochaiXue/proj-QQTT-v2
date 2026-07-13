@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
-from demo_v6_2.chunk_jsonl_tail import _optional_int
+from demo_v6_2.streaming.chunk_jsonl_tail import _optional_int
 
 
 # ---------------------------------------------------------------------------

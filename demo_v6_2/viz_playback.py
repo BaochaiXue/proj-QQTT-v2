@@ -1,6 +1,6 @@
 """Interactive playback loops and online chunk timeline assembly.
 
-Extracted verbatim from ``visualize_track.py`` as part of a behavior-preserving
+Extracted from ``visualization/visualize_track.py`` as part of a behavior-preserving
 file split. Depends on ``viz_camera_model``, ``viz_input_timeline``,
 ``viz_panels``, and ``viz_renderers``.
 """
@@ -14,7 +14,7 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from demo_v6_2.viz_camera_model import (
+from demo_v6_2.visualization.viz_camera_model import (
     CameraModel,
     _require_cv2,
     infer_case_dir,
@@ -23,7 +23,7 @@ from demo_v6_2.viz_camera_model import (
     normalize_online_dir,
     read_json,
 )
-from demo_v6_2.viz_input_timeline import (
+from demo_v6_2.visualization.viz_input_timeline import (
     CameraToFinalDataFpsMeter,
     OutputStreamPlaybackCursor,
     _chunk_frame_count,
@@ -46,7 +46,7 @@ from demo_v6_2.viz_panels import (
     draw_pipeline_status,
     render_side_by_side_frame,
 )
-from demo_v6_2.viz_renderers import (
+from demo_v6_2.visualization.viz_renderers import (
     RENDER_MODE_RGB_OVERLAY,
     RENDER_MODE_SAM3D_FINAL_DATA,
     Sam3DGuiFinalDataRenderer,

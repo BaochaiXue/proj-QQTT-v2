@@ -1,6 +1,6 @@
 """Frame renderers (RGB overlay and Open3D final_data) for the viewer.
 
-Extracted verbatim from ``visualize_track.py`` as part of a behavior-preserving
+Extracted from ``visualization/visualize_track.py`` as part of a behavior-preserving
 file split. Depends on ``viz_camera_model``, ``viz_input_timeline``, and
 ``viz_panels``.
 """
@@ -13,8 +13,8 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from demo_v6_2.viz_camera_model import CameraModel, _require_cv2
-from demo_v6_2.viz_input_timeline import (
+from demo_v6_2.visualization.viz_camera_model import CameraModel, _require_cv2
+from demo_v6_2.visualization.viz_input_timeline import (
     _resolve_capture_dir,
     _resolve_input_rgb_timeline,
     format_input_display_latency,

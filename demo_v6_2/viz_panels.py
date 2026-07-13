@@ -1,6 +1,6 @@
 """2D panel composition, overlays, marker colors, and chunk-frame rendering.
 
-Extracted verbatim from ``visualize_track.py`` as part of a behavior-preserving
+Extracted from ``visualization/visualize_track.py`` as part of a behavior-preserving
 file split. Depends on ``viz_camera_model`` and ``viz_input_timeline``.
 """
 from __future__ import annotations
@@ -14,12 +14,12 @@ from typing import Any, Mapping
 import numpy as np
 
 from demo_v6_2.pipeline_status import STAGE_FATAL, STAGE_LABELS
-from demo_v6_2.viz_camera_model import (
+from demo_v6_2.visualization.viz_camera_model import (
     CameraModel,
     _require_cv2,
     project_world_points_to_pixels,
 )
-from demo_v6_2.viz_input_timeline import (
+from demo_v6_2.visualization.viz_input_timeline import (
     InputRgbFrame,
     _chunk_frame_count,
     _source_frame_for_chunk_frame,

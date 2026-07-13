@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 import shutil
 
-from demo_v6_2.main_config import (
+from demo_v6_2.orchestration.main_config import (
     CAPTURE_DIR_NAME,
     DATA_DIR_NAME,
     ONLINE_DATA_DIR_NAME,

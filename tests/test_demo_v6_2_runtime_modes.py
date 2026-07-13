@@ -33,6 +33,67 @@ from demo_v6_2.phystwin_strict_product import (
 )
 
 
+class RootFacadeTests(unittest.TestCase):
+    EXPECTED_ROOT_PYTHON_FILES = frozenset(
+        {
+            "asap.py",
+            "chunk_capture_meta.py",
+            "chunk_data_output.py",
+            "chunk_data_stream.py",
+            "chunk_materialize.py",
+            "chunk_warmup_trim.py",
+            "chunk_window_builder.py",
+            "data_keys.py",
+            "main.py",
+            "main_cli.py",
+            "main_data_processing.py",
+            "main_options.py",
+            "main_subprocess.py",
+            "main_warmup.py",
+            "mdp_capture_source.py",
+            "mdp_cli.py",
+            "mdp_constants.py",
+            "mdp_demo_capture.py",
+            "mdp_demo_contract.py",
+            "mdp_demo_lifecycle.py",
+            "mdp_demo_pairpublish.py",
+            "mdp_demo_pcd.py",
+            "mdp_demo_segwarmup.py",
+            "mdp_headless_writer.py",
+            "mdp_packets.py",
+            "mdp_pipeline_plumbing.py",
+            "online_frame_archive.py",
+            "phystwin_shen_launch.py",
+            "phystwin_strict_product.py",
+            "pipeline_status.py",
+            "shape_prior_align.py",
+            "shape_prior_generate.py",
+            "shape_prior_sample.py",
+            "shape_prior_timing.py",
+            "shape_prior_warmup.py",
+            "tracking.py",
+            "viz_panels.py",
+            "viz_playback.py",
+        }
+    )
+
+    def test_root_python_files_are_pipeline_facade_only(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        demo_root = repo_root / "demo_v6_2"
+        root_python_files = {path.name for path in demo_root.glob("*.py")}
+        self.assertEqual(root_python_files, self.EXPECTED_ROOT_PYTHON_FILES)
+
+        pipeline_text = (demo_root / "PIPELINE.md").read_text(encoding="utf-8")
+        q2_start = pipeline_text.index("## 摄像头与逐帧 I/O（Q2–Q7）")
+        pipeline_answers = pipeline_text[q2_start:]
+        missing_citations = sorted(
+            name
+            for name in self.EXPECTED_ROOT_PYTHON_FILES
+            if name not in pipeline_answers
+        )
+        self.assertEqual(missing_citations, [])
+
+
 class RuntimeInputModeTests(unittest.TestCase):
     @staticmethod
     def _mask_packet(

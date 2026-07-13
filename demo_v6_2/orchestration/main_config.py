@@ -16,14 +16,15 @@ import yaml
 # Keep this repo at the front of the import path when the script is launched
 # from another working directory. Removing the existing entry first avoids a
 # duplicate path while preserving the "current checkout wins" import order.
-REPO_ROOT = Path(__file__).resolve().parents[1]
+DEMO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = DEMO_ROOT.parent
 REPO_ROOT_STR = str(REPO_ROOT)
 if REPO_ROOT_STR in sys.path:
     sys.path.remove(REPO_ROOT_STR)
 sys.path.insert(0, REPO_ROOT_STR)
 
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "default.yaml"
+DEFAULT_CONFIG_PATH = DEMO_ROOT / "config" / "default.yaml"
 
 
 def load_default_config(path: Path = DEFAULT_CONFIG_PATH) -> dict[str, object]:
