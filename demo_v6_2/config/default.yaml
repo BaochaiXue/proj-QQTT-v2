@@ -2,7 +2,7 @@
 paths:
   # Options: relative or absolute directory path; Demo v6.1 writes and clears
   # generated online chunks, capture files, and static final_data under it.
-  data_process_base_path: "outputs_v6_1"
+  data_process_base_path: "outputs"
   # Options: relative or absolute pickle file path; required when table
   # calibration is used by capture/alignment helpers.
   table_calibrate_path: "table_calibrate.pkl"
