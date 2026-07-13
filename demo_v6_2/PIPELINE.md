@@ -22,6 +22,36 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
 属性和方法签名；组装后的 MRO 把六个真实实现放在 contract stub 之前，所以它
 只改善类型检查和 IDE 导航，不增加另一条运行路径，也不创建额外状态。
 
+## 正式启动命令与当前实测边界
+
+当前 `config/default.yaml` 的正式默认组合是：`input_source=fake-live`、
+`data_process_base_path=outputs`、`downstream.mode=phystwin_shen`。因此不带调试
+override 的无 warm-up 窗口启动命令是：
+
+```bash
+conda run -n demo_2_max --no-capture-output \
+  python demo_v6_2/main.py \
+  --input-source fake-live \
+  --no-warmup-rgb-preview
+```
+
+这条命令先写 `<repo>/outputs/`，在 `shape_prior/points.npz` ready 后启动
+Phystwin_shen supervisor。外部 wrapper 随即启动 combined HTML viewer，默认
+地址是 `http://127.0.0.1:8765/`；页面开始监听后可用 Chrome 打开。浏览器本身
+不会启动 viewer server，所以应先看到 `STAGE_DOWNSTREAM_START`，或确认该 URL
+返回 HTTP 200。
+
+2026-07-12 做了两层验证。上游有界运行使用 `--max-chunks 1` 与
+`--downstream-mode disabled`，进程 exit 0，提交 1 个 5 帧 chunk；shape prior
+完整、`track_process_status=normal`、ASAP fallback frame 为 0。因为达到
+`max_chunks` 后编排器主动终止仍在 replay 的 camera 子进程，summary 中 camera
+return code `-15` 是预期 SIGTERM，不是 camera failure。随后按上述正式命令启动
+完整下游：`outputs/` 持续提交 chunk，points-ready trigger 启动 supervisor，
+viewer 返回 HTTP 200，Stage 1 读到在线 chunk 并导出首个 realtime candidate。
+这证明了正式启动到 viewer/Stage 1 的 live 路径，不把仍在运行的完整 5658 帧
+replay 和 100-iteration train 误报为已经终态成功。精确命令与观测记录在
+[`2026-07-12-demo-v6-2-fake-camera-phystwin-proof.md`](../docs/generated/2026-07-12-demo-v6-2-fake-camera-phystwin-proof.md)。
+
 ## 摄像头与逐帧 I/O（Q1–Q6）
 
 1. **摄像头在哪里启动？**
@@ -354,11 +384,20 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
     后处理不会决定最终对齐，只会增加 warm-up 关键路径。mesh postprocess 与
     texture baking 仍保持启用，分别服务后续 mesh 对齐/采样和带纹理 GLB 导出。
 
-    修改前保存的一轮基线中，submit 后总计约 59.23 s：generate 29.44 s
-    （49.7%）、align 14.26 s（24.1%）、upscale 12.27 s（20.7%）；三者合计
-    94.5%。camera start 到 submit 另约 15.94 s。因此下一轮详细 profile 应先
-    判断 generate 的模型加载还是 pipeline/export 最慢，再判断 align 的
-    render/match 与 ARAP，占比很小的二次 SAM3.1 segment 不是首要目标。
+    2026-07-12 正式 fake-live 运行生成了新 schema 的完整 profile：camera
+    runtime start 到 shape-prior submit 为 16.186 s；submit 后关键路径为
+    58.511 s；prior ready 到 formal gate open 仅 75.8 ms；总 warm-up 为
+    74.773 s。关键路径排名是 generate 29.415 s（50.27%）、align 14.139 s
+    （24.16%）、upscale 11.225 s（19.18%）、sample 3.133 s（5.35%）。前三项
+    合计 93.62%，generate 仍是第一优化目标。
+
+    本轮三个长阶段都确认 `ready_before_go=true` 且
+    `startup_tail_on_critical_path_ms=0`，说明预热 worker 已在 GO 前完成启动，
+    当前瓶颈不是迟到的 worker cold start。generate 的 `pipeline_run_ms` 约
+    14.567 s；align 中 `render_candidates_ms` 约 7.366 s、
+    `superglue_match_ms` 约 4.081 s，明显高于两段 ARAP 合计约 1.213 s。
+    因而下一轮优化应优先看 generate pipeline/export，再看 align 的
+    render/match，而不是二次 SAM3.1 或 ARAP。
 
     **源码与实测证据：**
 
@@ -369,8 +408,8 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
       [`shape_prior_align.main`](shape_prior_align.py)、
       [`shape_prior_sample.main`](shape_prior_sample.py) 和
       [`image_upscale.main`](utils/image_upscale.py) 写子进程明细。
-    - [`outputs_v6_1/capture/shape_prior_profile.json`](../outputs_v6_1/capture/shape_prior_profile.json#L5)
-      是修改前 59.23 s 基线；需要下一次运行才会生成新的详细 schema。
+    - [`2026-07-12-demo-v6-2-fake-camera-phystwin-proof.md`](../docs/generated/2026-07-12-demo-v6-2-fake-camera-phystwin-proof.md)
+      固化了本轮命令、profile 数字、viewer HTTP 检查和验证边界。
 
 11. **Warm-up 完成后保留哪些状态和文件？**
     `_seg_worker` 在其生命周期内保留 `SegmentationWarmupState`、
@@ -547,6 +586,13 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
     runtime，它会临时新建实例；“整个 session 一个 runtime”只保证在公开
     stream 主路径中成立。
 
+    `track_process_status` 是结果质量 telemetry，不是另一个分支：只要当前
+    window 有 controller anchor 使用局部刚性 proxy，状态就是 `degraded`；否则
+    是 `normal`。`degraded` chunk 仍会提交，proxy 事实另由
+    `controller_proxied` 和逐 anchor status 保留；schema/query/非有限值等合同
+    违反仍然 fail fast。2026-07-12 的 1-chunk 有界验证为 `normal`，长 replay
+    后段观察到 `degraded`，符合这个非致命定义，不能把它表述为 worker failure。
+
     **源码证据：**
 
     - [`stream_chunk_data_from_headless_capture`](chunk_data_stream.py#L69) 在
@@ -559,6 +605,9 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
       [`_check_frozen_identity`](tracking.py#L498)、
       [`_recover_anchor`](tracking.py#L564) 和
       [`_rigid_transform`](tracking.py#L346) 给出冻结与恢复细节。
+    - [`TrackingRuntime.process_window`](tracking.py) 仅在存在 `proxied` anchor 时
+      写 `TRACK_STATUS_DEGRADED`；[`main.main::on_chunk_written`](main.py) 只把该
+      值写入 chunk-committed status event。
 
 19. **跟踪后还会做哪些过滤？**
     `tracking.motion_consistency` 执行动作一致性过滤：半径 0.01 m、至少 5 个
@@ -683,7 +732,10 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
     Stage 2、train 和 viewer 继承 supervisor 的同一个 Python。wrapper 先启动
     `cma_viewer.source=all` 的单个合并 viewer，再顺序运行 Stage 1、可选
     Stage 2 和 train；独立 `train_viewer` 保持关闭。Demo 在启动 supervisor
-    前只清理这个 viewer 的 endpoint，默认是 `127.0.0.1:8765`。
+    前只清理这个 viewer 的 endpoint，默认是 `127.0.0.1:8765`。当前正式
+    `base_path=outputs` 时，viewer 的 origin、Stage 1 和 train 输入分别是
+    `outputs/online_data`、`experiments_online_cma/outputs/realtime` 和
+    `experiments_online_train/outputs/realtime`。
 
     supervisor、Stage 1/2 和 train 的合并 stdout/stderr 同时实时转发到 Demo
     启动终端（每行前缀 `[phystwin_shen]`）并保留到
@@ -731,6 +783,13 @@ supervisor；Stage 1、可选 Stage 2、train 和一个合并 HTML viewer 由外
     条。因此当前可核验的查看方式是：直接查看 `pipeline_status.jsonl`，或使用
     会进入 OpenCV `run_side_by_side` 的 `rgb-overlay` 路径；不能声称默认正式
     viewer 已经显示该状态条。
+
+    Phystwin_shen 的 `http://127.0.0.1:8765/` 是另一套 combined HTML viewer。
+    它展示 origin、Stage 1 和 train 的 realtime 结果，但不读取
+    `pipeline_status.jsonl`，也不替代上述 warm-up/fatal 状态条。它只在
+    points-ready 后由 supervisor 启动；Chrome 打开 URL 只是连接现有 server，
+    不会反向启动 Phystwin pipeline。2026-07-12 正式 fake-live 启动中，该
+    endpoint 已实测返回 HTTP 200 并成功在现有 Chrome 会话中打开。
 
     `main.main` 的外层 `try/except/finally` 覆盖 camera 启动、stream、
     supervisor launch 和最终 wait。shape-prior/materialization、camera、

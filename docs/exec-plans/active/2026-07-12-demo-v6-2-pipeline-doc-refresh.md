@@ -13,6 +13,8 @@ and mixin-contract refactors.
 - Update moved symbols and stale source line anchors.
 - Document the shared mixin typing contract where it affects architecture.
 - Regenerate the PDF from the final Markdown.
+- Record the 2026-07-12 bounded fake-camera run and formal Phystwin launch.
+- Distinguish the Phystwin combined HTML viewer from Demo pipeline-status UI.
 
 ## Validation
 
@@ -22,9 +24,12 @@ and mixin-contract refactors.
 
 ## Status
 
-- [x] Markdown synchronized with current code and 168 local links checked.
-- [x] PDF regenerated as A4 without browser headers/footers; updated text verified.
-- [x] Validation completed: the full smoke runner was attempted but is currently
-  blocked by pre-existing references to removed `demo_v5_1` files in
-  `render_demo32_headless_capture.py` and the scope guard. All other reachable
-  smoke guards pass, and the seven Demo v6.2 regression tests pass.
+- [x] Markdown synchronized with current code and 173 local links checked.
+- [x] PDF regenerated as a 17-page A4 document without browser
+  headers/footers; updated viewer, timing, and tracking-status text verified.
+- [x] Runtime proof records one completed upstream chunk and the formal
+  points-ready → supervisor → HTTP-200 viewer → Stage 1 export path without
+  misreporting the still-running replay/train as terminal success.
+- [x] Validation completed: 18 Demo v6.2 runtime-mode tests and 3 subtests pass.
+  The full smoke runner was attempted but remains blocked by the pre-existing
+  `render_demo32_headless_capture.py` import of removed `demo_v5_1` code.
