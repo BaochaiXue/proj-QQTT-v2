@@ -69,11 +69,6 @@ FORBIDDEN_DATA_PROCESS_FILES = [
 ]
 
 DEMO_SHAPE_PRIOR_CARVEOUTS = [
-    "demo_v5_1/shape_prior_warmup.py",
-    "demo_v5_1/shape_prior_generate.py",
-    "demo_v5_1/shape_prior_align.py",
-    "demo_v5_1/shape_prior_match_pairs.py",
-    "demo_v5_1/shape_prior_sample.py",
     "qqtt/demo/shape_prior_warmup.py",
     "qqtt/demo/single_view_shape_align.py",
 ]

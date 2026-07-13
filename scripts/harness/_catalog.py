@@ -246,7 +246,6 @@ CATALOG: tuple[HarnessEntry, ...] = (
         "diagnostics",
         "demo",
         "Render Demo 3.2 headless enhanced-pt PCD capture artifacts to MP4.",
-        "smoke",
         help=True,
     ),
     HarnessEntry(
