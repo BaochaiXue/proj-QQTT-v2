@@ -20,7 +20,7 @@ from demo_v6_2.visualization.viz_input_timeline import (
     format_input_display_latency,
     load_input_rgb_background_paths,
 )
-from demo_v6_2.viz_panels import (
+from demo_v6_2.visualization.viz_panels import (
     _blank_image,
     _sam3d_rainbow_colors_rgb_float,
     render_chunk_frame,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from demo_v6_2.shape_prior import warmup as shape_prior_warmup
 from demo_v6_2.orchestration.main_config import (
     CAMERA_FPS_CHOICES,
     CONFIG_SHAPE_PRIOR_CONTROLLER_NAME,
@@ -49,6 +50,12 @@ from demo_v6_2.orchestration.main_config import (
     DOWNSTREAM_MODES,
     VISUALIZER_LAYOUTS,
 )
+
+
+assert (DEFAULT_SHAPE_PRIOR_TIMEOUT_MS, DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES) == (
+    shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
+    shape_prior_warmup.DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
+), "shape-prior timeout/warmup-devices defaults diverged: config/default.yaml vs demo_v6_2/shape_prior/warmup.py"
 
 
 # ---------------------------------------------------------------------------

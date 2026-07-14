@@ -688,7 +688,6 @@ __all__ = [
     "PhystwinShenLaunchError",
     "PhystwinShenSettings",
     "build_full_pipeline_command",
-    "ensure_port_free",
     "launch_phystwin_shen",
     "validate_phystwin_shen_repo",
     "validate_phystwin_shen_settings",

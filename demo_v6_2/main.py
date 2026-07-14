@@ -36,9 +36,7 @@ if _BOOTSTRAP_REPO_ROOT_STR in sys.path:
     sys.path.remove(_BOOTSTRAP_REPO_ROOT_STR)
 sys.path.insert(0, _BOOTSTRAP_REPO_ROOT_STR)
 
-from demo_v6_2.chunk_data_stream import (
-    stream_chunk_data_from_headless_capture,
-)
+from demo_v6_2.streaming.session import ChunkStreamSession
 from demo_v6_2.main_cli import build_parser
 from demo_v6_2.orchestration.main_config import (
     DEFAULT_SAM31_CHECKPOINT_PATH,
@@ -47,38 +45,21 @@ from demo_v6_2.orchestration.main_config import (
 )
 from demo_v6_2.orchestration.main_layout import (
     prepare_realtime_output_for_new_run,
-    resolve_online_dir,
     resolve_run_summary_path,
-    resolve_shape_prior_case_root,
     resolve_shape_prior_points_npz,
-    resolve_static_data_path,
 )
-from demo_v6_2.main_options import (
-    _load_optional_points,
-    _python_command_prefix,
-    demo_visualizer_enabled,
-    phystwin_shen_enabled,
-    resolve_camera_serials,
-    resolve_camera_source_replay_fps,
-    resolve_chunk_frame_count,
-    resolve_downstream_mode,
-    resolve_main_data_processing_cuda_visible_devices,
-    resolve_phystwin_shen_settings,
-    resolve_shape_prior_warmup_cuda_visible_devices,
-    resolve_visualizer_cuda_visible_devices,
-    resolve_visualizer_layout,
-    resolve_write_input_rgb_timeline,
-    visualizer_start_policy,
-    visualizer_uses_side_by_side,
+from demo_v6_2.orchestration.run_config import (
+    OrchestratorRunConfig,
+    dry_run_contract,
+    static_run_contract,
 )
+from demo_v6_2.main_options import load_optional_points, python_command_prefix
 from demo_v6_2.main_subprocess import (
-    _contract,
-    _default_capture_dir,
-    _start_visualizer,
-    _stop_process,
     build_main_data_processing_command,
     build_visualizer_command,
-    validate_runtime_args,
+    default_capture_dir,
+    start_visualizer,
+    stop_process,
 )
 from demo_v6_2.phystwin_shen_launch import (
     PhystwinShenLaunch,
@@ -93,7 +74,7 @@ from demo_v6_2.pipeline_status import (
     STAGE_RUN_START,
     PipelineStatusWriter,
 )
-from demo_v6_2.utils.runtime_summary import _runtime_chunk_summary
+from demo_v6_2.utils.runtime_summary import runtime_chunk_summary
 
 # ---------------------------------------------------------------------------
 # Run summary and entrypoint
@@ -106,7 +87,7 @@ COLLECT_FINISH_BANNER = "##################\ncollect finish\n##################"
 def _stop_phystwin_launch(launch: PhystwinShenLaunch) -> int | None:
     """Terminate the saved full-pipeline process group."""
     try:
-        return _stop_process(
+        return stop_process(
             launch.pipeline_process,
             process_group_id=launch.process_group_id,
         )
@@ -133,11 +114,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run Demo v6.1 live/fake-live orchestration."""
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
-    chunk_frame_count = resolve_chunk_frame_count(args)
-    validate_runtime_args(args, chunk_frame_count=chunk_frame_count)
     # check parameters
+    config = OrchestratorRunConfig.from_args(args)
     if bool(args.dry_run):
-        print(json.dumps(_contract(args), indent=2, sort_keys=True))
+        print(json.dumps(dry_run_contract(args, config), indent=2, sort_keys=True))
         return 0
 
     base_path = Path(args.base_path)
@@ -156,10 +136,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     status = PipelineStatusWriter(base_path, "orchestrator")
     status.emit(
         STAGE_RUN_START,
-        f"input={args.input_source} downstream={resolve_downstream_mode(args)}",
+        f"input={args.input_source} downstream={config.downstream_mode}",
     )  # time record strat
 
-    capture_dir = _default_capture_dir(args, base_path)
+    capture_dir = default_capture_dir(args, base_path)
     capture_dir.mkdir(parents=True, exist_ok=True)
     profile_json = (
         Path(args.shape_prior_profile_json)
@@ -170,7 +150,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args,
         capture_dir=capture_dir,
         profile_json=profile_json,
-        chunk_frame_count=chunk_frame_count,
+        chunk_frame_count=config.chunk_frame_count,
     )  # generate the command text
     main_data_processing_env = os.environ.copy()
     # get SAM3.1 checkpoint path
@@ -182,13 +162,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not checkpoint_path.is_absolute():
             checkpoint_path = REPO_ROOT / checkpoint_path
         main_data_processing_env[SAM31_CHECKPOINT_ENV] = str(checkpoint_path)
-    main_data_processing_cuda_visible_devices = (
-        resolve_main_data_processing_cuda_visible_devices(args).strip()
+    main_data_processing_env["CUDA_VISIBLE_DEVICES"] = (
+        config.main_data_processing_cuda_visible_devices
     )
-    if main_data_processing_cuda_visible_devices:
-        main_data_processing_env["CUDA_VISIBLE_DEVICES"] = (
-            main_data_processing_cuda_visible_devices
-        )
     visualizer_process: subprocess.Popen[bytes] | None = None
     visualizer_started = False
     visualizer_started_manifest: dict[str, object] | None = None
@@ -199,7 +175,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     shape_prior_points_npz = resolve_shape_prior_points_npz(args)
 
     # start Phystwin
-    def _maybe_start_phystwin_shen() -> None:
+    def _ensure_phystwin_shen_running() -> None:
         """Launch once at shape-prior readiness and enforce live health.
 
         The warmup completion artifact (points.npz) doubles as the
@@ -209,7 +185,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         is nothing to wait for, so the launch happens on the first poll.
         """
         nonlocal phystwin_launch
-        if not phystwin_shen_enabled(args):
+        if not config.phystwin_shen_enabled:
             return
         if phystwin_launch is not None:
             phystwin_launch.assert_pipeline_output_relay_healthy()
@@ -228,8 +204,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             trigger = "warmup_disabled_immediate"
         # launch
         phystwin_launch = launch_phystwin_shen(
-            resolve_phystwin_shen_settings(args),
-            python_prefix=_python_command_prefix(args.phystwin_shen_conda_env),
+            config.phystwin_shen_settings,
+            python_prefix=python_command_prefix(args.phystwin_shen_conda_env),
             log_dir=base_path / "phystwin_shen",
             trigger=trigger,
             wall_time_origin_s=run_start_monotonic_s,
@@ -257,47 +233,47 @@ def main(argv: Sequence[str] | None = None) -> int:
         # side-by-side visualizer starts immediately after launch so warmup
         # RGB remains visible while the output side waits for chunks.
         if (
-            demo_visualizer_enabled(args)
-            and not visualizer_uses_side_by_side(args)
+            config.demo_visualizer_enabled
+            and not config.side_by_side
             and visualizer_process is None
         ):
-            visualizer_process = _start_visualizer(args)
+            visualizer_process = start_visualizer(args)
             visualizer_started = True
             visualizer_started_manifest = dict(manifest)
             visualizer_start_wall_s = time.monotonic()
         # Safety net: a chunk can only commit after the shape prior is ready.
-        _maybe_start_phystwin_shen()
+        _ensure_phystwin_shen_running()
 
-    surface_points = _load_optional_points(args.surface_points_npy)
-    interior_points = _load_optional_points(args.interior_points_npy)
+    surface_points = load_optional_points(args.surface_points_npy)
+    interior_points = load_optional_points(args.interior_points_npy)
     manifests: list[dict[str, object]] = []
     main_data_processing: subprocess.Popen[bytes] | None = None
     main_data_processing_return_code: int | None = None
-    camera_return_before_stop: int | None = None
+    main_data_processing_return_code_before_stop: int | None = None
     phystwin_pipeline_return_code: int | None = None
-    camera_stopped = False
+    main_data_processing_stopped = False
     try:
         main_data_processing = subprocess.Popen(
             main_data_processing_command,
             env=main_data_processing_env,
             start_new_session=True,
         )
-        if demo_visualizer_enabled(args) and visualizer_uses_side_by_side(args):
-            visualizer_process = _start_visualizer(args, capture_dir=capture_dir)
+        if config.demo_visualizer_enabled and config.side_by_side:
+            visualizer_process = start_visualizer(args, capture_dir=capture_dir)
             visualizer_started = True
             visualizer_start_wall_s = time.monotonic()
         # The bridge tails frames.jsonl and publishes fixed-size chunks while
         # the camera subprocess is still running, so fake-live and live share the
         # same realtime chunking path.
         # Offline parity with data_process_track.py:L37-L378 and
-        # data_process_sample.py:L250-L352. stream_chunk_data_from_headless_capture
-        # materializes those outputs incrementally instead of after the
-        # recording has finished.
-        manifests = stream_chunk_data_from_headless_capture(
+        # data_process_sample.py:L250-L352. ChunkStreamSession materializes
+        # those outputs incrementally instead of after the recording has
+        # finished.
+        chunk_stream = ChunkStreamSession(
             capture_dir,
             base_path=base_path,
             case_prefix=str(args.case_prefix),
-            chunk_frame_count=chunk_frame_count,
+            chunk_size=config.chunk_frame_count,
             fps=int(round(float(args.replay_fps))),
             max_chunks=args.max_chunks,
             capture_finished=lambda: main_data_processing.poll() is not None,
@@ -307,19 +283,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             surface_points=surface_points,
             interior_points=interior_points,
             on_chunk_written=on_chunk_written,
-            before_poll=_maybe_start_phystwin_shen,
+            before_poll=_ensure_phystwin_shen_running,
             asap_augment=bool(args.asap_augment),
             asap_mesh_path=args.asap_mesh_path,
         )
+        manifests = chunk_stream.run()
         if args.max_chunks is not None and len(manifests) >= int(args.max_chunks):
             print(COLLECT_FINISH_BANNER, flush=True)
-        camera_return_before_stop = main_data_processing.poll()
-        main_data_processing_return_code = _stop_process(main_data_processing)
-        camera_stopped = True
-        if camera_return_before_stop not in (None, 0):
+        main_data_processing_return_code_before_stop = main_data_processing.poll()
+        main_data_processing_return_code = stop_process(main_data_processing)
+        main_data_processing_stopped = True
+        if main_data_processing_return_code_before_stop not in (None, 0):
             raise RuntimeError(
                 "main_data_processing exited before the Demo completed "
-                f"(return code {camera_return_before_stop})"
+                f"(return code {main_data_processing_return_code_before_stop})"
             )
         expected_stop_codes = {
             0,
@@ -329,7 +306,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             128 + signal.SIGKILL,
         }
         if (
-            camera_return_before_stop is None
+            main_data_processing_return_code_before_stop is None
             and main_data_processing_return_code not in expected_stop_codes
         ):
             raise RuntimeError(
@@ -341,7 +318,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "Demo stream ended before the requested chunk target: "
                 f"wrote {len(manifests)} of {int(args.max_chunks)}"
             )
-        if phystwin_shen_enabled(args):
+        if config.phystwin_shen_enabled:
             if phystwin_launch is None:
                 raise PhystwinShenLaunchError(
                     "Demo stream finished before Phystwin_shen was launched"
@@ -352,95 +329,51 @@ def main(argv: Sequence[str] | None = None) -> int:
         if phystwin_launch is not None:
             _stop_phystwin_launch(phystwin_launch)
         if visualizer_process is not None:
-            _stop_process(visualizer_process)
+            stop_process(visualizer_process)
         raise
     finally:
-        if main_data_processing is not None and not camera_stopped:
-            camera_return_before_stop = main_data_processing.poll()
-            main_data_processing_return_code = _stop_process(main_data_processing)
+        if main_data_processing is not None and not main_data_processing_stopped:
+            main_data_processing_return_code_before_stop = main_data_processing.poll()
+            main_data_processing_return_code = stop_process(main_data_processing)
         if visualizer_process is not None:
             visualizer_return_code = visualizer_process.poll()
             visualizer_left_running = visualizer_return_code is None
-    runtime_summary = _runtime_chunk_summary(manifests)
+    runtime_summary = runtime_chunk_summary(manifests)
     if args.max_chunks is not None and len(manifests) >= int(args.max_chunks):
         stop_reason = "max_chunks_reached"
-    elif camera_return_before_stop == 0:
+    elif main_data_processing_return_code_before_stop == 0:
         stop_reason = "main_data_processing_completed"
-    elif camera_return_before_stop is None:
+    elif main_data_processing_return_code_before_stop is None:
         stop_reason = "main_data_processing_stopped_after_stream"
     else:
         stop_reason = "main_data_processing_exited_before_target"
     summary = {
-        "demo_version": "demo_v6_1",
+        **static_run_contract(args, config),
         "mode": (
             "full-fake-main-data-processing"
             if str(args.input_source) == "fake-live"
             else "full-live-main-data-processing"
         ),
         "main_data_processing_command": main_data_processing_command,
-        "main_data_processing_cuda_visible_devices": (
-            main_data_processing_cuda_visible_devices
-        ),
-        "camera_lossless_max_backlog_seconds": args.camera_lossless_max_backlog_seconds,
-        "camera_headless_prepared_only": bool(args.camera_headless_prepared_only),
-        "write_input_rgb_timeline": resolve_write_input_rgb_timeline(args),
-        "camera_serials": resolve_camera_serials(args),
-        "camera_source_replay_fps": resolve_camera_source_replay_fps(args),
-        "camera_source_replay_fps_override": (
-            None
-            if args.camera_source_replay_fps is None
-            else float(args.camera_source_replay_fps)
-        ),
-        "shape_prior_warmup_cuda_visible_devices": (
-            resolve_shape_prior_warmup_cuda_visible_devices(args)
-        ),
-        "shape_prior_controller_name": str(args.shape_prior_controller_name),
-        "shape_prior_sam3d_root": (
-            None
-            if args.shape_prior_sam3d_root is None
-            else str(args.shape_prior_sam3d_root)
-        ),
-        "shape_prior_config": (
-            None if args.shape_prior_config is None else str(args.shape_prior_config)
-        ),
         "main_data_processing_return_code": main_data_processing_return_code,
-        "main_data_processing_return_code_before_stop": camera_return_before_stop,
+        "main_data_processing_return_code_before_stop": (
+            main_data_processing_return_code_before_stop
+        ),
         "main_data_processing_stop_reason": stop_reason,
-        "main_data_processing_capture_dir": str(capture_dir),
-        "base_path": str(base_path),
-        "case_prefix": str(args.case_prefix),
-        "output_format": "online-primary-static-case",
-        "online_dir": str(resolve_online_dir(args)),
-        "static_data_path": str(resolve_static_data_path(args)),
-        "shape_prior_case_root": str(resolve_shape_prior_case_root(args)),
-        "shape_prior_points_npz": str(resolve_shape_prior_points_npz(args)),
         "startup_output_cleanup": startup_output_cleanup,
-        "chunk_frame_count": int(chunk_frame_count),
-        "chunk_poll_interval_s": float(args.chunk_poll_interval_s),
-        "max_chunks": args.max_chunks,
         "chunk_count": int(len(manifests)),
         "chunks": manifests,
         "external_shape_prior_points": bool(
             surface_points is not None or interior_points is not None
         ),
-        "downstream_mode": resolve_downstream_mode(args),
-        "visualizer_layout": resolve_visualizer_layout(args),
         "visualizer_started": visualizer_started,
-        "visualizer_start_policy": visualizer_start_policy(args),
-        "visualizer_capture_dir": str(capture_dir)
-        if visualizer_uses_side_by_side(args)
-        else None,
+        "visualizer_capture_dir": str(capture_dir) if config.side_by_side else None,
         "visualizer_started_from_chunk": visualizer_started_manifest,
         "visualizer_start_wall_s": visualizer_start_wall_s,
         "visualizer_command": build_visualizer_command(
             args,
-            capture_dir=capture_dir if visualizer_uses_side_by_side(args) else None,
+            capture_dir=capture_dir if config.side_by_side else None,
         ),
-        "visualizer_cuda_visible_devices": resolve_visualizer_cuda_visible_devices(
-            args
-        ),
-        "visualizer_fps": float(args.visualizer_playback_fps),
-        "visualizer_object_color_mode": str(args.visualizer_object_color_mode),
         "visualizer_return_code": visualizer_return_code,
         "visualizer_left_running": visualizer_left_running,
         "phystwin_shen_started": phystwin_launch is not None,
@@ -466,11 +399,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     # pipeline has completed successfully. A camera deliberately stopped after
     # max_chunks may report SIGTERM; an observed pre-stop camera failure was
     # already raised above.
-    if demo_visualizer_enabled(args) and not visualizer_started:
+    if config.demo_visualizer_enabled and not visualizer_started:
         return 1
     if visualizer_return_code not in (0, None):
         return int(visualizer_return_code)
-    if phystwin_shen_enabled(args):
+    if config.phystwin_shen_enabled:
         if phystwin_launch is None:
             return 1
         if phystwin_pipeline_return_code != 0:

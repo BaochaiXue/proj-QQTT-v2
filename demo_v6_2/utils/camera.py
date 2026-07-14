@@ -19,6 +19,13 @@ class CameraIntrinsics:
     cy: float
 
 
+def bgr_to_pil_rgb(color_bgr: np.ndarray) -> object:
+    """Return a PIL RGB image for a BGR frame array."""
+    from PIL import Image  # noqa: PLC0415
+
+    return Image.fromarray(np.ascontiguousarray(color_bgr[:, :, ::-1]))
+
+
 def parse_profile(profile: str) -> tuple[int, int]:
     """Parse profile."""
     if profile not in SUPPORTED_PROFILES:

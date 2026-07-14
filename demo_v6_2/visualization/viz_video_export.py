@@ -24,8 +24,8 @@ from demo_v6_2.visualization.viz_input_timeline import (
     load_fake_input_frame_total,
     load_input_rgb_frames,
 )
-from demo_v6_2.viz_panels import render_side_by_side_frame
-from demo_v6_2.viz_playback import (
+from demo_v6_2.visualization.viz_panels import render_side_by_side_frame
+from demo_v6_2.visualization.viz_playback import (
     LAYOUT_OUTPUT_ONLY,
     LAYOUT_SIDE_BY_SIDE,
     _append_new_output_frames,
@@ -35,8 +35,8 @@ from demo_v6_2.viz_playback import (
 from demo_v6_2.visualization.viz_renderers import build_frame_renderer
 
 
-def render_side_by_side_output_video(args: argparse.Namespace) -> int:
-    """Render existing side-by-side frames to an MP4 file."""
+def export_side_by_side_output_video(args: argparse.Namespace) -> int:
+    """Export existing side-by-side frames to an MP4 file."""
     cv2 = _require_cv2()
     online_dir = normalize_online_dir(args.online_dir)
     case_dir = infer_case_dir(online_dir, args.case_dir)
@@ -100,11 +100,11 @@ def render_side_by_side_output_video(args: argparse.Namespace) -> int:
     return 0
 
 
-def render_output_video(args: argparse.Namespace) -> int:
-    """Render existing output chunks to an MP4 file."""
+def export_output_video(args: argparse.Namespace) -> int:
+    """Export existing output chunks to an MP4 file."""
     cv2 = _require_cv2()
     if str(getattr(args, "layout", LAYOUT_OUTPUT_ONLY)) == LAYOUT_SIDE_BY_SIDE:
-        return render_side_by_side_output_video(args)
+        return export_side_by_side_output_video(args)
     online_dir = normalize_online_dir(args.online_dir)
     case_dir = infer_case_dir(online_dir, args.case_dir)
     camera = load_camera_model(case_dir, cam_idx=int(args.cam_idx))

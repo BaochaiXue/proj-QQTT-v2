@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tempfile
 import unittest
 
 import numpy as np
 
-from demo_v6_2.online_frame_archive import (
+from demo_v6_2.streaming.online_frame_archive import (
     OnlineFrameArchive,
     OnlineFrameArchiveError,
 )
@@ -42,36 +43,48 @@ class RealtimeArchiveContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             archive = OnlineFrameArchive(
                 base_path=Path(temporary_directory),
-                case_name="test-case",
                 fps=5,
             )
-            archive.initialize_case(metadata, serial_number="test-camera")
+            archive.initialize_case(metadata)
             with self.assertRaisesRegex(
                 OnlineFrameArchiveError,
                 "not streamed before chunk commit",
             ):
                 archive.archive_chunk(
                     chunk_id=0,
-                    metadata=metadata,
-                    serial_number="test-camera",
                     frames=[frame],
                     source_frame_indices=[42],
-                    source_timestamps_s=None,
                     online_start_frame=0,
                 )
 
             archive.stream_frame(frame)
             summary = archive.archive_chunk(
                 chunk_id=0,
-                metadata=metadata,
-                serial_number="test-camera",
                 frames=[frame],
                 source_frame_indices=[42],
-                source_timestamps_s=None,
                 online_start_frame=0,
+            )
+            archive.publish_metadata()
+            online_metadata = json.loads(
+                archive.metadata_path.read_text(encoding="utf-8")
+            )
+            enhance_metadata = json.loads(
+                archive.enhance_metadata_path.read_text(encoding="utf-8")
             )
 
         self.assertEqual(summary["online_frame_archive_frames"], 1)
+        self.assertEqual(
+            set(online_metadata),
+            {"serial_numbers", "WH", "intrinsics", "frame_num", "fps"},
+        )
+        self.assertEqual(online_metadata["serial_numbers"], ["test-camera"])
+        self.assertEqual(online_metadata["frame_num"], 1)
+        self.assertEqual(set(enhance_metadata), {"frame_mapping"})
+        self.assertEqual(len(enhance_metadata["frame_mapping"]), 1)
+        self.assertEqual(
+            set(enhance_metadata["frame_mapping"][0]),
+            {"online_frame_index", "seq", "source_frame_index", "depth_path"},
+        )
 
 
 if __name__ == "__main__":

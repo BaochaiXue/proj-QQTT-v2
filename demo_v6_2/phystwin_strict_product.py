@@ -18,9 +18,13 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
+from demo_v6_2.utils.atomic_io import atomic_open
 from demo_v6_2.utils.depth_geometry import transform_points
 from demo_v6_2.utils.pcd_postprocess import detect_radius_outlier_indices
-from demo_v6_2.utils.projection import build_projection_grid_from_matrix
+from demo_v6_2.utils.projection import (
+    build_projection_grid_from_matrix,
+    intrinsics_to_matrix,
+)
 from demo_v6_2.utils.render import (
     _load_rgb,
     _render_empty_video,
@@ -182,32 +186,6 @@ def _depth_validity_mask(depth: np.ndarray) -> np.ndarray:
     )
 
 
-def _intrinsics_to_matrix(intrinsics: Any) -> np.ndarray:
-    """Coerce intrinsics to a 3x3 pinhole K matrix (float32).
-
-    Accepts a mapping with fx/fy/cx/cy, an object exposing those attributes
-    (e.g. a pyrealsense2 intrinsics struct), or anything reshapeable to 3x3.
-    """
-    if isinstance(intrinsics, Mapping):
-        fx = float(intrinsics["fx"])
-        fy = float(intrinsics["fy"])
-        cx = float(intrinsics["cx"])
-        cy = float(intrinsics["cy"])
-        return np.array(
-            [[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float32
-        )
-    if all(hasattr(intrinsics, name) for name in ("fx", "fy", "cx", "cy")):
-        return np.array(
-            [
-                [float(intrinsics.fx), 0.0, float(intrinsics.cx)],
-                [0.0, float(intrinsics.fy), 0.0 + float(intrinsics.cy)],
-                [0.0, 0.0, 1.0],
-            ],
-            dtype=np.float32,
-        )
-    return np.asarray(intrinsics, dtype=np.float32).reshape(3, 3)
-
-
 def dense_world_pcd_grid(
     *,
     depth_m: np.ndarray,
@@ -226,7 +204,7 @@ def dense_world_pcd_grid(
     if color.shape[:2] != depth.shape or color.ndim != 3 or color.shape[2] != 3:
         raise ValueError("color_rgb_u8 must have shape HxWx3 matching depth_m")
     height, width = depth.shape
-    K = _intrinsics_to_matrix(intrinsics)
+    K = intrinsics_to_matrix(intrinsics)
     c2w_matrix = np.asarray(c2w, dtype=np.float32).reshape(4, 4)
     if not np.isfinite(K).all():
         raise ValueError("camera intrinsics must be finite")
@@ -469,8 +447,6 @@ def write_prepared_phystwin_frame(
 ) -> Path:
     """Write prepared phystwin frame."""
     output = Path(path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    tmp = output.with_name(f"{output.name}.tmp")
     masks = normalize_processed_mask_frame(frame.processed_mask_frame)
     mask_keys = np.asarray(sorted(masks.keys()))
     # The npz is read back with allow_pickle=False, so None provenance fields
@@ -510,10 +486,8 @@ def write_prepared_phystwin_frame(
         )
     for key in mask_keys:
         payload[f"mask_{str(key)}"] = np.ascontiguousarray(masks[str(key)], dtype=bool)
-    # Write-then-rename keeps concurrent readers from ever seeing a partial npz.
-    with tmp.open("wb") as handle:
+    with atomic_open(output) as handle:
         np.savez(handle, **payload)
-    tmp.replace(output)
     return output
 
 
@@ -802,9 +776,10 @@ def finalize_headless_capture(
     )
 
     from demo_v6_2 import tracking as tracking_module  # noqa: PLC0415
+    from demo_v6_2.streaming import window_observations  # noqa: PLC0415
 
     normalized_masks = [normalize_processed_mask_frame(frame) for frame in mask_frames]
-    track_input = tracking_module.build_window_observations(
+    track_input = window_observations.build_window_observations(
         tracks_yx=tracks_yx,
         visibility=tracker_visibility,
         mask_frames=normalized_masks,

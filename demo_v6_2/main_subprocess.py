@@ -1,4 +1,4 @@
-"""Demo v6.1 subprocess commands, runtime contract, and process lifecycle."""
+"""Demo v6.1 subprocess commands and process lifecycle."""
 
 from __future__ import annotations
 
@@ -9,13 +9,10 @@ import signal
 import subprocess
 import time
 
-import numpy as np
-
 from demo_v6_2.orchestration.main_config import (
     CAPTURE_DIR_NAME,
     DEFAULT_CAMERA_SOURCE_REPLAY_FPS,
     DEFAULT_TABLE_CALIBRATE_PATH,
-    EDGE_TAM_TRACKING_IDENTITIES,
     REPO_ROOT,
     VISUALIZER_LAYOUT_SIDE_BY_SIDE,
 )
@@ -24,29 +21,15 @@ from demo_v6_2.orchestration.main_layout import (
     resolve_shape_prior_case_root,
     resolve_shape_prior_points_npz,
     resolve_static_data_dir,
-    resolve_static_data_path,
 )
 from demo_v6_2.main_options import (
-    _python_command_prefix,
-    demo_visualizer_enabled,
-    phystwin_shen_enabled,
+    python_command_prefix,
     resolve_camera_serials,
     resolve_camera_source_replay_fps,
-    resolve_chunk_frame_count,
-    resolve_downstream_mode,
-    resolve_main_data_processing_cuda_visible_devices,
-    resolve_phystwin_shen_cuda_visible_devices,
-    resolve_phystwin_shen_settings,
     resolve_shape_prior_warmup_cuda_visible_devices,
     resolve_visualizer_cuda_visible_devices,
     resolve_visualizer_layout,
     resolve_write_input_rgb_timeline,
-    visualizer_start_policy,
-)
-from demo_v6_2.phystwin_shen_launch import (
-    build_full_pipeline_command,
-    validate_phystwin_shen_repo,
-    validate_phystwin_shen_settings,
 )
 
 
@@ -62,7 +45,7 @@ def build_visualizer_command(
         "" if capture_dir is None else str(Path(capture_dir) / "input_frames.jsonl")
     )
     command = [
-        *_python_command_prefix(getattr(args, "visualizer_conda_env", None)),
+        *python_command_prefix(getattr(args, "visualizer_conda_env", None)),
         str(Path("demo_v6_2") / "visualization" / "visualize_track.py"),
         "--layout",
         layout,
@@ -99,154 +82,6 @@ def build_visualizer_command(
     return command
 
 
-def _contract(args: argparse.Namespace) -> dict[str, object]:
-    """Return the dry-run/runtime summary without launching subprocesses."""
-    chunk_frame_count = int(resolve_chunk_frame_count(args))
-    phystwin_settings = (
-        resolve_phystwin_shen_settings(args) if phystwin_shen_enabled(args) else None
-    )
-    return {
-        "demo_version": "demo_v6_1",
-        "input_source": str(args.input_source),
-        "replay_fps": float(args.replay_fps),
-        "camera_serials": resolve_camera_serials(args),
-        "camera_source_replay_fps": resolve_camera_source_replay_fps(args),
-        "camera_source_replay_fps_override": (
-            None
-            if args.camera_source_replay_fps is None
-            else float(args.camera_source_replay_fps)
-        ),
-        "chunk_seconds": float(args.chunk_seconds),
-        "chunk_poll_interval_s": float(args.chunk_poll_interval_s),
-        "chunk_frame_count": chunk_frame_count,
-        "base_path": str(args.base_path),
-        "case_prefix": str(args.case_prefix),
-        "output_format": "online-primary-static-case",
-        "online_dir": str(resolve_online_dir(args)),
-        "static_data_path": str(resolve_static_data_path(args)),
-        "shape_prior_case_root": str(resolve_shape_prior_case_root(args)),
-        "shape_prior_points_npz": str(resolve_shape_prior_points_npz(args)),
-        "max_chunks": args.max_chunks,
-        "depth_backend": str(args.depth_backend),
-        "edgetam_tracking_identities": list(EDGE_TAM_TRACKING_IDENTITIES),
-        "main_data_processing_capture_dir": str(
-            _default_capture_dir(args, Path(args.base_path))
-        ),
-        "main_data_processing_cuda_visible_devices": (
-            resolve_main_data_processing_cuda_visible_devices(args)
-        ),
-        "perception_device": str(args.perception_device),
-        "tracker_device": str(args.tracker_device),
-        "inference_dtype": str(args.inference_dtype),
-        "camera_lossless_max_backlog_seconds": args.camera_lossless_max_backlog_seconds,
-        "camera_headless_prepared_only": bool(args.camera_headless_prepared_only),
-        "write_input_rgb_timeline": resolve_write_input_rgb_timeline(args),
-        "shape_prior_warmup": bool(args.shape_prior_warmup),
-        "shape_prior_prewarm_stage_workers": bool(
-            args.shape_prior_prewarm_stage_workers
-        ),
-        "shape_prior_warmup_cuda_visible_devices": (
-            resolve_shape_prior_warmup_cuda_visible_devices(args)
-        ),
-        "shape_prior_controller_name": str(args.shape_prior_controller_name),
-        "shape_prior_sam3d_root": (
-            None
-            if args.shape_prior_sam3d_root is None
-            else str(args.shape_prior_sam3d_root)
-        ),
-        "shape_prior_config": (
-            None if args.shape_prior_config is None else str(args.shape_prior_config)
-        ),
-        "shape_prior_chunk_wait_timeout_s": float(
-            args.shape_prior_chunk_wait_timeout_s
-        ),
-        "downstream_mode": resolve_downstream_mode(args),
-        "visualizer_layout": resolve_visualizer_layout(args),
-        "visualizer_command": build_visualizer_command(args),
-        "visualizer_cuda_visible_devices": resolve_visualizer_cuda_visible_devices(
-            args
-        ),
-        "visualizer_start_policy": visualizer_start_policy(args),
-        "visualizer_capture_dir": None,
-        "visualizer_fps": float(args.visualizer_playback_fps),
-        "visualizer_object_color_mode": str(args.visualizer_object_color_mode),
-        "phystwin_shen_repo_path": str(args.phystwin_shen_repo),
-        "phystwin_shen_conda_env": str(args.phystwin_shen_conda_env),
-        "phystwin_shen_pipeline_config": str(args.phystwin_shen_pipeline_config),
-        "phystwin_shen_cuda_visible_devices": (
-            resolve_phystwin_shen_cuda_visible_devices(args)
-        ),
-        "phystwin_shen_viewer_urls": (
-            {} if phystwin_settings is None else phystwin_settings.viewer_urls
-        ),
-        "phystwin_shen_pipeline_command": (
-            None
-            if phystwin_settings is None
-            else build_full_pipeline_command(
-                phystwin_settings,
-                python_prefix=_python_command_prefix(args.phystwin_shen_conda_env),
-            )
-        ),
-    }
-
-
-def validate_runtime_args(args: argparse.Namespace, *, chunk_frame_count: int) -> None:
-    """Validate cross-option constraints before launching subprocesses."""
-    if float(args.chunk_poll_interval_s) <= 0.0:
-        raise ValueError("--chunk-poll-interval-s must be positive")
-    if not np.isfinite(float(args.visualizer_playback_fps)):
-        raise ValueError("--visualizer-playback-fps must be finite")
-    if float(args.visualizer_playback_fps) <= 0.0:
-        raise ValueError("--visualizer-playback-fps must be positive")
-    resolve_camera_serials(args)
-    resolve_camera_source_replay_fps(args)
-    if (
-        bool(getattr(args, "fake_live_case_cli_override", False))
-        and str(args.input_source) != "fake-live"
-    ):
-        raise ValueError("--fake-live-case requires --input-source fake-live")
-    if int(chunk_frame_count) <= 0:
-        raise ValueError("chunk frame count must be positive")
-    if args.max_chunks is not None and int(args.max_chunks) <= 0:
-        raise ValueError("--max-chunks must be positive when provided")
-    if not np.isfinite(float(args.edgetam_mask_logit_threshold)):
-        raise ValueError("--edgetam-mask-logit-threshold must be finite")
-    resolve_main_data_processing_cuda_visible_devices(args)
-    if bool(args.shape_prior_warmup):
-        resolve_shape_prior_warmup_cuda_visible_devices(args)
-    resolve_downstream_mode(args)
-    if phystwin_shen_enabled(args):
-        # Fail fast before launching subprocesses: a bad checkout/port/GPU
-        # config should not surface only at shape-prior-ready time.
-        if not bool(args.asap_augment):
-            raise ValueError("--downstream-mode phystwin_shen requires --asap-augment")
-        settings = resolve_phystwin_shen_settings(args)
-        validate_phystwin_shen_repo(
-            settings.repo_path,
-            settings.pipeline_config,
-        )
-        validate_phystwin_shen_settings(
-            settings,
-            python_prefix=_python_command_prefix(args.phystwin_shen_conda_env),
-        )
-        resolve_phystwin_shen_cuda_visible_devices(args)
-        if not str(args.phystwin_shen_conda_env).strip():
-            raise ValueError("--phystwin-shen-conda-env must be non-empty")
-    if demo_visualizer_enabled(args):
-        resolve_visualizer_layout(args)
-        if int(args.visualizer_cam_idx) < 0:
-            raise ValueError("--visualizer-cam-idx must be non-negative")
-        if float(args.visualizer_poll_sec) <= 0.0:
-            raise ValueError("--visualizer-poll-sec must be positive")
-        if int(args.visualizer_object_stride) <= 0:
-            raise ValueError("--visualizer-object-stride must be positive")
-        if int(args.visualizer_object_radius) <= 0:
-            raise ValueError("--visualizer-object-radius must be positive")
-        if int(args.visualizer_controller_radius) <= 0:
-            raise ValueError("--visualizer-controller-radius must be positive")
-        resolve_visualizer_cuda_visible_devices(args)
-
-
 # ---------------------------------------------------------------------------
 # Camera subprocess command and process lifecycle
 # ---------------------------------------------------------------------------
@@ -275,7 +110,7 @@ def build_main_data_processing_command(
     duration_s = 0.0
     # This is the only v6.1 camera/tracker entrypoint. It writes prepared
     # per-frame NPZ payloads plus optional input RGB timeline data; chunk
-    # materialization happens in chunk_data_stream.py.
+    # materialization happens in streaming/session.py.
     # Offline parity with data_process_sam3d/data_process_pcd.py:L84-L149,
     # data_process_sam3d/data_process_mask.py:L42-L152, and
     # data_process_sam3d/data_process_track.py:L49-L55. The subprocess emits the
@@ -321,8 +156,6 @@ def build_main_data_processing_command(
         "tapnextpp",
         "--tracker-overlay-max-points",
         "0",
-        "--demo-visual-mode",
-        "tracking",
         "--replay-fps",
         str(camera_source_replay_fps),
         "--device",
@@ -335,12 +168,6 @@ def build_main_data_processing_command(
         str(args.tracker_device),
         "--table-calibrate",
         str(DEFAULT_TABLE_CALIBRATE_PATH),
-        "--runtime-product-name",
-        "demo_v6_1_main_data_processing",
-        "--metadata-demo-version",
-        "demo_v6_1",
-        "--metadata-reference-pipeline",
-        "data_process_sam3d",
     ]
     if args.camera_lossless_max_backlog_seconds is not None:
         command.extend(
@@ -394,7 +221,7 @@ def build_main_data_processing_command(
     return command
 
 
-def _default_capture_dir(args: argparse.Namespace, base_path: Path) -> Path:
+def default_capture_dir(args: argparse.Namespace, base_path: Path) -> Path:
     """Return the default capture dir."""
     if args.camera_capture_dir is not None:
         return Path(args.camera_capture_dir)
@@ -435,7 +262,7 @@ def _wait_for_process_group_exit(
         time.sleep(0.05)
 
 
-def _stop_process(
+def stop_process(
     process: subprocess.Popen[bytes],
     *,
     process_group_id: int | None = None,
@@ -493,7 +320,7 @@ def _stop_process(
     return process.returncode
 
 
-def _start_visualizer(
+def start_visualizer(
     args: argparse.Namespace,
     *,
     capture_dir: Path | None = None,

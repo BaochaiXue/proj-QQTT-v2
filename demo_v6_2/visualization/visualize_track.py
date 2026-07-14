@@ -7,8 +7,8 @@ chooses the final_data frame whose source timestamp best matches the desired
 camera-to-output latency.
 
 This module is the thin CLI entry point. The implementation lives in the
-``demo_v6_2.visualization`` package plus the pipeline-cited root panel/playback
-modules. This file keeps the module constants it owns and the CLI surface.
+``demo_v6_2.visualization`` package. This file keeps the module constants it
+owns and the CLI surface.
 """
 from __future__ import annotations
 
@@ -32,8 +32,8 @@ from demo_v6_2.visualization.viz_camera_model import (
     load_camera_model,
     normalize_online_dir,
 )
-from demo_v6_2.viz_panels import DEFAULT_RIGHT_BLANK_LABEL, parse_bgr_color
-from demo_v6_2.viz_playback import (
+from demo_v6_2.visualization.viz_panels import DEFAULT_RIGHT_BLANK_LABEL, parse_bgr_color
+from demo_v6_2.visualization.viz_playback import (
     LAYOUT_OUTPUT_ONLY,
     LAYOUT_SIDE_BY_SIDE,
     LAYOUTS,
@@ -49,7 +49,7 @@ from demo_v6_2.visualization.viz_renderers import (
     RENDER_MODES,
     build_frame_renderer,
 )
-from demo_v6_2.visualization.viz_video_export import render_output_video
+from demo_v6_2.visualization.viz_video_export import export_output_video
 
 
 DEFAULT_WINDOW_NAME = "Demo v6.1 visualize track"
@@ -124,7 +124,7 @@ def run(args: argparse.Namespace) -> int:
     """Play committed chunks in order, tailing the online directory live."""
     validate_args(args)
     if args.output_video is not None:
-        return render_output_video(args)
+        return export_output_video(args)
     if str(args.layout) == LAYOUT_SIDE_BY_SIDE:
         if use_interactive_side_by_side(args):
             return run_interactive_side_by_side(args)

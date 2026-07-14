@@ -15,7 +15,6 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
-from demo_v6_2.utils.jsonl_io import read_jsonl_rows
 from demo_v6_2.visualization.viz_camera_model import (
     _require_cv2,
     load_pickle,
@@ -33,75 +32,6 @@ class InputRgbFrame:
     path: Path | None
     source_frame_index: int | None
     source_timestamp_s: float | None
-
-
-class InputReceiveTimeline:
-    """Incrementally cache fake-camera receive times keyed by source frame.
-
-    The timeline file is append-only during live capture, so the reader keeps a
-    byte offset and only parses newly completed JSONL rows.
-    """
-
-    def __init__(self, timeline_path: str | Path | None) -> None:
-        """Initialize InputReceiveTimeline."""
-        self.timeline_path = None if timeline_path is None else Path(timeline_path).expanduser()
-        self.receive_times: dict[int, float] = {}
-        self._offset = 0
-
-    def refresh(self) -> None:
-        """Read any newly completed receive-timeline rows."""
-        path = self.timeline_path
-        if path is None:
-            return
-        try:
-            size = path.stat().st_size
-        except OSError:
-            return
-        if int(size) < int(self._offset):
-            self._offset = 0
-            self.receive_times.clear()
-        try:
-            with path.open("rb") as handle:
-                handle.seek(self._offset)
-                for raw_line in handle:
-                    self._ingest_line(raw_line)
-                self._offset = int(handle.tell())
-        except OSError:
-            return
-
-    def receive_time(self, source_frame_index: int | None) -> float | None:
-        """Return the cached receive time for one source frame."""
-        if source_frame_index is None:
-            return None
-        try:
-            key = int(source_frame_index)
-        except (TypeError, ValueError):
-            return None
-        value = self.receive_times.get(key)
-        if value is None:
-            return None
-        receive_s = float(value)
-        if not math.isfinite(receive_s):
-            return None
-        return receive_s
-
-    def _ingest_line(self, raw_line: bytes) -> None:
-        """Ingest one JSONL timeline row."""
-        text = raw_line.decode("utf-8", errors="replace").strip()
-        if not text:
-            return
-        try:
-            row = dict(json.loads(text))
-        except (json.JSONDecodeError, TypeError, ValueError):
-            return
-        try:
-            source_frame_index = int(row["source_frame_index"])
-            receive_perf_s = float(row["receive_perf_s"])
-        except (KeyError, TypeError, ValueError):
-            return
-        if not math.isfinite(receive_perf_s):
-            return
-        self.receive_times[source_frame_index] = receive_perf_s
 
 
 @dataclass
@@ -246,9 +176,27 @@ def _input_rgb_frame_from_row(row: Mapping[str, Any], *, capture_dir: Path) -> I
     )
 
 
-def _read_jsonl_rows(path: Path) -> list[dict[str, Any]]:
-    """Read JSONL rows."""
-    return read_jsonl_rows(path)
+def _read_jsonl_rows(path: str | Path) -> list[dict[str, Any]]:
+    """Read every non-blank row of a .jsonl file as a dict.
+
+    Blank lines are skipped and each remaining line is parsed with ``json.loads``;
+    rows that fail to parse (or are not dict-convertible) are skipped. A missing
+    file yields an empty list.
+    """
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in lines:
+        text = line.strip()
+        if not text:
+            continue
+        try:
+            rows.append(dict(json.loads(text)))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+    return rows
 
 
 def load_latest_input_rgb_frame(timeline_path: str | Path, *, capture_dir: str | Path) -> InputRgbFrame | None:
@@ -315,26 +263,6 @@ def _source_frame_for_chunk_frame(chunk: Mapping[str, Any], local_frame: int) ->
     return int(chunk.get("start_frame", 0)) + int(local_frame)
 
 
-def input_display_latency_s(
-    chunk: Mapping[str, Any],
-    *,
-    local_frame: int,
-    receive_times: Mapping[int, float],
-    now_s: float,
-) -> float | None:
-    """Measure input receive-to-display latency for one output chunk frame."""
-    source_frame = _source_frame_for_chunk_frame(chunk, int(local_frame))
-    try:
-        receive_perf_s = float(receive_times[int(source_frame)])
-    except (KeyError, TypeError, ValueError):
-        return None
-    now_value = float(now_s)
-    latency_s = now_value - receive_perf_s
-    if not math.isfinite(latency_s) or latency_s < 0.0:
-        return None
-    return latency_s
-
-
 def format_input_display_latency(latency_s: float | None) -> str:
     """Format an input-display latency value for the viewer overlay."""
     if latency_s is None:
@@ -347,26 +275,6 @@ def format_input_display_latency(latency_s: float | None) -> str:
         return "input->display --"
     rounded = Decimal(str(value + 1e-9)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return f"input->display {rounded:.2f}s"
-
-
-def _input_display_latency_for_output_index(
-    output_frames: Sequence[tuple[Mapping[str, Any], int]],
-    *,
-    output_index: int,
-    receive_times: Mapping[int, float],
-    now_s: float,
-) -> float | None:
-    """Return the input display latency for output index."""
-    if not output_frames:
-        return None
-    idx = min(max(int(output_index), 0), len(output_frames) - 1)
-    chunk, local_frame = output_frames[idx]
-    return input_display_latency_s(
-        chunk,
-        local_frame=int(local_frame),
-        receive_times=receive_times,
-        now_s=float(now_s),
-    )
 
 
 def _source_time_for_chunk_frame(

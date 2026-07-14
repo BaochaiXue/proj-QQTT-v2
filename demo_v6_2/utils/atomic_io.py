@@ -1,11 +1,29 @@
-"""Atomic file writers shared by Demo v6.1 tools and online consumers."""
+"""Atomic file writers shared by Demo v6.2 tools and online consumers."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
 import pickle
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, BinaryIO, Iterator, Mapping
+
+
+@contextmanager
+def atomic_open(path: str | Path) -> Iterator[BinaryIO]:
+    """Open a fsync'd temp file that replaces ``path`` on successful exit.
+
+    Readers polling ``path`` never see partial bytes, and the finished file
+    survives a power loss once the context exits.
+    """
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = target.with_name(target.name + ".tmp")
+    with tmp_path.open("wb") as handle:
+        yield handle
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_path, target)
 
 
 def atomic_pickle_dump(value: Any, path: str | Path) -> None:

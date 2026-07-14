@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from demo_v6_2.shape_prior_timing import elapsed_ms
+from demo_v6_2.shape_prior.timing import elapsed_ms
 
 
 QQTT_SAM31_CHECKPOINT_ENV = "QQTT_SAM31_CHECKPOINT"

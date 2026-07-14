@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Sequence
 
 
-def _runtime_chunk_summary(
+def runtime_chunk_summary(
     manifests: Sequence[dict[str, object]],
 ) -> dict[str, object]:
     """Aggregate per-chunk manifests into run-level publish/quality stats."""

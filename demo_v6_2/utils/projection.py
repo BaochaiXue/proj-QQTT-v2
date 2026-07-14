@@ -37,7 +37,7 @@ class OverlayLiftResult:
     valid_mask: np.ndarray
 
 
-def _intrinsics_to_matrix(intrinsics: Any) -> np.ndarray:
+def intrinsics_to_matrix(intrinsics: Any) -> np.ndarray:
     """Normalize a mapping, fx/fy/cx/cy attribute object, or 3x3 array to a float32 K matrix."""
     if isinstance(intrinsics, Mapping):
         fx = float(intrinsics["fx"])
@@ -138,7 +138,7 @@ def lift_tracks_yx_to_world(
             valid_mask=valid,
         )
 
-    K = _intrinsics_to_matrix(intrinsics)
+    K = intrinsics_to_matrix(intrinsics)
     ray_x, ray_y = build_projection_grid_from_matrix(width=width, height=height, K=K)
     transform = np.asarray(c2w, dtype=np.float32).reshape(4, 4)
     z = sampled_depth[source_indices]
