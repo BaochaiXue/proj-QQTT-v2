@@ -178,6 +178,226 @@ passes all 185 tests. Nothing committed (working tree, `single-camera` branch).
 Remaining optional: duplication pass 2 (query-schema 3x), product-schema cleanup
 A2-A5, and viewer renderer display check.
 
+## 2026-07-13 cleanup pass 4 — package layout + mixins dissolved into classes
+
+Owner-directed ("continue" on the deferred layout menu, plus: rewrite the
+mixins into REAL collaborating classes). Six stages, each landed green
+(20 tests + 3 subtests, 3 guards) before the next started.
+
+Stage 1 — star-import elimination (the enabling prerequisite): the 12
+`from mdp_constants import *` consumers now import every symbol explicitly
+from its TRUE home (numpy/stdlib/qqtt/utils/phystwin/tracking; only
+mdp_constants-defined names from mdp_constants). mdp_constants shed its
+entire re-export hub (utils.camera/concurrency/ffs_align/projection/
+query_rainbow/phystwin/tracking/qqtt blocks) and the dynamic globals-scraped
+__all__ — it is now a pure constants+bootstrap module.
+
+Stage 2 — demo_v6_2/mdp/ package + MIXINS DISSOLVED. Support modules moved
+(constants, cli, packets, plumbing (was pipeline_plumbing), capture_source,
+headless_writer, tracker_geometry, warmup_preview, warmup). Then the
+5-mixin shared-self MainDataProcessingDemo was rewritten as real classes:
+- mdp/runtime.py — MainDataProcessingDemo is now a COMPOSITION ROOT ONLY:
+  builds services, wires stages with explicit constructor dependencies,
+  owns run()/stop()/threads and the headless metadata build.
+- Stages: CaptureStage (mdp/capture.py, owns preview sequencing +
+  startup_hold_s), SegmentationStage (mdp/segmentation.py, owns the warm-up
+  perception profile + frame-0 seeding; absorbed perception/
+  mdp_segmentation.py helpers), TrackerStage (mdp/tracker.py, owns the
+  frozen TrackerQuerySet), FormalProductStage (mdp/formal_products.py,
+  canonical frames + ordered pair publish + row writes).
+- Services: CameraSession (mdp/session.py — camera runtime/source/
+  calibration/headless writer/depth engine: everything warm-up populates
+  and stop() tears down), ShapePriorPublisher (mdp/shape_prior_flow.py —
+  frame-0 submit, packet enrichment, WARMUP-FINISHED transition).
+- Cross-stage collaboration is explicit: FormalProductStage holds
+  shape_prior + capture refs; ShapePriorPublisher holds the segmentation
+  ref for warm-up profiling; capture/seg share one first_frame_segmented
+  Event. mdp_demo_contract.py DELETED — constructor deps replaced the
+  typing contract. mdp/warmup.py is now only the frame-0 SAM3.1 seed.
+  Behavior nuance fixed en route: FfsDepthEngine constructs its TensorRT
+  runner eagerly, so it stays a run()-phase service on the session (not an
+  __init__ service). Verified by a full fake-live product run (2 chunks,
+  run_finished, manifest finished, 0 tracebacks).
+
+Stage 3 — streaming/ + shape_prior/ consolidation (19 git-mv moves,
+prefixes dropped: streaming/{session,materialize,window_builder,
+capture_meta,warmup_trim,data_output,data_payload,jsonl_tail,
+online_frame_archive,asap,data_keys}.py; shape_prior/{warmup,align,
+generate,sample,timing,case,match_pairs,upscale}.py — upscale moved in
+from utils/ as the chain's first stage). The four `-m` subprocess
+entrypoint strings updated in lockstep and smoke-run. REPO_ROOT depth
+fixes (parents[1]->parents[2]) in the two moved bootstrap resolvers.
+
+Stage 5 (folded into 3) — tracking.py observation-lift split:
+build_window_observations moved verbatim to streaming/
+window_observations.py; tracking.py is now the pure design-spec state
+machine with zero perception imports.
+
+Stage 4 — orchestrator half: NEW orchestration/run_config.py with frozen
+OrchestratorRunConfig (18 fields) built once in main() after parse —
+the orchestrator-side mirror of mdp RunMode. validate_runtime_args absorbed
+into from_args (construction-time validation); 6 single-caller resolvers
+inlined and deleted, 9 multi-caller resolvers stay in main_options;
+dry_run_contract + run summary share a 29-key static builder
+(visualizer_command/visualizer_capture_dir intentionally stay per-product —
+they legitimately differ). 7 cross-module underscore names de-privatized.
+--dry-run output proven byte-identical over an 8-vector matrix.
+main_subprocess 512->347 (commands + process lifecycle only).
+
+Stage 6 — PIPELINE.md full reference refresh: new package paths, the
+composition-root architecture story, and re-derived #L anchors.
+
+Final root: 9 modules (main.py, main_cli.py, main_data_processing.py,
+main_options.py, main_subprocess.py, phystwin_shen_launch.py,
+phystwin_strict_product.py, pipeline_status.py, tracking.py) + 7 packages
+(mdp/ 17, streaming/ 13, shape_prior/ 9, perception/ 4, visualization/ 8,
+orchestration/ 3+run_config, utils/). Every package boundary now has only
+downward dependencies; perception/ is a pure lower layer (ffs, segment,
+sam31).
+
+## 2026-07-13 cleanup pass 3 — structure + naming sweep
+
+Owner-directed continuation ("继续清理和重构，也包括改名"). Driven by a
+75-finding verified audit (47 structural + 28 naming, every finding
+adversarially re-checked against the code before implementation).
+
+Runtime half (camera subprocess):
+- MainDataProcessingDemo is now FIVE mixins: `_PairPublishMixin` merged into
+  `_PcdMixin` (mdp_demo_pairpublish.py deleted); the gate decision and the
+  row write it gates live in one file.
+- Three new aggregates: `FormalTimelineGate` (mdp_pipeline_plumbing; owns the
+  warm-up→formal-timeline state machine formerly smeared as 6 attrs over 4
+  mixins — one-way timeout latch, exactly-once first-ungated-row metadata,
+  exactly-once anchor detection, run-end-while-gated fatal),
+  `StageStatsBoard` (per-stage fps + the stage_fps row snapshot), and
+  `TrackerQuerySet` (mdp_packets; frozen chunk-0 query arrays + monotonically
+  shrinking consistent_visible — replaced 7 parallel attrs, 5 asserts, and an
+  unreachable re-init guard).
+- Dead pipeline paths deleted: `_depth_profile_worker` + DepthProfilePacket +
+  depth stage thread + write-only depth_profile_slot/tracker_marker_slot;
+  PipelineTiming lost 5 always-0.0 fields (remote_* vestiges of the removed
+  remote-FFS path + receive_to_render_ms); MaskedPcdPacket.dropped_seg_frames
+  and TrackerMarkerPacket.display_scope (write-only) removed. NOTE: headless
+  rows no longer carry the remote_*/receive_to_render_ms timing keys or the
+  stage_fps["depth_fps"] source (writer still emits depth_fps=0.0 via its
+  .get default), so new captures' row schema drops always-constant keys.
+- Import cycle DISSOLVED: mdp_constants no longer imports
+  main_warmup/shape_prior_warmup (re-export hub edges deleted; consumers
+  import directly); main_warmup renamed **mdp_warmup.py** (it is
+  camera-process code), its cycle-driven callable injections
+  (recording_source_cls/start_realsense_pipeline/writer_cls/policy) replaced
+  by direct imports, its `demo: Any` params typed as `_DemoRuntimeContract`,
+  and the SAM3.1 args side-channel replaced by a returned `Sam31FrameTiming`.
+  `bgr_to_pil_rgb` moved to utils/camera (headless_writer no longer needs the
+  warmup module). utils/ffs_defaults.py folded into mdp_constants.
+- mdp_cli: 4 single-caller predicates inlined into `RunMode.from_args`;
+  shape-prior profile trio moved onto `ShapePriorWarmupManager`
+  (construction-time identity + profile()/profile_payload()/
+  write_profile_json()); main_data_processing.py lost its 6 dead star
+  re-exports + duplicated repo-root resolver.
+- Contract rewritten: 42 attr annotations → 24, 18 stubs → 12; mdp_warmup
+  documented as the 6th participant; width/height/camera_runtime now declared.
+
+Chunk/streaming half: payload chain pruned to the strict TrackingRuntime
+contract (~362 lines of fallback ladders for inputs no caller can produce);
+one producer per manifest key; ChunkDataWriter/OnlineFrameArchive dead
+defensive params deleted (archive_chunk 7→5 params); WarmupStartFilter object
+replaces the state-struct+free-function pair; always-true query-schema
+re-checks dropped (TrackingRuntime._check_frozen_identity is the single
+enforcement point); 16-param stream_chunk_data_from_headless_capture wrapper
+inlined (main.py constructs ChunkStreamSession directly). Byte-parity of
+final_data/track_process/chunk-record pickles + manifests proven against
+HEAD via a synthetic strict-runtime harness.
+
+Shape-prior half: frame-0 case serialization split out to
+**shape_prior_case.py** (shape_prior_warmup 997→806 lines);
+PrewarmWorkerPool aggregate owns the prewarmed stage-worker lifecycle;
+StageProfileRun (shape_prior_timing) deduplicates the WAITING/GO/COMPLETED
+scaffold across the 4 stage CLIs and single-sources the total_ms rule
+(timing JSON byte-identical); DISABLED-manager profile parity byte-verified.
+
+Viz/utils: viz_panels.py + viz_playback.py moved into visualization/ (the
+package now has only downward deps); dead viewer-latency cluster (~110
+lines), query_rainbow dead HSV chain, jsonl_io single-consumer module folded;
+phystwin K-matrix twin folded into utils.projection.intrinsics_to_matrix;
+atomic write-then-rename consolidated into utils/atomic_io.atomic_open (fixes
+the depth-npy/metadata fsync inconsistency); main_cli carries an import-time
+assert pinning config/default.yaml defaults to the warmup constants.
+
+Naming sweep (internal identifiers only; CLI flags and on-disk keys
+unchanged): LosslessPipeline offer_frame/publish_mask→submit_frame/
+submit_mask, maybe_finish→maybe_close_pair_output; RunMode.replay_input→
+fake_live_input (+ _is_fake_live_input_source); self.runtime→camera_runtime;
+PcdBuildResult.packet→pcd_packet; validate_args→validate_and_normalize_args;
+DEFAULT_MODEL_ID/DEFAULT_COMPILE_MODE→DEFAULT_EDGETAM_*; COORDINATE_FRAME→
+CAMERA_COLOR_FRAME; _headless_product_rows_gated→FormalTimelineGate.
+rows_gated; frames_written→frames_committed; _shape_points_for_chunk→
+_wait_for_shape_points; lookahead_*→borrow_* (borrow-row vocabulary);
+build_chunk_data_record/payload→build_online_chunk_record/
+build_window_publish_payloads; _write_chunk_from_rows→
+_materialize_and_commit_window; render_*_output_video→export_*;
+_contract→_dry_run_contract; camera_* locals in main.py→
+main_data_processing_*; ChunkStreamSession ctor chunk_frame_count→chunk_size.
+
+One real bug caught by the product gate during this pass: TrackerQuerySet was
+frozen while `consistent_visible &= x` rebinds the field (FrozenInstanceError
+in the lossless tracker worker) — fixed with np.logical_and(..., out=...).
+
+Verified: 20 tests + 3 subtests; check_scope/check_visual_architecture/
+check_experiment_boundaries; every file <1000 lines; bounded fake-live
+product run green (2 chunks committed, points.npz, run_finished, manifest
+finished). PIPELINE.md citations updated for renamed/moved/deleted symbols
+(#L line anchors still drift — separate doc pass if wanted).
+
+Deferred next-pass menu (needs owner layout decision, in dependency order):
+star-import elimination across the 14 `from mdp_constants import *` consumers
+(enabling prerequisite); demo_v6_2/mdp/ package for the camera-subprocess
+family (retires the mdp_ prefix); chunk family → streaming/;
+shape_prior family → shape_prior/ (the three `-m` subprocess strings must
+move in lockstep); perception/mdp_* relocation; OrchestratorRunConfig (the
+orchestrator-side RunMode: 15 resolvers × 39 call sites) + dry-run/summary
+shared builder + main_subprocess 3-way split; tracking.py
+build_window_observations extraction; metadata intrinsics/c2w parser
+unification (chunk_capture_meta vs online_frame_archive).
+
+## 2026-07-12 cleanup pass 2 — ChunkStreamSession + RunMode
+
+Follow-up to cleanup pass 1 (below), completing the two remaining aggregation
+clusters. 11 files, +485/−483.
+
+- `ChunkStreamSession` (chunk_data_stream.py, in place — no new module): the
+  chunk half's session state (~15 driver locals + the `_materialize_pending`
+  closure + 12 session-constant kwargs threaded through
+  `chunk_materialize._write_chunk_from_rows`, which went 21→6 params) is now
+  one object: capture paths, wall-time origin, warm-up trim state, pending
+  window, ChunkDataWriter/OnlineFrameArchive/TrackingRuntime/AsapRuntime as
+  owned components, frozen session query schema. The
+  `online_writer/frame_archive/tracking_runtime/session_query_schema is None`
+  guards that existed only because free functions had to accept partial state
+  are gone. Public entry `stream_chunk_data_from_headless_capture` keeps its
+  exact signature as a thin wrapper (main.py + tests unchanged). The five
+  session invariants (borrow-row commit gating, stream→verify→commit→publish
+  fsync ordering, exactly-once warm-up trim, recording→finished|failed
+  manifest transitions, frozen chunk-0 identity) were additionally verified
+  live by a synthetic end-to-end smoke driving the real session, including a
+  forced materialize failure.
+- `RunMode` (mdp_cli): frozen dataclass snapshot built once in
+  `_LifecycleMixin.__init__` from validated args (track_mode, tracker/lossless
+  enabled, lossless_input_fps, controller/object tracking, replay_input,
+  headless_capture_enabled, depth_backend_label). ~40 per-call predicate
+  re-derivations across the mixins became attribute reads (`self.mode.*`).
+  Killed with it: main_warmup's verbatim duplicates of the track-mode
+  predicates + its local TRACK_MODE_* constants (the demo now passes its
+  `mode` in — main_warmup cannot import mdp_cli without a cycle), and the
+  is_replay/fake_live/headless_capture callable injections from lifecycle.run
+  into main_warmup that existed for the same cycle reason. The always-false
+  "recording-replay" label branch (replay input IS fake-live) collapsed.
+
+Verified: 20 tests green, 3 guards green, contract stubs all overridden,
+every file <1000 lines, bounded fake-live product run green (run_finished,
+2 chunks committed track_status=normal, points.npz, zero tracebacks,
+manifest finished/latest_committed_chunk=1).
+
 ## 2026-07-12 cleanup pass — inline wrappers, kill dead code, aggregate objects
 
 Principles applied (owner-directed): keep business-rule functions; inline
