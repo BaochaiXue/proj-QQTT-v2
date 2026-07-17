@@ -17,7 +17,7 @@ import numpy as np
 import open3d as o3d
 
 
-DEFAULT_CHUNKS_DIR = Path("outputs_v6_1/online_data/chunks")
+DEFAULT_CHUNKS_DIR = Path("outputs/online_data/chunks")
 DEFAULT_OUTPUT_DIR = Path("demo_v6_2/others/obj_shape_asap_outputs")
 DEFAULT_OUTPUT_PATH = DEFAULT_OUTPUT_DIR / "object_controller_tracking_5fps.mp4"
 DEFAULT_SUMMARY_PATH = DEFAULT_OUTPUT_DIR / "object_controller_tracking_5fps.json"

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Export the stitched Demo v6.1 online result as a FuturePhysTwin case.
+"""Export the stitched Demo v6.2 online result as a FuturePhysTwin case.
 
-Takes the cross-chunk stitched tracking result (``outputs_v6_1/data/final_data.pkl``),
+Takes the cross-chunk stitched tracking result (``outputs/data/final_data.pkl``),
 the single-camera table calibration (``table_calibrate.pkl``), the capture
-metadata (``outputs_v6_1/capture/metadata.json``), and the per-frame input color
+metadata (``outputs/capture/metadata.json``), and the per-frame input color
 images, and materializes a case directory laid out the way
 ``~/FuturePhysTwin/train_warp.py`` expects:
 
@@ -31,10 +31,10 @@ import numpy as np
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_FINAL_DATA_PATH = REPO_ROOT / "outputs_v6_1/data/final_data.pkl"
-DEFAULT_ONLINE_MANIFEST_PATH = REPO_ROOT / "outputs_v6_1/online_data/manifest.json"
+DEFAULT_FINAL_DATA_PATH = REPO_ROOT / "outputs/data/final_data.pkl"
+DEFAULT_ONLINE_MANIFEST_PATH = REPO_ROOT / "outputs/online_data/manifest.json"
 DEFAULT_TABLE_CALIBRATE_PATH = REPO_ROOT / "table_calibrate.pkl"
-DEFAULT_CAPTURE_DIR = REPO_ROOT / "outputs_v6_1/capture"
+DEFAULT_CAPTURE_DIR = REPO_ROOT / "outputs/capture"
 DEFAULT_FUTUREPHYSTWIN_ROOT = Path.home() / "FuturePhysTwin"
 DEFAULT_CASE_NAME = "demo_v6_1_stitched_805"
 DEFAULT_CASES_ROOT = REPO_ROOT / "demo_v6_1/others/futurephystwin_stitched/cases"
@@ -69,7 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
     parser = argparse.ArgumentParser(
         description=(
-            "Export the stitched Demo v6.1 final_data as a FuturePhysTwin case "
+            "Export the stitched Demo v6.2 final_data as a FuturePhysTwin case "
             "and seed its zero-order optimal_params from a donor case."
         )
     )

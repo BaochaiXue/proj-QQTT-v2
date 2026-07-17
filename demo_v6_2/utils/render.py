@@ -68,7 +68,7 @@ def _load_rgb(path: Path) -> np.ndarray:
     return np.asarray(Image.open(path).convert("RGB"), dtype=np.uint8)
 
 
-def _open_video_writer(path: Path, *, size: tuple[int, int], fps: float = 30.0):
+def open_video_writer(path: Path, *, size: tuple[int, int], fps: float = 30.0):
     """Open video writer."""
     import cv2
 
@@ -96,7 +96,7 @@ def _render_tracking_2d_video(
     """Render tracking 2d video."""
     import cv2
 
-    writer = _open_video_writer(path, size=size)
+    writer = open_video_writer(path, size=size)
     width, height = int(size[0]), int(size[1])
     is_object = np.asarray(query_is_object, dtype=bool).reshape(-1)
     is_controller = np.asarray(query_is_controller, dtype=bool).reshape(-1)
@@ -222,7 +222,7 @@ def _render_world_track_video(
     """Render world track video."""
     import cv2
 
-    writer = _open_video_writer(path, size=size)
+    writer = open_video_writer(path, size=size)
     frame_count = max(
         int(np.asarray(object_points).shape[0]),
         int(np.asarray(controller_points).shape[0]),
@@ -285,7 +285,7 @@ def _render_empty_video(
     """Render empty video."""
     import cv2
 
-    writer = _open_video_writer(path, size=size)
+    writer = open_video_writer(path, size=size)
     width, height = int(size[0]), int(size[1])
     count = max(1, int(frame_count))
     for frame_idx in range(count):

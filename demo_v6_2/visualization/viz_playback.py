@@ -25,6 +25,7 @@ from demo_v6_2.visualization.viz_camera_model import (
 )
 from demo_v6_2.visualization.viz_input_timeline import (
     CameraToFinalDataFpsMeter,
+    InputRgbFrame,
     OutputStreamPlaybackCursor,
     _chunk_frame_count,
     _resolve_capture_dir,
@@ -137,9 +138,10 @@ def use_interactive_side_by_side(args: argparse.Namespace) -> bool:
     )
 
 
-def run_interactive_side_by_side(args: argparse.Namespace) -> int:
-    """Run the Open3D output window next to a live OpenCV RGB input window."""
-    cv2 = _require_cv2()
+def _playback_context(
+    args: argparse.Namespace,
+) -> tuple[Path, Path, CameraModel, float, Path | None, Path | None, int | None]:
+    """Resolve the shared playback context (dirs, camera, fps, input timeline)."""
     online_dir = normalize_online_dir(args.online_dir)
     case_dir = infer_case_dir(online_dir, args.case_dir)
     camera = load_camera_model(case_dir, cam_idx=int(args.cam_idx))
@@ -147,6 +149,65 @@ def run_interactive_side_by_side(args: argparse.Namespace) -> int:
     capture_dir = _resolve_capture_dir(args)
     input_timeline = _resolve_input_rgb_timeline(args, capture_dir=capture_dir)
     fake_input_frame_total = load_fake_input_frame_total(capture_dir)
+    return (
+        online_dir,
+        case_dir,
+        camera,
+        fps,
+        capture_dir,
+        input_timeline,
+        fake_input_frame_total,
+    )
+
+
+def _poll_output_stream(
+    *,
+    online_dir: Path,
+    start_chunk: int,
+    capture_dir: Path | None,
+    input_timeline: Path | None,
+    loaded_paths: set[Path],
+    output_frames: list[tuple[dict[str, Any], int]],
+    fps_meter: CameraToFinalDataFpsMeter,
+) -> tuple[int, float, float | None, InputRgbFrame | None]:
+    """Poll new output chunks and the latest RGB input for one viewer tick."""
+    appended = _append_new_output_frames(
+        online_dir,
+        start_chunk=start_chunk,
+        loaded_paths=loaded_paths,
+        output_frames=output_frames,
+    )
+    latest = max(0, len(output_frames) - 1)
+    now_s = time.monotonic()
+    camera_to_final_data_fps = fps_meter.update(
+        appended_frames=appended,
+        now_s=now_s,
+    )
+    if camera_to_final_data_fps is None:
+        camera_to_final_data_fps = fps_meter.seed(
+            estimate_historical_camera_to_final_data_fps(
+                online_dir,
+                start_chunk=start_chunk,
+            )
+        )
+    input_frame = None
+    if capture_dir is not None and input_timeline is not None:
+        input_frame = load_latest_input_rgb_frame(input_timeline, capture_dir=capture_dir)
+    return latest, now_s, camera_to_final_data_fps, input_frame
+
+
+def run_interactive_side_by_side(args: argparse.Namespace) -> int:
+    """Run the Open3D output window next to a live OpenCV RGB input window."""
+    cv2 = _require_cv2()
+    (
+        online_dir,
+        case_dir,
+        camera,
+        fps,
+        capture_dir,
+        input_timeline,
+        fake_input_frame_total,
+    ) = _playback_context(args)
     width, height = camera.image_size
     left_window_name = f"{args.window_name} - RGB input"
     right_window_name = f"{args.window_name} - final_data output"
@@ -172,29 +233,15 @@ def run_interactive_side_by_side(args: argparse.Namespace) -> int:
 
     try:
         while True:
-            appended = _append_new_output_frames(
-                online_dir,
+            latest, now_s, camera_to_final_data_fps, input_frame = _poll_output_stream(
+                online_dir=online_dir,
                 start_chunk=int(args.start_chunk),
+                capture_dir=capture_dir,
+                input_timeline=input_timeline,
                 loaded_paths=loaded_paths,
                 output_frames=output_frames,
+                fps_meter=final_data_fps_meter,
             )
-            latest = max(0, len(output_frames) - 1)
-            now_s = time.monotonic()
-            camera_to_final_data_fps = final_data_fps_meter.update(
-                appended_frames=appended,
-                now_s=now_s,
-            )
-            if camera_to_final_data_fps is None:
-                camera_to_final_data_fps = final_data_fps_meter.seed(
-                    estimate_historical_camera_to_final_data_fps(
-                        online_dir,
-                        start_chunk=int(args.start_chunk),
-                    )
-                )
-
-            input_frame = None
-            if capture_dir is not None and input_timeline is not None:
-                input_frame = load_latest_input_rgb_frame(input_timeline, capture_dir=capture_dir)
             if output_frames and not paused:
                 # The left panel follows the latest camera RGB. The right panel
                 # plays only committed chunk frames at the configured 5 FPS.
@@ -259,14 +306,16 @@ def run_interactive_side_by_side(args: argparse.Namespace) -> int:
 def run_side_by_side(args: argparse.Namespace) -> int:
     """Run the single-window side-by-side viewer/video fallback."""
     cv2 = _require_cv2()
-    online_dir = normalize_online_dir(args.online_dir)
-    case_dir = infer_case_dir(online_dir, args.case_dir)
-    camera = load_camera_model(case_dir, cam_idx=int(args.cam_idx))
-    fps = resolve_playback_fps(args, camera)
+    (
+        online_dir,
+        case_dir,
+        camera,
+        fps,
+        capture_dir,
+        input_timeline,
+        fake_input_frame_total,
+    ) = _playback_context(args)
     renderer = build_frame_renderer(args, camera=camera, fps=fps)
-    capture_dir = _resolve_capture_dir(args)
-    input_timeline = _resolve_input_rgb_timeline(args, capture_dir=capture_dir)
-    fake_input_frame_total = load_fake_input_frame_total(capture_dir)
 
     window_name = str(args.window_name)
     trackbar_name = "output frame"
@@ -293,35 +342,21 @@ def run_side_by_side(args: argparse.Namespace) -> int:
     cv2.createTrackbar(trackbar_name, window_name, 0, 1, on_trackbar)
     try:
         while True:
-            appended = _append_new_output_frames(
-                online_dir,
+            latest, now_s, camera_to_final_data_fps, input_frame = _poll_output_stream(
+                online_dir=online_dir,
                 start_chunk=int(args.start_chunk),
+                capture_dir=capture_dir,
+                input_timeline=input_timeline,
                 loaded_paths=loaded_paths,
                 output_frames=output_frames,
+                fps_meter=final_data_fps_meter,
             )
-            latest = max(0, len(output_frames) - 1)
             # OpenCV rejects a trackbar max of 0, and some GUI backends do not
             # implement setTrackbarMax at all.
             try:
                 cv2.setTrackbarMax(trackbar_name, window_name, max(1, latest))
             except Exception:
                 pass
-            now_s = time.monotonic()
-            camera_to_final_data_fps = final_data_fps_meter.update(
-                appended_frames=appended,
-                now_s=now_s,
-            )
-            if camera_to_final_data_fps is None:
-                camera_to_final_data_fps = final_data_fps_meter.seed(
-                    estimate_historical_camera_to_final_data_fps(
-                        online_dir,
-                        start_chunk=int(args.start_chunk),
-                    )
-                )
-
-            input_frame = None
-            if capture_dir is not None and input_timeline is not None:
-                input_frame = load_latest_input_rgb_frame(input_timeline, capture_dir=capture_dir)
             if output_frames and follow_latest and not paused:
                 # The left panel follows the latest camera RGB. The right panel
                 # plays only committed chunk frames at the configured 5 FPS.

@@ -11,7 +11,7 @@ import numpy as np
 import open3d as o3d
 
 
-DEFAULT_OUTPUTS_ROOT = Path("outputs_v6_1")
+DEFAULT_OUTPUTS_ROOT = Path("outputs")
 DEFAULT_CASE_NAME = "shape_prior_frame0"
 
 COLOR_OBJECT = (0.95, 0.95, 0.95)
@@ -73,7 +73,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--outputs-root",
         type=Path,
         default=DEFAULT_OUTPUTS_ROOT,
-        help="Demo v6.2 outputs root. Defaults to ./outputs_v6_1.",
+        help="Demo v6.2 outputs root. Defaults to ./outputs.",
     )
     parser.add_argument(
         "--case-name",

@@ -222,7 +222,7 @@ def project_world_points_to_pixels(
     visibility: np.ndarray | None = None,
     stride: int = 1,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Project world-space Demo v6.1 points back onto the selected RGB camera.
+    """Project world-space Demo v6.2 points back onto the selected RGB camera.
 
     Returns integer pixel coordinates plus the surviving points' original row
     indices, so callers can look up per-point attributes such as colors.

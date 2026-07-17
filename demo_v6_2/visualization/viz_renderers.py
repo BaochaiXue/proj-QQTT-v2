@@ -74,7 +74,59 @@ class RgbOverlayRenderer:
         return None
 
 
-class Sam3DFinalDataRenderer:
+class _Sam3DFrameDataBase:
+    """Shared final_data frame extraction for the Open3D renderer classes.
+
+    Subclasses initialize ``_show_invisible_object_points``, ``_object_colors``,
+    and ``_object_color_count`` in their own ``__init__``.
+    """
+
+    _show_invisible_object_points: bool
+    _object_colors: np.ndarray | None
+    _object_color_count: int
+
+    def _object_visibility(self, chunk: Mapping[str, Any], local_frame: int, point_count: int) -> np.ndarray:
+        """Return the object visibility."""
+        if self._show_invisible_object_points:
+            return np.ones((point_count,), dtype=bool)
+        value = chunk.get("object_visibilities")
+        if value is None:
+            return np.ones((point_count,), dtype=bool)
+        arr = np.asarray(value, dtype=bool)
+        if arr.ndim == 2 and int(local_frame) < int(arr.shape[0]) and arr.shape[1] == point_count:
+            return np.ascontiguousarray(arr[int(local_frame)], dtype=bool)
+        return np.ones((point_count,), dtype=bool)
+
+    def _update_object_colors(self, object_points: np.ndarray) -> np.ndarray:
+        """Update object colors."""
+        point_count = int(object_points.shape[1])
+        if self._object_colors is None or self._object_color_count != point_count:
+            self._object_colors = _sam3d_rainbow_colors_rgb_float(object_points, point_count)
+            self._object_color_count = point_count
+        return self._object_colors
+
+    def _prepare_final_data_frame(
+        self, chunk: Mapping[str, Any], local_frame: int
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+        """Extract one frame's object/controller arrays, or None when invalid."""
+        object_arr = np.asarray(chunk.get("object_points"), dtype=np.float64)
+        controller_arr = np.asarray(chunk.get("controller_points"), dtype=np.float64)
+        if object_arr.ndim != 3 or controller_arr.ndim != 3:
+            return None
+        if int(local_frame) >= int(object_arr.shape[0]) or int(local_frame) >= int(controller_arr.shape[0]):
+            return None
+
+        object_frame = np.asarray(object_arr[int(local_frame)], dtype=np.float64).reshape(-1, 3)
+        object_colors = self._update_object_colors(object_arr)
+        visible = self._object_visibility(chunk, int(local_frame), int(object_frame.shape[0]))
+        object_valid = visible & np.all(np.isfinite(object_frame), axis=1)
+        controller_frame = np.asarray(controller_arr[int(local_frame)], dtype=np.float64).reshape(-1, 3)
+        controller_valid = np.all(np.isfinite(controller_frame), axis=1)
+        controller_points = controller_frame[controller_valid]
+        return object_frame, object_valid, object_colors, controller_points
+
+
+class Sam3DFinalDataRenderer(_Sam3DFrameDataBase):
     """Render final_data object/controller points through an Open3D visualizer."""
 
     def __init__(
@@ -130,26 +182,6 @@ class Sam3DFinalDataRenderer:
         )
         self._object_pcd = o3d.geometry.PointCloud()
 
-    def _object_visibility(self, chunk: Mapping[str, Any], local_frame: int, point_count: int) -> np.ndarray:
-        """Return the object visibility."""
-        if self._show_invisible_object_points:
-            return np.ones((point_count,), dtype=bool)
-        value = chunk.get("object_visibilities")
-        if value is None:
-            return np.ones((point_count,), dtype=bool)
-        arr = np.asarray(value, dtype=bool)
-        if arr.ndim == 2 and int(local_frame) < int(arr.shape[0]) and arr.shape[1] == point_count:
-            return np.ascontiguousarray(arr[int(local_frame)], dtype=bool)
-        return np.ones((point_count,), dtype=bool)
-
-    def _update_object_colors(self, object_points: np.ndarray) -> np.ndarray:
-        """Update object colors."""
-        point_count = int(object_points.shape[1])
-        if self._object_colors is None or self._object_color_count != point_count:
-            self._object_colors = _sam3d_rainbow_colors_rgb_float(object_points, point_count)
-            self._object_color_count = point_count
-        return self._object_colors
-
     def _reset_controller_meshes(self, controller_points: np.ndarray) -> None:
         # Controller spheres are cached and translated in place per frame;
         # rebuild them only when the controller point count changes.
@@ -191,20 +223,10 @@ class Sam3DFinalDataRenderer:
         assert self._object_pcd is not None
         o3d = self._require_open3d()
 
-        object_arr = np.asarray(chunk.get("object_points"), dtype=np.float64)
-        controller_arr = np.asarray(chunk.get("controller_points"), dtype=np.float64)
-        if object_arr.ndim != 3 or controller_arr.ndim != 3:
+        prepared = self._prepare_final_data_frame(chunk, local_frame)
+        if prepared is None:
             return self.poll()
-        if int(local_frame) >= int(object_arr.shape[0]) or int(local_frame) >= int(controller_arr.shape[0]):
-            return self.poll()
-
-        object_frame = np.asarray(object_arr[int(local_frame)], dtype=np.float64).reshape(-1, 3)
-        object_colors = self._update_object_colors(object_arr)
-        visible = self._object_visibility(chunk, int(local_frame), int(object_frame.shape[0]))
-        object_valid = visible & np.all(np.isfinite(object_frame), axis=1)
-        controller_frame = np.asarray(controller_arr[int(local_frame)], dtype=np.float64).reshape(-1, 3)
-        controller_valid = np.all(np.isfinite(controller_frame), axis=1)
-        controller_points = controller_frame[controller_valid]
+        object_frame, object_valid, object_colors, controller_points = prepared
 
         if not self._initialized:
             self._object_pcd.points = o3d.utility.Vector3dVector(object_frame[object_valid])
@@ -246,7 +268,7 @@ class Sam3DFinalDataRenderer:
             self._vis = None
 
 
-class Sam3DGuiFinalDataRenderer:
+class Sam3DGuiFinalDataRenderer(_Sam3DFrameDataBase):
     """Interactive Open3D GUI renderer with a 2D latency HUD in the 3D window."""
 
     def __init__(
@@ -360,26 +382,6 @@ class Sam3DGuiFinalDataRenderer:
         self._closed = True
         return True
 
-    def _object_visibility(self, chunk: Mapping[str, Any], local_frame: int, point_count: int) -> np.ndarray:
-        """Return the object visibility."""
-        if self._show_invisible_object_points:
-            return np.ones((point_count,), dtype=bool)
-        value = chunk.get("object_visibilities")
-        if value is None:
-            return np.ones((point_count,), dtype=bool)
-        arr = np.asarray(value, dtype=bool)
-        if arr.ndim == 2 and int(local_frame) < int(arr.shape[0]) and arr.shape[1] == point_count:
-            return np.ascontiguousarray(arr[int(local_frame)], dtype=bool)
-        return np.ones((point_count,), dtype=bool)
-
-    def _update_object_colors(self, object_points: np.ndarray) -> np.ndarray:
-        """Update object colors."""
-        point_count = int(object_points.shape[1])
-        if self._object_colors is None or self._object_color_count != point_count:
-            self._object_colors = _sam3d_rainbow_colors_rgb_float(object_points, point_count)
-            self._object_color_count = point_count
-        return self._object_colors
-
     def _set_latency_label(self, latency_s: float | None) -> None:
         """Set latency label."""
         if self._latency_label is None:
@@ -452,20 +454,10 @@ class Sam3DGuiFinalDataRenderer:
         assert o3d is not None
         self._set_latency_label(input_to_display_latency_s)
 
-        object_arr = np.asarray(chunk.get("object_points"), dtype=np.float64)
-        controller_arr = np.asarray(chunk.get("controller_points"), dtype=np.float64)
-        if object_arr.ndim != 3 or controller_arr.ndim != 3:
+        prepared = self._prepare_final_data_frame(chunk, local_frame)
+        if prepared is None:
             return self.poll()
-        if int(local_frame) >= int(object_arr.shape[0]) or int(local_frame) >= int(controller_arr.shape[0]):
-            return self.poll()
-
-        object_frame = np.asarray(object_arr[int(local_frame)], dtype=np.float64).reshape(-1, 3)
-        object_colors = self._update_object_colors(object_arr)
-        visible = self._object_visibility(chunk, int(local_frame), int(object_frame.shape[0]))
-        object_valid = visible & np.all(np.isfinite(object_frame), axis=1)
-        controller_frame = np.asarray(controller_arr[int(local_frame)], dtype=np.float64).reshape(-1, 3)
-        controller_valid = np.all(np.isfinite(controller_frame), axis=1)
-        controller_points = controller_frame[controller_valid]
+        object_frame, object_valid, object_colors, controller_points = prepared
 
         object_pcd = o3d.geometry.PointCloud()
         object_pcd.points = o3d.utility.Vector3dVector(object_frame[object_valid])

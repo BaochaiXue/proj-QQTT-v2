@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 
-DEFAULT_ONLINE_DATA_DIR = Path("outputs_v6_1/online_data")
+DEFAULT_ONLINE_DATA_DIR = Path("outputs/online_data")
 DEFAULT_OUTPUT_DIR = Path("demo_v6_2/others/obj_shape_asap_outputs")
 DEFAULT_VIDEO_PATH = (
     DEFAULT_OUTPUT_DIR / "online_depth_realsense_dynamic_jet_5fps.mp4"
@@ -22,7 +22,7 @@ DEFAULT_SUMMARY_PATH = (
     DEFAULT_OUTPUT_DIR / "online_depth_realsense_dynamic_jet_5fps.json"
 )
 DEFAULT_GRID_PATH = (
-    Path("outputs_v6_1/diagnostics")
+    Path("outputs/diagnostics")
     / "default_fake_live_first_window_raw_depth_full.png"
 )
 DEFAULT_GRID_FRAME_COUNT = 35

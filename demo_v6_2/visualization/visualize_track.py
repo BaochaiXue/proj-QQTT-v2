@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Track visualization for Demo v6.1 object/controller point chunks.
+"""Track visualization for Demo v6.2 object/controller point chunks.
 
 The viewer can render historical chunk files or follow a live run. In
 side-by-side mode the left panel follows camera RGB input while the right panel
@@ -52,7 +52,7 @@ from demo_v6_2.visualization.viz_renderers import (
 from demo_v6_2.visualization.viz_video_export import export_output_video
 
 
-DEFAULT_WINDOW_NAME = "Demo v6.1 visualize track"
+DEFAULT_WINDOW_NAME = "Demo v6.2 visualize track"
 DEFAULT_OBJECT_RADIUS = 3
 DEFAULT_CONTROLLER_RADIUS = 6
 
@@ -61,9 +61,9 @@ DEFAULT_CONTROLLER_RADIUS = 6
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the Demo v6.1 chunk viewer CLI parser."""
+    """Build the Demo v6.2 chunk viewer CLI parser."""
     parser = argparse.ArgumentParser(
-        description="Play Demo v6.1 online object/controller points chunk by chunk."
+        description="Play Demo v6.2 online object/controller points chunk by chunk."
     )
     parser.add_argument("--layout", choices=LAYOUTS, default=LAYOUT_OUTPUT_ONLY)
     parser.add_argument(
@@ -164,7 +164,7 @@ def run(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Parse CLI arguments and run the Demo v6.1 viewer."""
+    """Parse CLI arguments and run the Demo v6.2 viewer."""
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     return run(args)

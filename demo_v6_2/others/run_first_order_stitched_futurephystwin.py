@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run FuturePhysTwin first-order optimization on the stitched Demo v6.1 case.
+"""Run FuturePhysTwin first-order optimization on the stitched Demo v6.2 case.
 
 Mirrors ``~/FuturePhysTwin/train_warp.py`` (config loading, optimal-params
 seeding, calibration/metadata wiring, ``InvPhyTrainerWarp.train()``) for a case
@@ -125,7 +125,6 @@ def main(argv: list[str] | None = None) -> None:
 
     futurephystwin_root = args.futurephystwin_root.resolve()
     case_dir = (args.cases_root / args.case_name).resolve()
-    base_path = case_dir.parent
     for required in ("final_data.pkl", "calibrate.pkl", "metadata.json", "split.json"):
         if not (case_dir / required).is_file():
             raise FileNotFoundError(case_dir / required)
@@ -151,7 +150,6 @@ def main(argv: list[str] | None = None) -> None:
 
     import numpy as np
     import pickle
-    import torch
 
     from qqtt import InvPhyTrainerWarp
     from qqtt.utils import cfg, logger

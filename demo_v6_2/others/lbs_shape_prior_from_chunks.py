@@ -10,7 +10,7 @@ import numpy as np
 import open3d as o3d
 
 
-DEFAULT_OUTPUTS_ROOT = Path("outputs_v6_1")
+DEFAULT_OUTPUTS_ROOT = Path("outputs")
 DEFAULT_CASE_NAME = "shape_prior_frame0"
 DEFAULT_ARTIFACT_DIR = Path("demo_v6_2/others/obj_shape_asap_outputs")
 DEFAULT_PREVIEW_VIDEO_PATH = DEFAULT_ARTIFACT_DIR / "shape_prior_lbs_preview.mp4"
@@ -36,13 +36,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--outputs-root",
         type=Path,
         default=DEFAULT_OUTPUTS_ROOT,
-        help="Demo v6.2 outputs root. Defaults to ./outputs_v6_1.",
+        help="Demo v6.2 outputs root. Defaults to ./outputs.",
     )
     parser.add_argument(
         "--case-name",
         type=str,
         default=DEFAULT_CASE_NAME,
-        help="Shape-prior warmup case under outputs_v6_1/shape_prior_case/.",
+        help="Shape-prior warmup case under outputs/shape_prior_case/.",
     )
     parser.add_argument(
         "--write-preview",

@@ -9,6 +9,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
+from demo_v6_2.utils.render import open_video_writer
 from demo_v6_2.visualization.viz_camera_model import (
     _require_cv2,
     infer_case_dir,
@@ -18,10 +19,7 @@ from demo_v6_2.visualization.viz_camera_model import (
 )
 from demo_v6_2.visualization.viz_input_timeline import (
     _chunk_frame_count,
-    _resolve_capture_dir,
-    _resolve_input_rgb_timeline,
     list_available_chunk_paths,
-    load_fake_input_frame_total,
     load_input_rgb_frames,
 )
 from demo_v6_2.visualization.viz_panels import render_side_by_side_frame
@@ -29,6 +27,7 @@ from demo_v6_2.visualization.viz_playback import (
     LAYOUT_OUTPUT_ONLY,
     LAYOUT_SIDE_BY_SIDE,
     _append_new_output_frames,
+    _playback_context,
     _render_output_timeline_frame,
     resolve_playback_fps,
 )
@@ -37,15 +36,17 @@ from demo_v6_2.visualization.viz_renderers import build_frame_renderer
 
 def export_side_by_side_output_video(args: argparse.Namespace) -> int:
     """Export existing side-by-side frames to an MP4 file."""
-    cv2 = _require_cv2()
-    online_dir = normalize_online_dir(args.online_dir)
-    case_dir = infer_case_dir(online_dir, args.case_dir)
-    camera = load_camera_model(case_dir, cam_idx=int(args.cam_idx))
-    fps = resolve_playback_fps(args, camera)
+    _require_cv2()
+    (
+        online_dir,
+        case_dir,
+        camera,
+        fps,
+        capture_dir,
+        input_timeline,
+        fake_input_frame_total,
+    ) = _playback_context(args)
     renderer = build_frame_renderer(args, camera=camera, fps=fps)
-    capture_dir = _resolve_capture_dir(args)
-    input_timeline = _resolve_input_rgb_timeline(args, capture_dir=capture_dir)
-    fake_input_frame_total = load_fake_input_frame_total(capture_dir)
     input_frames = (
         []
         if capture_dir is None or input_timeline is None
@@ -84,14 +85,7 @@ def export_side_by_side_output_video(args: argparse.Namespace) -> int:
             )
             if writer is None:
                 height, width = image.shape[:2]
-                writer = cv2.VideoWriter(
-                    str(output_path),
-                    cv2.VideoWriter_fourcc(*"mp4v"),
-                    fps,
-                    (int(width), int(height)),
-                )
-                if not writer.isOpened():
-                    raise RuntimeError(f"failed to open VideoWriter for {output_path}")
+                writer = open_video_writer(output_path, size=(int(width), int(height)), fps=fps)
             writer.write(image)
     finally:
         if writer is not None:
@@ -102,7 +96,7 @@ def export_side_by_side_output_video(args: argparse.Namespace) -> int:
 
 def export_output_video(args: argparse.Namespace) -> int:
     """Export existing output chunks to an MP4 file."""
-    cv2 = _require_cv2()
+    _require_cv2()
     if str(getattr(args, "layout", LAYOUT_OUTPUT_ONLY)) == LAYOUT_SIDE_BY_SIDE:
         return export_side_by_side_output_video(args)
     online_dir = normalize_online_dir(args.online_dir)
@@ -124,14 +118,7 @@ def export_output_video(args: argparse.Namespace) -> int:
                 image = renderer.render_frame(chunk, local_frame=local_frame, case_dir=case_dir)
                 if writer is None:
                     height, width = image.shape[:2]
-                    writer = cv2.VideoWriter(
-                        str(output_path),
-                        cv2.VideoWriter_fourcc(*"mp4v"),
-                        fps,
-                        (int(width), int(height)),
-                    )
-                    if not writer.isOpened():
-                        raise RuntimeError(f"failed to open VideoWriter for {output_path}")
+                    writer = open_video_writer(output_path, size=(int(width), int(height)), fps=fps)
                 writer.write(image)
     finally:
         if writer is not None:
