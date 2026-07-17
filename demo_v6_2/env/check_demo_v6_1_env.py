@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check Demo v6.1 runtime imports, toolchains, and repo-local assets."""
+"""Check Demo v6.2 runtime imports, toolchains, and repo-local assets."""
 from __future__ import annotations
 
 import argparse
@@ -336,9 +336,9 @@ def _check_gsplat_runtime_smoke() -> list[str]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the Demo v6.1 environment-check CLI parser."""
+    """Build the Demo v6.2 environment-check CLI parser."""
     parser = argparse.ArgumentParser(
-        description="Check Demo v6.1 runtime environment and repo-local assets."
+        description="Check Demo v6.2 runtime environment and repo-local assets."
     )
     parser.add_argument("--role", choices=("main", "shape-prior", "all"), default="all")
     parser.add_argument("--require-cuda", action="store_true")
@@ -346,17 +346,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the requested Demo v6.1 environment checks."""
+    """Run the requested Demo v6.2 environment checks."""
     args = build_parser().parse_args(argv)
     errors: list[str] = []
     role = str(args.role)
     if role in {"main", "all"}:
-        print("[check] Demo v6.1 main environment")
+        print("[check] Demo v6.2 main environment")
         errors.extend(_check_imports(MAIN_MODULES))
         errors.extend(_check_paths(COMMON_ASSET_PATHS))
         errors.extend(_check_main_source_imports())
     if role in {"shape-prior", "all"}:
-        print("[check] Demo v6.1 shape-prior worker environment")
+        print("[check] Demo v6.2 shape-prior worker environment")
         errors.extend(_check_imports(SHAPE_PRIOR_MODULES))
         errors.extend(_check_paths(SHAPE_PRIOR_ASSET_PATHS))
         errors.extend(_check_shape_prior_source_import())
@@ -365,11 +365,11 @@ def main(argv: list[str] | None = None) -> int:
         errors.extend(_check_nvcc_toolchain())
         errors.extend(_check_gsplat_runtime_smoke())
     if errors:
-        print("[fail] Demo v6.1 environment check failed:")
+        print("[fail] Demo v6.2 environment check failed:")
         for error in errors:
             print(f"  - {error}")
         return 1
-    print("[ok] Demo v6.1 environment check passed")
+    print("[ok] Demo v6.2 environment check passed")
     return 0
 
 

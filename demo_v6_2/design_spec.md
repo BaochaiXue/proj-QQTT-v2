@@ -17,7 +17,7 @@ mask。tracker、runtime PCD、shape prior 和 prepared PhysTwin 必须消费同
 - shape prior 进入终态失败（failed/unavailable）时闸门解除，让 chunk bridge 的 shape-prior 错误路径正常报错，而不是让行流无声停滞。
 - 闸门自带 deadline：`--shape-prior-timeout-ms` 限定行流最多被扣留多久；超时后行流永久恢复，由 bridge 的 shape-prior 等待/失败路径响亮报错（防止 prior 子进程挂死导致无限静默停滞）。
 - warmup frame 0 的锚位只能由 chunk-ready 的行占据（controller ≥ 30 点、object > 0 点，与 bridge 的 `_row_ready_for_realtime_chunk_start` 一致）。canonical PT 后 object/controller 任一为空会在 camera 进程立即 fail fast；类别非空但 controller 尚不足 30 点的 startup row 仍可由 bridge 修剪，且不触发闸门。
-- run 在闸门期内结束（prior 未就绪、正式时间线从未开始）时，收尾必须响亮报错并在 metadata 标记 `formal_timeline_incomplete`，绝不能以"成功零 chunk"收场。`--duration-s` 只计正式采集时段，不含闸门等待。
+- run 在闸门期内结束（prior 未就绪、正式时间线从未开始）时，收尾必须响亮报错并在 metadata 标记 `formal_timeline_incomplete`，绝不能以"成功零 chunk"收场。
 
 ## SAM3D generate 输出契约
 

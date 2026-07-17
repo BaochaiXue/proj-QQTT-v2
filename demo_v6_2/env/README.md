@@ -1,6 +1,6 @@
-# Demo v6.1 Environment Files
+# Demo v6.2 Environment Files
 
-This folder contains the install and verification material for Demo v6.1. Demo v6.1
+This folder contains the install and verification material for Demo v6.2. Demo v6.2
 uses two environments:
 
 - `demo_2_max`: main camera/fake-camera, tracking, chunk writer, and
@@ -11,10 +11,10 @@ Use existing validated environments when they are already present:
 
 ```bash
 conda run -n demo_2_max --no-capture-output \
-  python demo_v6_1/env/check_demo_v6_1_env.py --role main --require-cuda
+  python demo_v6_2/env/check_demo_v6_1_env.py --role main --require-cuda
 
 conda run -n phystwin-max --no-capture-output \
-  python demo_v6_1/env/check_demo_v6_1_env.py --role shape-prior --require-cuda
+  python demo_v6_2/env/check_demo_v6_1_env.py --role shape-prior --require-cuda
 ```
 
 The shape-prior `--require-cuda` check validates that `nvcc` is reachable through
@@ -27,37 +27,37 @@ postprocess error.
 Create environments on a new machine:
 
 ```bash
-bash demo_v6_1/env/install_demo_v6_1_env.sh create
+bash demo_v6_2/env/install_demo_v6_1_env.sh create
 ```
 
 Or run the steps manually:
 
 ```bash
-conda env create -f demo_v6_1/env/environment-demo-v6-1-main.yml
+conda env create -f demo_v6_2/env/environment-demo-v6-1-main.yml
 conda run -n demo_2_max --no-capture-output \
-  python -m pip install -r demo_v6_1/env/requirements-demo-v6-1-main.txt
+  python -m pip install -r demo_v6_2/env/requirements-demo-v6-1-main.txt
 
-conda env create -f demo_v6_1/env/environment-demo-v6-1-shape-prior.yml
+conda env create -f demo_v6_2/env/environment-demo-v6-1-shape-prior.yml
 conda run -n phystwin-max --no-capture-output \
-  python -m pip install -r demo_v6_1/env/requirements-demo-v6-1-shape-prior.txt
+  python -m pip install -r demo_v6_2/env/requirements-demo-v6-1-shape-prior.txt
 ```
 
 Update existing environments:
 
 ```bash
-bash demo_v6_1/env/install_demo_v6_1_env.sh update
+bash demo_v6_2/env/install_demo_v6_1_env.sh update
 ```
 
 Or run the steps manually:
 
 ```bash
-conda env update -f demo_v6_1/env/environment-demo-v6-1-main.yml --prune
+conda env update -f demo_v6_2/env/environment-demo-v6-1-main.yml --prune
 conda run -n demo_2_max --no-capture-output \
-  python -m pip install -r demo_v6_1/env/requirements-demo-v6-1-main.txt
+  python -m pip install -r demo_v6_2/env/requirements-demo-v6-1-main.txt
 
-conda env update -f demo_v6_1/env/environment-demo-v6-1-shape-prior.yml --prune
+conda env update -f demo_v6_2/env/environment-demo-v6-1-shape-prior.yml --prune
 conda run -n phystwin-max --no-capture-output \
-  python -m pip install -r demo_v6_1/env/requirements-demo-v6-1-shape-prior.txt
+  python -m pip install -r demo_v6_2/env/requirements-demo-v6-1-shape-prior.txt
 ```
 
 GPU wheels are CUDA-stack-sensitive. If PyTorch, PyTorch3D, Kaolin, Warp, or
@@ -65,7 +65,7 @@ Open3D fail to install from these requirements on a new machine, install the
 wheel matching that machine's CUDA stack first, then rerun the checker. The
 validated versions are recorded in `validated-versions-20260625.txt`.
 If the shape-prior checker reports a missing `nvcc`, rerun
-`bash demo_v6_1/env/install_demo_v6_1_env.sh update` or install a CUDA toolkit whose
+`bash demo_v6_2/env/install_demo_v6_1_env.sh update` or install a CUDA toolkit whose
 `bin/nvcc` matches the active PyTorch CUDA stack before running SAM3D.
 
 The checker also verifies that repo-local runtime assets exist under

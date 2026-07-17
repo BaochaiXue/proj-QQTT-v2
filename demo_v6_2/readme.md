@@ -36,7 +36,7 @@ should treat visible overlap as a segmentation-quality warning.
 
 The `demo_v6_2/` root is intentionally limited to Python modules directly
 named by answers Q2-Q25 in `PIPELINE.md`; an introduction/Q1 mention alone does
-not qualify. Other modules live under five internal packages:
-`orchestration/`, `streaming/`, `perception/`, `shape_prior/`, and
+not qualify. Other modules live under six internal packages:
+`mdp/`, `orchestration/`, `streaming/`, `perception/`, `shape_prior/`, and
 `visualization/`. There are no root compatibility wrappers or duplicate import
 paths; import the canonical subpackage module directly.
