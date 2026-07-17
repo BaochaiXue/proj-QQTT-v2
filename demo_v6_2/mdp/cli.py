@@ -19,12 +19,12 @@ from qqtt.tracking.backends.point_tracker_adapter import (
 )
 
 from demo_v6_2.shape_prior import warmup as shape_prior_warmup
+from demo_v6_2.tracking import DEFAULT_VOLUME_SAMPLE_SIZE_M
 from demo_v6_2.mdp.constants import (
     CONTROLLER_COLOR_RGB,
     DEFAULT_DEPTH_SOURCE,
     DEFAULT_DEVICE,
     DEFAULT_DTYPE,
-    DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES,
     DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD,
     DEFAULT_FAKE_LIVE_CASE,
     DEFAULT_FFS_REPO,
@@ -52,11 +52,6 @@ from demo_v6_2.mdp.constants import (
     TRACK_MODE_NONE,
     TRACK_MODE_OBJECT_ONLY,
     TRACK_MODES,
-)
-from demo_v6_2.phystwin_strict_product import (
-    DEFAULT_TRACKING_PRODUCT_BACKEND,
-    TRACKING_PRODUCT_BACKENDS,
-    normalize_tracking_product_backend,
 )
 from demo_v6_2.utils.camera import SUPPORTED_CAPTURE_FPS, parse_profile
 from demo_v6_2.utils.ffs_align import validate_ffs_paths
@@ -276,13 +271,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--tracking-product-backend",
-        choices=TRACKING_PRODUCT_BACKENDS,
-        default=DEFAULT_TRACKING_PRODUCT_BACKEND,
+        "--volume-sample-size-m",
+        type=float,
+        default=DEFAULT_VOLUME_SAMPLE_SIZE_M,
         help=(
-            "Final tracking product backend. realtime-overlay keeps the live "
-            "marker product; phystwin-strict-tracking writes PhysTwin-compatible "
-            "headless artifacts using TAPNext++ tracks."
+            "Voxel edge (meters) for the origin first-batch volume sampling "
+            "(data_process_origin/data_process_sample.py --volume_sample_size): "
+            "one object query per occupied voxel, frozen at chunk 0. Also "
+            "drives the shape-prior sample stage."
         ),
     )
     parser.add_argument(
@@ -290,9 +286,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help=(
-            "Output directory for --tracking-product-backend "
-            "phystwin-strict-tracking. Defaults to "
-            "<headless-capture-dir>/phystwin_like."
+            "Output directory for the strict PhysTwin tracking product. "
+            "Defaults to <headless-capture-dir>/phystwin_like."
         ),
     )
     parser.add_argument(
@@ -333,7 +328,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--shape-prior-case-root",
         type=Path,
-        default=Path("outputs_v6_1") / "shape_prior_case",
+        default=Path("outputs") / "shape_prior_case",
     )
     parser.add_argument(
         "--shape-prior-points-npz",
@@ -361,7 +356,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
     )
     parser.set_defaults(shape_prior_skip_route_visualizations=True)
-    parser.set_defaults(tapnextpp_fast_postprocess=True)
     parser.add_argument(
         "--device", default=DEFAULT_DEVICE, help="Inference device, usually cuda."
     )
@@ -390,12 +384,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--duration-s",
-        type=float,
-        default=0.0,
-        help="Optional auto-stop duration. Use 0 to run until closed.",
-    )
-    parser.add_argument(
         "--headless-capture-dir",
         type=Path,
         default=None,
@@ -416,7 +404,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--write-input-rgb-timeline",
         action="store_true",
         help=(
-            "Write input_rgb/*.png and input_frames.jsonl for Demo v6.1 "
+            "Write input_rgb/*.png and input_frames.jsonl for Demo v6.2 "
             "realtime side-by-side viewing."
         ),
     )
@@ -481,48 +469,28 @@ def validate_and_normalize_args(args: argparse.Namespace) -> None:
             "--shape-prior-controller-name is required when --shape-prior-warmup "
             "is enabled"
         )
-    if int(DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES) < 0:
-        raise ValueError("--edgetam-live-session-keep-frames must be >= 0")
     if not np.isfinite(float(args.edgetam_mask_logit_threshold)):
         raise ValueError("--edgetam-mask-logit-threshold must be finite")
-    if (
-        int(
-            getattr(
-                args,
-                "shape_prior_timeout_ms",
-                shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
-            )
-        )
-        <= 0
-    ):
+    if float(args.volume_sample_size_m) <= 0.0:
+        raise ValueError("--volume-sample-size-m must be positive")
+    if int(args.shape_prior_timeout_ms) <= 0:
         raise ValueError("--shape-prior-timeout-ms must be positive")
     if args.table_calibrate is None:
-        raise ValueError("phystwin-strict-tracking requires --table-calibrate")
+        raise ValueError("formal runtime requires --table-calibrate")
     if args.depth_source == "none" and args.pcd_mode == "masked":
         raise ValueError("--depth-source none requires --pcd-mode none")
     if headless_capture_enabled(args):
-        if args.input_source not in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_LIVE}:
-            raise ValueError(
-                "--headless-capture-dir requires --input-source live or fake-live"
-            )
         if args.depth_source not in {"ffs", "realsense"}:
             raise ValueError(
                 "--headless-capture-dir requires --depth-source ffs or realsense"
             )
     args.tracker_backend = normalize_tracker_backend(str(args.tracker_backend))
-    args.tracking_product_backend = normalize_tracking_product_backend(
-        getattr(args, "tracking_product_backend", DEFAULT_TRACKING_PRODUCT_BACKEND)
-    )
     if args.pcd_mode == "masked" and not tracker_enabled(args):
         raise ValueError("--pcd-mode masked requires --tracker-backend tapnextpp")
     if args.pcd_mode == "masked" and args.track_mode == TRACK_MODE_NONE:
         raise ValueError("--pcd-mode masked requires an enabled --track-mode")
-    if str(args.input_source) not in {INPUT_SOURCE_FAKE_LIVE, INPUT_SOURCE_LIVE}:
-        raise ValueError(
-            "phystwin-strict-tracking requires --input-source live or fake-live"
-        )
     if args.headless_capture_dir is None:
-        raise ValueError("phystwin-strict-tracking requires --headless-capture-dir")
+        raise ValueError("formal runtime requires --headless-capture-dir")
     if args.phystwin_strict_output_dir is None:
         args.phystwin_strict_output_dir = (
             Path(args.headless_capture_dir) / "phystwin_like"
@@ -570,9 +538,7 @@ def active_object_ids(args: argparse.Namespace) -> list[int]:
 def tracker_enabled(args: argparse.Namespace) -> bool:
     """Return whether tracker is enabled."""
     return (
-        normalize_tracker_backend(
-            str(getattr(args, "tracker_backend", TRACKER_BACKEND_NONE))
-        )
+        normalize_tracker_backend(str(args.tracker_backend))
         != TRACKER_BACKEND_NONE
     )
 
@@ -586,14 +552,12 @@ class RunMode:
     from the argparse Namespace at every call site.
     """
 
-    track_mode: str
     tracker_enabled: bool
     lossless_enabled: bool
     lossless_input_fps: float
     controller_tracking_enabled: bool
     object_tracking_enabled: bool
     fake_live_input: bool  # recorded fake-live replay (the only replay source)
-    headless_capture_enabled: bool
     depth_backend_label: str
 
     @classmethod
@@ -602,18 +566,14 @@ class RunMode:
         track_mode = str(args.track_mode)
         is_tracker_enabled = tracker_enabled(args)
         return cls(
-            track_mode=track_mode,
             tracker_enabled=is_tracker_enabled,
             lossless_enabled=bool(is_tracker_enabled and args.pcd_mode == "masked"),
-            lossless_input_fps=float(
-                getattr(args, "lossless_input_fps", DEFAULT_LOSSLESS_INPUT_FPS)
-            ),
+            lossless_input_fps=float(args.lossless_input_fps),
             controller_tracking_enabled=track_mode
             in {TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_CONTROLLER_ONLY},
             object_tracking_enabled=track_mode
             in {TRACK_MODE_CONTROLLER_OBJECT, TRACK_MODE_OBJECT_ONLY},
             fake_live_input=_is_fake_live_input_source(str(args.input_source)),
-            headless_capture_enabled=headless_capture_enabled(args),
             depth_backend_label=depth_backend_label(args),
         )
 

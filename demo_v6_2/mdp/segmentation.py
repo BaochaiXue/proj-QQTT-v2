@@ -93,39 +93,18 @@ def _load_hf_streaming_runtime() -> Any:
     return hf_stream
 
 
-def _time_runtime_ms(
-    fn: Callable[[], Any],
-) -> tuple[Any, float, float, float]:
-    """Measure the wall time of ``fn`` in milliseconds.
-
-    Returns ``(value, elapsed_ms, pre_sync_ms, post_sync_ms)``; the sync fields
-    stay 0.0 (the optional CUDA-sync profiling was CLI-gated and unreachable).
-    """
+def _time_runtime_ms(fn: Callable[[], Any]) -> tuple[Any, float]:
+    """Run ``fn`` and return ``(value, elapsed_ms)``."""
     started = time.perf_counter()
     value = fn()
-    elapsed_ms = _elapsed_ms(started, time.perf_counter())
-    return value, elapsed_ms, 0.0, 0.0
+    return value, _elapsed_ms(started, time.perf_counter())
 
 
-def _time_model_forward(fn: Callable[[], Any]) -> tuple[Any, float, float, float, float]:
-    """Measure the wall time of a model forward in milliseconds.
-
-    Returns ``(value, wall_ms, cuda_event_ms, pre_sync_ms, post_sync_ms)``; the
-    cuda-event and sync fields stay 0.0 (their profiling was CLI-gated and
-    unreachable).
-    """
+def _time_model_forward(fn: Callable[[], Any]) -> tuple[Any, float]:
+    """Run a model forward and return ``(value, wall_ms)``."""
     started_s = time.perf_counter()
     value = fn()
-    wall_ms = _elapsed_ms(started_s, time.perf_counter())
-    return value, wall_ms, 0.0, 0.0, 0.0
-
-
-__all__ = [
-    "extract_object_masks_from_hf_output",
-    "_load_hf_streaming_runtime",
-    "_time_runtime_ms",
-    "_time_model_forward",
-]
+    return value, _elapsed_ms(started_s, time.perf_counter())
 
 
 @dataclass(frozen=True)
@@ -413,8 +392,6 @@ class SegmentationStage:
     ) -> None:
         """Prune edgetam live session."""
         keep_frames = int(DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES)
-        if keep_frames <= 0:
-            return
         min_frame_idx = int(current_frame_idx) - keep_frames + 1
 
         processed_frames = getattr(session, "processed_frames", None)
@@ -458,12 +435,10 @@ class SegmentationStage:
     ) -> MaskPacket:
         """Run segmentation frame."""
         image = bgr_to_pil_rgb(frame.color_bgr)
-        inputs, preprocess_ms, preprocess_pre_sync_ms, preprocess_post_sync_ms = (
-            _time_runtime_ms(
-                lambda: processor(
-                    images=image, device=self.args.device, return_tensors="pt"
-                ),
-            )
+        inputs, preprocess_ms = _time_runtime_ms(
+            lambda: processor(
+                images=image, device=self.args.device, return_tensors="pt"
+            ),
         )
         pixel_values = inputs.pixel_values[0].to(device=self.args.device, dtype=dtype)
         prompt_ms = 0.0
@@ -486,38 +461,22 @@ class SegmentationStage:
                     prompt_masks.append(
                         np.asarray(initial_masks.hand_b_mask, dtype=bool)
                     )
-                _unused, prompt_ms, prompt_pre_sync_ms, prompt_post_sync_ms = (
-                    _time_runtime_ms(
-                        lambda: processor.add_inputs_to_inference_session(
-                            inference_session=session,
-                            frame_idx=int(frame.seq),
-                            obj_ids=prompt_obj_ids,
-                            input_masks=prompt_masks,
-                        ),
-                    )
+                _unused, prompt_ms = _time_runtime_ms(
+                    lambda: processor.add_inputs_to_inference_session(
+                        inference_session=session,
+                        frame_idx=int(frame.seq),
+                        obj_ids=prompt_obj_ids,
+                        input_masks=prompt_masks,
+                    ),
                 )
-            else:
-                prompt_pre_sync_ms = 0.0
-                prompt_post_sync_ms = 0.0
-            (
-                output,
-                wall_model_ms,
-                cuda_event_model_ms,
-                model_pre_sync_ms,
-                model_post_sync_ms,
-            ) = _time_model_forward(
+            output, wall_model_ms = _time_model_forward(
                 lambda: model(
                     inference_session=session,
                     frame=pixel_values,
                     frame_idx=int(frame.seq),
                 ),
             )
-            (
-                post_masks,
-                postprocess_ms,
-                postprocess_pre_sync_ms,
-                postprocess_post_sync_ms,
-            ) = _time_runtime_ms(
+            post_masks, postprocess_ms = _time_runtime_ms(
                 lambda: processor.post_process_masks(
                     [output.pred_masks],
                     original_sizes=inputs.original_sizes,
@@ -557,19 +516,6 @@ class SegmentationStage:
             prompt_ms=prompt_ms,
             model_ms=wall_model_ms,
             wall_model_ms=wall_model_ms,
-            cuda_event_model_ms=cuda_event_model_ms,
-            pre_sync_wait_ms=float(
-                preprocess_pre_sync_ms
-                + prompt_pre_sync_ms
-                + model_pre_sync_ms
-                + postprocess_pre_sync_ms
-            ),
-            post_sync_wait_ms=float(
-                preprocess_post_sync_ms
-                + prompt_post_sync_ms
-                + model_post_sync_ms
-                + postprocess_post_sync_ms
-            ),
             postprocess_ms=postprocess_ms,
             mask_ms=float(preprocess_ms + prompt_ms + wall_model_ms + postprocess_ms),
         )

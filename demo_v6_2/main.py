@@ -111,7 +111,7 @@ def _wait_for_phystwin_launch(launch: PhystwinShenLaunch) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run Demo v6.1 live/fake-live orchestration."""
+    """Run Demo v6.2 live/fake-live orchestration."""
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     # check parameters
@@ -150,9 +150,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         args,
         capture_dir=capture_dir,
         profile_json=profile_json,
-        chunk_frame_count=config.chunk_frame_count,
     )  # generate the command text
     main_data_processing_env = os.environ.copy()
+    from demo_v6_2.perception.sam31_image_segmentation import (  # noqa: PLC0415
+        QQTT_SAM31_CHECKPOINT_ENV,
+    )
+
+    assert SAM31_CHECKPOINT_ENV == QQTT_SAM31_CHECKPOINT_ENV, (
+        "sam31 checkpoint env var name diverged: config/default.yaml "
+        "paths.sam31_checkpoint_env vs "
+        "demo_v6_2/perception/sam31_image_segmentation.py QQTT_SAM31_CHECKPOINT_ENV"
+    )
     # get SAM3.1 checkpoint path
     if not main_data_processing_env.get(SAM31_CHECKPOINT_ENV):
         # A caller-provided checkpoint env var wins. Otherwise anchor the
@@ -274,6 +282,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             base_path=base_path,
             case_prefix=str(args.case_prefix),
             chunk_size=config.chunk_frame_count,
+            volume_sample_size_m=config.volume_sample_size_m,
             fps=int(round(float(args.replay_fps))),
             max_chunks=args.max_chunks,
             capture_finished=lambda: main_data_processing.poll() is not None,

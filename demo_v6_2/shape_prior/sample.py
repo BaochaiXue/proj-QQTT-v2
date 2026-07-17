@@ -1,4 +1,4 @@
-"""Sample Demo v6.1 shape-prior points into final_data.pkl."""
+"""Sample Demo v6.2 shape-prior points into final_data.pkl."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from demo_v6_2.shape_prior.timing import (  # noqa: E402
     StageProfileRun,
     elapsed_ms,
 )
+from demo_v6_2.tracking import DEFAULT_VOLUME_SAMPLE_SIZE_M  # noqa: E402
 from demo_v6_2.utils.align_util import as_mesh  # noqa: E402
 
 _MODULE_IMPORT_MS = elapsed_ms(_MODULE_IMPORT_STARTED_S)
@@ -23,7 +24,6 @@ _MODULE_IMPORT_MS = elapsed_ms(_MODULE_IMPORT_STARTED_S)
 
 DEFAULT_SURFACE_POINTS = 1024
 INTERIOR_CANDIDATE_POINTS = 10000
-DEFAULT_VOLUME_SAMPLE_SIZE_M = 0.005
 
 
 def build_parser() -> ArgumentParser:

@@ -71,9 +71,10 @@ class OrderedPacketQueue(Generic[PacketT]):
         self._last_get_seq = -1
         self._closed = False
         self._max_size_seen = 0
+        self._blocked_s = 0.0
 
-    def put(self, packet: PacketT) -> int:
-        """Return the put."""
+    def put(self, packet: PacketT) -> None:
+        """Enqueue one packet; raises on seq gaps, overflow, or a closed queue."""
         seq = int(_packet_seq(packet))
         with self._condition:
             if self._closed:
@@ -94,17 +95,23 @@ class OrderedPacketQueue(Generic[PacketT]):
             self._last_put_seq = seq
             self._max_size_seen = max(self._max_size_seen, len(self._items))
             self._condition.notify_all()
-            return len(self._items)
 
     def wait_for_capacity(self, *, stop_event: threading.Event, timeout_s: float = 0.05) -> bool:
         """Wait for for capacity."""
         with self._condition:
+            waited_from: float | None = None
             while not stop_event.is_set():
                 if self._closed:
                     raise LosslessPipelineError(f"{self.name} queue is closed")
                 if len(self._items) < self.max_backlog_frames:
+                    if waited_from is not None:
+                        self._blocked_s += time.perf_counter() - waited_from
                     return True
+                if waited_from is None:
+                    waited_from = time.perf_counter()
                 self._condition.wait(timeout=float(timeout_s))
+            if waited_from is not None:
+                self._blocked_s += time.perf_counter() - waited_from
             return False
 
     def put_wait(self, packet: PacketT, *, stop_event: threading.Event, timeout_s: float = 0.05) -> int:
@@ -118,12 +125,17 @@ class OrderedPacketQueue(Generic[PacketT]):
                 raise LosslessPipelineError(
                     f"{self.name} queue expected seq {expected}, got {seq}"
                 )
+            waited_from: float | None = None
             while len(self._items) >= self.max_backlog_frames:
                 if stop_event.is_set():
                     return 0
                 if self._closed:
                     raise LosslessPipelineError(f"{self.name} queue is closed")
+                if waited_from is None:
+                    waited_from = time.perf_counter()
                 self._condition.wait(timeout=float(timeout_s))
+            if waited_from is not None:
+                self._blocked_s += time.perf_counter() - waited_from
             self._items.append(packet)
             self._last_put_seq = seq
             self._max_size_seen = max(self._max_size_seen, len(self._items))
@@ -154,6 +166,17 @@ class OrderedPacketQueue(Generic[PacketT]):
             self._closed = True
             self._condition.notify_all()
 
+    def telemetry(self) -> dict[str, int | float]:
+        """Queue-health snapshot: depth, high-water mark, seqs, blocked time."""
+        with self._condition:
+            return {
+                "len": len(self._items),
+                "max_seen": int(self._max_size_seen),
+                "put_seq": int(self._last_put_seq),
+                "get_seq": int(self._last_get_seq),
+                "blocked_s": round(self._blocked_s, 3),
+            }
+
     def reset(self) -> None:
         """Reset OrderedPacketQueue."""
         with self._condition:
@@ -162,6 +185,7 @@ class OrderedPacketQueue(Generic[PacketT]):
             self._last_get_seq = -1
             self._closed = False
             self._max_size_seen = 0
+            self._blocked_s = 0.0
             self._condition.notify_all()
 
 
@@ -174,9 +198,10 @@ class SameSeqPairer:
         self._pending_pcd: dict[int, PcdBuildResult] = {}
         self._pending_tracker: dict[int, TrackerMarkerPacket] = {}
         self._expected_seq = 0
-        self._emitted_seq = -1
         self._pcd_closed = False
         self._tracker_closed = False
+        self._max_pending_seen = 0
+        self._blocked_s = 0.0
 
     def reset(self) -> None:
         """Reset SameSeqPairer."""
@@ -184,9 +209,10 @@ class SameSeqPairer:
             self._pending_pcd.clear()
             self._pending_tracker.clear()
             self._expected_seq = 0
-            self._emitted_seq = -1
             self._pcd_closed = False
             self._tracker_closed = False
+            self._max_pending_seen = 0
+            self._blocked_s = 0.0
             self._condition.notify_all()
 
     def wait_for_side_capacity(
@@ -201,6 +227,7 @@ class SameSeqPairer:
         if side_name not in {"pcd", "tracker"}:
             raise ValueError("side must be 'pcd' or 'tracker'")
         with self._condition:
+            waited_from: float | None = None
             while not stop_event.is_set():
                 if side_name == "pcd":
                     if self._pcd_closed:
@@ -211,8 +238,14 @@ class SameSeqPairer:
                         raise LosslessPipelineError("same-seq pairer tracker side is closed")
                     pending = len(self._pending_tracker)
                 if pending < self.max_backlog_frames:
+                    if waited_from is not None:
+                        self._blocked_s += time.perf_counter() - waited_from
                     return True
+                if waited_from is None:
+                    waited_from = time.perf_counter()
                 self._condition.wait(timeout=float(timeout_s))
+            if waited_from is not None:
+                self._blocked_s += time.perf_counter() - waited_from
             return False
 
     def add_pcd_result(self, result: PcdBuildResult) -> list[PairedBuildResult]:
@@ -228,6 +261,9 @@ class SameSeqPairer:
             if seq in self._pending_pcd:
                 raise LosslessPipelineError(f"same-seq pairer duplicate PCD seq {seq}")
             self._pending_pcd[seq] = result
+            self._max_pending_seen = max(
+                self._max_pending_seen, len(self._pending_pcd), len(self._pending_tracker)
+            )
             self._check_backlog_locked()
             pairs = self._flush_ready_locked()
             self._condition.notify_all()
@@ -246,6 +282,9 @@ class SameSeqPairer:
             if seq in self._pending_tracker:
                 raise LosslessPipelineError(f"same-seq pairer duplicate tracker seq {seq}")
             self._pending_tracker[seq] = packet
+            self._max_pending_seen = max(
+                self._max_pending_seen, len(self._pending_pcd), len(self._pending_tracker)
+            )
             self._check_backlog_locked()
             pairs = self._flush_ready_locked()
             self._condition.notify_all()
@@ -280,6 +319,17 @@ class SameSeqPairer:
                 and not self._pending_tracker
             )
 
+    def telemetry(self) -> dict[str, int | float]:
+        """Pairer-health snapshot: pending sides, high-water mark, blocked time."""
+        with self._condition:
+            return {
+                "pending_pcd": len(self._pending_pcd),
+                "pending_tracker": len(self._pending_tracker),
+                "max_pending_seen": int(self._max_pending_seen),
+                "expected_seq": int(self._expected_seq),
+                "blocked_s": round(self._blocked_s, 3),
+            }
+
     def _flush_ready_locked(self) -> list[PairedBuildResult]:
         """Return the flush ready locked."""
         pairs: list[PairedBuildResult] = []
@@ -288,7 +338,6 @@ class SameSeqPairer:
             pcd_result = self._pending_pcd.pop(seq)
             tracker_packet = self._pending_tracker.pop(seq)
             pairs.append(PairedBuildResult(seq=seq, pcd_result=pcd_result, tracker_packet=tracker_packet))
-            self._emitted_seq = seq
             self._expected_seq += 1
         return pairs
 
@@ -352,7 +401,6 @@ class LosslessPipeline:
         self._pairer_lock = threading.Lock()
         self._publish_condition = threading.Condition()
         self._next_publish_seq = 0
-        self.capture_done = threading.Event()
         self.processing_done = threading.Event()
         self.first_pair_published = threading.Event()
 
@@ -366,7 +414,6 @@ class LosslessPipeline:
         with self._publish_condition:
             self._next_publish_seq = 0
             self._publish_condition.notify_all()
-        self.capture_done.clear()
         self.processing_done.clear()
         self.first_pair_published.clear()
 
@@ -383,8 +430,7 @@ class LosslessPipeline:
         return self.frame_queue.put_wait(packet, stop_event=stop_event) > 0
 
     def finish_capture(self) -> None:
-        """Mark the capture side complete and close the frame queue."""
-        self.capture_done.set()
+        """Close the frame queue to mark the capture side complete."""
         self.frame_queue.close()
 
     # ---- segmentation side ------------------------------------------------
@@ -457,6 +503,19 @@ class LosslessPipeline:
                 )
             self._next_publish_seq += 1
             self._publish_condition.notify_all()
+
+    def telemetry(self) -> dict[str, object]:
+        """Per-stage queue-health snapshot for the [queue-telemetry] stream."""
+        with self._publish_condition:
+            next_publish_seq = int(self._next_publish_seq)
+        return {
+            "frame": self.frame_queue.telemetry(),
+            "mask": self.mask_queue.telemetry(),
+            "processed": self.processed_frame_queue.telemetry(),
+            "pair_output": self.pair_output_queue.telemetry(),
+            "pairer": self.pairer.telemetry(),
+            "next_publish_seq": next_publish_seq,
+        }
 
     def maybe_close_pair_output(self) -> None:
         """Close the pair-output queue once the pairer fully drained."""

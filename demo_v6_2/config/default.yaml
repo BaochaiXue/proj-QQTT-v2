@@ -37,6 +37,11 @@ chunking:
   chunk_poll_interval_s: 0.001
   # Options: null or positive integer; null streams until input ends/stops.
   max_chunks: null
+  # Options: positive float meters. Origin data_process_sample.py
+  # --volume_sample_size parity: one object query per occupied voxel on the
+  # first batch (identity frozen at chunk 0); also drives the shape-prior
+  # sample stage voxel. 0.005 preserves origin parity.
+  volume_sample_size_m: 0.005
 
 # Camera capture, depth, masks, and local model runtime.
 camera:
@@ -259,8 +264,6 @@ visualizer:
   visualizer_object_color_mode: "rainbow"
   # Options: string enum value used for side-by-side input/output display.
   visualizer_layout_side_by_side: "side-by-side"
-  # Options: string enum value used for output-only display.
-  visualizer_layout_output_only: "output-only"
   # Options: list containing the exact allowed visualizer layout strings.
   visualizer_layouts: ["side-by-side", "output-only"]
   # Options: one value from visualizer_layouts.

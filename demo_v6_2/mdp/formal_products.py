@@ -27,7 +27,6 @@ from demo_v6_2.phystwin_strict_product import (
     apply_radius_outlier_to_mask_frame,
     dense_world_pcd_grid,
 )
-from demo_v6_2.mdp.cli import RunMode
 from demo_v6_2.mdp.plumbing import (
     FatalErrorLatch,
     FormalTimelineGate,
@@ -55,7 +54,6 @@ class FormalProductStage:
         self,
         *,
         args: argparse.Namespace,
-        mode: RunMode,
         session: CameraSession,
         lossless: LosslessPipeline,
         stage_stats: StageStatsBoard,
@@ -67,7 +65,6 @@ class FormalProductStage:
     ) -> None:
         """Initialize FormalProductStage."""
         self.args = args
-        self.mode = mode
         self.session = session
         self.lossless = lossless
         self.stage_stats = stage_stats

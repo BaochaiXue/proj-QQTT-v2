@@ -25,7 +25,6 @@ from demo_v6_2.utils.ffs_tensorrt_infra import (
     FFS_INPUT_STAGING_PINNED,
     _CachedTensorRTRun,
     _PinnedBatchPairImageInputBuffers,
-    _PinnedSinglePairImageInputBuffers,
     _configure_tensorrt_runtime_search_paths,
     apply_tensorrt_image_transform,
     load_tensorrt_model_config,
@@ -97,7 +96,6 @@ class FastFoundationStereoTensorRTRunner:
             str(self.feature_engine_path),
             str(self.post_engine_path),
         )
-        self._input_buffers: _PinnedSinglePairImageInputBuffers | None = None
         self._batch_input_buffers: _PinnedBatchPairImageInputBuffers | None = None
         self._disparity_host_buffer: Any | None = None
         self._last_h2d_profile: dict[str, float | str | bool] = {
@@ -136,27 +134,8 @@ class FastFoundationStereoTensorRTRunner:
         torch = self.torch
         if (
             self.input_staging == FFS_INPUT_STAGING_PINNED
-            and len(prepared_left) == 1
-            and len(prepared_right) == 1
-            and prepared_left[0].ndim == 3
-            and prepared_right[0].ndim == 3
-            and prepared_left[0].shape == prepared_right[0].shape
-            and prepared_left[0].dtype == np.uint8
-            and prepared_right[0].dtype == np.uint8
-        ):
-            image_shape = tuple(int(item) for item in prepared_left[0].shape)
-            if self._input_buffers is None or self._input_buffers.image_shape != image_shape:
-                self._input_buffers = _PinnedSinglePairImageInputBuffers(
-                    torch_module=torch,
-                    image_shape=image_shape,
-                )
-            left_tensor, right_tensor = self._input_buffers.load(prepared_left[0], prepared_right[0])
-            self._last_h2d_profile = dict(self._input_buffers.last_profile)
-            return left_tensor, right_tensor
-        if (
-            self.input_staging == FFS_INPUT_STAGING_PINNED
             and len(prepared_left) == len(prepared_right)
-            and len(prepared_left) > 1
+            and len(prepared_left) >= 1
             and all(left.ndim == 3 for left in prepared_left)
             and all(right.ndim == 3 for right in prepared_right)
             and all(left.shape == prepared_left[0].shape for left in prepared_left)

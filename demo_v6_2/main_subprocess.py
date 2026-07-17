@@ -1,4 +1,4 @@
-"""Demo v6.1 subprocess commands and process lifecycle."""
+"""Demo v6.2 subprocess commands and process lifecycle."""
 
 from __future__ import annotations
 
@@ -92,7 +92,6 @@ def build_main_data_processing_command(
     *,
     capture_dir: Path,
     profile_json: Path,
-    chunk_frame_count: int,
 ) -> list[str]:
     """Build the subprocess command that emits prepared realtime frames."""
     script = Path("demo_v6_2") / "main_data_processing.py"
@@ -103,17 +102,15 @@ def build_main_data_processing_command(
         depth_source = "realsense"
     else:
         raise ValueError(f"unsupported depth backend: {args.depth_backend!r}")
-    # Demo v6.1 chunks are bounded by the chunk publisher, not by the camera
-    # subprocess (chunk_frame_count stays in the signature for that contract).
-    # Keeping camera duration unbounded (0.0 = run until stopped) prevents
-    # shape-prior warmup time from consuming the realtime RGB input timeline.
-    duration_s = 0.0
+    # Demo v6.2 chunks are bounded by the chunk publisher, not by the camera
+    # subprocess; the camera runs until stopped, so shape-prior warmup time
+    # never consumes the realtime RGB input timeline.
     # This is the only v6.1 camera/tracker entrypoint. It writes prepared
     # per-frame NPZ payloads plus optional input RGB timeline data; chunk
     # materialization happens in streaming/session.py.
-    # Offline parity with data_process_sam3d/data_process_pcd.py:L84-L149,
-    # data_process_sam3d/data_process_mask.py:L42-L152, and
-    # data_process_sam3d/data_process_track.py:L49-L55. The subprocess emits the
+    # Offline parity with data_process_origin/data_process_pcd.py:L84-L149,
+    # data_process_origin/data_process_mask.py:L42-L152, and
+    # data_process_origin/data_process_track.py:L49-L55. The subprocess emits the
     # realtime equivalents of those PCD, mask, and cotracker inputs.
     command = [
         "python",
@@ -142,12 +139,8 @@ def build_main_data_processing_command(
         depth_source,
         "--depth-backend-label",
         str(args.depth_backend),
-        "--duration-s",
-        f"{duration_s:.3f}",
         "--headless-capture-dir",
         str(capture_dir),
-        "--tracking-product-backend",
-        "phystwin-strict-tracking",
         "--track-mode",
         "controller-object",
         "--pcd-mode",
@@ -180,6 +173,9 @@ def build_main_data_processing_command(
         command.extend(["--fake-live-case", str(args.fake_live_case)])
     if float(camera_source_replay_fps) != float(DEFAULT_CAMERA_SOURCE_REPLAY_FPS):
         command.extend(["--lossless-input-fps", str(float(camera_source_replay_fps))])
+    command.extend(
+        ["--volume-sample-size-m", str(float(args.volume_sample_size_m))]
+    )
     if bool(args.camera_headless_prepared_only):
         command.append("--headless-prepared-only")
     if resolve_write_input_rgb_timeline(args):

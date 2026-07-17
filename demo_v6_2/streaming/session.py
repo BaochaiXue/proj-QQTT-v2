@@ -1,4 +1,4 @@
-"""Convert Demo v6.1 headless capture rows into realtime chunks.
+"""Convert Demo v6.2 headless capture rows into realtime chunks.
 
 The camera process appends ``frames.jsonl`` and prepared per-frame NPZ payloads.
 This bridge tails that stream as one ``ChunkStreamSession``, waits for the shape
@@ -91,6 +91,7 @@ class ChunkStreamSession:
         interior_points: np.ndarray | None = None,
         require_shape_prior: bool = False,
         shape_prior_wait_timeout_s: float = 300.0,
+        volume_sample_size_m: float = tracking.DEFAULT_VOLUME_SAMPLE_SIZE_M,
         on_chunk_written: Callable[[dict[str, Any]], None] | None = None,
         online_case_name: str | None = None,
         asap_augment: bool = True,
@@ -110,6 +111,7 @@ class ChunkStreamSession:
         self.interior_points = interior_points
         self.require_shape_prior = bool(require_shape_prior)
         self.shape_prior_wait_timeout_s = float(shape_prior_wait_timeout_s)
+        self.volume_sample_size_m = float(volume_sample_size_m)
         self.on_chunk_written = on_chunk_written
         metadata = _wait_for_metadata(
             self.capture,
@@ -144,7 +146,9 @@ class ChunkStreamSession:
         self.frame_archive.initialize_case(metadata)
         # One stateful tracking runtime spans the realtime session so chunk N+1
         # continues the identity frozen by chunk 0.
-        self.tracking_runtime = tracking.TrackingRuntime()
+        self.tracking_runtime = tracking.TrackingRuntime(
+            volume_sample_size=self.volume_sample_size_m
+        )
         # design_spec_v6_1.md: session-lived ASAP augmenter; initializes from the
         # first materialized window (the aligned mesh exists only after shape-
         # prior warmup) and fails fast when final_mesh.glb is missing.

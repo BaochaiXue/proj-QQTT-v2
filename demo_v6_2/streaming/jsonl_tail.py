@@ -1,4 +1,4 @@
-"""frames.jsonl tailing helpers for Demo v6.1 chunk streaming.
+"""frames.jsonl tailing helpers for Demo v6.2 chunk streaming.
 
 frames.jsonl is append-only and owned by the camera subprocess. The helpers in
 this section either tolerate incomplete rows or normalize source-frame metadata

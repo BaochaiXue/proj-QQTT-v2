@@ -57,6 +57,60 @@ def intrinsics_to_matrix(intrinsics: Any) -> np.ndarray:
     return np.asarray(intrinsics, dtype=np.float32).reshape(3, 3)
 
 
+def track_lift_valid_mask(
+    *,
+    tracks_yx: np.ndarray,
+    visibility: np.ndarray,
+    depth: np.ndarray,
+    depth_scale_m_per_unit: float,
+    mask: np.ndarray | None,
+    depth_min_m: float,
+    depth_max_m: float,
+) -> np.ndarray:
+    """Return the per-track lift validity mask (visible, in-bounds, in-mask,
+    depth within [depth_min_m, depth_max_m]), aligned with the input tracks."""
+    tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
+    vis = np.asarray(visibility, dtype=np.float32).reshape(-1) > 0.0
+    if vis.shape[0] != tracks.shape[0]:
+        raise ValueError("visibility length must match tracks_yx")
+
+    depth_arr = np.asarray(depth)
+    if np.issubdtype(depth_arr.dtype, np.floating):
+        depth_m = depth_arr.astype(np.float32, copy=False)
+    else:
+        depth_m = depth_arr.astype(np.float32) * np.float32(depth_scale_m_per_unit)
+    height, width = depth_m.shape[:2]
+    mask_bool = (
+        np.ones((height, width), dtype=bool)
+        if mask is None
+        else np.asarray(mask, dtype=bool)
+    )
+    if mask_bool.shape[:2] != (height, width):
+        raise ValueError("tracker lift mask shape must match depth shape")
+
+    yy = np.rint(tracks[:, 0]).astype(np.int64)
+    xx = np.rint(tracks[:, 1]).astype(np.int64)
+    finite_tracks = np.isfinite(tracks).all(axis=1)
+    in_bounds = (yy >= 0) & (yy < height) & (xx >= 0) & (xx < width)
+    valid = vis & finite_tracks & in_bounds
+    if not np.any(valid):
+        return np.zeros((tracks.shape[0],), dtype=bool)
+
+    valid_indices = np.flatnonzero(valid)
+    sampled_depth = depth_m[yy[valid_indices], xx[valid_indices]]
+    depth_valid = (
+        np.isfinite(sampled_depth)
+        & (sampled_depth > 0.0)
+        & (sampled_depth >= np.float32(depth_min_m))
+    )
+    if np.isfinite(float(depth_max_m)):
+        depth_valid &= sampled_depth <= np.float32(depth_max_m)
+    inside_mask = mask_bool[yy[valid_indices], xx[valid_indices]]
+    valid_out = np.zeros((tracks.shape[0],), dtype=bool)
+    valid_out[valid_indices] = depth_valid & inside_mask
+    return valid_out
+
+
 def _depth_to_meters(depth: np.ndarray, depth_scale_m_per_unit: float) -> np.ndarray:
     """Return depth in meters: float inputs are taken as meters already, integer
     inputs (e.g. uint16 sensor units) are scaled by depth_scale_m_per_unit.
@@ -105,22 +159,16 @@ def lift_tracks_yx_to_world(
 
     yy = np.rint(tracks[:, 0]).astype(np.int64)
     xx = np.rint(tracks[:, 1]).astype(np.int64)
-    in_bounds = (yy >= 0) & (yy < height) & (xx >= 0) & (xx < width)
 
-    sampled_depth = np.zeros((tracks.shape[0],), dtype=np.float32)
-    inside_mask = np.zeros((tracks.shape[0],), dtype=bool)
-    valid_bounds = np.where(in_bounds)[0]
-    if len(valid_bounds) > 0:
-        sampled_depth[valid_bounds] = depth_m[yy[valid_bounds], xx[valid_bounds]]
-        inside_mask[valid_bounds] = mask_bool[yy[valid_bounds], xx[valid_bounds]]
-
-    depth_valid = (
-        np.isfinite(sampled_depth)
-        & (sampled_depth > 0.0)
-        & (sampled_depth >= float(depth_min_m))
-        & (sampled_depth <= float(depth_max_m))
+    valid = track_lift_valid_mask(
+        tracks_yx=tracks,
+        visibility=visibility,
+        depth=depth,
+        depth_scale_m_per_unit=float(depth_scale_m_per_unit),
+        mask=mask,
+        depth_min_m=float(depth_min_m),
+        depth_max_m=float(depth_max_m),
     )
-    valid = vis & in_bounds & inside_mask & depth_valid
     # Deterministic even-stride cap keeps the survivor set stable frame to frame.
     if max_points is not None and int(max_points) >= 0 and int(valid.sum()) > int(max_points):
         valid_indices = np.where(valid)[0]
@@ -141,9 +189,9 @@ def lift_tracks_yx_to_world(
     K = intrinsics_to_matrix(intrinsics)
     ray_x, ray_y = build_projection_grid_from_matrix(width=width, height=height, K=K)
     transform = np.asarray(c2w, dtype=np.float32).reshape(4, 4)
-    z = sampled_depth[source_indices]
     rows = yy[source_indices]
     cols = xx[source_indices]
+    z = depth_m[rows, cols]
     x_cam = ray_x[rows, cols].astype(np.float32, copy=False) * z
     y_cam = ray_y[rows, cols].astype(np.float32, copy=False) * z
     points_camera = np.stack([x_cam, y_cam, z], axis=1).astype(np.float32)

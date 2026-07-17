@@ -1,4 +1,4 @@
-"""Single-camera shape-prior warmup for Demo v6.1."""
+"""Single-camera shape-prior warmup for Demo v6.2."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from demo_v6_2.shape_prior.case import (
     write_shape_prior_case,
     write_shape_prior_points_npz,
 )
+from demo_v6_2.tracking import DEFAULT_VOLUME_SAMPLE_SIZE_M
 from demo_v6_2.shape_prior.timing import (
     build_critical_path_analysis,
     critical_path_entry,
@@ -44,8 +45,7 @@ CASE_NAME = "shape_prior_frame0"
 # Surface/interior sampling counts follow the original PhysTwin offline
 # pipeline (data_process_origin/data_process_sample.py defaults).
 DEFAULT_SURFACE_POINT_COUNT = 1024
-DEFAULT_VOLUME_SAMPLE_SIZE_M = 0.005
-POINTS_NPZ = Path("outputs_v6_1") / "shape_prior" / "points.npz"
+POINTS_NPZ = Path("outputs") / "shape_prior" / "points.npz"
 # Pre-warmed one-shot stage workers: spawned at app boot with --wait-signal so
 # model loading happens off the frame-0 critical path; each worker runs its
 # stage once on GO and exits, releasing its whole CUDA context.
@@ -213,8 +213,12 @@ class ShapePriorLocalClient:
         sam3d_config: str | Path | None = None,
         sam31_device: str = "cuda",
         reuse_sam31_model: bool = True,
+        volume_sample_size_m: float = DEFAULT_VOLUME_SAMPLE_SIZE_M,
     ) -> None:
         """Initialize ShapePriorLocalClient."""
+        if float(volume_sample_size_m) <= 0.0:
+            raise ValueError("volume_sample_size_m must be positive")
+        self.volume_sample_size_m = float(volume_sample_size_m)
         self.case_root = Path(case_root)
         self.cuda_visible_devices = str(cuda_visible_devices)
         self.object_name = require_name(object_name, field_name="object_name")
@@ -522,7 +526,7 @@ class ShapePriorLocalClient:
             "--num_surface_points",
             str(DEFAULT_SURFACE_POINT_COUNT),
             "--volume_sample_size",
-            str(DEFAULT_VOLUME_SAMPLE_SIZE_M),
+            str(self.volume_sample_size_m),
             "--profile-json",
             str(self._stage_profile_path("sample")),
         ]

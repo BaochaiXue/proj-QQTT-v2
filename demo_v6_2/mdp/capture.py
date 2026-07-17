@@ -94,7 +94,7 @@ class CaptureStage:
         """Publish input preview packet."""
         self._put_preview_slot_frame(packet)
         should_write_timeline = self.mode.fake_live_input or bool(
-            getattr(self.args, "write_input_rgb_timeline", False)
+            self.args.write_input_rgb_timeline
         )
         if self.session.headless_capture_writer is not None and should_write_timeline:
             self.session.headless_capture_writer.write_input_frame(packet)
@@ -158,11 +158,9 @@ class CaptureStage:
             wait_ms: float = 0.0,
         ) -> FramePacket:
             """Read preview packet."""
-            reader = getattr(source, "read_preview_packet", None)
-            if callable(reader):
-                return reader(seq=int(seq), frame_index=int(source_index), wait_ms=float(wait_ms))
-            packet = source.read_packet(seq=int(seq), frame_index=int(source_index), wait_ms=float(wait_ms))
-            return preview_from_packet(packet, seq=int(seq))
+            return source.read_preview_packet(
+                seq=int(seq), frame_index=int(source_index), wait_ms=float(wait_ms)
+            )
 
         def publish_preview_packet(packet: FramePacket) -> None:
             """Publish preview packet."""

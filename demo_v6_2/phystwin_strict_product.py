@@ -1,4 +1,4 @@
-"""Strict PhysTwin-compatible tracking product for Demo v6.1.
+"""Strict PhysTwin-compatible tracking product for Demo v6.2.
 
 Builds, from a single-camera realtime capture, the same on-disk layout the
 offline data_process_origin pipeline produces (processed masks, dense world
@@ -33,13 +33,9 @@ from demo_v6_2.utils.render import (
 )
 
 
-TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY = "realtime-overlay"
+# Fixed manifest identifier: the formal runtime has exactly one tracking
+# product — the strict PhysTwin finalization below.
 TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT = "phystwin-strict-tracking"
-TRACKING_PRODUCT_BACKENDS = (
-    TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY,
-    TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT,
-)
-DEFAULT_TRACKING_PRODUCT_BACKEND = TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY
 
 COMPATIBILITY_TARGET_PHYSTWIN = "PhysTwin"
 PHYSTWIN_STRICT_EXECUTION_MODE = "workstation_strict"
@@ -81,41 +77,12 @@ class PreparedPhysTwinFrame:
 
 
 # ---------------------------------------------------------------------------
-# Tracking product backend selection
-# ---------------------------------------------------------------------------
-
-
-def normalize_tracking_product_backend(value: str | None) -> str:
-    # Accept hyphen/underscore and shorthand spellings from CLI flags and
-    # config files; everything maps onto the two canonical backend names.
-    """Normalize tracking product backend."""
-    normalized = (
-        str(value or DEFAULT_TRACKING_PRODUCT_BACKEND).strip().lower().replace("_", "-")
-    )
-    aliases = {
-        "overlay": TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY,
-        "realtime": TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY,
-        "tapnextpp-overlay": TRACKING_PRODUCT_BACKEND_REALTIME_OVERLAY,
-        "phystwin-strict": TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT,
-        "phys-twin-strict": TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT,
-        "phystwin-strict-tracking": TRACKING_PRODUCT_BACKEND_PHYSTWIN_STRICT,
-    }
-    normalized = aliases.get(normalized, normalized)
-    if normalized not in TRACKING_PRODUCT_BACKENDS:
-        raise ValueError(
-            f"unsupported tracking product backend {value!r}; expected one of "
-            f"{TRACKING_PRODUCT_BACKENDS}"
-        )
-    return normalized
-
-
-# ---------------------------------------------------------------------------
 # Processed mask frames (object / controller / optional per-hand)
 # ---------------------------------------------------------------------------
 
 
 def normalize_processed_mask_frame(frame: Mapping[str, Any]) -> dict[str, np.ndarray]:
-    # Demo v6.1 offline parity: data_process_sam3d/data_process_mask.py:L56-L80
+    # demo_v6_1 offline-parity reference: data_process_origin/data_process_mask.py:L56-L80
     # keeps object and controller masks independent — origin never subtracts
     # the controller mask from the object mask, so overlap pixels stay valid
     # for both classes.
@@ -193,7 +160,7 @@ def dense_world_pcd_grid(
     intrinsics: Any,
     c2w: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    # Demo v6.1 offline parity: data_process_sam3d/data_process_pcd.py:L84-L149
+    # demo_v6_1 offline-parity reference: data_process_origin/data_process_pcd.py:L84-L149
     # lifts RGB-D pixels through intrinsics and camera_to_world into a
     # world-space PCD grid.
     """Build dense world PCD grid."""
@@ -242,7 +209,7 @@ def apply_depth_validity_to_mask_frame(
     frame: Mapping[str, np.ndarray],
     depth_m: np.ndarray,
 ) -> dict[str, np.ndarray]:
-    # Demo v6.1 offline parity: data_process_sam3d/data_process_mask.py:L56-L80
+    # demo_v6_1 offline-parity reference: data_process_origin/data_process_mask.py:L56-L80
     # intersects semantic masks with valid depth support.
     """Apply depth validity to mask frame."""
     depth = np.asarray(depth_m, dtype=np.float32)
@@ -263,7 +230,7 @@ def apply_radius_outlier_to_mask_frame(
     frame: Mapping[str, np.ndarray],
     points_grid: np.ndarray,
 ) -> dict[str, np.ndarray]:
-    # Demo v6.1 offline parity: data_process_sam3d/data_process_mask.py:L81-L92
+    # demo_v6_1 offline-parity reference: data_process_origin/data_process_mask.py:L81-L92
     # and L107-L136 remove isolated 3D mask points before processed mask output.
     """Apply radius outlier to mask frame."""
     normalized = normalize_processed_mask_frame(frame)

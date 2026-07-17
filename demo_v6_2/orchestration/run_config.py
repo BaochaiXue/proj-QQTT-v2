@@ -53,6 +53,7 @@ class OrchestratorRunConfig:
     """
 
     chunk_frame_count: int
+    volume_sample_size_m: float
     camera_serials: tuple[str, ...]
     camera_source_replay_fps: float
     camera_source_replay_fps_override: float | None
@@ -85,6 +86,8 @@ class OrchestratorRunConfig:
             )
         if chunk_frame_count <= 0:
             raise ValueError("chunk frame count must be positive")
+        if float(args.volume_sample_size_m) <= 0.0:
+            raise ValueError("--volume-sample-size-m must be positive")
         if float(args.chunk_poll_interval_s) <= 0.0:
             raise ValueError("--chunk-poll-interval-s must be positive")
         if not np.isfinite(float(args.visualizer_playback_fps)):
@@ -171,6 +174,7 @@ class OrchestratorRunConfig:
             visualizer_start_policy = "after_first_committed_online_chunk"
         return cls(
             chunk_frame_count=chunk_frame_count,
+            volume_sample_size_m=float(args.volume_sample_size_m),
             camera_serials=camera_serials,
             camera_source_replay_fps=camera_source_replay_fps,
             camera_source_replay_fps_override=(
@@ -219,6 +223,7 @@ def static_run_contract(
         "camera_headless_prepared_only": bool(args.camera_headless_prepared_only),
         "write_input_rgb_timeline": config.write_input_rgb_timeline,
         "chunk_frame_count": config.chunk_frame_count,
+        "volume_sample_size_m": float(config.volume_sample_size_m),
         "chunk_poll_interval_s": float(args.chunk_poll_interval_s),
         "max_chunks": args.max_chunks,
         "base_path": str(args.base_path),

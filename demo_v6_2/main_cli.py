@@ -1,10 +1,11 @@
-"""Demo v6.1 realtime orchestration CLI parser."""
+"""Demo v6.2 realtime orchestration CLI parser."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
+from demo_v6_2.mdp import constants as mdp_constants
 from demo_v6_2.shape_prior import warmup as shape_prior_warmup
 from demo_v6_2.orchestration.main_config import (
     CAMERA_FPS_CHOICES,
@@ -14,6 +15,7 @@ from demo_v6_2.orchestration.main_config import (
     DEFAULT_CAMERA_FPS,
     DEFAULT_CASE_PREFIX,
     DEFAULT_CHUNK_POLL_INTERVAL_S,
+    DEFAULT_VOLUME_SAMPLE_SIZE_M,
     DEFAULT_CHUNK_SECONDS,
     DEFAULT_DATA_PROCESS_BASE_PATH,
     DEFAULT_DEPTH_BACKEND,
@@ -57,6 +59,14 @@ assert (DEFAULT_SHAPE_PRIOR_TIMEOUT_MS, DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_
     shape_prior_warmup.DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
 ), "shape-prior timeout/warmup-devices defaults diverged: config/default.yaml vs demo_v6_2/shape_prior/warmup.py"
 
+assert (
+    DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD
+    == mdp_constants.DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD
+), (
+    "edgetam mask logit threshold defaults diverged: config/default.yaml vs "
+    "demo_v6_2/mdp/constants.py"
+)
+
 
 # ---------------------------------------------------------------------------
 # CLI definition
@@ -79,11 +89,11 @@ class _StoreFakeLiveCase(argparse.Action):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the CLI parser for Demo v6.1 realtime orchestration."""
+    """Build the CLI parser for Demo v6.2 realtime orchestration."""
     parser = argparse.ArgumentParser(
         description=(
-            "Demo v6.1 realtime data_process_sam3d runner. It turns Demo v6.1 "
-            "single-camera fake/live capture into one online data_process_sam3d "
+            "Demo v6.2 realtime data_process_origin runner. It turns Demo v6.2 "
+            "single-camera fake/live capture into one online data_process_origin "
             "case and can launch an online visualizer."
         )
     )
@@ -94,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--input-source",
         choices=("fake-live", "live"),
         default=DEFAULT_INPUT_SOURCE,
-        help="Camera source mode used when Demo v6.1 launches its own capture.",
+        help="Camera source mode used when Demo v6.2 launches its own capture.",
     )
     parser.add_argument("--replay-fps", type=float, default=DEFAULT_REPLAY_FPS)
     parser.add_argument(
@@ -102,8 +112,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help=(
-            "Optional Demo v6.1 fake-live pacing FPS. When omitted, Demo v6.1 uses "
-            "--replay-fps; Demo v6.1 output metadata/window math still use --replay-fps."
+            "Optional Demo v6.2 fake-live pacing FPS. When omitted, Demo v6.2 uses "
+            "--replay-fps; Demo v6.2 output metadata/window math still use --replay-fps."
         ),
     )
     parser.add_argument(
@@ -111,7 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
         action=_StoreFakeLiveCase,
         type=Path,
         default=DEFAULT_FAKE_LIVE_CASE,
-        help="Raw data_collect case folder passed to Demo v6.1 fake-live replay.",
+        help="Raw data_collect case folder passed to Demo v6.2 fake-live replay.",
     )
     parser.set_defaults(fake_live_case_cli_override=False)
     parser.add_argument("--chunk-seconds", type=float, default=DEFAULT_CHUNK_SECONDS)
@@ -120,6 +130,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_CHUNK_POLL_INTERVAL_S,
         help="Polling interval for realtime frames.jsonl chunk tailing.",
+    )
+    parser.add_argument(
+        "--volume-sample-size-m",
+        type=float,
+        default=DEFAULT_VOLUME_SAMPLE_SIZE_M,
+        help=(
+            "Voxel edge (meters) for the origin first-batch volume sampling: "
+            "object query density at chunk 0 and the shape-prior sample stage."
+        ),
     )
     parser.add_argument(
         "--depth-backend",
@@ -179,8 +198,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help=(
-            "Optional strict lossless replay backlog window passed to Demo v6.1. "
-            "Omit it to keep Demo v6.1 defaults."
+            "Optional strict lossless replay backlog window passed to Demo v6.2. "
+            "Omit it to keep Demo v6.2 defaults."
         ),
     )
     parser.add_argument(
@@ -189,7 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=CAMERA_FPS_CHOICES,
         default=DEFAULT_CAMERA_FPS,
         help=(
-            "RealSense capture FPS passed to Demo v6.1 live camera. "
+            "RealSense capture FPS passed to Demo v6.2 live camera. "
             "The default 30 FPS input is sampled at replay FPS for output."
         ),
     )
@@ -229,13 +248,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--camera-color-exposure",
         type=float,
         default=DEFAULT_CAMERA_COLOR_EXPOSURE,
-        help="Manual RealSense RGB exposure passed to Demo v6.1 live camera.",
+        help="Manual RealSense RGB exposure passed to Demo v6.2 live camera.",
     )
     parser.add_argument(
         "--camera-color-gain",
         type=float,
         default=DEFAULT_CAMERA_COLOR_GAIN,
-        help="Manual RealSense RGB gain passed to Demo v6.1 live camera.",
+        help="Manual RealSense RGB gain passed to Demo v6.2 live camera.",
     )
     # The current chunker consumes prepared frames directly. Keeping only
     # prepared artifacts keeps live runs small and avoids old per-frame outputs
@@ -244,14 +263,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--camera-headless-prepared-only",
         dest="camera_headless_prepared_only",
         action="store_true",
-        help="Ask Demo v6.1 to write only prepared PhysTwin frames needed by Demo v6.1 chunking.",
+        help="Ask Demo v6.2 to write only prepared PhysTwin frames needed by Demo v6.2 chunking.",
     )
     parser.add_argument(
         "--camera-legacy-headless-artifacts",
         dest="camera_headless_prepared_only",
         action="store_false",
         help=(
-            "Keep Demo v6.1 legacy per-frame headless artifacts in addition to "
+            "Keep Demo v6.2 legacy per-frame headless artifacts in addition to "
             "prepared realtime frames."
         ),
     )
@@ -262,7 +281,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=None,
         help=(
-            "Write input_rgb/*.png and input_frames.jsonl for the Demo v6.1 "
+            "Write input_rgb/*.png and input_frames.jsonl for the Demo v6.2 "
             "side-by-side visualizer."
         ),
     )
@@ -288,7 +307,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--camera-capture-dir",
         type=Path,
         default=None,
-        help="Headless capture directory for the Demo v6.1 realtime subprocess.",
+        help="Headless capture directory for the Demo v6.2 realtime subprocess.",
     )
     parser.add_argument("--surface-points-npy", type=Path, default=None)
     parser.add_argument("--interior-points-npy", type=Path, default=None)
@@ -296,7 +315,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--shape-prior-warmup",
         dest="shape_prior_warmup",
         action="store_true",
-        help="Keep SAM3D shape-prior warmup enabled for Demo v6.1 capture.",
+        help="Keep SAM3D shape-prior warmup enabled for Demo v6.2 capture.",
     )
     parser.add_argument(
         "--no-shape-prior-warmup",
@@ -331,7 +350,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_SHAPE_PRIOR_CHUNK_WAIT_TIMEOUT_S,
         help=(
-            "How long Demo v6.1 waits for required shape-prior structure points "
+            "How long Demo v6.2 waits for required shape-prior structure points "
             "before writing final_data chunks."
         ),
     )
@@ -479,6 +498,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print resolved Demo v6.1 contract and exit.",
+        help="Print resolved Demo v6.2 contract and exit.",
     )
     return parser

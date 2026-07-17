@@ -194,7 +194,9 @@ def _materialize_and_commit_window(
     chunk_source_frame_indices = [int(value) for value in chunk.source_frame_indices]
     chunk_source_timestamps_s = _rows_source_timestamps(rows)
 
-    final_data, track_process, manifest = build_window_publish_payloads(chunk)
+    final_data, track_process, manifest = build_window_publish_payloads(
+        chunk, volume_sample_size_m=session.volume_sample_size_m
+    )
     manifest.update(
         {
             "chunk_name": chunk_name,

@@ -1,4 +1,4 @@
-"""Publish Demo v6.1 chunks in the online final_data format.
+"""Publish Demo v6.2 chunks in the online final_data format.
 
 The online stream has two views of the same data: small per-window chunk pickle
 files for low-latency readers, and a continuously rewritten ``data`` directory
@@ -80,8 +80,8 @@ def build_online_chunk_record(
     source_timestamps_s: Sequence[float] | None = None,
 ) -> dict[str, Any]:
     """Create the small per-window payload stored under online_data/chunks."""
-    # Offline parity with data_process_sam3d/data_process_sample.py:L335-L352.
-    # That path produces one final_data.pkl for a completed case. Demo v6.1
+    # Offline parity with data_process_origin/data_process_sample.py::process_unique_points.
+    # That path produces one final_data.pkl for a completed case. Demo v6.2
     # slices that same final_data contract into per-window online chunks.
     data = dict(data)
     indices = [int(idx) for idx in source_frame_indices]
@@ -233,8 +233,8 @@ class ChunkDataWriter:
 
     def _append_static_data(self, data: Mapping[str, Any], *, frame_count: int) -> None:
         """Update data/final_data.pkl as a prefix aggregate."""
-        # Offline parity with data_process_sam3d/data_process_sample.py:L335-L352.
-        # That path writes one static final_data.pkl. Demo v6.1 continuously
+        # Offline parity with data_process_origin/data_process_sample.py::process_unique_points.
+        # That path writes one static final_data.pkl. Demo v6.2 continuously
         # rewrites the same schema as a prefix aggregate for realtime consumers.
         data = dict(data)
         # Time arrays grow by concatenation. Static arrays are overwritten with

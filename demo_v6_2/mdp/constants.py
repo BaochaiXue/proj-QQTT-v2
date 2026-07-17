@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import sys
 
@@ -14,9 +13,6 @@ def _resolve_repo_root() -> Path:
     """Resolve repo root."""
     candidates: list[Path] = []
     candidates.extend([Path(__file__).resolve().parents[2], Path.cwd()])
-    env_root = os.environ.get("QQTT_REPO_ROOT")
-    if env_root:
-        candidates.append(Path(env_root))
     for candidate in candidates:
         root = candidate.expanduser().resolve()
         if (
@@ -84,10 +80,7 @@ EDGE_TAM_OBJECT_LABELS = {
 CONTROLLER_COLOR_RGB = (255, 96, 32)
 OBJECT_COLOR_RGB = (64, 180, 255)
 CAMERA_COLOR_FRAME = "camera_color_frame"
-TRACKER_DISPLAY_SCOPE_CONTROLLER = "controller"
-TRACKER_DISPLAY_SCOPE_OBJECT = "object"
-TRACKER_DISPLAY_SCOPE_UNION = "union"
-DEFAULT_TRACKER_DISPLAY_SCOPE = TRACKER_DISPLAY_SCOPE_UNION
+DEFAULT_TRACKER_DISPLAY_SCOPE = "union"
 DEFAULT_TRACKER_BACKEND = TRACKER_BACKEND_TAPNEXTPP
 DEFAULT_TRACKER_QUERY_COUNT = PHYSTWIN_DENSE_QUERY_POINTS
 DEFAULT_TRACKER_SEED = 42

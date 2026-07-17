@@ -1,4 +1,4 @@
-"""Demo v6.1 fixed output layout under ``--base-path``."""
+"""Demo v6.2 fixed output layout under ``--base-path``."""
 
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ def prepare_realtime_output_for_new_run(
     *,
     legacy_case_prefix: str,
 ) -> dict[str, object]:
-    """Remove stale generated outputs before writing fixed Demo v6.1 paths."""
+    """Remove stale generated outputs before writing fixed Demo v6.2 paths."""
     base = Path(base_path)
     cleanup_paths = {
         "capture": base / CAPTURE_DIR_NAME,

@@ -64,7 +64,7 @@ class ShapePriorPublisher:
         result: PcdBuildResult,
     ) -> shape_prior_case.ShapePriorFrame0Request | None:
         """Return the shape prior frame0 request from PCD result."""
-        if not bool(getattr(self.args, "shape_prior_warmup", False)):
+        if not bool(self.args.shape_prior_warmup):
             return None
         if self.session.table_c2w is None:
             raise RuntimeError(

@@ -1,4 +1,4 @@
-"""ASAP augmentation for Demo v6.1 online chunks (see demo_v6_1/design_spec_v6_1.md).
+"""ASAP augmentation for Demo v6.2 online chunks (see design_spec_v6_1.md).
 
 Adapted from the downstream-provided offline postprocessor
 (``july2_chunk_vis.py::write_asap_online_chunks``). Per published frame the
@@ -195,7 +195,7 @@ class LocalRigidEmbedding:
 
 
 class AsapRuntime:
-    """Session-lived live ASAP augmenter for Demo v6.1 chunk windows.
+    """Session-lived live ASAP augmenter for Demo v6.2 chunk windows.
 
     Initialization is lazy: the aligned mesh only exists once shape-prior
     warmup finished, so the first materialized window resolves and loads it

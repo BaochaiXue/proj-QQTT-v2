@@ -78,10 +78,6 @@ class CameraSession:
 
     def initialize_table_calibration(self, args: argparse.Namespace) -> None:
         """Load and validate the camera-to-world table calibration."""
-        if args.table_calibrate is None:
-            raise RuntimeError(
-                "formal runtime requires camera-to-world table calibration"
-            )
         if self.camera_runtime is None:
             raise RuntimeError("camera runtime is not initialized")
         path = Path(args.table_calibrate)

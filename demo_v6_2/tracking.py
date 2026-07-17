@@ -1,4 +1,4 @@
-"""Demo v6.1 realtime tracking state machine (see demo_v6_1/design_spec.md).
+"""Demo v6.2 realtime tracking state machine (see design_spec.md).
 
 Semantics implemented here, in spec order:
 
@@ -356,12 +356,12 @@ class TrackingRuntime:
         if self._query_ids is None or self._query_semantic_labels is None:
             raise RuntimeError("tracking runtime identity is not frozen yet")
         if not np.array_equal(self._query_ids, np.asarray(window["query_ids"], dtype=np.int64)):
-            raise ValueError("Demo v6.1 session query_ids changed across chunks")
+            raise ValueError("Demo v6.2 session query_ids changed across chunks")
         if not np.array_equal(
             self._query_semantic_labels,
             np.asarray(window["query_semantic_labels"], dtype=np.int8),
         ):
-            raise ValueError("Demo v6.1 session query_semantic_labels changed across chunks")
+            raise ValueError("Demo v6.2 session query_semantic_labels changed across chunks")
 
     def _recovery_tiers(self) -> list[int]:
         """design_spec.md 特殊情况 donor-count ladder: 15 -> 10 -> 5 by default.

@@ -179,16 +179,12 @@ class HeadlessCaptureWriter:
         packet: MaskedPcdPacket,
         *,
         processed_frame: ProcessedFramePacket,
-        tracker_packet: TrackerMarkerPacket | None = None,
-        stage_fps: dict[str, float] | None = None,
-        startup_hold_s: float = 0.0,
+        tracker_packet: TrackerMarkerPacket,
+        stage_fps: dict[str, float],
+        startup_hold_s: float,
     ) -> None:
         """Write RGB-D, PCD, masks, tracking, and prepared PhysTwin artifacts."""
-        if self.prepared_only and tracker_packet is None:
-            raise RuntimeError(
-                "prepared-only headless capture requires a tracker packet"
-            )
-        fps_info = stage_fps or {}
+        fps_info = stage_fps
         if int(packet.seq) != int(processed_frame.seq):
             raise ValueError(
                 "headless PCD/processed-frame sequence mismatch: "
@@ -253,44 +249,38 @@ class HeadlessCaptureWriter:
                     [str(packet.coordinate_frame or self.pcd_coordinate_frame)]
                 ),
             )
-        prepared_phystwin_frame_path: str | None = None
-        if tracker_packet is not None:
-            full_tracks_yx, full_visibility = _full_tracker_arrays_for_prepared_frame(
-                tracker_packet
-            )
-            mask_frame = {
-                "object": np.asarray(mask_packet.object_mask, dtype=bool),
-                "controller": np.asarray(mask_packet.controller_mask, dtype=bool),
-                "hand_a": np.asarray(_mask_packet_hand_a_mask(mask_packet), dtype=bool),
-                "hand_b": np.asarray(_mask_packet_hand_b_mask(mask_packet), dtype=bool),
-            }
-            prepared = prepare_phystwin_frame(
-                seq=int(packet.seq),
-                rgb_frame=np.ascontiguousarray(
-                    mask_packet.color_bgr[:, :, ::-1], dtype=np.uint8
-                ),
-                depth_m=np.asarray(depth_m, dtype=np.float32),
-                processed_mask_frame=mask_frame,
-                pcd_points=processed_frame.pcd_points,
-                pcd_colors=processed_frame.pcd_colors,
-                tracks_yx=full_tracks_yx,
-                visibility=full_visibility,
-                query_points_yx=np.asarray(
-                    tracker_packet.query_points_yx, dtype=np.float32
-                ),
-                source_timestamp_s=packet.source_timestamp_s,
-                source_frame_index=packet.source_frame_index,
-                source_step=packet.source_step,
-            )
-            write_prepared_phystwin_frame(prepared_phystwin_path, prepared)
-            prepared_phystwin_frame_path = self._relative(prepared_phystwin_path)
-        pair_process_done_s = (
-            max(
-                float(packet.process_done_perf_s),
-                float(tracker_packet.process_done_perf_s),
-            )
-            if tracker_packet is not None
-            else float(packet.process_done_perf_s)
+        full_tracks_yx, full_visibility = _full_tracker_arrays_for_prepared_frame(
+            tracker_packet
+        )
+        mask_frame = {
+            "object": np.asarray(mask_packet.object_mask, dtype=bool),
+            "controller": np.asarray(mask_packet.controller_mask, dtype=bool),
+            "hand_a": np.asarray(_mask_packet_hand_a_mask(mask_packet), dtype=bool),
+            "hand_b": np.asarray(_mask_packet_hand_b_mask(mask_packet), dtype=bool),
+        }
+        prepared = prepare_phystwin_frame(
+            seq=int(packet.seq),
+            rgb_frame=np.ascontiguousarray(
+                mask_packet.color_bgr[:, :, ::-1], dtype=np.uint8
+            ),
+            depth_m=np.asarray(depth_m, dtype=np.float32),
+            processed_mask_frame=mask_frame,
+            pcd_points=processed_frame.pcd_points,
+            pcd_colors=processed_frame.pcd_colors,
+            tracks_yx=full_tracks_yx,
+            visibility=full_visibility,
+            query_points_yx=np.asarray(
+                tracker_packet.query_points_yx, dtype=np.float32
+            ),
+            source_timestamp_s=packet.source_timestamp_s,
+            source_frame_index=packet.source_frame_index,
+            source_step=packet.source_step,
+        )
+        write_prepared_phystwin_frame(prepared_phystwin_path, prepared)
+        prepared_phystwin_frame_path = self._relative(prepared_phystwin_path)
+        pair_process_done_s = max(
+            float(packet.process_done_perf_s),
+            float(tracker_packet.process_done_perf_s),
         )
         row = {
             "seq": int(packet.seq),
@@ -314,13 +304,14 @@ class HeadlessCaptureWriter:
             * 1000.0,
             "capture_fps": float(fps_info.get("capture_fps", 0.0)),
             "seg_fps": float(fps_info.get("seg_fps", 0.0)),
-            "depth_fps": float(fps_info.get("depth_fps", 0.0)),
+            # v6.2 has no depth stage recorder (StageStatsBoard._STAGES); key
+            # kept for the demo32 diagnostics reader
+            # (render_demo32_headless_capture.py).
+            "depth_fps": 0.0,
             "pcd_fps": float(fps_info.get("pcd_fps", 0.0)),
             "tracker_fps": float(fps_info.get("tracker_fps", 0.0)),
             "saved_pcd_source": self.saved_pcd_source,
-            "marker_count": int(tracker_packet.marker_count)
-            if tracker_packet is not None
-            else 0,
+            "marker_count": int(tracker_packet.marker_count),
             "controller_point_count": int(packet.controller_point_count),
             "object_point_count": int(packet.object_point_count),
             "controller_mask_pixels": int(
@@ -333,18 +324,10 @@ class HeadlessCaptureWriter:
             "hand_b_mask_pixels": int(
                 np.count_nonzero(_mask_packet_hand_b_mask(mask_packet))
             ),
-            "hand_a_query_count": int(tracker_packet.hand_a_query_count)
-            if tracker_packet is not None
-            else 0,
-            "hand_b_query_count": int(tracker_packet.hand_b_query_count)
-            if tracker_packet is not None
-            else 0,
-            "object_query_count": int(tracker_packet.object_query_count)
-            if tracker_packet is not None
-            else 0,
-            "query_count": int(tracker_packet.query_count)
-            if tracker_packet is not None
-            else 0,
+            "hand_a_query_count": int(tracker_packet.hand_a_query_count),
+            "hand_b_query_count": int(tracker_packet.hand_b_query_count),
+            "object_query_count": int(tracker_packet.object_query_count),
+            "query_count": int(tracker_packet.query_count),
             "receive_perf_s": float(packet.receive_perf_s),
             "process_done_perf_s": float(packet.process_done_perf_s),
             "pair_process_done_perf_s": float(pair_process_done_s),
@@ -360,8 +343,7 @@ class HeadlessCaptureWriter:
                     "mask_path": self._relative(mask_path),
                 }
             )
-        if prepared_phystwin_frame_path is not None:
-            row["prepared_phystwin_frame_path"] = prepared_phystwin_frame_path
+        row["prepared_phystwin_frame_path"] = prepared_phystwin_frame_path
         line = json.dumps(row, sort_keys=True)
         with self._lock:
             with self.frames_path.open("a", encoding="utf-8") as handle:

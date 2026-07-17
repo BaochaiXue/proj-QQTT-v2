@@ -39,9 +39,9 @@ def _track_input_with_session_query_schema(
     reuse the same arrays so online output can be concatenated without changing
     object/controller topology.
     """
-    # Offline parity with data_process_sam3d/data_process_track.py:L58-L118.
+    # Offline parity with data_process_origin/data_process_track.py:L58-L118.
     # That stage labels first-frame tracks by object/controller masks and lifts
-    # visible track pixels into world-space PCD samples. Demo v6.1 also pins
+    # visible track pixels into world-space PCD samples. Demo v6.2 also pins
     # query ids across realtime chunks so those role labels stay stable online.
     query_ids = None
     query_semantic_labels = None
@@ -160,9 +160,9 @@ def _chunk_data_window_from_prepared_frames(
     tracker_visibility = np.stack(visibility, axis=0)
     pcd_points_arr = np.stack(pcd_points, axis=0)
     pcd_colors_arr = np.stack(pcd_colors, axis=0)
-    # Offline parity with data_process_sam3d/data_process_pcd.py:L84-L149,
-    # data_process_sam3d/data_process_mask.py:L42-L152, and
-    # data_process_sam3d/data_process_track.py:L37-L135. Prepared frames already
+    # Offline parity with data_process_origin/data_process_pcd.py:L84-L149,
+    # data_process_origin/data_process_mask.py:L42-L152, and
+    # data_process_origin/data_process_track.py:L37-L135. Prepared frames already
     # contain the PCD and mask products, so this block performs the corresponding
     # track classification/lift step.
     track_input = _track_input_with_session_query_schema(

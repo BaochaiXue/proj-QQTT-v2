@@ -1,4 +1,4 @@
-"""Latest-wins buffers and timing helpers shared by Demo v6.1 realtime threads."""
+"""Latest-wins buffers and timing helpers shared by Demo v6.2 realtime threads."""
 
 from __future__ import annotations
 
@@ -26,18 +26,15 @@ class LatestSlot(Generic[T]):
     """Thread-safe single-slot latest-wins buffer.
 
     Producers put(); the consumer polls get_latest_after() with the last seq it
-    handled. Overwriting a packet the consumer never took counts as a drop, both
-    into a total counter and a resettable window counter (reset_dropped_count).
+    handled. Overwriting a packet the consumer never took counts as a drop.
     """
 
     def __init__(self) -> None:
         """Initialize LatestSlot."""
         self._lock = threading.Lock()
         self._packet: T | None = None
-        self._last_taken_seq_total = -1
         self._last_taken_seq_window = -1
         self._dropped = 0
-        self._dropped_total = 0
 
     def put(self, packet: T) -> int:
         """Store packet, count drops if the previous one was never taken; returns window drops."""
@@ -46,8 +43,6 @@ class LatestSlot(Generic[T]):
             if self._packet is not None:
                 current_seq = packet_seq(self._packet)
                 # seq gaps count as multiple drops (producer skipped frames upstream).
-                if current_seq > self._last_taken_seq_total:
-                    self._dropped_total += max(1, seq - current_seq)
                 if current_seq > self._last_taken_seq_window:
                     self._dropped += max(1, seq - current_seq)
             self._packet = packet
@@ -61,7 +56,6 @@ class LatestSlot(Generic[T]):
             seq = packet_seq(self._packet)
             if seq <= last_seq:
                 return None
-            self._last_taken_seq_total = seq
             self._last_taken_seq_window = seq
             return self._packet
 
@@ -72,21 +66,8 @@ class LatestSlot(Generic[T]):
                 return -1
             return packet_seq(self._packet)
 
-    def reset_dropped_count(self) -> None:
-        """Reset the interval dropped-frame counter."""
-        with self._lock:
-            self._dropped = 0
-            if self._packet is not None:
-                self._last_taken_seq_window = max(self._last_taken_seq_window, packet_seq(self._packet))
-
     @property
     def dropped_count(self) -> int:
         """Return the dropped count."""
         with self._lock:
             return self._dropped
-
-    @property
-    def total_dropped_count(self) -> int:
-        """Return the total dropped count."""
-        with self._lock:
-            return self._dropped_total

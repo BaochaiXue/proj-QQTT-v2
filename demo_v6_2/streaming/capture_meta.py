@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Mapping
 import numpy as np
 
 from demo_v6_2.streaming import asap
+from demo_v6_2.utils.projection import intrinsics_to_matrix
 
 if TYPE_CHECKING:
     from demo_v6_2.streaming.session import ChunkStreamSession
@@ -20,20 +21,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 def _intrinsics_matrix(metadata: Mapping[str, Any]) -> np.ndarray:
     """Accept the fx/fy/cx/cy mapping or matrix metadata forms as float32 3x3."""
-    intrinsics = metadata.get("intrinsics")
-    if isinstance(intrinsics, Mapping):
-        return np.array(
-            [
-                [float(intrinsics["fx"]), 0.0, float(intrinsics["cx"])],
-                [0.0, float(intrinsics["fy"]), float(intrinsics["cy"])],
-                [0.0, 0.0, 1.0],
-            ],
-            dtype=np.float32,
-        )
-    arr = np.asarray(intrinsics, dtype=np.float32)
-    if arr.shape == (1, 3, 3):
-        return np.ascontiguousarray(arr[0], dtype=np.float32)
-    return np.ascontiguousarray(arr.reshape(3, 3), dtype=np.float32)
+    return np.ascontiguousarray(intrinsics_to_matrix(metadata.get("intrinsics")))
 
 
 def _camera_to_world(metadata: Mapping[str, Any]) -> np.ndarray:
@@ -134,7 +122,7 @@ def _wait_for_shape_points(
 ) -> tuple[Mapping[str, Any], np.ndarray, np.ndarray]:
     """Wait until required shape-prior points are available for final_data.
 
-    Demo v6.1 keeps capture realtime, but ``final_data.pkl`` must contain
+    Demo v6.2 keeps capture realtime, but ``final_data.pkl`` must contain
     structure points when shape-prior warmup is enabled. Waiting happens here,
     after a source window has closed, not inside the camera/tracker loop. The
     ``ChunkStreamSession`` supplies the capture location, explicit point
@@ -177,7 +165,7 @@ def _wait_for_shape_points(
             raise RuntimeError(f"shape prior {status}: {detail}")
         if time.monotonic() >= deadline:
             raise RuntimeError(
-                "shape prior is required for Demo v6.1 final_data chunks, "
+                "shape prior is required for Demo v6.2 final_data chunks, "
                 "but no surface/interior points became ready"
             )
         if session.before_poll is not None:

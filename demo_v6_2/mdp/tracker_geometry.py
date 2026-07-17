@@ -12,10 +12,9 @@ from demo_v6_2.mdp.constants import (
     OBJECT_ID,
     QUERY_CONTROLLER_INSTANCE_HAND_A,
     QUERY_CONTROLLER_INSTANCE_HAND_B,
-    TRACKER_DISPLAY_SCOPE_OBJECT,
-    TRACKER_DISPLAY_SCOPE_UNION,
 )
 from demo_v6_2.mdp.packets import MaskPacket
+from demo_v6_2.utils.projection import track_lift_valid_mask
 
 
 def _tracker_union_mask(mask_packet: MaskPacket) -> np.ndarray:
@@ -86,31 +85,6 @@ def _classify_query_targets_yx(
     )
 
 
-def _tracker_display_visibility(
-    visibility: np.ndarray,
-    *,
-    query_is_object: np.ndarray,
-    query_is_controller: np.ndarray,
-    display_scope: str,
-) -> np.ndarray:
-    """Return the tracker display visibility."""
-    vis = np.asarray(visibility, dtype=np.float32).reshape(-1)
-    scope = str(display_scope)
-    if scope == TRACKER_DISPLAY_SCOPE_UNION:
-        return vis
-    if scope == TRACKER_DISPLAY_SCOPE_OBJECT:
-        labels = np.asarray(query_is_object, dtype=bool).reshape(-1)
-    else:
-        labels = np.asarray(query_is_controller, dtype=bool).reshape(-1)
-    if labels.shape[0] != vis.shape[0]:
-        fitted = np.zeros_like(vis, dtype=bool)
-        fitted[: min(len(labels), len(fitted))] = labels[
-            : min(len(labels), len(fitted))
-        ]
-        labels = fitted
-    return np.where(labels, vis, 0.0).astype(np.float32)
-
-
 def _tracker_per_target_visibility(
     tracks_yx: np.ndarray,
     visibility: np.ndarray,
@@ -170,46 +144,15 @@ def _tracker_lift_valid_mask(
     depth_max_m: float,
 ) -> np.ndarray:
     """Return the tracker lift valid mask."""
-    tracks = np.asarray(tracks_yx, dtype=np.float32).reshape(-1, 2)
-    vis = np.asarray(visibility, dtype=np.float32).reshape(-1) > 0.0
-    if vis.shape[0] != tracks.shape[0]:
-        raise ValueError("visibility length must match tracks_yx")
-
-    depth_arr = np.asarray(depth)
-    if np.issubdtype(depth_arr.dtype, np.floating):
-        depth_m = depth_arr.astype(np.float32, copy=False)
-    else:
-        depth_m = depth_arr.astype(np.float32) * np.float32(depth_scale_m_per_unit)
-    height, width = depth_m.shape[:2]
-    mask_bool = (
-        np.ones((height, width), dtype=bool)
-        if mask is None
-        else np.asarray(mask, dtype=bool)
+    return track_lift_valid_mask(
+        tracks_yx=tracks_yx,
+        visibility=visibility,
+        depth=depth,
+        depth_scale_m_per_unit=depth_scale_m_per_unit,
+        mask=mask,
+        depth_min_m=depth_min_m,
+        depth_max_m=depth_max_m,
     )
-    if mask_bool.shape[:2] != (height, width):
-        raise ValueError("tracker lift mask shape must match depth shape")
-
-    yy = np.rint(tracks[:, 0]).astype(np.int64)
-    xx = np.rint(tracks[:, 1]).astype(np.int64)
-    finite_tracks = np.isfinite(tracks).all(axis=1)
-    in_bounds = (yy >= 0) & (yy < height) & (xx >= 0) & (xx < width)
-    valid = vis & finite_tracks & in_bounds
-    if not np.any(valid):
-        return np.zeros((tracks.shape[0],), dtype=bool)
-
-    valid_indices = np.flatnonzero(valid)
-    sampled_depth = depth_m[yy[valid_indices], xx[valid_indices]]
-    depth_valid = (
-        np.isfinite(sampled_depth)
-        & (sampled_depth > 0.0)
-        & (sampled_depth >= np.float32(depth_min_m))
-    )
-    if np.isfinite(float(depth_max_m)):
-        depth_valid &= sampled_depth <= np.float32(depth_max_m)
-    inside_mask = mask_bool[yy[valid_indices], xx[valid_indices]]
-    valid_out = np.zeros((tracks.shape[0],), dtype=bool)
-    valid_out[valid_indices] = depth_valid & inside_mask
-    return valid_out
 
 
 def _select_visible_spread_indices(
@@ -255,7 +198,6 @@ __all__ = [
     "_mask_packet_hand_a_mask",
     "_mask_packet_hand_b_mask",
     "_classify_query_targets_yx",
-    "_tracker_display_visibility",
     "_tracker_per_target_visibility",
     "_tracker_lift_valid_mask",
     "_select_visible_spread_indices",

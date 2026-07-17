@@ -1,4 +1,4 @@
-"""Semantic-mask gates for Demo v6.1 tracking (see demo_v6_1/design_spec.md).
+"""Semantic-mask gates for Demo v6.2 tracking (see demo_v6_1/design_spec.md).
 
 This module owns the mask half of the per-frame observation gate:
 

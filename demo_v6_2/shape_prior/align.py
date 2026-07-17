@@ -710,8 +710,6 @@ def main(argv=None):
         pcd.points = o3d.utility.Vector3dVector(obs_points)
         pcd.colors = o3d.utility.Vector3dVector(obs_colors)
 
-        coordinate = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1)
-
         # Render the final stuffs as a turntable video
         vis = o3d.visualization.Visualizer()
         vis.create_window(visible=False)

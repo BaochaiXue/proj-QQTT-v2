@@ -213,7 +213,7 @@ def run_sam31_first_frame_mask_bundle(
     text_prompt = ",".join(prompt_labels)
     # Shape-prior warmup re-runs SAM3.1 on frame 0, so it needs the model kept
     # in the cache (reuse) and only an allocator trim afterwards.
-    reuse_sam31_runtime = bool(getattr(args, "shape_prior_warmup", False))
+    reuse_sam31_runtime = bool(args.shape_prior_warmup)
     trim_cleanup_ms = 0.0
     release_cleanup_ms = 0.0
     try:

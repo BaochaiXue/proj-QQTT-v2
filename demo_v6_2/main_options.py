@@ -1,4 +1,4 @@
-"""Demo v6.1 realtime orchestration option-resolution helpers.
+"""Demo v6.2 realtime orchestration option-resolution helpers.
 
 Every resolver here is shared by ``OrchestratorRunConfig.from_args`` and the
 subprocess command builders, which consume the raw argparse Namespace.
@@ -58,7 +58,7 @@ def resolve_camera_source_replay_fps(args: argparse.Namespace) -> float:
     value = args.camera_source_replay_fps
     fps = float(args.replay_fps if value is None else value)
     if not math.isfinite(fps) or fps <= 0.0:
-        raise ValueError("Demo v6.1 source replay fps must be positive")
+        raise ValueError("Demo v6.2 source replay fps must be positive")
     return fps
 
 
@@ -116,7 +116,7 @@ def resolve_downstream_mode(args: argparse.Namespace) -> str:
 
 
 def demo_visualizer_enabled(args: argparse.Namespace) -> bool:
-    """Return whether the Demo v6.1 viewer window is the downstream consumer."""
+    """Return whether the Demo v6.2 viewer window is the downstream consumer."""
     return resolve_downstream_mode(args) == DOWNSTREAM_MODE_DEMO_VISUALIZER
 
 

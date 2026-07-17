@@ -24,8 +24,6 @@ from demo_v6_2.mdp.constants import (
     OBJECT_ID,
     QUERY_CONTROLLER_INSTANCE_HAND_A,
     QUERY_CONTROLLER_INSTANCE_HAND_B,
-    TRACKER_DISPLAY_SCOPE_CONTROLLER,
-    TRACKER_DISPLAY_SCOPE_OBJECT,
     TRACKER_QUERY_SOURCE_UNION_MASK,
     pcd_coordinate_frame,
 )
@@ -36,7 +34,6 @@ from demo_v6_2.mdp.tracker_geometry import (
     _mask_packet_hand_a_mask,
     _mask_packet_hand_b_mask,
     _select_visible_spread_indices,
-    _tracker_display_visibility,
     _tracker_lift_valid_mask,
     _tracker_per_target_visibility,
     _tracker_union_mask,
@@ -205,14 +202,7 @@ class TrackerStage:
 
     def _tracker_lift_mask(self, mask_packet: MaskPacket) -> np.ndarray | None:
         """Return the tracker lift mask."""
-        scope = str(DEFAULT_TRACKER_DISPLAY_SCOPE)
-        if scope == TRACKER_DISPLAY_SCOPE_CONTROLLER:
-            mask = np.asarray(mask_packet.controller_mask, dtype=bool)
-        elif scope == TRACKER_DISPLAY_SCOPE_OBJECT:
-            mask = np.asarray(mask_packet.object_mask, dtype=bool)
-        else:
-            mask = _tracker_union_mask(mask_packet)
-        return np.ascontiguousarray(mask)
+        return np.ascontiguousarray(_tracker_union_mask(mask_packet))
 
     def _build_tracker_marker_packet(
         self,
@@ -255,12 +245,7 @@ class TrackerStage:
             mask_packet=mask_packet,
             query_target_id=query_target_id,
         )
-        display_visibility = _tracker_display_visibility(
-            target_visibility,
-            query_is_object=query_is_object,
-            query_is_controller=query_is_controller,
-            display_scope=str(DEFAULT_TRACKER_DISPLAY_SCOPE),
-        )
+        display_visibility = target_visibility
         lift_mask = self._tracker_lift_mask(mask_packet)
         selected = _select_visible_spread_indices(
             tracks_latest,
@@ -287,14 +272,16 @@ class TrackerStage:
         consistent_visible_count = queries.and_update_consistent_visible(
             current_lift_valid
         )
+        if self.session.table_c2w is None:
+            raise RuntimeError(
+                "tracker lift requires camera-to-world table calibration"
+            )
         lifted = lift_tracks_yx_to_world(
             tracks_yx=selected_tracks,
             visibility=selected_visibility,
             depth=depth_for_lift,
             intrinsics=mask_packet.intrinsics,
-            c2w=self.session.table_c2w
-            if self.session.table_c2w is not None
-            else np.eye(4, dtype=np.float32),
+            c2w=self.session.table_c2w,
             depth_scale_m_per_unit=float(depth_scale_m_per_unit),
             mask=lift_mask,
             depth_min_m=float(PHYSTWIN_DEPTH_MIN_M),

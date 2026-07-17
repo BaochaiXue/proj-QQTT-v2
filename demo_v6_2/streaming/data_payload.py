@@ -1,6 +1,6 @@
-"""Build Demo v6.1 realtime final_data chunk payloads.
+"""Build Demo v6.2 realtime final_data chunk payloads.
 
-Demo v6.1 publishes online chunks directly. It no longer materializes each
+Demo v6.2 publishes online chunks directly. It no longer materializes each
 window as a data_process-style case directory.
 """
 
@@ -95,11 +95,9 @@ DATA_PROCESS_SAM3D_METRICS = {
     "controller_recovery_neighbor_table_size": NEIGHBOR_TABLE_SIZE,
     "controller_recovery_neighbor_count": RECOVERY_NEIGHBOR_COUNT,
     "object_sampling_source": "data_process_sam3d/data_process_sample.py::process_unique_points",
-    "object_volume_sample_size_m": 0.005,
     "shape_prior_sampling_source": "data_process_sam3d/data_process_sample.py",
     "shape_prior_target_surface_points": 1024,
     "shape_prior_interior_candidate_points": 10000,
-    "shape_prior_volume_sample_size_m": 0.005,
     "shape_prior_configured_max_dist_m": 0.05,
     "shape_prior_effective_max_dist_m": 0.05,
     "shape_prior_distance_policy": "canonical_single_view_configured",
@@ -201,7 +199,7 @@ def _track_process_payload(
     track_process_data: Mapping[str, np.ndarray],
 ) -> dict[str, Any]:
     """Normalize strict tracking output into data_process_sam3d track payload."""
-    # Offline parity with data_process_sam3d/data_process_track.py:L127-L135
+    # Offline parity with data_process_origin/data_process_track.py:L127-L135
     # and L321-L322. That path assembles object/controller point, color, and
     # visibility arrays, then adds the controller candidate mask after motion
     # filtering.
@@ -269,7 +267,8 @@ def _final_data_payload(
     interior_points: np.ndarray,
 ) -> dict[str, np.ndarray]:
     """Assemble the realtime final_data.pkl contract."""
-    # Offline parity with data_process_sam3d/data_process_sample.py:L250-L352.
+    # Offline parity with data_process_origin/data_process_sample.py:L250-L258
+    # (surface/interior sampling in process_unique_points, L47).
     # That path reduces track_process_data into final_data.pkl, carrying object
     # samples, controller handles, and optional surface/interior shape-prior
     # points.
@@ -402,6 +401,8 @@ def _quality_manifest_fields(
 
 def build_window_publish_payloads(
     chunk: ChunkDataWindow,
+    *,
+    volume_sample_size_m: float,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Build final_data, track_process diagnostics, and manifest fields."""
     # Frame count is the leading axis of the (T, N, 3) object track tensor.
@@ -432,7 +433,13 @@ def build_window_publish_payloads(
         "depth_source_internal": str(chunk.depth_source_internal),
         "runtime_contract": DATA_PROCESS_SAM3D_REALTIME_CONTRACT_VERSION,
         "chunk_continuity_contract": "stable_query_schema_hash_and_contiguous_frames",
-        "data_process_sam3d_metrics": dict(DATA_PROCESS_SAM3D_METRICS),
+        "data_process_sam3d_metrics": {
+            **DATA_PROCESS_SAM3D_METRICS,
+            # The one configurable sampling knob: reported from the runtime
+            # value so the manifest never lies about the actual voxel size.
+            "object_volume_sample_size_m": float(volume_sample_size_m),
+            "shape_prior_volume_sample_size_m": float(volume_sample_size_m),
+        },
         "publish_contract": "online_final_data_chunk",
         "query_schema_version": _scalar_str(final_data["query_schema_version"]),
         "query_schema_hash": _scalar_str(final_data["query_schema_hash"]),

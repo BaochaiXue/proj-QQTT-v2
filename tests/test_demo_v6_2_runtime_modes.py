@@ -106,7 +106,6 @@ class RuntimeInputModeTests(unittest.TestCase):
                 controller_color=(255, 0, 0),
                 object_color=(0, 0, 255),
             ),
-            mode=SimpleNamespace(),
             session=SimpleNamespace(
                 table_c2w=np.eye(4, dtype=np.float32) if with_calibration else None,
                 headless_capture_writer=None,
@@ -243,7 +242,6 @@ class RuntimeInputModeTests(unittest.TestCase):
             orchestrator_args,
             capture_dir=Path("/tmp/demo-v6-2-capture"),
             profile_json=Path("/tmp/demo-v6-2-profile.json"),
-            chunk_frame_count=5,
         )
         self.assertFalse(removed_options & set(command))
 
@@ -262,7 +260,6 @@ class RuntimeInputModeTests(unittest.TestCase):
             main_cli.build_parser().parse_args([]),
             capture_dir=Path("/tmp/demo-v6-2-capture"),
             profile_json=Path("/tmp/demo-v6-2-profile.json"),
-            chunk_frame_count=5,
         )
         self.assertFalse(removed_options & set(command))
 
@@ -278,7 +275,6 @@ class RuntimeInputModeTests(unittest.TestCase):
             depth_backend_label="realsense",
             lossless_enabled=True,
             lossless_input_fps=5.0,
-            headless_capture_enabled=True,
         )
         runtime.session = SimpleNamespace(
             camera_runtime=SimpleNamespace(
@@ -525,6 +521,119 @@ class RuntimeInputModeTests(unittest.TestCase):
                 "depth_backend",
                 "depth_source_internal",
             },
+        )
+
+
+class VolumeSampleTests(unittest.TestCase):
+    def test_volume_sample_semantics_match_origin(self) -> None:
+        from demo_v6_2 import tracking
+
+        # Two points inside one 5 mm voxel, one point in a second voxel:
+        # exactly one survivor per occupied voxel, first occurrence wins,
+        # original order preserved (query identity freeze).
+        points = np.asarray(
+            [
+                [0.0010, 0.0010, 0.0010],
+                [0.0012, 0.0012, 0.0012],
+                [0.0080, 0.0010, 0.0010],
+            ],
+            dtype=np.float32,
+        )
+        keep = tracking._volume_sample_indices(
+            points,
+            surface_points=None,
+            interior_points=None,
+            volume_sample_size=0.005,
+        )
+        np.testing.assert_array_equal(keep, np.asarray([0, 2], dtype=np.int64))
+
+        # Deterministic, and coarser voxels never keep more points.
+        rng = np.random.default_rng(7)
+        cloud = rng.uniform(-0.05, 0.05, size=(400, 3)).astype(np.float32)
+        kept_counts = []
+        for voxel in (0.005, 0.0075, 0.010):
+            first = tracking._volume_sample_indices(
+                cloud,
+                surface_points=None,
+                interior_points=None,
+                volume_sample_size=voxel,
+            )
+            again = tracking._volume_sample_indices(
+                cloud,
+                surface_points=None,
+                interior_points=None,
+                volume_sample_size=voxel,
+            )
+            np.testing.assert_array_equal(first, again)
+            self.assertTrue(np.all(np.diff(first) > 0))
+            kept_counts.append(len(first))
+        self.assertTrue(kept_counts[0] >= kept_counts[1] >= kept_counts[2])
+
+        # Shape-prior points only shift the shared grid origin (origin
+        # data_process_sample.py includes them in min_bound).
+        shifted = tracking._volume_sample_indices(
+            points,
+            surface_points=np.asarray([[-0.0025, 0.0, 0.0]], dtype=np.float32),
+            interior_points=None,
+            volume_sample_size=0.005,
+        )
+        self.assertTrue(np.all(np.diff(shifted) > 0))
+
+    def test_volume_sample_size_is_a_single_authoritative_config(self) -> None:
+        from demo_v6_2 import main_cli, tracking
+        from demo_v6_2.main_subprocess import build_main_data_processing_command
+        from demo_v6_2.orchestration.main_config import DEFAULT_VOLUME_SAMPLE_SIZE_M
+        from demo_v6_2.shape_prior import sample as shape_prior_sample
+        from demo_v6_2.shape_prior import warmup as shape_prior_warmup_module
+        from demo_v6_2.streaming.data_payload import DATA_PROCESS_SAM3D_METRICS
+
+        # One code default (tracking) re-exported by the shape-prior stages,
+        # matching the authoritative config value.
+        self.assertEqual(tracking.DEFAULT_VOLUME_SAMPLE_SIZE_M, 0.005)
+        self.assertIs(
+            shape_prior_sample.DEFAULT_VOLUME_SAMPLE_SIZE_M,
+            tracking.DEFAULT_VOLUME_SAMPLE_SIZE_M,
+        )
+        self.assertIs(
+            shape_prior_warmup_module.DEFAULT_VOLUME_SAMPLE_SIZE_M,
+            tracking.DEFAULT_VOLUME_SAMPLE_SIZE_M,
+        )
+        self.assertEqual(DEFAULT_VOLUME_SAMPLE_SIZE_M, 0.005)
+
+        # Camera CLI carries the knob and rejects non-positive values.
+        camera_args = mdp_cli.build_parser().parse_args([])
+        self.assertEqual(
+            float(camera_args.volume_sample_size_m),
+            tracking.DEFAULT_VOLUME_SAMPLE_SIZE_M,
+        )
+        bad = mdp_cli.build_parser().parse_args(
+            ["--table-calibrate", "table_calibrate.pkl", "--volume-sample-size-m", "0"]
+        )
+        with self.assertRaisesRegex(ValueError, "volume-sample-size-m"):
+            mdp_cli.validate_and_normalize_args(bad)
+
+        # Orchestrator forwards the value into the camera subprocess command.
+        orch_args = main_cli.build_parser().parse_args(
+            ["--volume-sample-size-m", "0.0075"]
+        )
+        command = build_main_data_processing_command(
+            orch_args,
+            capture_dir=Path("/tmp/capture"),
+            profile_json=Path("/tmp/profile.json"),
+        )
+        flag_index = command.index("--volume-sample-size-m")
+        self.assertEqual(float(command[flag_index + 1]), 0.0075)
+
+        # The runtime consumes it, and the manifest constants no longer carry
+        # a hardcoded copy (the true value is injected per run).
+        runtime = __import__("demo_v6_2.tracking", fromlist=["TrackingRuntime"])
+        self.assertEqual(
+            runtime.TrackingRuntime(volume_sample_size=0.0075).volume_sample_size,
+            0.0075,
+        )
+        self.assertNotIn("object_volume_sample_size_m", DATA_PROCESS_SAM3D_METRICS)
+        self.assertNotIn(
+            "shape_prior_volume_sample_size_m", DATA_PROCESS_SAM3D_METRICS
         )
 
 

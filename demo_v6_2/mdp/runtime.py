@@ -10,6 +10,7 @@ lives in the stage classes; this class only composes them.
 from __future__ import annotations
 
 import argparse
+import json
 import threading
 import time
 from pathlib import Path
@@ -74,12 +75,9 @@ class MainDataProcessingDemo:
         # Live pipeline-status stream (design question 25), shared with the
         # orchestrator + shape-prior stages under
         # <base_path>/pipeline_status.jsonl. base_path is the parent of the
-        # headless capture dir; a None capture dir yields a no-op writer.
+        # headless capture dir (validation guarantees it is set).
         self._status = PipelineStatusWriter(
-            Path(args.headless_capture_dir).parent
-            if args.headless_capture_dir is not None
-            else None,
-            "camera",
+            Path(args.headless_capture_dir).parent, "camera"
         )
         self.fatal = FatalErrorLatch(status=self._status, stop_event=self.stop_event)
         self.shape_prior_manager = self._create_shape_prior_manager()
@@ -98,13 +96,7 @@ class MainDataProcessingDemo:
                     "shape_prior_status", shape_prior_warmup.STATUS_DISABLED
                 )
             ),
-            timeout_ms=int(
-                getattr(
-                    args,
-                    "shape_prior_timeout_ms",
-                    shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
-                )
-            ),
+            timeout_ms=int(args.shape_prior_timeout_ms),
         )
         self._first_frame_segmented = threading.Event()
 
@@ -156,7 +148,6 @@ class MainDataProcessingDemo:
         )
         self.formal = FormalProductStage(
             args=args,
-            mode=self.mode,
             session=self.session,
             lossless=self.lossless,
             stage_stats=self.stage_stats,
@@ -171,27 +162,24 @@ class MainDataProcessingDemo:
         self,
     ) -> shape_prior_warmup.ShapePriorWarmupManager:
         """Create the shape-prior warmup manager for the runtime."""
-        enabled = bool(getattr(self.args, "shape_prior_warmup", False))
+        enabled = bool(self.args.shape_prior_warmup)
         client = None
         if enabled:
             client = shape_prior_warmup.ShapePriorLocalClient(
                 case_root=Path(self.args.shape_prior_case_root),
                 cuda_visible_devices=str(
-                    getattr(
-                        self.args,
-                        "shape_prior_warmup_cuda_visible_devices",
-                        shape_prior_warmup.DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
-                    )
+                    self.args.shape_prior_warmup_cuda_visible_devices
                 ),
                 object_name=str("stuffed animal"),
                 controller_name=str(self.args.shape_prior_controller_name),
                 points_npz=Path(self.args.shape_prior_points_npz),
-                sam3d_root=getattr(self.args, "shape_prior_sam3d_root", None),
-                sam3d_config=getattr(self.args, "shape_prior_config", None),
+                sam3d_root=self.args.shape_prior_sam3d_root,
+                sam3d_config=self.args.shape_prior_config,
                 sam31_device=str(self.args.device),
                 reuse_sam31_model=True,
+                volume_sample_size_m=float(self.args.volume_sample_size_m),
             )
-            if bool(getattr(self.args, "shape_prior_prewarm_stage_workers", False)):
+            if bool(self.args.shape_prior_prewarm_stage_workers):
                 client.prewarm()
         return shape_prior_warmup.ShapePriorWarmupManager(
             enabled=enabled,
@@ -199,7 +187,7 @@ class MainDataProcessingDemo:
             input_source=str(self.args.input_source),
             depth_backend_label=self.mode.depth_backend_label,
             depth_source=str(self.args.depth_source),
-            profile_json=getattr(self.args, "shape_prior_profile_json", None),
+            profile_json=self.args.shape_prior_profile_json,
         )
 
     def _build_headless_capture_metadata(self) -> dict[str, Any]:
@@ -220,12 +208,8 @@ class MainDataProcessingDemo:
             "depth_source": str(self.args.depth_source),
             "depth_source_internal": str(self.args.depth_source),
             "depth_backend": self.mode.depth_backend_label,
-            "headless_prepared_only": bool(
-                getattr(self.args, "headless_prepared_only", False)
-            ),
-            "write_input_rgb_timeline": bool(
-                getattr(self.args, "write_input_rgb_timeline", False)
-            ),
+            "headless_prepared_only": bool(self.args.headless_prepared_only),
+            "write_input_rgb_timeline": bool(self.args.write_input_rgb_timeline),
             "shape_prior_status": str(
                 shape_profile.get(
                     "shape_prior_status",
@@ -238,11 +222,7 @@ class MainDataProcessingDemo:
                 if self.mode.lossless_enabled
                 else None
             ),
-            "saved_pcd_source": (
-                HEADLESS_CAPTURE_SAVED_PCD_SOURCE
-                if self.mode.headless_capture_enabled
-                else None
-            ),
+            "saved_pcd_source": HEADLESS_CAPTURE_SAVED_PCD_SOURCE,
             "serial": str(session.camera_runtime.serial),
             "width": int(session.width),
             "height": int(session.height),
@@ -289,16 +269,15 @@ class MainDataProcessingDemo:
         self.session.prepare_source(self.args, self.mode)
         try:
             self.session.initialize_table_calibration(self.args)
-            if self.mode.headless_capture_enabled:
-                self.session.headless_capture_writer = HeadlessCaptureWriter(
-                    self.args.headless_capture_dir,
-                    metadata=self._build_headless_capture_metadata(),
-                )
-                print(
-                    "[headless-capture] "
-                    f"dir={self.session.headless_capture_writer.output_dir}",
-                    flush=True,
-                )
+            self.session.headless_capture_writer = HeadlessCaptureWriter(
+                self.args.headless_capture_dir,
+                metadata=self._build_headless_capture_metadata(),
+            )
+            print(
+                "[headless-capture] "
+                f"dir={self.session.headless_capture_writer.output_dir}",
+                flush=True,
+            )
             self._run_headless()
             self._finalize_headless_tracking_product()
         finally:
@@ -312,13 +291,9 @@ class MainDataProcessingDemo:
         writer = self.session.headless_capture_writer
         if writer is None:
             raise RuntimeError(
-                "phystwin-strict-tracking requires an initialized headless capture writer"
+                "formal runtime requires an initialized headless capture writer"
             )
-        output_dir = (
-            Path(self.args.phystwin_strict_output_dir)
-            if getattr(self.args, "phystwin_strict_output_dir", None) is not None
-            else writer.output_dir / "phystwin_like"
-        )
+        output_dir = Path(self.args.phystwin_strict_output_dir)
         print(f"[phystwin-strict] finalizing output_dir={output_dir}", flush=True)
         manifest = finalize_headless_capture(writer.output_dir, output_dir=output_dir)
         print(
@@ -398,12 +373,21 @@ class MainDataProcessingDemo:
     def _run_headless(self) -> None:
         """Run headless."""
         self._start_threads()
+        last_telemetry_s = time.perf_counter()
         try:
             while not self.stop_event.is_set():
                 if self.mode.lossless_enabled:
                     if self.lossless.processing_done.is_set():
                         self.stop_event.set()
                         break
+                    now_s = time.perf_counter()
+                    if now_s - last_telemetry_s >= 5.0:
+                        last_telemetry_s = now_s
+                        print(
+                            "[queue-telemetry] "
+                            + json.dumps(self.lossless.telemetry(), sort_keys=True),
+                            flush=True,
+                        )
                     time.sleep(0.05)
                     continue
                 time.sleep(0.05)

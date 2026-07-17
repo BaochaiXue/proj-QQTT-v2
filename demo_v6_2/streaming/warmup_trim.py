@@ -1,4 +1,4 @@
-"""Warmup-delayed startup row trimming for Demo v6.1 chunk streaming."""
+"""Warmup-delayed startup row trimming for Demo v6.2 chunk streaming."""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ class WarmupStartFilter:
     def _trim_unready_startup_rows(self) -> None:
         """Drop invalid startup rows while preserving warmup frame 0 for chunking.
 
-        Demo v6.1 writes ``input_frames.jsonl`` from camera start, but
+        Demo v6.2 writes ``input_frames.jsonl`` from camera start, but
         ``frames.jsonl`` is the data_process output stream. With shape-prior
         warmup, the first strict pair can be source frame 0 processed many
         seconds late; the next row then jumps to the realtime source frame

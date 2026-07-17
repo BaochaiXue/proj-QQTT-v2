@@ -1,4 +1,4 @@
-"""Demo v6.1-owned SAM3.1 single-image text segmentation."""
+"""Demo v6.2-owned SAM3.1 single-image text segmentation."""
 
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ from demo_v6_2.shape_prior.timing import elapsed_ms
 
 
 QQTT_SAM31_CHECKPOINT_ENV = "QQTT_SAM31_CHECKPOINT"
-QQTT_SAM31_BPE_PATH_ENV = "QQTT_SAM31_BPE_PATH"
 BPE_VOCAB_NAME = "bpe_simple_vocab_16e6.txt.gz"
 # Prompts split on commas/newlines/semicolons, plus periods that are not part
 # of a decimal number (so labels like "sam 3.1" stay intact).
@@ -45,14 +44,10 @@ def parse_text_prompts(text_prompt: str) -> list[str]:
 
 
 def resolve_sam31_bpe_path(checkpoint_path: str | Path | None = None) -> str | None:
-    # Search order: env override, next to the checkpoint, then the sam3 package
-    # assets. Returning None lets the model builder use its bundled default.
+    # Search order: next to the checkpoint, then the sam3 package assets.
+    # Returning None lets the model builder use its bundled default.
     """Resolve the SAM 3.1 BPE vocabulary path."""
     candidates: list[Path] = []
-    bpe_override = os.getenv(QQTT_SAM31_BPE_PATH_ENV)
-    if bpe_override:
-        candidates.append(Path(bpe_override).expanduser())
-
     if checkpoint_path is not None:
         checkpoint_dir = Path(checkpoint_path).expanduser().resolve().parent
         candidates.append(checkpoint_dir / BPE_VOCAB_NAME)

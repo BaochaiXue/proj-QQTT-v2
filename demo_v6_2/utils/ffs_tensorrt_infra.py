@@ -154,63 +154,6 @@ FFS_INPUT_STAGING_PAGEABLE = "pageable"
 FFS_INPUT_STAGING_MODES = (FFS_INPUT_STAGING_PINNED, FFS_INPUT_STAGING_PAGEABLE)
 
 
-class _PinnedSinglePairImageInputBuffers:
-    def __init__(self, *, torch_module: Any, image_shape: tuple[int, int, int]) -> None:
-        self.torch = torch_module
-        self.image_shape = tuple(int(item) for item in image_shape)
-        if len(self.image_shape) != 3 or self.image_shape[2] != 3:
-            raise ValueError(f"Expected HxWx3 image shape, got {self.image_shape!r}.")
-        height, width, channels = self.image_shape
-        self.left_host = torch_module.empty(self.image_shape, dtype=torch_module.uint8, pin_memory=True)
-        self.right_host = torch_module.empty(self.image_shape, dtype=torch_module.uint8, pin_memory=True)
-        self.left_device = torch_module.empty(
-            (1, channels, height, width),
-            device="cuda",
-            dtype=torch_module.float32,
-        )
-        self.right_device = torch_module.empty(
-            (1, channels, height, width),
-            device="cuda",
-            dtype=torch_module.float32,
-        )
-        self.last_profile: dict[str, float | str | bool] = {
-            "input_staging": FFS_INPUT_STAGING_PINNED,
-            "stage_ms": 0.0,
-            "h2d_enqueue_ms": 0.0,
-            "h2d_wait_ms": 0.0,
-            "pin_memory": True,
-        }
-
-    def load(self, left_image: np.ndarray, right_image: np.ndarray) -> tuple[Any, Any]:
-        left = np.ascontiguousarray(left_image)
-        right = np.ascontiguousarray(right_image)
-        if tuple(left.shape) != self.image_shape or tuple(right.shape) != self.image_shape:
-            raise ValueError(
-                "Pinned TensorRT input buffer shape mismatch. "
-                f"expected={self.image_shape!r} left={left.shape!r} right={right.shape!r}"
-            )
-        if left.dtype != np.uint8 or right.dtype != np.uint8:
-            raise ValueError(f"Expected uint8 TensorRT inputs, got {left.dtype!r} and {right.dtype!r}.")
-
-        torch = self.torch
-        stage_start_s = time.perf_counter()
-        self.left_host.copy_(torch.as_tensor(left, dtype=torch.uint8))
-        self.right_host.copy_(torch.as_tensor(right, dtype=torch.uint8))
-        stage_ms = (time.perf_counter() - stage_start_s) * 1000.0
-        h2d_start_s = time.perf_counter()
-        self.left_device[0].copy_(self.left_host.permute(2, 0, 1), non_blocking=True)
-        self.right_device[0].copy_(self.right_host.permute(2, 0, 1), non_blocking=True)
-        h2d_enqueue_ms = (time.perf_counter() - h2d_start_s) * 1000.0
-        self.last_profile = {
-            "input_staging": FFS_INPUT_STAGING_PINNED,
-            "stage_ms": float(stage_ms),
-            "h2d_enqueue_ms": float(h2d_enqueue_ms),
-            "h2d_wait_ms": 0.0,
-            "pin_memory": True,
-        }
-        return self.left_device, self.right_device
-
-
 class _PinnedBatchPairImageInputBuffers:
     def __init__(self, *, torch_module: Any, batch_size: int, image_shape: tuple[int, int, int]) -> None:
         self.torch = torch_module

@@ -1,7 +1,7 @@
-"""Demo v6.1 realtime orchestration defaults and module-level constants.
+"""Demo v6.2 realtime orchestration defaults and module-level constants.
 
 This module owns the config/default.yaml loader and every module-level default
-so the other Demo v6.1 orchestration modules can reach the ``DEFAULT_*`` values
+so the other Demo v6.2 orchestration modules can reach the ``DEFAULT_*`` values
 without an import cycle.
 """
 
@@ -28,7 +28,7 @@ DEFAULT_CONFIG_PATH = DEMO_ROOT / "config" / "default.yaml"
 
 
 def load_default_config(path: Path = DEFAULT_CONFIG_PATH) -> dict[str, object]:
-    """Load Demo v6.1 defaults from YAML."""
+    """Load Demo v6.2 defaults from YAML."""
     text = Path(path).read_text(encoding="utf-8")
     loaded = yaml.safe_load(text)
     if not isinstance(loaded, dict):
@@ -60,13 +60,14 @@ def _cfg_mapping(section: str, key: str) -> dict[str, object]:
     return dict(value)
 
 
-# Defaults below describe the current Demo v6.1 realtime path.
+# Defaults below describe the current Demo v6.2 realtime path.
 DEFAULT_DATA_PROCESS_BASE_PATH = Path(str(_cfg("paths", "data_process_base_path")))
 DEFAULT_INPUT_SOURCE = str(_cfg("input", "input_source"))
 DEFAULT_FAKE_LIVE_CASE = _cfg_optional_path("input", "fake_live_case")
 DEFAULT_REPLAY_FPS = float(_cfg("input", "replay_fps"))
 DEFAULT_CHUNK_SECONDS = float(_cfg("chunking", "chunk_seconds"))
 DEFAULT_CHUNK_POLL_INTERVAL_S = float(_cfg("chunking", "chunk_poll_interval_s"))
+DEFAULT_VOLUME_SAMPLE_SIZE_M = float(_cfg("chunking", "volume_sample_size_m"))
 DEFAULT_CAMERA_SOURCE_REPLAY_FPS = float(_cfg("input", "camera_source_replay_fps"))
 DEFAULT_CAMERA_FPS = int(_cfg("camera", "camera_fps"))
 CAMERA_FPS_CHOICES = tuple(int(item) for item in _cfg("camera", "camera_fps_choices"))
@@ -108,7 +109,7 @@ DEFAULT_INFERENCE_DTYPE = str(_cfg("camera", "inference_dtype"))
 DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD = float(
     _cfg("camera", "edgetam_mask_logit_threshold")
 )
-# Downstream consumers are mutually exclusive per session: the Demo v6.1
+# Downstream consumers are mutually exclusive per session: the Demo v6.2
 # viewer window or the Phystwin_shen online trainer + HTML viewer.
 DOWNSTREAM_MODE_DISABLED = "disabled"
 DOWNSTREAM_MODE_DEMO_VISUALIZER = "demo_visualizer"
@@ -155,7 +156,6 @@ DEFAULT_VISUALIZER_OBJECT_COLOR_MODE = str(
 VISUALIZER_LAYOUT_SIDE_BY_SIDE = str(
     _cfg("visualizer", "visualizer_layout_side_by_side")
 )
-VISUALIZER_LAYOUT_OUTPUT_ONLY = str(_cfg("visualizer", "visualizer_layout_output_only"))
 VISUALIZER_LAYOUTS = tuple(
     str(item) for item in _cfg("visualizer", "visualizer_layouts")
 )
