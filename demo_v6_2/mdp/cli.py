@@ -19,6 +19,10 @@ from qqtt.tracking.backends.point_tracker_adapter import (
 )
 
 from demo_v6_2.shape_prior import warmup as shape_prior_warmup
+from demo_v6_2.orchestration.main_config import (
+    DEFAULT_SHAPE_PRIOR_CACHE_ROOT,
+    DEFAULT_SHAPE_PRIOR_OBJECT_PROMPT,
+)
 from demo_v6_2.tracking import DEFAULT_VOLUME_SAMPLE_SIZE_M
 from demo_v6_2.mdp.constants import (
     CONTROLLER_COLOR_RGB,
@@ -343,6 +347,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--shape-prior-controller-name",
         default=None,
     )
+    parser.add_argument(
+        "--shape-prior-object",
+        default=None,
+        help=(
+            "Canonical-mesh cache identity (instance + asset version). Absent "
+            "disables the cache. Never pass 'none'/'null'; omit the flag instead."
+        ),
+    )
+    parser.add_argument(
+        "--shape-prior-object-prompt",
+        default=DEFAULT_SHAPE_PRIOR_OBJECT_PROMPT,
+        help="SAM3.1 semantic label for the object in view.",
+    )
+    parser.add_argument(
+        "--shape-prior-cache-root",
+        type=Path,
+        default=DEFAULT_SHAPE_PRIOR_CACHE_ROOT,
+        help="Persistent cache root for canonical meshes (not under run output).",
+    )
     parser.add_argument("--shape-prior-sam3d-root", type=Path, default=None)
     parser.add_argument("--shape-prior-config", type=Path, default=None)
     parser.add_argument(
@@ -469,6 +492,17 @@ def validate_and_normalize_args(args: argparse.Namespace) -> None:
             "--shape-prior-controller-name is required when --shape-prior-warmup "
             "is enabled"
         )
+    object_prompt = str(args.shape_prior_object_prompt or "").strip()
+    if bool(args.shape_prior_warmup) or args.track_mode in {
+        TRACK_MODE_CONTROLLER_OBJECT,
+        TRACK_MODE_OBJECT_ONLY,
+    }:
+        if not object_prompt:
+            raise ValueError(
+                "--shape-prior-object-prompt is required when shape-prior "
+                "warmup or object tracking is enabled"
+            )
+    args.shape_prior_object_prompt = object_prompt
     if not np.isfinite(float(args.edgetam_mask_logit_threshold)):
         raise ValueError("--edgetam-mask-logit-threshold must be finite")
     if float(args.volume_sample_size_m) <= 0.0:
@@ -495,6 +529,24 @@ def validate_and_normalize_args(args: argparse.Namespace) -> None:
         args.phystwin_strict_output_dir = (
             Path(args.headless_capture_dir) / "phystwin_like"
         )
+    if bool(args.shape_prior_warmup):
+        from demo_v6_2.shape_prior.mesh_cache import (  # noqa: PLC0415
+            ShapePriorMeshCacheError,
+            normalize_object_id,
+            validate_cache_root,
+        )
+
+        try:
+            args.shape_prior_object = normalize_object_id(args.shape_prior_object)
+        except ShapePriorMeshCacheError as exc:
+            raise ValueError(str(exc)) from exc
+        try:
+            args.shape_prior_cache_root = validate_cache_root(
+                args.shape_prior_cache_root,
+                forbidden_root=Path(args.shape_prior_case_root).parent,
+            )
+        except ShapePriorMeshCacheError as exc:
+            raise ValueError(str(exc)) from exc
     if (
         getattr(args, "color_exposure", None) is not None
         and float(args.color_exposure) <= 0.0

@@ -170,13 +170,14 @@ class MainDataProcessingDemo:
                 cuda_visible_devices=str(
                     self.args.shape_prior_warmup_cuda_visible_devices
                 ),
-                object_name=str("stuffed animal"),
+                object_prompt=str(self.args.shape_prior_object_prompt),
                 controller_name=str(self.args.shape_prior_controller_name),
+                object_id=self.args.shape_prior_object,
+                cache_root=self.args.shape_prior_cache_root,
                 points_npz=Path(self.args.shape_prior_points_npz),
                 sam3d_root=self.args.shape_prior_sam3d_root,
                 sam3d_config=self.args.shape_prior_config,
                 sam31_device=str(self.args.device),
-                reuse_sam31_model=True,
                 volume_sample_size_m=float(self.args.volume_sample_size_m),
             )
             if bool(self.args.shape_prior_prewarm_stage_workers):

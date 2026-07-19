@@ -52,6 +52,24 @@ def _cfg_optional_path(section: str, key: str) -> Path | None:
     return Path(str(value))
 
 
+def _cfg_required_string(section: str, key: str) -> str:
+    """Read one required non-empty YAML string without coercing its type."""
+    value = _cfg(section, key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"default config {section}.{key} must be a non-empty string")
+    return value
+
+
+def _cfg_optional_string(section: str, key: str) -> str | None:
+    """Read one nullable YAML string; only YAML null means unset."""
+    value = _cfg(section, key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"default config {section}.{key} must be a string or null")
+    return value
+
+
 def _cfg_mapping(section: str, key: str) -> dict[str, object]:
     """Read one required nested mapping from the default config."""
     value = _cfg(section, key)
@@ -89,6 +107,14 @@ DEFAULT_SHAPE_PRIOR_CHUNK_WAIT_TIMEOUT_S = float(
 )
 CONFIG_SHAPE_PRIOR_CONTROLLER_NAME = str(
     _cfg("shape_prior", "shape_prior_controller_name")
+)
+# Cache identity for the canonical object.glb; YAML null disables the cache.
+DEFAULT_SHAPE_PRIOR_OBJECT = _cfg_optional_string("shape_prior", "object")
+DEFAULT_SHAPE_PRIOR_OBJECT_PROMPT = _cfg_required_string(
+    "shape_prior", "object_prompt"
+)
+DEFAULT_SHAPE_PRIOR_CACHE_ROOT = Path(
+    _cfg_required_string("shape_prior", "cache_root")
 )
 DEFAULT_SHAPE_PRIOR_SAM3D_ROOT = _cfg_optional_path(
     "shape_prior", "shape_prior_sam3d_root"

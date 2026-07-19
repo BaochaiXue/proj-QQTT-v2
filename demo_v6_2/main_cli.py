@@ -32,8 +32,11 @@ from demo_v6_2.orchestration.main_config import (
     DEFAULT_PHYSTWIN_SHEN_PIPELINE_CONFIG_PATH,
     DEFAULT_PHYSTWIN_SHEN_REPO_PATH,
     DEFAULT_REPLAY_FPS,
+    DEFAULT_SHAPE_PRIOR_CACHE_ROOT,
     DEFAULT_SHAPE_PRIOR_CHUNK_WAIT_TIMEOUT_S,
     DEFAULT_SHAPE_PRIOR_CONFIG,
+    DEFAULT_SHAPE_PRIOR_OBJECT,
+    DEFAULT_SHAPE_PRIOR_OBJECT_PROMPT,
     DEFAULT_SHAPE_PRIOR_SAM3D_ROOT,
     DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
     DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
@@ -358,6 +361,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--shape-prior-controller-name",
         default=CONFIG_SHAPE_PRIOR_CONTROLLER_NAME,
         help="Controller label used when writing the one-camera shape-prior case.",
+    )
+    parser.add_argument(
+        "--shape-prior-object",
+        default=DEFAULT_SHAPE_PRIOR_OBJECT,
+        help=(
+            "Canonical-mesh cache identity (a specific instance + asset version, "
+            "e.g. sloth_plush_01_v1). Omit/null disables the cache. Not a prompt."
+        ),
+    )
+    parser.add_argument(
+        "--shape-prior-object-prompt",
+        default=DEFAULT_SHAPE_PRIOR_OBJECT_PROMPT,
+        help=(
+            "SAM3.1 semantic label for the object in view (frame-0 mask, EdgeTAM "
+            "object identity, case label, upscale category, second segmentation)."
+        ),
+    )
+    parser.add_argument(
+        "--shape-prior-cache-root",
+        type=Path,
+        default=DEFAULT_SHAPE_PRIOR_CACHE_ROOT,
+        help=(
+            "Persistent storage root for cached canonical meshes; must not live "
+            "under the run output directory."
+        ),
     )
     parser.add_argument(
         "--shape-prior-sam3d-root",

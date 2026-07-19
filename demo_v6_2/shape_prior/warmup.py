@@ -22,6 +22,11 @@ from demo_v6_2.shape_prior.case import (
     write_shape_prior_case,
     write_shape_prior_points_npz,
 )
+from demo_v6_2.shape_prior import mesh_cache
+from demo_v6_2.shape_prior.mesh_cache import (
+    ShapePriorMeshCache,
+    normalize_object_id,
+)
 from demo_v6_2.tracking import DEFAULT_VOLUME_SAMPLE_SIZE_M
 from demo_v6_2.shape_prior.timing import (
     build_critical_path_analysis,
@@ -45,6 +50,9 @@ CASE_NAME = "shape_prior_frame0"
 # Surface/interior sampling counts follow the original PhysTwin offline
 # pipeline (data_process_origin/data_process_sample.py defaults).
 DEFAULT_SURFACE_POINT_COUNT = 1024
+# Mirrors demo_v6_2/shape_prior/generate.py DEFAULT_SEED; passed explicitly so
+# the mesh-cache manifest records the exact generation seed.
+DEFAULT_GENERATE_SEED = 42
 POINTS_NPZ = Path("outputs") / "shape_prior" / "points.npz"
 # Pre-warmed one-shot stage workers: spawned at app boot with --wait-signal so
 # model loading happens off the frame-0 critical path; each worker runs its
@@ -122,10 +130,18 @@ class PrewarmWorkerPool:
         self._lock = threading.Lock()
         self._atexit_registered = False
 
-    def spawn(self, commands: Mapping[str, list[str]], env: dict[str, str]) -> None:
-        """Spawn one ``--wait-signal`` worker per stage (at most once each)."""
+    def spawn(
+        self,
+        commands: Mapping[str, list[str]],
+        env: dict[str, str],
+        *,
+        active_stages: tuple[str, ...],
+    ) -> None:
+        """Spawn one worker for every explicitly selected prewarm stage."""
         with self._lock:
-            for stage in PREWARM_STAGES:
+            for stage in active_stages:
+                if stage not in PREWARM_STAGES:
+                    raise ValueError(f"unsupported shape-prior prewarm stage: {stage}")
                 if stage in self._workers:
                     continue
                 self._workers[stage] = subprocess.Popen(
@@ -204,24 +220,28 @@ class ShapePriorLocalClient:
         self,
         *,
         case_root: str | Path,
-        object_name: str,
+        object_prompt: str,
         controller_name: str,
+        cache_root: str | Path,
+        object_id: str | None = None,
         cuda_visible_devices: str = DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
         case_name: str = CASE_NAME,
         points_npz: str | Path = POINTS_NPZ,
         sam3d_root: str | Path | None = None,
         sam3d_config: str | Path | None = None,
         sam31_device: str = "cuda",
-        reuse_sam31_model: bool = True,
         volume_sample_size_m: float = DEFAULT_VOLUME_SAMPLE_SIZE_M,
     ) -> None:
-        """Initialize ShapePriorLocalClient."""
+        """Initialize ShapePriorLocalClient and resolve the mesh cache."""
         if float(volume_sample_size_m) <= 0.0:
             raise ValueError("volume_sample_size_m must be positive")
         self.volume_sample_size_m = float(volume_sample_size_m)
         self.case_root = Path(case_root)
         self.cuda_visible_devices = str(cuda_visible_devices)
-        self.object_name = require_name(object_name, field_name="object_name")
+        # object_prompt is the SAM3.1 semantic label; object_id is the cache
+        # identity (a specific instance + asset version). They are distinct: the
+        # prompt is never a cache key.
+        self.object_prompt = require_name(object_prompt, field_name="object_prompt")
         self.controller_name = require_name(
             controller_name,
             field_name="controller_name",
@@ -231,8 +251,32 @@ class ShapePriorLocalClient:
         self.sam3d_root = None if sam3d_root is None else Path(sam3d_root)
         self.sam3d_config = None if sam3d_config is None else Path(sam3d_config)
         self.sam31_device = str(sam31_device)
-        self.reuse_sam31_model = bool(reuse_sam31_model)
         self._prewarm_pool = PrewarmWorkerPool()
+        # Resolve the cache before any worker pre-warms (a corrupt entry raises
+        # here, before prewarm, so the run fails at startup instead of silently
+        # regenerating). cache_root is only touched when a cache is enabled.
+        self.object_id = normalize_object_id(object_id)
+        self._cache = ShapePriorMeshCache(
+            object_id=self.object_id,
+            cache_root=cache_root,
+        )
+        self._cache_resolution = self._cache.resolve()
+        self.reuse_sam31_model = not self._cache_resolution.hit
+
+    @property
+    def cache_resolution(self) -> mesh_cache.CacheResolution:
+        """Return the startup-resolved cache decision for this run."""
+        return self._cache_resolution
+
+    @property
+    def cache_root(self) -> Path:
+        """Return the resolved persistent cache root from configuration."""
+        return self._cache.cache_root
+
+    @property
+    def requires_generation(self) -> bool:
+        """Return whether this run executes upscale, segment, and generate."""
+        return not self._cache_resolution.hit
 
     def _stage_profile_path(self, stage: str) -> Path:
         """Return the fixed detailed timing path for one subprocess stage."""
@@ -267,7 +311,7 @@ class ShapePriorLocalClient:
             "--output_path",
             str(shape_dir / "high_resolution.png"),
             "--category",
-            self.object_name,
+            self.object_prompt,
             "--profile-json",
             str(self._stage_profile_path(PREWARM_STAGE_UPSCALE)),
         ]
@@ -279,6 +323,8 @@ class ShapePriorLocalClient:
             str(shape_dir / "masked_image.png"),
             "--output_dir",
             str(shape_dir),
+            "--seed",
+            str(DEFAULT_GENERATE_SEED),
             "--skip-visualization",
             "--profile-json",
             str(self._stage_profile_path(PREWARM_STAGE_GENERATE)),
@@ -306,6 +352,12 @@ class ShapePriorLocalClient:
             PREWARM_STAGE_ALIGN: align,
         }
 
+    def _prewarm_stages(self) -> tuple[str, ...]:
+        """Return the explicit prewarm-stage set for this run's cache state."""
+        if self._cache_resolution.hit:
+            return (PREWARM_STAGE_ALIGN,)
+        return PREWARM_STAGES
+
     def prewarm(self) -> None:
         """Spawn pre-warmed one-shot workers for the heavy subprocess stages.
 
@@ -320,8 +372,15 @@ class ShapePriorLocalClient:
         be resident during the upscale stage's inference peak, which does not
         fit on a 24GB card. Weights move to the GPU after GO, exactly like
         the cold path's serial ordering.
+
+        On a cache hit only the align worker is pre-warmed (see
+        ``_prewarm_stages``); upscale and generate are skipped entirely.
         """
-        self._prewarm_pool.spawn(self._stage_commands(), self._stage_env())
+        self._prewarm_pool.spawn(
+            self._stage_commands(),
+            self._stage_env(),
+            active_stages=self._prewarm_stages(),
+        )
 
     def close(self) -> None:
         """Ask any unused pre-warmed workers to exit and reap them."""
@@ -431,7 +490,7 @@ class ShapePriorLocalClient:
             frame0,
             case_root=self.case_root,
             case_name=self.case_name,
-            object_name=self.object_name,
+            object_name=self.object_prompt,
             controller_name=self.controller_name,
         )
         case_end_s = time.perf_counter()
@@ -456,7 +515,7 @@ class ShapePriorLocalClient:
             build_details: Callable[[Any], Mapping[str, Any]],
             *,
             require_file: tuple[Path, str] | None = None,
-        ) -> None:
+        ) -> Any:
             """Run one stage, then append its validated critical-path entry."""
             stage_start_s = time.perf_counter()
             outcome = run()
@@ -472,6 +531,7 @@ class ShapePriorLocalClient:
                     details=build_details(outcome),
                 )
             )
+            return outcome
 
         def record_subprocess_stage(
             stage: str,
@@ -490,28 +550,119 @@ class ShapePriorLocalClient:
                 require_file=require_file,
             )
 
-        record_subprocess_stage(
-            PREWARM_STAGE_UPSCALE,
-            require_file=(high_resolution_path, "shape-prior upscale"),
-        )
+        def record_skipped_stage(stage: str) -> None:
+            """Emit a zero-duration critical-path entry for a cache-hit skip."""
+            now_s = time.perf_counter()
+            critical_path.append(
+                critical_path_entry(
+                    stage=stage,
+                    path_start_s=request_start_s,
+                    stage_start_s=now_s,
+                    stage_end_s=now_s,
+                    details={"execution_mode": "skipped_cache_hit"},
+                )
+            )
 
-        from demo_v6_2.perception import (  # noqa: PLC0415
-            sam31_image_segmentation,
-        )
+        resolution = self._cache_resolution
+        object_glb_path = paths["shape"] / mesh_cache.MESH_FILENAME
+        canonical_mesh_source = "cache" if resolution.hit else "generated"
+        canonical_mesh_sha256: str | None = None
+        cache_publish_ms = 0.0
 
-        record_stage(
-            "segment_image",
-            lambda: sam31_image_segmentation.segment_image_to_origin_rgba(
-                img_path=high_resolution_path,
-                text_prompt=self.object_name,
-                output_path=masked_image_path,
-                device=self.sam31_device,
-                reuse_model=self.reuse_sam31_model,
-            ),
-            lambda outcome: outcome[1],
-            require_file=(masked_image_path, "shape-prior segment"),
-        )
-        record_subprocess_stage(PREWARM_STAGE_GENERATE)
+        if resolution.hit:
+            # Cache hit: skip upscale + second SAM3.1 segment + SAM3D generate,
+            # and materialize the canonical mesh from disk into this run's case.
+            # The "generate" stage slot records the materialization instead.
+            record_skipped_stage(PREWARM_STAGE_UPSCALE)
+            record_skipped_stage("segment_image")
+            canonical_mesh_sha256 = str(
+                record_stage(
+                    PREWARM_STAGE_GENERATE,
+                    lambda: self._cache.materialize(
+                        resolution=resolution, dest_glb=object_glb_path
+                    ),
+                    lambda sha: {
+                        "execution_mode": "cache_hit_materialize",
+                        "canonical_mesh_source": "cache",
+                        "canonical_mesh_sha256": str(sha),
+                        "cache_entry_dir": str(resolution.entry_dir),
+                    },
+                    require_file=(object_glb_path, "cache materialize"),
+                )
+            )
+        else:
+            record_subprocess_stage(
+                PREWARM_STAGE_UPSCALE,
+                require_file=(high_resolution_path, "shape-prior upscale"),
+            )
+
+            from demo_v6_2.perception import (  # noqa: PLC0415
+                sam31_image_segmentation,
+            )
+
+            record_stage(
+                "segment_image",
+                lambda: sam31_image_segmentation.segment_image_to_origin_rgba(
+                    img_path=high_resolution_path,
+                    text_prompt=self.object_prompt,
+                    output_path=masked_image_path,
+                    device=self.sam31_device,
+                    reuse_model=self.reuse_sam31_model,
+                ),
+                lambda outcome: outcome[1],
+                require_file=(masked_image_path, "shape-prior segment"),
+            )
+
+            def generate_canonical_mesh() -> dict[str, Any]:
+                orchestration = self._run_stage_maybe_prewarmed(
+                    PREWARM_STAGE_GENERATE,
+                    commands[PREWARM_STAGE_GENERATE],
+                    env=env,
+                    prewarmed_stages=prewarmed_stages,
+                )
+                publish_ms = 0.0
+                if resolution.enabled:
+                    # Publish before align so a later alignment failure does not
+                    # force the same canonical mesh to be regenerated.
+                    publish_start_s = time.perf_counter()
+                    published = self._cache.publish(
+                        source_glb=object_glb_path,
+                        object_prompt_at_generation=self.object_prompt,
+                        generator_seed=DEFAULT_GENERATE_SEED,
+                    )
+                    publish_ms = elapsed_ms(publish_start_s)
+                    mesh_sha256 = str(published["mesh_sha256"])
+                else:
+                    mesh_cache.validate_mesh_glb(object_glb_path)
+                    mesh_sha256 = mesh_cache.sha256_file(object_glb_path)
+                return {
+                    "orchestration": orchestration[1],
+                    "mesh_sha256": mesh_sha256,
+                    "cache_publish_ms": publish_ms,
+                }
+
+            def generated_mesh_details(outcome: Mapping[str, Any]) -> dict[str, Any]:
+                details = self._completed_stage_details(
+                    PREWARM_STAGE_GENERATE,
+                    orchestration=dict(outcome["orchestration"]),
+                )
+                details["canonical_mesh"] = {
+                    "source": "generated",
+                    "mesh_sha256": str(outcome["mesh_sha256"]),
+                    "cache_status": str(resolution.status),
+                    "cache_publish_ms": float(outcome["cache_publish_ms"]),
+                }
+                return details
+
+            generated = record_stage(
+                PREWARM_STAGE_GENERATE,
+                generate_canonical_mesh,
+                generated_mesh_details,
+                require_file=(object_glb_path, "shape-prior generate"),
+            )
+            canonical_mesh_sha256 = str(generated["mesh_sha256"])
+            cache_publish_ms = float(generated["cache_publish_ms"])
+
         record_subprocess_stage(PREWARM_STAGE_ALIGN)
 
         sample_command = [
@@ -609,7 +760,8 @@ class ShapePriorLocalClient:
             "shape_prior_case_dir": str(paths["case"]),
             "shape_prior_points_npz": str(self.points_npz),
             "shape_prior_warmup_cuda_visible_devices": self.cuda_visible_devices,
-            "shape_prior_object_name": self.object_name,
+            "shape_prior_object_name": self.object_prompt,
+            "shape_prior_object_prompt": self.object_prompt,
             "shape_prior_controller_name": self.controller_name,
             "shape_prior_sam31_device": self.sam31_device,
             "shape_prior_sam31_reuse_model": self.reuse_sam31_model,
@@ -617,6 +769,30 @@ class ShapePriorLocalClient:
             "shape_prior_surface_point_count": int(surface.shape[0]),
             "shape_prior_interior_point_count": int(interior.shape[0]),
             "shape_prior_point_count": int(points.shape[0]),
+            "shape_prior_cache_enabled": bool(resolution.enabled),
+            "shape_prior_cache_hit": (
+                None if not resolution.enabled else bool(resolution.hit)
+            ),
+            "shape_prior_cache_status": str(resolution.status),
+            "shape_prior_cache_object_id": resolution.object_id,
+            "shape_prior_cache_root": str(self.cache_root),
+            "shape_prior_object_prompt_at_generation": (
+                str(resolution.manifest["object_prompt_at_generation"])
+                if resolution.hit
+                else self.object_prompt
+            ),
+            "shape_prior_cache_entry_dir": (
+                str(resolution.entry_dir) if resolution.enabled else None
+            ),
+            "shape_prior_cache_mesh_sha256": (
+                canonical_mesh_sha256 if resolution.enabled else None
+            ),
+            "shape_prior_canonical_mesh_source": canonical_mesh_source,
+            "shape_prior_canonical_mesh_sha256": canonical_mesh_sha256,
+            "shape_prior_cache_materialize_ms": (
+                stage_ms["generate"] if resolution.hit else 0.0
+            ),
+            "shape_prior_cache_publish_ms": cache_publish_ms,
         }
         return ShapePriorResult(
             seq=int(frame0.seq),
@@ -661,9 +837,32 @@ class ShapePriorWarmupManager:
         self._thread: threading.Thread | None = None
         self._result: ShapePriorResult | None = None
         self._profile = default_profile(enabled=self.enabled)
+        if client is not None:
+            # Cache identity/status is resolved at client construction, so it is
+            # known even before the request runs -- surface it up front so a
+            # failure profile still carries the cache status and object id.
+            resolution = client.cache_resolution
+            self._profile.update(
+                {
+                    "shape_prior_cache_enabled": bool(resolution.enabled),
+                    "shape_prior_cache_hit": (
+                        None if not resolution.enabled else bool(resolution.hit)
+                    ),
+                    "shape_prior_cache_status": str(resolution.status),
+                    "shape_prior_cache_object_id": resolution.object_id,
+                    "shape_prior_cache_root": str(client.cache_root),
+                }
+            )
         self._warmup_runtime_start_perf_s: float | None = None
         self._ready_perf_s: float | None = None
         self._gate_open_perf_s: float | None = None
+
+    @property
+    def requires_sam31_reuse(self) -> bool:
+        """Return whether shape-prior generation needs the initial SAM3.1 model."""
+        return bool(
+            self.enabled and self.client is not None and self.client.requires_generation
+        )
 
     def maybe_submit(self, frame0: ShapePriorFrame0Request) -> bool:
         """Maybe start or update submit."""

@@ -155,6 +155,8 @@ def build_main_data_processing_command(
         str(args.perception_device),
         "--dtype",
         str(args.inference_dtype),
+        "--shape-prior-object-prompt",
+        str(args.shape_prior_object_prompt),
         "--edgetam-mask-logit-threshold",
         str(float(args.edgetam_mask_logit_threshold)),
         "--tracker-device",
@@ -192,12 +194,18 @@ def build_main_data_processing_command(
                 resolve_shape_prior_warmup_cuda_visible_devices(args),
                 "--shape-prior-controller-name",
                 str(args.shape_prior_controller_name),
+                "--shape-prior-cache-root",
+                str(args.shape_prior_cache_root),
                 "--shape-prior-case-root",
                 str(resolve_shape_prior_case_root(args)),
                 "--shape-prior-points-npz",
                 str(resolve_shape_prior_points_npz(args)),
             ]
         )
+        # Absence of --shape-prior-object (YAML null) disables the cache; a
+        # present value is the cache identity. Never forwarded as "none".
+        if args.shape_prior_object is not None:
+            command.extend(["--shape-prior-object", str(args.shape_prior_object)])
         if bool(args.shape_prior_prewarm_stage_workers):
             command.append("--shape-prior-prewarm-stage-workers")
         else:

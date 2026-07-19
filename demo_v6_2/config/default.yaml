@@ -101,6 +101,20 @@ shape_prior:
   shape_prior_chunk_wait_timeout_s: 300.0
   # Options: non-empty semantic label string, e.g. hand or towel.
   shape_prior_controller_name: "hand"
+  # Cache identity for the canonical object.glb mesh: a specific physical
+  # instance plus asset version (e.g. "sloth_plush_01_v1"). Options: YAML null
+  # disables the cache (shape prior still runs a full on-the-fly generation
+  # every run); or a single safe directory-name string to enable persistent
+  # reuse. NOT a SAM3.1 prompt and never a cache key derived from the prompt.
+  object: null
+  # SAM3.1 semantic label for the object in view (frame-0 object mask, EdgeTAM
+  # object identity, case label, upscale category, and the shape-prior second
+  # segmentation). Options: non-empty string, e.g. "sloth" or "stuffed animal".
+  object_prompt: "sloth"
+  # Persistent storage root for cached canonical meshes. Options: absolute or
+  # relative directory path that must NOT live under the run output directory
+  # (so output cleanup never deletes cache entries).
+  cache_root: "/home/xinjie/qqtt_shape_prior_cache"
   # Options: null or relative/absolute SAM3D checkout directory path; null
   # lets SAM3D resolution use environment/default candidates.
   shape_prior_sam3d_root: null

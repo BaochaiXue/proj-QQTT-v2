@@ -40,6 +40,11 @@ from demo_v6_2.phystwin_shen_launch import (
     validate_phystwin_shen_repo,
     validate_phystwin_shen_settings,
 )
+from demo_v6_2.shape_prior.mesh_cache import (
+    ShapePriorMeshCacheError,
+    normalize_object_id,
+    validate_cache_root,
+)
 
 
 @dataclass(frozen=True)
@@ -75,6 +80,22 @@ class OrchestratorRunConfig:
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> OrchestratorRunConfig:
         """Validate cross-option constraints, then build the frozen snapshot."""
+        object_prompt = str(args.shape_prior_object_prompt or "").strip()
+        if not object_prompt:
+            raise ValueError("--shape-prior-object-prompt must be non-empty")
+        args.shape_prior_object_prompt = object_prompt
+        try:
+            args.shape_prior_object = normalize_object_id(args.shape_prior_object)
+        except ShapePriorMeshCacheError as exc:
+            raise ValueError(str(exc)) from exc
+        try:
+            cache_root = validate_cache_root(
+                args.shape_prior_cache_root,
+                forbidden_root=Path(args.base_path),
+            )
+        except ShapePriorMeshCacheError as exc:
+            raise ValueError(str(exc)) from exc
+        args.shape_prior_cache_root = cache_root
         if args.chunk_frame_count is not None:
             chunk_frame_count = int(args.chunk_frame_count)
         else:
@@ -237,6 +258,11 @@ def static_run_contract(
             config.shape_prior_warmup_cuda_visible_devices
         ),
         "shape_prior_controller_name": str(args.shape_prior_controller_name),
+        "shape_prior_object": (
+            None if args.shape_prior_object is None else str(args.shape_prior_object)
+        ),
+        "shape_prior_object_prompt": str(args.shape_prior_object_prompt),
+        "shape_prior_cache_root": str(args.shape_prior_cache_root),
         "shape_prior_sam3d_root": (
             None
             if args.shape_prior_sam3d_root is None

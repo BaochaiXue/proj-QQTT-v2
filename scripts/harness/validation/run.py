@@ -19,7 +19,7 @@ if ROOT_STR in sys.path:
     sys.path.remove(ROOT_STR)
 sys.path.insert(0, ROOT_STR)
 
-from scripts.harness._catalog import help_scripts
+from scripts.harness._catalog import help_scripts  # noqa: E402
 
 
 BASE_FORMAL_HELP_SCRIPTS: tuple[str, ...] = (
@@ -52,6 +52,7 @@ def _unique(items: tuple[str, ...]) -> tuple[str, ...]:
 
 
 QUICK_UNITTEST_MODULES: tuple[str, ...] = (
+    "tests.test_demo_v6_2_shape_prior_cache",
     "tests.test_demo_v6_2_runtime_modes",
     "tests.test_demo_v6_2_stream_archive",
 )

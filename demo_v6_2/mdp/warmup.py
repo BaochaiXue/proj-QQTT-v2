@@ -188,6 +188,8 @@ def run_sam31_first_frame_mask_bundle(
     color_bgr: np.ndarray,
     args: argparse.Namespace,
     mode: RunMode,
+    *,
+    reuse_sam31_runtime: bool,
 ) -> tuple[InitialMaskBundle, Sam31FrameTiming]:
     """Run SAM3.1 on frame 0 and return the mask bundle plus its timings."""
     from demo_v6_2.perception.sam31_image_segmentation import (
@@ -199,9 +201,10 @@ def run_sam31_first_frame_mask_bundle(
     # for the first prompt of a multi-prompt request and all instances for the
     # later ones, so the object prompt must come before the controller prompt
     # (one object mask, both hand instances preserved).
+    object_prompt = str(args.shape_prior_object_prompt)
     prompt_labels = []
     if mode.object_tracking_enabled:
-        prompt_labels.append(str("stuffed animal"))
+        prompt_labels.append(object_prompt)
     if mode.controller_tracking_enabled:
         prompt_labels.append(str("hand"))
     if not prompt_labels:
@@ -211,9 +214,9 @@ def run_sam31_first_frame_mask_bundle(
             Sam31FrameTiming(),
         )
     text_prompt = ",".join(prompt_labels)
-    # Shape-prior warmup re-runs SAM3.1 on frame 0, so it needs the model kept
-    # in the cache (reuse) and only an allocator trim afterwards.
-    reuse_sam31_runtime = bool(args.shape_prior_warmup)
+    # A cache miss (or disabled mesh cache) reuses this model for the second
+    # segmentation. A mesh-cache hit releases it after the initial mask.
+    reuse_sam31_runtime = bool(reuse_sam31_runtime)
     trim_cleanup_ms = 0.0
     release_cleanup_ms = 0.0
     try:
@@ -244,10 +247,10 @@ def run_sam31_first_frame_mask_bundle(
     controller_mask: np.ndarray | None = None
     controller_masks: list[np.ndarray] = []
     if mode.object_tracking_enabled:
-        object_label = parse_text_prompts(str("stuffed animal"))[0]
+        object_label = parse_text_prompts(object_prompt)[0]
         object_mask = _union_masks(
             list(masks_by_label.get(object_label, [])),
-            label="stuffed animal",
+            label=object_prompt,
         )
     if mode.controller_tracking_enabled:
         controller_label = parse_text_prompts(str("hand"))[0]

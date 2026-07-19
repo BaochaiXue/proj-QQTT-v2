@@ -189,7 +189,10 @@ class SegmentationStage:
         # frame.
         expected_shape = tuple(first_frame.color_bgr.shape[:2])
         initial_masks, sam31_timing = warmup.run_sam31_first_frame_mask_bundle(
-            first_frame.color_bgr, self.args, self.mode
+            first_frame.color_bgr,
+            self.args,
+            self.mode,
+            reuse_sam31_runtime=self.shape_prior_manager.requires_sam31_reuse,
         )
         if (
             initial_masks.controller_mask.shape != expected_shape

@@ -60,6 +60,38 @@ viewer 返回 HTTP 200，Stage 1 读到在线 chunk 并导出首个 realtime can
 replay 和 100-iteration train 误报为已经终态成功。精确命令与观测记录在
 [`2026-07-12-demo-v6-2-fake-camera-phystwin-proof.md`](../docs/generated/2026-07-12-demo-v6-2-fake-camera-phystwin-proof.md)。
 
+## Canonical mesh cache 配置
+
+`config/default.yaml` 用下面三个字段控制 shape-prior canonical mesh：
+
+```yaml
+shape_prior:
+  object: null
+  object_prompt: "sloth"
+  cache_root: "/home/xinjie/qqtt_shape_prior_cache"
+```
+
+`object` 是具体物理实例和资产版本的 ID，不是分割 prompt。YAML `null` 表示
+完全禁用 cache：每次执行 upscale、第二次 SAM3.1 segmentation 和 SAM3D
+generate，并且不读取、不创建 cache entry。非 null 的安全单目录名启用
+read-through cache；例如资产更新时由操作员把 `sloth_plush_01_v1` 改为
+`sloth_plush_01_v2`。字符串 `"none"`/`"null"` 不具有关闭语义，会在启动时
+报错。
+
+`object_prompt` 是本轮观测的唯一语义标签来源，供 frame-0 SAM3.1、case label、
+upscale 和 cache miss 的第二次 segmentation 使用。它只作为生成 provenance
+写入 manifest，不参与 cache key；同一 `object` 后续改 prompt 仍会命中原资产。
+`cache_root` 必须位于本轮 `outputs` 根目录之外，并在 camera worker/prewarm
+启动前校验。
+
+启用 cache 后，启动时状态只有三种：entry 不存在为 `miss`；manifest、GLB、
+SHA-256 和 mesh 结构全部有效为 `hit`；entry 已出现但任一部分损坏则 fail fast，
+不会回退到重新生成。miss 在 SAM3D generate 后、align 前原子发布
+`schema_v1/<object>/object.glb` 与 `manifest.json`；因此本轮 align 失败时资产仍可
+用于下一次对齐调试。hit 把 GLB 原子复制到本轮 case，跳过 upscale、第二次
+segmentation 和 generate，但 align 与 sample 始终重新执行。两个进程发布同一
+ID 时由 per-object 文件锁串行化，已存在 entry 永不覆盖。
+
 ## 总体流水线与并发边界（Q1）
 
 1. **总体 pipeline 是什么？各阶段是线程还是进程，为什么这样设计？**
@@ -479,13 +511,20 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
     是本轮第一优化目标；`accounted_ms` 和 `unattributed_ms` 用于检查计时是否
     闭合。这里的排名只描述本轮，不能用单次结果代替多轮 p50/p95。
 
-    三个预热子进程还会在
+    cache hit 仍保留相同七个 stage 名称以维持 profile contract：`upscale` 和
+    `segment_image` 是零时长 `skipped_cache_hit`，`generate` 表示校验并复制
+    cached canonical mesh；miss/disabled 时 `generate` 的 wall duration 包含
+    GLB 校验、hash 和（仅 miss）原子发布，不留下 cache IO 的计时缺口。
+
+    cache miss 或 disabled 时，三个预热子进程还会在
     `<shape-prior-case>/shape/timing/{upscale,generate,align}.json` 写 READY 与
     completed 快照；sample 写 `sample.json`。父进程比较 READY wall time 与
     GO wall time，给出 `ready_before_go`、`ready_lead_ms` 和
     `startup_tail_on_critical_path_ms`，因此可以区分“模型已经预热完成”和
     “GO 发出后仍在补模型加载”。`profile_snapshot_to_parent_return_ms` 还把
     最后一次 profile snapshot 后的 JSON flush/进程退出成本单独暴露出来。
+    cache hit 只启动 align worker，并在 frame-0 初始 mask 后释放不再需要的
+    SAM3.1 runtime，不加载 upscale/SAM3D worker。
 
     子阶段拆分直接对应可优化动作：upscale 区分 model load/crop/inference/
     PNG write；generate 区分 prepare/model load/pipeline run/GLB/PLY export；
@@ -535,7 +574,9 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
     磁盘上会保留 offline-style shape-prior case、配置路径下的
     `shape_prior/points.npz`、capture 下的 `shape_prior/points.npz`、
     `<case>/shape/matching/final_mesh.glb`，以及 shape-prior sampling 生成的
-    `<case>/final_data.pkl`。
+    `<case>/final_data.pkl`。启用 cache 时还会在外部 `cache_root/schema_v1/`
+    保留 immutable `object.glb` + `manifest.json` entry；本轮 case 始终持有自己
+    的 `shape/object.glb` 副本，不使用 symlink。
 
     **源码证据：**
 
@@ -554,6 +595,9 @@ replay 和 100-iteration train 误报为已经终态成功。精确命令与观�
     - [`shape_prior.align.main`](shape_prior/align.py#L385) 导出
       `final_mesh.glb`；[`shape_prior.sample.main`](shape_prior/sample.py#L191)
       写 case `final_data.pkl`。
+    - [`ShapePriorMeshCache`](shape_prior/mesh_cache.py) 负责 object ID、manifest、
+      SHA-256、GLB 校验、原子发布和 run-local materialize；它不包含 alignment
+      或 sampling 逻辑。
 
 13. **Warm-up 状态如何校验？**
     `SegmentationStage._prepare_warmup` 在 SAM3.1 返回后校验 controller/object
