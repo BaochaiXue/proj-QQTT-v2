@@ -828,13 +828,8 @@ class ClientRequestPathTests(unittest.TestCase):
 
 
 class ConfigPlumbingTests(unittest.TestCase):
-    def test_orchestrator_cli_defaults_and_override(self) -> None:
+    def test_orchestrator_cli_cache_overrides(self) -> None:
         from demo_v6_2 import main_cli  # noqa: PLC0415
-
-        args = main_cli.build_parser().parse_args([])
-        self.assertIsNone(args.shape_prior_object)
-        self.assertEqual(args.shape_prior_object_prompt, "sloth")
-        self.assertTrue(str(args.shape_prior_cache_root))
 
         args = main_cli.build_parser().parse_args(
             [
@@ -848,6 +843,7 @@ class ConfigPlumbingTests(unittest.TestCase):
         )
         self.assertEqual(args.shape_prior_object, "sloth_v1")
         self.assertEqual(args.shape_prior_object_prompt, "sloth")
+        self.assertEqual(Path(args.shape_prior_cache_root), Path("/tmp/x"))
 
     def test_prompt_is_forwarded_when_shape_prior_warmup_is_disabled(self) -> None:
         from demo_v6_2 import main_cli  # noqa: PLC0415
@@ -912,6 +908,7 @@ class ConfigPlumbingTests(unittest.TestCase):
         base = main_cli.build_parser().parse_args(
             ["--shape-prior-warmup", "--shape-prior-controller-name", "hand"]
         )
+        base.shape_prior_object = None
         cmd = build_main_data_processing_command(
             base,
             capture_dir=Path("/tmp/cap"),
