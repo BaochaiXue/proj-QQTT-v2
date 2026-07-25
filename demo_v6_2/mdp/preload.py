@@ -150,8 +150,9 @@ class PerceptionPreloader:
     Legs mirror the worker-spawn conditions in ``_start_threads``: the EdgeTAM
     and SAM3.1 legs exist only when a seg worker will run, the tracker leg only
     when a tracker worker will run. ``start()`` is called once at ``run()``
-    entry — after the FFS engine constructor on ffs runs, so its global
-    ``torch.compile`` disposition still precedes the EdgeTAM compile wrap.
+    entry, after the FFS engine constructor on ffs runs (its ``torch.compile``
+    disable is scoped to the FFS imports and restored before it returns, so
+    the ordering is convenience, not a compile-correctness dependency).
     """
 
     def __init__(self, *, args: argparse.Namespace, mode: RunMode) -> None:
@@ -178,8 +179,14 @@ class PerceptionPreloader:
             if mode.object_tracking_enabled or mode.controller_tracking_enabled:
                 self._sam31 = warmup.Sam31PreloadThread(device=str(args.device))
         if mode.lossless_enabled or mode.tracker_enabled:
-            from demo_v6_2.mdp.tracker import build_tracker_adapter
+            from demo_v6_2.mdp.tracker import (
+                build_tracker_adapter,
+                pin_tapnet_import_path,
+            )
 
+            # Main-thread sys.path pin: after this no leg thread mutates
+            # sys.path, so the parallel import phases only ever read it.
+            pin_tapnet_import_path()
             self._tracker = _PreloadLeg(
                 "tracker", lambda: build_tracker_adapter(self.args)
             )

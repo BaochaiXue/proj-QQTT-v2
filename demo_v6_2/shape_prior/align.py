@@ -222,8 +222,17 @@ def pose_selection_render_superglue(
     render_candidates_ms = elapsed_ms(render_started_s)
     # Use superglue to match the features
     match_started_s = time.perf_counter()
+    # Formal call: no viz, no matches_i.npz cache reads/writes — the only
+    # matching artifact on the formal path is best_match.pkl (written by the
+    # caller as align's own resume point). cache/save stay available for
+    # diagnostic runs of image_pair_matching only. With every side channel
+    # off, the matcher runs its GPU-resident loop (one sync, winner-only
+    # materialization) with byte-identical outputs.
     best_idx, match_result = image_pair_matching(
         grays, crop_img, output_dir,
+        viz=False,
+        cache=False,
+        save=False,
         viz_best=bool(args.render_route_visualizations),
         candidate_features=candidate_features,
     )
@@ -395,35 +404,44 @@ def deform_ARAP_ray_registration(
     matching_points,
 ):
     """Return the deform a r a p ray registration."""
+    # index_position mirrors final_indices for O(1) membership/position
+    # lookups; append order, first-target-wins priority, and the in-place
+    # table clamp below are exactly the legacy list-scan semantics.
     final_indices = []
     final_targets = []
+    index_position = {}
+
+    def _append_first(index, target):
+        index_position[index] = len(final_indices)
+        final_indices.append(index)
+        final_targets.append(target)
+
     for index, target in zip(mesh_points_indices, matching_points):
-        if index not in final_indices:
-            final_indices.append(index)
-            final_targets.append(target)
+        if index not in index_position:
+            _append_first(index, target)
 
     for c2w, w2c in zip(c2ws, w2cs):
         new_indices, new_targets = get_matching_ray_registration(
             deform_kp_mesh_world, obs_points_world, mesh, trimesh_indices, c2w, w2c
         )
         for index, target in zip(new_indices, new_targets):
-            if index not in final_indices:
-                final_indices.append(index)
-                final_targets.append(target)
+            if index not in index_position:
+                _append_first(index, target)
 
     # Also need to adjust the positions to make sure they are above the table
-    indices = np.where(np.asarray(deform_kp_mesh_world.vertices)[:, 2] > 0)[0]
+    vertices = np.asarray(deform_kp_mesh_world.vertices)
+    indices = np.where(vertices[:, 2] > 0)[0]
     for index in indices:
-        if index not in final_indices:
-            final_indices.append(index)
-            target = np.asarray(deform_kp_mesh_world.vertices)[index].copy()
+        position = index_position.get(index)
+        if position is None:
+            target = vertices[index].copy()
             target[2] = 0
-            final_targets.append(target)
+            _append_first(index, target)
         else:
-            target = final_targets[final_indices.index(index)]
+            target = final_targets[position]
             if target[2] > 0:
                 target[2] = 0
-                final_targets[final_indices.index(index)] = target
+                final_targets[position] = target
 
     final_mesh_world = deform_kp_mesh_world.deform_as_rigid_as_possible(
         o3d.utility.IntVector(final_indices),

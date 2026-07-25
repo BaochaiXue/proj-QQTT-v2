@@ -212,3 +212,45 @@ compute, chunk contents, or the fake-live replay semantics. demo_v6_1 frozen.
   during a startup failure (process exit reaps them); a SAM3.1 preload
   failure surfaces only after the ~4.6s precompile (failure path only);
   ≤2 zombie workers on a mid-request failure (process exits shortly after).
+
+## Round 3 (2026-07-25): GPT exact-serial list — fact-check + implemented subset
+
+Fact-check verdicts on the round-3 external list:
+- CONFIRMED: per-candidate `.cpu().numpy()` syncs in `image_pair_matching`
+  (192x3 D2H + full CPU materialization, only the winner consumed); formal
+  align call inherited `cache=True` (192 stale-readable `matches_i.npz`
+  stat/read hazard, no manifest validation); matplotlib imported at module
+  top of both `match_pairs.py` and `models/utils.py`; SAM3.1 preload leg
+  imports outside `HEAVY_IMPORT_LOCK` + tapnet `sys.path` insert still
+  thread-side (residual race window); ARAP `deform_ARAP_ray_registration`
+  O(N^2) `list.index`/`not in` bookkeeping; FFS engine ctor + numba warmup
+  still serial before `preload.start()`.
+- Implemented this round (all byte-gated):
+  1. `pin_tapnet_import_path()` (mdp/tracker.py) — main-thread sys.path pin
+     in `PerceptionPreloader.__init__` before any leg starts; leg-side
+     inserts are now read-only no-ops. Structural fix for the tapnet import
+     flake; `HEAVY_IMPORT_LOCK` retained as defense in depth.
+  2. Formal align call passes `viz=False, cache=False, save=False`
+     explicitly — formal path can never read a stale `matches_i.npz`;
+     `best_match.pkl` (align's own resume point) unchanged.
+  3. GPU-resident matching loop (`gpu_resident = not (viz or viz_best or
+     save or cache)`): per-candidate matches stay on device, one
+     `torch.stack(counts).cpu()` sync, winner-only materialization. Same
+     forwards, same order, same B=1 — proven BYTE-IDENTICAL vs legacy loop
+     (3 seeds x 8 cands + 192-cand set, winner index + all four arrays).
+     Synthetic timing: 2.55s -> 2.51s (192 cands) — the loop is
+     compute-bound, not sync-bound; the external 0.2-0.8s estimate did not
+     materialize on this GPU.
+  4. matplotlib fully lazy on the formal matching path (viz-branch imports
+     in match_pairs.py; `_load_pyplot()` in models/utils.py) — align worker
+     no longer imports matplotlib at all when route viz is off.
+  5. ARAP `index_position` dict replaces list scans — identical append
+     order / first-target-wins / in-place clamp semantics.
+- NOT adopted (deferred, each needs its own GPU A/B round): B=1 CUDA
+  Graph / dual-stream matching, keypoint-count-bucketed micro-batch
+  (changes batch kernels — strictest gate), EdgeTAM compile-policy A/B
+  matrix (none/model-default vs vision-reduce-overhead; potentially
+  removes the 4.6-12.2s precompile AND the ~2.3s session tax — biggest
+  candidate win, full-video mask byte gate required), GeometryStage
+  (depth/PCD parallel to seg), FFS engine deserialization as a preload
+  leg, SAM3.1-mask-sourced shape prior (semantic change, owner sign-off).

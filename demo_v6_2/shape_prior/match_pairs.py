@@ -46,7 +46,6 @@
 
 from pathlib import Path
 import numpy as np
-import matplotlib.cm as cm
 import torch
 
 from demo_v6_2.models.matching import Matching
@@ -160,6 +159,13 @@ def image_pair_matching(
     candidate_features optionally supplies prepare_candidate_features output
     for every input image (align prerender); SuperPoint then runs zero times
     for candidates and once for the reference instead of once per pair.
+
+    When no viz/cache/save side channel is requested (the formal align call),
+    the loop runs GPU-resident: per-candidate matches stay on the device, the
+    match counts synchronize once after the loop, and only the winning pair
+    is copied to the CPU. The forwards themselves are unchanged — same model,
+    same batch size, same order — so the returned arrays are byte-identical
+    to the legacy per-candidate-sync loop; only D2H copy timing moves.
     """
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print('Running inference on device "{}"'.format(device))
@@ -185,6 +191,12 @@ def image_pair_matching(
 
     best_match = {}
     best_match_num = -1
+
+    gpu_resident = not (viz or viz_best or save or cache)
+    # (candidate keypoints, matches0, matching_scores0) tensors per candidate
+    # plus the running count tensors — synchronized once after the loop.
+    gpu_outputs = []
+    gpu_match_counts = []
 
     # Reference-side work is identical for every candidate pair: read the
     # reference image and run its SuperPoint once, then hand the features to
@@ -239,6 +251,18 @@ def image_pair_matching(
             data.update({k + "0": v for k, v in cand_features.items()})
             data.update({k + "1": v for k, v in ref_features.items()})
             pred = matching(data)
+            if gpu_resident:
+                matches0 = pred["matches0"][0]
+                gpu_outputs.append(
+                    (
+                        cand_features["keypoints"][0],
+                        matches0,
+                        pred["matching_scores0"][0],
+                    )
+                )
+                gpu_match_counts.append((matches0 > -1).sum())
+                timer.update("matcher")
+                continue
             kpts0 = cand_features["keypoints"][0].cpu().numpy()
             kpts1 = ref_kpts
             matches = pred["matches0"][0].cpu().numpy()
@@ -274,6 +298,8 @@ def image_pair_matching(
             best_match["mconf"] = mconf
 
         if do_viz:
+            import matplotlib.cm as cm
+
             color = cm.jet(mconf)
             text = [
                 "SuperGlue",
@@ -307,9 +333,26 @@ def image_pair_matching(
             )
 
             timer.update("viz_match")
+
+    if gpu_resident:
+        # One synchronization for every candidate's count; the winner picks
+        # with the same first-max tie-break as the legacy list.index below.
+        counts = torch.stack(gpu_match_counts).cpu().numpy()
+        match_nums = [int(count) for count in counts]
+        best_pose = match_nums.index(max(match_nums))
+        best_kpts0, best_matches0, best_scores0 = gpu_outputs[best_pose]
+        return best_pose, {
+            "keypoints0": best_kpts0.cpu().numpy(),
+            "keypoints1": ref_kpts,
+            "matches": best_matches0.cpu().numpy(),
+            "match_confidence": best_scores0.cpu().numpy(),
+        }
+
     best_pose = match_nums.index(max(match_nums))
 
     if viz_best:
+        import matplotlib.cm as cm
+
         viz_path = f"{output_dir}/best_match.{viz_extension}"
         color = cm.jet(best_match["mconf"])
         text = [

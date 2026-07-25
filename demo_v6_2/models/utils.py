@@ -49,9 +49,18 @@ from threading import Thread
 import numpy as np
 import cv2
 import torch
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('Agg')
+
+
+def _load_pyplot():
+    """Import matplotlib (Agg) on first plotting call.
+
+    The formal matching path never plots, so keeping matplotlib out of the
+    module import keeps it off the align worker's startup entirely.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    return plt
 
 
 class AverageTimer:
@@ -431,6 +440,7 @@ def pose_auc(errors, thresholds):
 
 def plot_image_pair(imgs, dpi=100, size=6, pad=.5):
     """Plot image pair."""
+    plt = _load_pyplot()
     n = len(imgs)
     assert n == 2, 'number of images must be two'
     figsize = (size*n, size*3/4) if size is not None else None
@@ -446,6 +456,7 @@ def plot_image_pair(imgs, dpi=100, size=6, pad=.5):
 
 def plot_keypoints(kpts0, kpts1, color='w', ps=2):
     """Plot keypoints."""
+    plt = _load_pyplot()
     ax = plt.gcf().axes
     ax[0].scatter(kpts0[:, 0], kpts0[:, 1], c=color, s=ps)
     ax[1].scatter(kpts1[:, 0], kpts1[:, 1], c=color, s=ps)
@@ -453,6 +464,9 @@ def plot_keypoints(kpts0, kpts1, color='w', ps=2):
 
 def plot_matches(kpts0, kpts1, color, lw=1.5, ps=4):
     """Plot matches."""
+    import matplotlib
+
+    plt = _load_pyplot()
     fig = plt.gcf()
     ax = fig.axes
     fig.canvas.draw()
@@ -480,6 +494,7 @@ def make_matching_plot(image0, image1, kpts0, kpts1, mkpts0, mkpts1,
                                 opencv_display, opencv_title, small_text)
         return
 
+    plt = _load_pyplot()
     plot_image_pair([image0, image1])
     if show_keypoints:
         plot_keypoints(kpts0, kpts1, color='k', ps=4)

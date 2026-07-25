@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -60,6 +61,28 @@ if TYPE_CHECKING:
     from demo_v6_2.mdp.session import CameraSession
 
 
+def pin_tapnet_import_path() -> None:
+    """Insert the tapnet repo into ``sys.path`` from the MAIN thread.
+
+    The preload legs import concurrently, so ``sys.path`` must be fully
+    settled before any leg thread starts — a thread-side insert can race
+    another leg's in-flight import and drop ``tapnet`` from its module
+    search. Calls the adapter's own resolution/insert code (both writers:
+    the factory-side raw path and availability()'s resolved path) so the
+    leg-side inserts find the entries already present and stay read-only.
+    """
+    from qqtt.tracking.backends.point_tracker_adapter import _prepend_repo_dir
+    from qqtt.tracking.backends.tapnextpp_adapter import TAPNextPPAdapter
+
+    repo_dir = str(DEFAULT_TAPNET_REPO_DIR)
+    _prepend_repo_dir(repo_dir)
+    resolved = TAPNextPPAdapter._resolve_repo_sys_path(repo_dir)
+    if resolved is not None:
+        path = str(resolved)
+        if path not in sys.path:
+            sys.path.insert(0, path)
+
+
 def build_tracker_adapter(args: argparse.Namespace) -> Any:
     """Build the TAPNext++ adapter and eagerly load its checkpoint.
 
@@ -78,9 +101,11 @@ def build_tracker_adapter(args: argparse.Namespace) -> Any:
         tapnextpp_compile=bool(False),
         tapnextpp_fast_postprocess=bool(True),
     )
-    # availability() prepends the tapnet repo to sys.path and imports it —
-    # serialized against the other preload legs' import phases; the heavy
-    # checkpoint load below stays parallel.
+    # sys.path is pinned on the main thread before any leg starts
+    # (pin_tapnet_import_path), so availability()'s insert is a read-only
+    # no-op here; the lock still serializes the import phases against the
+    # other legs' non-path import side effects. The heavy checkpoint load
+    # below stays parallel.
     with HEAVY_IMPORT_LOCK:
         adapter = build_point_tracker_adapter_factory(config)(0)
         availability = adapter.availability()
