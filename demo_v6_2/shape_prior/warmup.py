@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import atexit
 from dataclasses import dataclass, field
+import json
 import os
 from pathlib import Path
-import pickle
 import subprocess
 import sys
 import threading
@@ -17,17 +17,17 @@ import numpy as np
 
 from demo_v6_2.shape_prior.case import (
     ShapePriorFrame0Request,
-    points_array,
     require_name,
     write_shape_prior_case,
-    write_shape_prior_points_npz,
 )
-from demo_v6_2.shape_prior import mesh_cache
+from demo_v6_2.shape_prior import mesh_cache, sample as sample_stage
 from demo_v6_2.shape_prior.mesh_cache import (
     ShapePriorMeshCache,
     normalize_object_id,
 )
-from demo_v6_2.tracking import DEFAULT_VOLUME_SAMPLE_SIZE_M
+from demo_v6_2.orchestration.main_config import (
+    DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
+)
 from demo_v6_2.shape_prior.timing import (
     build_critical_path_analysis,
     critical_path_entry,
@@ -36,6 +36,7 @@ from demo_v6_2.shape_prior.timing import (
     pre_submit_timing,
 )
 from demo_v6_2.utils.atomic_io import atomic_json_dump
+from demo_v6_2.utils.stage_prewarm import PRERENDER_DIRECTIVE_PREFIX
 
 
 STATUS_DISABLED = "disabled"
@@ -44,8 +45,6 @@ STATUS_RUNNING = "running"
 STATUS_READY = "ready"
 STATUS_FAILED = "failed"
 
-DEFAULT_SHAPE_PRIOR_TIMEOUT_MS = 180_000
-DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES = "0"
 CASE_NAME = "shape_prior_frame0"
 # Surface/interior sampling counts follow the original PhysTwin offline
 # pipeline (data_process_origin/data_process_sample.py defaults).
@@ -53,17 +52,18 @@ DEFAULT_SURFACE_POINT_COUNT = 1024
 # Mirrors demo_v6_2/shape_prior/generate.py DEFAULT_SEED; passed explicitly so
 # the mesh-cache manifest records the exact generation seed.
 DEFAULT_GENERATE_SEED = 42
-POINTS_NPZ = Path("outputs") / "shape_prior" / "points.npz"
 # Pre-warmed one-shot stage workers: spawned at app boot with --wait-signal so
 # model loading happens off the frame-0 critical path; each worker runs its
 # stage once on GO and exits, releasing its whole CUDA context.
 PREWARM_STAGE_UPSCALE = "upscale"
 PREWARM_STAGE_GENERATE = "generate"
 PREWARM_STAGE_ALIGN = "align"
+PREWARM_STAGE_SAMPLE = "sample"
 PREWARM_STAGES = (
     PREWARM_STAGE_UPSCALE,
     PREWARM_STAGE_GENERATE,
     PREWARM_STAGE_ALIGN,
+    PREWARM_STAGE_SAMPLE,
 )
 PREWARM_WORKER_EXIT_TIMEOUT_S = 10.0
 
@@ -180,11 +180,30 @@ class PrewarmWorkerPool:
                     worker.kill()
                     worker.wait()
 
-    def pop_and_go(self, stage: str) -> tuple[float, float] | None:
-        """Pop the stage's worker (single-use) and signal GO, else None.
+    def send_directive(self, stage: str, line: str) -> bool:
+        """Write one pre-GO directive line to a still-waiting worker.
 
-        Returns the worker's critical-path time in ms and the GO wall
-        timestamp.
+        Best-effort: returns False when the worker is absent, already popped,
+        or dead. Write+flush happen under the pool lock so a concurrent
+        pop_and_go can never interleave its GO into this line.
+        """
+        with self._lock:
+            worker = self._workers.get(stage)
+            if worker is None or worker.poll() is not None:
+                return False
+            try:
+                assert worker.stdin is not None
+                worker.stdin.write(f"{line}\n")
+                worker.stdin.flush()
+            except (BrokenPipeError, OSError, ValueError):
+                return False
+            return True
+
+    def pop_and_go_nowait(self, stage: str) -> PendingStageReap | None:
+        """Pop the stage's worker (single-use) and signal GO without waiting.
+
+        Returns a reap handle, or None when no worker is pre-warmed for the
+        stage; a worker that died before GO raises (unchanged fail-fast).
         """
         with self._lock:
             worker = self._workers.pop(stage, None)
@@ -201,10 +220,87 @@ class PrewarmWorkerPool:
         worker.stdin.write("GO\n")
         worker.stdin.flush()
         worker.stdin.close()
-        returncode = worker.wait()
+        return PendingStageReap(
+            stage=stage,
+            worker=worker,
+            go_start_perf_s=start_s,
+            go_wall_time_s=float(go_wall_time_s),
+        )
+
+    def pop_and_go(self, stage: str) -> tuple[float, float] | None:
+        """Pop the stage's worker, signal GO, and wait for its exit, else None.
+
+        Returns the worker's critical-path time in ms and the GO wall
+        timestamp. Used by the stages whose CUDA context must be fully
+        released before the next stage runs (upscale/generate VRAM budget);
+        align and sample go through ``pop_and_go_nowait`` + deferred reap.
+        """
+        pending = self.pop_and_go_nowait(stage)
+        if pending is None:
+            return None
+        pending.reap()
+        return elapsed_ms(pending.go_start_perf_s), pending.go_wall_time_s
+
+
+class PendingStageReap:
+    """A GO-signalled prewarmed worker whose exit is collected later.
+
+    ``wait_snapshot`` returns as soon as the stage's COMPLETED profile
+    snapshot is on disk (all stage outputs precede it), so the parent's
+    critical path no longer pays the worker's CUDA-context exit tail;
+    ``reap`` collects the exit code before READY with the same
+    ``CalledProcessError`` failure surface as the synchronous wait.
+    """
+
+    def __init__(
+        self,
+        *,
+        stage: str,
+        worker: subprocess.Popen[str],
+        go_start_perf_s: float,
+        go_wall_time_s: float,
+    ) -> None:
+        """Initialize PendingStageReap."""
+        self.stage = str(stage)
+        self.worker = worker
+        self.go_start_perf_s = float(go_start_perf_s)
+        self.go_wall_time_s = float(go_wall_time_s)
+        self.reaped = False
+
+    def wait_snapshot(
+        self,
+        snapshot_completed: Callable[[], bool],
+        *,
+        poll_interval_s: float = 0.01,
+    ) -> float:
+        """Block until the completed snapshot exists; return elapsed ms.
+
+        A worker that exits before producing the snapshot surfaces exactly
+        like the synchronous path: nonzero exit raises CalledProcessError
+        here, a zero exit without a completed snapshot fails downstream in
+        ``load_completed_stage_profile``.
+        """
+        while True:
+            if snapshot_completed():
+                return elapsed_ms(self.go_start_perf_s)
+            returncode = self.worker.poll()
+            if returncode is not None:
+                if returncode != 0:
+                    self.reaped = True
+                    raise subprocess.CalledProcessError(
+                        returncode, self.worker.args
+                    )
+                return elapsed_ms(self.go_start_perf_s)
+            time.sleep(poll_interval_s)
+
+    def reap(self) -> None:
+        """Collect the worker's exit code, raising on nonzero exit."""
+        if self.reaped:
+            return
+        returncode = self.worker.wait()
+        self.reaped = True
         if returncode != 0:
-            raise subprocess.CalledProcessError(returncode, worker.args)
-        return elapsed_ms(start_s), float(go_wall_time_s)
+            raise subprocess.CalledProcessError(returncode, self.worker.args)
 
 
 class ShapePriorLocalClient:
@@ -226,16 +322,11 @@ class ShapePriorLocalClient:
         object_id: str | None = None,
         cuda_visible_devices: str = DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
         case_name: str = CASE_NAME,
-        points_npz: str | Path = POINTS_NPZ,
         sam3d_root: str | Path | None = None,
         sam3d_config: str | Path | None = None,
         sam31_device: str = "cuda",
-        volume_sample_size_m: float = DEFAULT_VOLUME_SAMPLE_SIZE_M,
     ) -> None:
         """Initialize ShapePriorLocalClient and resolve the mesh cache."""
-        if float(volume_sample_size_m) <= 0.0:
-            raise ValueError("volume_sample_size_m must be positive")
-        self.volume_sample_size_m = float(volume_sample_size_m)
         self.case_root = Path(case_root)
         self.cuda_visible_devices = str(cuda_visible_devices)
         # object_prompt is the SAM3.1 semantic label; object_id is the cache
@@ -247,7 +338,6 @@ class ShapePriorLocalClient:
             field_name="controller_name",
         )
         self.case_name = str(case_name)
-        self.points_npz = Path(points_npz)
         self.sam3d_root = None if sam3d_root is None else Path(sam3d_root)
         self.sam3d_config = None if sam3d_config is None else Path(sam3d_config)
         self.sam31_device = str(sam31_device)
@@ -346,16 +436,30 @@ class ShapePriorLocalClient:
             "--profile-json",
             str(self._stage_profile_path(PREWARM_STAGE_ALIGN)),
         ]
+        sample = [
+            sys.executable,
+            "-m",
+            "demo_v6_2.shape_prior.sample",
+            "--base_path",
+            str(self.case_root),
+            "--case_name",
+            self.case_name,
+            "--num_surface_points",
+            str(DEFAULT_SURFACE_POINT_COUNT),
+            "--profile-json",
+            str(self._stage_profile_path(PREWARM_STAGE_SAMPLE)),
+        ]
         return {
             PREWARM_STAGE_UPSCALE: upscale,
             PREWARM_STAGE_GENERATE: generate,
             PREWARM_STAGE_ALIGN: align,
+            PREWARM_STAGE_SAMPLE: sample,
         }
 
     def _prewarm_stages(self) -> tuple[str, ...]:
         """Return the explicit prewarm-stage set for this run's cache state."""
         if self._cache_resolution.hit:
-            return (PREWARM_STAGE_ALIGN,)
+            return (PREWARM_STAGE_ALIGN, PREWARM_STAGE_SAMPLE)
         return PREWARM_STAGES
 
     def prewarm(self) -> None:
@@ -386,6 +490,59 @@ class ShapePriorLocalClient:
         """Ask any unused pre-warmed workers to exit and reap them."""
         self._prewarm_pool.close()
 
+    def send_align_prerender(
+        self,
+        *,
+        width: int,
+        height: int,
+        fx_color: float,
+    ) -> bool:
+        """Ask the waiting align worker to pre-render pose candidates.
+
+        Mesh-cache hit only: the canonical mesh is already on disk (sha256
+        verified at resolve), so once frame-0 geometry is known the align
+        worker can render its 8x4 candidate views and extract their SuperPoint
+        features before GO. The worker re-verifies mesh sha + width/height/fov
+        at GO and falls back to a cold render on any mismatch, so this hint is
+        purely a scheduling optimization.
+        """
+        resolution = self._cache_resolution
+        if not resolution.hit:
+            return False
+        manifest = resolution.manifest or {}
+        mesh_sha256 = manifest.get("mesh_sha256")
+        if resolution.mesh_path is None or not mesh_sha256:
+            return False
+        payload = {
+            "mesh_path": str(resolution.mesh_path),
+            "mesh_sha256": str(mesh_sha256),
+            "width": int(width),
+            "height": int(height),
+            "fx": float(fx_color),
+        }
+        sent = self._prewarm_pool.send_directive(
+            PREWARM_STAGE_ALIGN,
+            f"{PRERENDER_DIRECTIVE_PREFIX}{json.dumps(payload)}",
+        )
+        if sent:
+            print(
+                "[demo_v6_1] align prerender hint sent "
+                f"(width={payload['width']} height={payload['height']} "
+                f"fx={payload['fx']:.3f})",
+                flush=True,
+            )
+        return sent
+
+    def _stage_snapshot_completed(self, stage: str) -> bool:
+        """Return whether the stage's COMPLETED profile snapshot is on disk."""
+        try:
+            load_completed_stage_profile(
+                self._stage_profile_path(stage), expected_stage=stage
+            )
+        except (FileNotFoundError, ValueError):
+            return False
+        return True
+
     def _run_stage_maybe_prewarmed(
         self,
         stage: str,
@@ -393,22 +550,56 @@ class ShapePriorLocalClient:
         *,
         env: dict[str, str],
         prewarmed_stages: list[str],
+        defer_reap: list[PendingStageReap] | None = None,
     ) -> tuple[float, dict[str, Any]]:
-        """Run a stage via its pre-warmed worker when present, else cold."""
-        prewarmed = self._prewarm_pool.pop_and_go(stage)
-        if prewarmed is None:
+        """Run a stage via its pre-warmed worker when present, else cold.
+
+        With ``defer_reap`` the prewarmed run returns at the stage's COMPLETED
+        snapshot (outputs already on disk) and appends the exit-reap handle to
+        the list; the caller collects every exit code before READY. Without
+        it the run waits for the worker's exit, as the upscale/generate VRAM
+        budget requires.
+        """
+        if defer_reap is None:
+            prewarmed = self._prewarm_pool.pop_and_go(stage)
+            if prewarmed is None:
+                stage_ms = _run_stage(command, env=env)
+                return stage_ms, {
+                    "execution_mode": "cold",
+                    "critical_path_ms": float(stage_ms),
+                    "go_wall_time_s": None,
+                }
+            stage_ms, go_wall_time_s = prewarmed
+            prewarmed_stages.append(stage)
+            return stage_ms, {
+                "execution_mode": "prewarmed",
+                "critical_path_ms": float(stage_ms),
+                "go_wall_time_s": float(go_wall_time_s),
+            }
+        # Drop any profile left from a previous run (or this worker's WAITING
+        # snapshot) before GO: wait_snapshot must only ever accept a COMPLETED
+        # snapshot written AFTER this GO. The worker rewrites WAITING before
+        # it reads stdin, so GO racing a slow import can otherwise meet a
+        # stale COMPLETED file. ready_wall_time_s survives in the worker's
+        # memory, not this file.
+        self._stage_profile_path(stage).unlink(missing_ok=True)
+        pending = self._prewarm_pool.pop_and_go_nowait(stage)
+        if pending is None:
             stage_ms = _run_stage(command, env=env)
             return stage_ms, {
                 "execution_mode": "cold",
                 "critical_path_ms": float(stage_ms),
                 "go_wall_time_s": None,
             }
-        stage_ms, go_wall_time_s = prewarmed
+        stage_ms = pending.wait_snapshot(
+            lambda: self._stage_snapshot_completed(stage),
+        )
+        defer_reap.append(pending)
         prewarmed_stages.append(stage)
         return stage_ms, {
             "execution_mode": "prewarmed",
             "critical_path_ms": float(stage_ms),
-            "go_wall_time_s": float(go_wall_time_s),
+            "go_wall_time_s": float(pending.go_wall_time_s),
         }
 
     def _completed_stage_details(
@@ -505,6 +696,10 @@ class ShapePriorLocalClient:
         env = self._stage_env()
         commands = self._stage_commands()
         prewarmed_stages: list[str] = []
+        # align/sample exit-reap handles: their workers' CUDA-context exit
+        # tails come off the critical path; every exit code is still collected
+        # (and can still fail the request) before READY.
+        deferred_reaps: list[PendingStageReap] = []
 
         high_resolution_path = paths["shape"] / "high_resolution.png"
         masked_image_path = paths["shape"] / "masked_image.png"
@@ -537,12 +732,17 @@ class ShapePriorLocalClient:
             stage: str,
             *,
             require_file: tuple[Path, str] | None = None,
+            defer_reap: list[PendingStageReap] | None = None,
         ) -> None:
             """Record one cold-or-prewarmed subprocess stage run."""
             record_stage(
                 stage,
                 lambda: self._run_stage_maybe_prewarmed(
-                    stage, commands[stage], env=env, prewarmed_stages=prewarmed_stages
+                    stage,
+                    commands[stage],
+                    env=env,
+                    prewarmed_stages=prewarmed_stages,
+                    defer_reap=defer_reap,
                 ),
                 lambda outcome: self._completed_stage_details(
                     stage, orchestration=outcome[1]
@@ -663,55 +863,57 @@ class ShapePriorLocalClient:
             canonical_mesh_sha256 = str(generated["mesh_sha256"])
             cache_publish_ms = float(generated["cache_publish_ms"])
 
-        record_subprocess_stage(PREWARM_STAGE_ALIGN)
+        record_subprocess_stage(PREWARM_STAGE_ALIGN, defer_reap=deferred_reaps)
 
-        sample_command = [
-            sys.executable,
-            "-m",
-            "demo_v6_2.shape_prior.sample",
-            "--base_path",
-            str(self.case_root),
-            "--case_name",
-            self.case_name,
-            "--shape_prior",
-            "--num_surface_points",
-            str(DEFAULT_SURFACE_POINT_COUNT),
-            "--volume_sample_size",
-            str(self.volume_sample_size_m),
-            "--profile-json",
-            str(self._stage_profile_path("sample")),
-        ]
-        record_stage(
-            "sample",
-            lambda: _run_stage(sample_command, env=env),
-            lambda sample_ms: self._completed_stage_details(
-                "sample",
-                orchestration={
-                    "execution_mode": "cold",
-                    "critical_path_ms": float(sample_ms),
-                    "go_wall_time_s": None,
-                },
+        record_subprocess_stage(
+            PREWARM_STAGE_SAMPLE,
+            require_file=(
+                paths["shape"] / sample_stage.CANDIDATES_FILENAME,
+                "shape-prior sample",
             ),
+            defer_reap=deferred_reaps,
         )
 
+        # Deferred-reap barrier BEFORE result_finalize: points.npz is the
+        # downstream launch trigger, so no worker exit code may still be
+        # outstanding when it lands on disk. READY stays gated on every exit
+        # code; the exit tails still overlapped the stages above (align's
+        # under sample, most of sample's under the snapshot/require gap).
+        reap_start_s = time.perf_counter()
+        reap_error: BaseException | None = None
+        for pending in deferred_reaps:
+            try:
+                pending.reap()
+            except BaseException as exc:
+                if reap_error is None:
+                    reap_error = exc
+        reap_end_s = time.perf_counter()
+        if reap_error is not None:
+            raise reap_error
+        if deferred_reaps:
+            critical_path.append(
+                critical_path_entry(
+                    stage="worker_reap",
+                    path_start_s=request_start_s,
+                    stage_start_s=reap_start_s,
+                    stage_end_s=reap_end_s,
+                    details={
+                        "stages": [pending.stage for pending in deferred_reaps]
+                    },
+                )
+            )
+
+        # The warm-up result now carries the RAW candidate pools; the final
+        # origin-parity selection (final tracked object first, one shared
+        # occupied set) happens once, at chunk-0 identity freeze, which also
+        # writes the final points.npz downstream trigger.
         finalize_start_s = time.perf_counter()
-        final_data_path = paths["case"] / "final_data.pkl"
-        _require_stage_file(final_data_path, stage_name="shape-prior sample")
+        candidates_path = paths["shape"] / sample_stage.CANDIDATES_FILENAME
+        _require_stage_file(candidates_path, stage_name="shape-prior sample")
         load_start_s = time.perf_counter()
-        with final_data_path.open("rb") as handle:
-            final_data = pickle.load(handle)
+        surface, interior = sample_stage.load_shape_prior_candidates(candidates_path)
         load_end_s = time.perf_counter()
-
-        surface = points_array(final_data["surface_points"], name="surface_points")
-        interior = points_array(final_data["interior_points"], name="interior_points")
         points = np.concatenate([surface, interior], axis=0)
-        points_write_start_s = time.perf_counter()
-        write_shape_prior_points_npz(
-            self.points_npz,
-            surface_points=surface,
-            interior_points=interior,
-        )
-        points_write_end_s = time.perf_counter()
         # Uniform display tint for prior points; real per-point colors are
         # not available for sampled surface/interior points.
         colors = np.tile(
@@ -726,11 +928,7 @@ class ShapePriorLocalClient:
                 stage_start_s=finalize_start_s,
                 stage_end_s=finalize_end_s,
                 details={
-                    "final_data_load_ms": elapsed_ms(load_start_s, load_end_s),
-                    "points_npz_write_ms": elapsed_ms(
-                        points_write_start_s,
-                        points_write_end_s,
-                    ),
+                    "candidates_load_ms": elapsed_ms(load_start_s, load_end_s),
                 },
             )
         )
@@ -755,10 +953,12 @@ class ShapePriorLocalClient:
             "shape_prior_align_ms": stage_ms["align"],
             "shape_prior_sample_ms": stage_ms["sample"],
             "shape_prior_result_finalize_ms": stage_ms["result_finalize"],
+            "shape_prior_worker_reap_ms": stage_ms.get("worker_reap", 0.0),
             "shape_prior_request_total_ms": request_total_ms,
             "shape_prior_timing": timing_analysis,
             "shape_prior_case_dir": str(paths["case"]),
-            "shape_prior_points_npz": str(self.points_npz),
+            "shape_prior_candidates_npz": str(candidates_path),
+            "shape_prior_structure_points_role": "raw_candidates",
             "shape_prior_warmup_cuda_visible_devices": self.cuda_visible_devices,
             "shape_prior_object_name": self.object_prompt,
             "shape_prior_object_prompt": self.object_prompt,
@@ -801,8 +1001,11 @@ class ShapePriorLocalClient:
             status=STATUS_READY,
             points_m=np.ascontiguousarray(points, dtype=np.float32),
             colors_rgb_u8=np.ascontiguousarray(colors, dtype=np.uint8),
-            surface_points_m=np.ascontiguousarray(surface, dtype=np.float32),
-            interior_points_m=np.ascontiguousarray(interior, dtype=np.float32),
+            # RAW candidates stay float64: they feed the chunk-0 origin-parity
+            # voxel selection, whose floor-binning must not see a float32
+            # round trip (points_m above is display-only).
+            surface_points_m=np.ascontiguousarray(surface, dtype=np.float64),
+            interior_points_m=np.ascontiguousarray(interior, dtype=np.float64),
             metadata=metadata,
         )
 
@@ -863,6 +1066,34 @@ class ShapePriorWarmupManager:
         return bool(
             self.enabled and self.client is not None and self.client.requires_generation
         )
+
+    def notify_frame0_geometry(
+        self,
+        *,
+        width: int,
+        height: int,
+        fx_color: float,
+    ) -> None:
+        """Forward frame-0 geometry so align can pre-render pose candidates.
+
+        Scheduling hint only (mesh-cache hit): the align worker verifies mesh
+        sha + geometry at GO and re-renders cold on mismatch, so failures here
+        are logged, never raised.
+        """
+        if not self.enabled or self.client is None:
+            return
+        try:
+            self.client.send_align_prerender(
+                width=int(width),
+                height=int(height),
+                fx_color=float(fx_color),
+            )
+        except Exception as exc:
+            print(
+                "[demo_v6_1] align prerender hint failed: "
+                f"{type(exc).__name__}: {exc}",
+                flush=True,
+            )
 
     def maybe_submit(self, frame0: ShapePriorFrame0Request) -> bool:
         """Maybe start or update submit."""
@@ -995,9 +1226,6 @@ class ShapePriorWarmupManager:
 
 
 __all__ = [
-    "DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES",
-    "DEFAULT_SHAPE_PRIOR_TIMEOUT_MS",
-    "POINTS_NPZ",
     "STATUS_DISABLED",
     "STATUS_PENDING",
     "STATUS_READY",

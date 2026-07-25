@@ -1,0 +1,14 @@
+{
+  "vertex_counts": {
+    "sam3d_raw": 3890,
+    "rigid_pnp_scale": 2788,
+    "arap_keypoint": 2788,
+    "arap_ray_table": 2788,
+    "final_mesh_glb": 3890
+  },
+  "observation_points": 20100,
+  "optimal_scale": 0.4969992186986213,
+  "pnp_reprojection_error_px": 11.274259434795093,
+  "final_correspondences": 39,
+  "replay_vs_saved_final_max_vertex_delta_m": 2.1369000374749092e-08
+}

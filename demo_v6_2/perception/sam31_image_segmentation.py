@@ -158,6 +158,31 @@ def release_sam31_image_segmentation_runtime() -> None:
     clear_sam31_image_processor_cache()
 
 
+def preload_sam31_image_runtime(
+    *,
+    device: str,
+    checkpoint_path: str | Path | None = None,
+    compile_model: bool = False,
+    confidence_threshold: float = 0.5,
+) -> dict[str, float | bool]:
+    """Load the SAM3.1 model into the runtime cache ahead of the first frame.
+
+    Populates _IMAGE_PROCESSOR_CACHE under the same cache key that a later
+    run_image_segmentation call with these arguments computes, so that call
+    becomes a cache hit and pays only inference. Weights, eval mode, and
+    inference settings are identical to the lazy path; this only moves the
+    checkpoint I/O and CUDA init earlier. Returns the build timing dict.
+    """
+    _, _, _, _, build_timing = _build_sam31_image_processor(
+        checkpoint_path=checkpoint_path,
+        compile_model=compile_model,
+        confidence_threshold=float(confidence_threshold),
+        device=device,
+        reuse_model=True,
+    )
+    return build_timing
+
+
 def _build_sam31_image_processor(
     *,
     checkpoint_path: str | Path | None,

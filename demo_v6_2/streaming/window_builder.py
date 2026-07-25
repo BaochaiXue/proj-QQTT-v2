@@ -181,11 +181,17 @@ def _chunk_data_window_from_prepared_frames(
         interior_points=interior_points,
         lookahead_frames=len(borrow_frames),
     )
+    # The runtime freezes the FINAL structure points at chunk 0 (unified
+    # origin sampling: object claims the shared occupancy before the raw
+    # candidates passed in above); every chunk publishes the frozen result.
+    final_surface_points, final_interior_points = (
+        session.tracking_runtime.frozen_structure_points()
+    )
 
     return ChunkDataWindow(
         track_process_data=track_process,
-        surface_points=surface_points,
-        interior_points=interior_points,
+        surface_points=final_surface_points,
+        interior_points=final_interior_points,
         fps=int(session.fps),
         serial_number=session.serial_number,
         depth_backend=str(

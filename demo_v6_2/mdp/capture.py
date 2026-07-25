@@ -20,6 +20,7 @@ from demo_v6_2.mdp.plumbing import (
 from demo_v6_2.utils.concurrency import LatestSlot, elapsed_ms as _elapsed_ms
 
 if TYPE_CHECKING:
+    from demo_v6_2.mdp.preload import PerceptionPreloader
     from demo_v6_2.mdp.session import CameraSession
 
 
@@ -41,6 +42,7 @@ class CaptureStage:
         capture_slot: LatestSlot[FramePacket],
         input_preview_slot: LatestSlot[FramePacket],
         stage_stats: StageStatsBoard,
+        preload: PerceptionPreloader,
         first_frame_segmented: threading.Event,
         stop_event: threading.Event,
         fatal: FatalErrorLatch,
@@ -53,6 +55,7 @@ class CaptureStage:
         self.capture_slot = capture_slot
         self.input_preview_slot = input_preview_slot
         self.stage_stats = stage_stats
+        self.preload = preload
         self._first_frame_segmented = first_frame_segmented
         self.stop_event = stop_event
         self.fatal = fatal
@@ -367,6 +370,31 @@ class CaptureStage:
                 )
             )
             last_preview_publish_s = now_s
+
+        # Frame-0 readiness barrier: hold frame-0 designation until every
+        # frame-0 consumer (EdgeTAM, SAM3.1, TAPNext++) has finished loading,
+        # pumping the preview meanwhile so the operator can frame the scene.
+        # The hold-still window opens at the frame captured AFTER the barrier,
+        # not at camera open. Pump frames never touch the pipeline
+        # (raw_seq/capture_slot/lossless are untouched). A failed preload leg
+        # also opens the barrier; its error re-raises on the consuming worker,
+        # whose fatal record sets stop_event.
+        if self.preload.has_frame0_consumers:
+            barrier_start_s = time.perf_counter()
+            while not self.stop_event.is_set():
+                if self.preload.wait_frame0_consumers_ready(timeout=0.005):
+                    print(
+                        "[warmup] frame-0 readiness barrier opened after "
+                        f"{time.perf_counter() - barrier_start_s:.2f}s; "
+                        "hold still now",
+                        flush=True,
+                    )
+                    break
+                pump_warmup_preview()
+            if self.stop_event.is_set():
+                if self.mode.lossless_enabled:
+                    self.lossless.finish_capture()
+                return
 
         while not self.stop_event.is_set():
             wait_start_s = time.perf_counter()

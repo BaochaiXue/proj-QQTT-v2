@@ -44,7 +44,8 @@ conda run -n demo_2_max --no-capture-output \
 ```
 
 这条命令先写 `<repo>/outputs/`，在 `shape_prior/points.npz` ready 后启动
-Phystwin_shen supervisor。外部 wrapper 随即启动 combined HTML viewer，默认
+Phystwin_shen supervisor（该文件由 chunk session 在 chunk-0 统一采样完成后
+原子写出，warm-up 阶段只发布 raw candidates）。外部 wrapper 随即启动 combined HTML viewer，默认
 地址是 `http://127.0.0.1:8765/`；页面开始监听后可用 Chrome 打开。浏览器本身
 不会启动 viewer server，所以应先看到 `STAGE_DOWNSTREAM_START`，或确认该 URL
 返回 HTTP 200。
@@ -253,9 +254,10 @@ ID 时由 per-object 文件锁串行化，已存在 entry 永不覆盖。
 
    seg 和 lossless tracker 会在同一个进程、同一个 CUDA device 上并发执行。
    EdgeTAM 的 `reduce-overhead` 会在第 2 次 model call 录制 CUDA graph；
-   TAPNext++ 第一次拿到 mask 时才构造 CUDA model，并在参数初始化时使用 RNG。
-   为避免两者重叠，live 与 replay 都会在发布 frame 0 后等待完整的首个
-   PCD/tracker pair，再释放 frame 1。这个启动 handshake 保留后续并发与 compile
+   TAPNext++ 的 CUDA model 现在由 preload leg 在 `run()` 入口就加载
+   （`tracker.build_tracker_adapter`），tracker worker 只 join 结果。
+   为避免首帧编译与其他 CUDA 工作重叠，live 与 replay 都会在发布 frame 0
+   后等待完整的首个 PCD/tracker pair，再释放 frame 1。这个启动 handshake 保留后续并发与 compile
    性能，同时满足 CUDA graph capture 期间不能有其他线程 CUDA 工作的约束。
    `_capture_recording_worker` **不是另一条线程**；replay 模式下，capture
    线程进入 `CaptureStage.run` 后同步调用它。
@@ -435,6 +437,43 @@ ID 时由 per-object 文件锁串行化，已存在 entry 永不覆盖。
      [`_run_segmentation_frame`](mdp/segmentation.py#L423) 并设置
      `add_prompt=True`。
 
+   **Warm-up 关键路径重叠（2026-07-19 + 2026-07-22，仅调度、输出逐字节
+   不变）：**
+   (a) 所有不依赖相机的模型加载在 `run()` 入口就并行启动
+   （`mdp/preload.py::PerceptionPreloader`）：EdgeTAM runtime
+   （`load_edgetam_runtime`）、SAM3.1（`Sam31PreloadThread`，启动点从 seg
+   worker 移到 preloader）、TAPNext++ checkpoint（`tracker.build_tracker_adapter`
+   + `adapter.warmup()`，取代旧的首个 mask packet 惰性加载）。各 stage worker
+   join 自己的 leg，leg 失败在 join 处按原路径重抛。`--depth-source ffs`
+   时 preloader 在 `FfsDepthEngine` 构造之后才启动，保持 FFS 的全局
+   `torch.compile` 处置先于 EdgeTAM compile wrap。live 下 capture 用
+   frame-0 就绪屏障（`wait_frame0_consumers_ready` + seg 的
+   `mark_seg_frame0_ready`）推迟 frame-0 指定：操作员的 hold-still 窗口从
+   屏障打开才开始，屏障期间 preview 泵持续显示画面（display-only）。
+   fake-live 无屏障（录制 frame 0 即锚点，回放/预览时钟不变）。frame-0
+   到达后 `run_sam31_first_frame_mask_bundle` 命中 runtime cache 只做推理，
+   模型是否保留仍由 `requires_sam31_reuse` 决定；mesh-cache 命中时释放
+   清理延后到 frame-0 EdgeTAM forward 之后的 daemon 线程
+   （`defer_release`），异常路径仍在原地释放。
+   (b) `image_pair_matching`（`shape_prior/match_pairs.py`）对参考裁剪图只跑
+   一次 SuperPoint，特征沿 192 对匹配复用（`Matching` 收到预计算 keypoints
+   时跳过 SuperPoint）。(c) mesh-cache 命中时，相机源一打开
+   （`runtime._notify_frame0_geometry_from_camera`，宽高来自 session、fx 来自
+   runtime k_color）就经 `ShapePriorWarmupManager.notify_frame0_geometry`
+   向等待 GO 的 align worker 发送 `PRERENDER` stdin 指令
+   （`utils/stage_prewarm.py`）；worker 在 GO 前渲染 192 个候选视角并抽取其
+   SuperPoint 特征，GO 时校验 mesh sha256 + 宽高 + fov，全部一致才复用，
+   任何不一致回退冷渲染——提示只可能提前算，不可能改变输出。
+   (d) align/sample 的 prewarmed worker 在 COMPLETED profile snapshot 出现时
+   即向父进程返回（`PrewarmWorkerPool.pop_and_go_nowait` +
+   `PendingStageReap`），CUDA context 退出尾巴与后续阶段重叠；READY 仍在
+   `worker_reap` 屏障处收齐全部退出码。(e) `write_shape_prior_case` 的九个
+   独立产物并行写（校验/派生全部先于任何写）。(f) EdgeTAM 的一次性
+   compile/capture 税由 seg 线程在 SAM3.1 join 窗口内的丢弃式带提示 dummy
+   forward 预付（`_precompile_first_forward`，
+   `DEFAULT_EDGETAM_PRECOMPILE_FIRST_FORWARD`，frame-0 mask 逐字节 A/B
+   通过后才允许为 True；frame-0 forward 实测 3.80s→2.30s）。
+
 9. **系统如何确认拿到的是 frame 0？**
    正式 strict 路径不是靠 sentinel 单独保证，而是靠 producer handshake
    加 FIFO：live 首次发布时 `output_seq == 0`，replay 首次显式调用
@@ -529,7 +568,7 @@ ID 时由 per-object 文件锁串行化，已存在 entry 永不覆盖。
     子阶段拆分直接对应可优化动作：upscale 区分 model load/crop/inference/
     PNG write；generate 区分 prepare/model load/pipeline run/GLB/PLY export；
     align 区分 input/render candidates/SuperGlue/PnP+scale/两段 ARAP/mesh
-    export；sample 区分 mesh load/surface+volume sample/voxel dedup/pickle。
+    export；sample 区分 mesh load/surface+volume sample/candidates 写出。
 
     generate 的 SAM3D 调用固定关闭 `with_layout_postprocess`：Demo v6.2 只消费
     GLB mesh 和 Gaussian，不使用 SAM3D 返回的 layout/pose 字段；随后独立的
@@ -571,10 +610,11 @@ ID 时由 per-object 文件锁串行化，已存在 entry 永不覆盖。
     `add_inputs_to_inference_session` 中注册。shape-prior manager 成功后还在
     `self._result` 中保留 `ShapePriorResult`。
 
-    磁盘上会保留 offline-style shape-prior case、配置路径下的
-    `shape_prior/points.npz`、capture 下的 `shape_prior/points.npz`、
-    `<case>/shape/matching/final_mesh.glb`，以及 shape-prior sampling 生成的
-    `<case>/final_data.pkl`。启用 cache 时还会在外部 `cache_root/schema_v1/`
+    磁盘上会保留 offline-style shape-prior case、warm-up 写出的
+    `<case>/shape/candidates.npz`（raw 1024 surface + 10000 interior 候选）、
+    capture 下的 shape npz（同样是候选）、`<case>/shape/matching/final_mesh.glb`，
+    以及 chunk-0 统一采样后由 chunk session 原子写出的
+    `<base_path>/shape_prior/points.npz`（最终 surface/interior）。启用 cache 时还会在外部 `cache_root/schema_v1/`
     保留 immutable `object.glb` + `manifest.json` entry；本轮 case 始终持有自己
     的 `shape/object.glb` 副本，不使用 symlink。
 
@@ -588,13 +628,14 @@ ID 时由 per-object 文件锁串行化，已存在 entry 永不覆盖。
       `self._result`，[`ready_result`](shape_prior/warmup.py#L766) 读取它。
     - `shape_prior/case.py` 是 frame-0 case 序列化模块：
       [`write_shape_prior_case`](shape_prior/case.py) 与
-      [`ShapePriorLocalClient.request_shape_prior`](shape_prior/warmup.py#L424)
-      写 case 和配置的 `points.npz`；
+      [`ShapePriorLocalClient.request_shape_prior`](shape_prior/warmup.py)
+      写 case 并读取 sample 阶段的 `candidates.npz`（不再写 points.npz）；
       [`HeadlessCaptureWriter.write_shape_prior_result`](mdp/headless_writer.py#L99)
       写 capture 副本。
     - [`shape_prior.align.main`](shape_prior/align.py#L385) 导出
-      `final_mesh.glb`；[`shape_prior.sample.main`](shape_prior/sample.py#L191)
-      写 case `final_data.pkl`。
+      `final_mesh.glb`；[`shape_prior.sample.main`](shape_prior/sample.py)
+      写 case `shape/candidates.npz`（raw 候选；最终 voxel 选择在 chunk-0
+      `tracking.sample_origin_unified_structure` 一次完成）。
     - [`ShapePriorMeshCache`](shape_prior/mesh_cache.py) 负责 object ID、manifest、
       SHA-256、GLB 校验、原子发布和 run-local materialize；它不包含 alignment
       或 sampling 逻辑。

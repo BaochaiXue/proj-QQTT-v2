@@ -525,94 +525,113 @@ class RuntimeInputModeTests(unittest.TestCase):
 
 
 class VolumeSampleTests(unittest.TestCase):
-    def test_volume_sample_semantics_match_origin(self) -> None:
+    def test_unified_sampling_matches_origin_reference(self) -> None:
+        """sample_origin_unified_structure vs a literal origin reimplementation.
+
+        The reference reproduces data_process_origin/data_process_sample.py
+        L47-L119 verbatim (np.unique value order, z>0 clamp, raw-candidate
+        min_bound, ONE shared grid, object -> surface -> interior priority).
+        """
         from demo_v6_2 import tracking
 
-        # Two points inside one 5 mm voxel, one point in a second voxel:
-        # exactly one survivor per occupied voxel, first occurrence wins,
-        # original order preserved (query identity freeze).
-        points = np.asarray(
-            [
-                [0.0010, 0.0010, 0.0010],
-                [0.0012, 0.0012, 0.0012],
-                [0.0080, 0.0010, 0.0010],
-            ],
-            dtype=np.float32,
-        )
-        keep = tracking._volume_sample_indices(
-            points,
-            surface_points=None,
-            interior_points=None,
-            volume_sample_size=0.005,
-        )
-        np.testing.assert_array_equal(keep, np.asarray([0, 2], dtype=np.int64))
+        rng = np.random.default_rng(11)
+        obj = rng.uniform(-0.05, 0.05, size=(3, 60, 3)).astype(np.float64)
+        obj[0, 5] = obj[0, 4]  # exact duplicate for the unique step
+        obj[0, 7, 2] = 0.004  # positive z exercises the above-table clamp
+        surface = rng.uniform(-0.06, 0.06, size=(40, 3))
+        interior = rng.uniform(-0.06, 0.06, size=(80, 3))
+        voxel = 0.005
 
-        # Deterministic, and coarser voxels never keep more points.
-        rng = np.random.default_rng(7)
-        cloud = rng.uniform(-0.05, 0.05, size=(400, 3)).astype(np.float32)
-        kept_counts = []
-        for voxel in (0.005, 0.0075, 0.010):
-            first = tracking._volume_sample_indices(
-                cloud,
-                surface_points=None,
-                interior_points=None,
-                volume_sample_size=voxel,
-            )
-            again = tracking._volume_sample_indices(
-                cloud,
-                surface_points=None,
-                interior_points=None,
-                volume_sample_size=voxel,
-            )
-            np.testing.assert_array_equal(first, again)
-            self.assertTrue(np.all(np.diff(first) > 0))
-            kept_counts.append(len(first))
-        self.assertTrue(kept_counts[0] >= kept_counts[1] >= kept_counts[2])
+        # --- literal origin reference ---
+        ref_obj = obj.copy()
+        unique_idx = np.unique(ref_obj[0], axis=0, return_index=True)[1]
+        ref_obj = ref_obj[:, unique_idx, :]
+        ref_obj[ref_obj[..., 2] > 0, 2] = 0
+        all_points = np.concatenate([surface, interior, ref_obj[0]], axis=0)
+        min_bound = np.min(all_points, axis=0)
+        grid_flag: dict[tuple, int] = {}
+        ref_object_local = []
+        for i in range(ref_obj.shape[1]):
+            key = tuple(np.floor((ref_obj[0, i] - min_bound) / voxel).astype(int))
+            if key not in grid_flag:
+                grid_flag[key] = 1
+                ref_object_local.append(i)
+        ref_surface = []
+        for i in range(surface.shape[0]):
+            key = tuple(np.floor((surface[i] - min_bound) / voxel).astype(int))
+            if key not in grid_flag:
+                grid_flag[key] = 1
+                ref_surface.append(surface[i])
+        ref_interior = []
+        for i in range(interior.shape[0]):
+            key = tuple(np.floor((interior[i] - min_bound) / voxel).astype(int))
+            if key not in grid_flag:
+                grid_flag[key] = 1
+                ref_interior.append(interior[i])
 
-        # Shape-prior points only shift the shared grid origin (origin
-        # data_process_sample.py includes them in min_bound).
-        shifted = tracking._volume_sample_indices(
-            points,
-            surface_points=np.asarray([[-0.0025, 0.0, 0.0]], dtype=np.float32),
-            interior_points=None,
-            volume_sample_size=0.005,
+        unified = tracking.sample_origin_unified_structure(
+            obj, surface, interior, volume_sample_size=voxel
         )
-        self.assertTrue(np.all(np.diff(shifted) > 0))
+        np.testing.assert_array_equal(
+            unified.object_source_indices, unique_idx[ref_object_local]
+        )
+        np.testing.assert_array_equal(unified.surface_points, np.asarray(ref_surface))
+        np.testing.assert_array_equal(unified.interior_points, np.asarray(ref_interior))
+        np.testing.assert_array_equal(unified.min_bound, min_bound)
+
+    def test_unified_sampling_priority_and_raw_min_bound(self) -> None:
+        from demo_v6_2 import tracking
+
+        voxel = 0.005
+        # object + surface share a voxel -> object wins; surface + interior
+        # share another -> surface wins.
+        obj = np.asarray([[[0.001, 0.001, -0.001]]], dtype=np.float64)
+        surface = np.asarray(
+            [[0.002, 0.002, -0.002], [0.0125, 0.001, -0.001]], dtype=np.float64
+        )
+        interior = np.asarray([[0.0135, 0.002, -0.002]], dtype=np.float64)
+        unified = tracking.sample_origin_unified_structure(
+            obj, surface, interior, volume_sample_size=voxel
+        )
+        np.testing.assert_array_equal(unified.object_source_indices, [0])
+        np.testing.assert_array_equal(unified.surface_points, [[0.0125, 0.001, -0.001]])
+        self.assertEqual(unified.interior_points.shape[0], 0)
+
+        # A raw extreme candidate anchors min_bound even when occupancy later
+        # rejects it (the exact defect of the old two-pass split).
+        extreme = np.asarray([[-0.1, -0.1, -0.1]], dtype=np.float64)
+        anchored = tracking.sample_origin_unified_structure(
+            np.asarray([[[-0.0999, -0.0999, -0.0999]]], dtype=np.float64),
+            extreme,
+            None,
+            volume_sample_size=voxel,
+        )
+        np.testing.assert_array_equal(anchored.min_bound, extreme[0])
+        # Same voxel as the object -> the extreme surface candidate is
+        # rejected by occupancy, yet it anchored the grid.
+        self.assertEqual(anchored.surface_points.shape[0], 0)
+        np.testing.assert_array_equal(anchored.object_source_indices, [0])
 
     def test_volume_sample_size_is_a_single_authoritative_config(self) -> None:
-        from demo_v6_2 import main_cli, tracking
+        from demo_v6_2 import main_cli
         from demo_v6_2.main_subprocess import build_main_data_processing_command
         from demo_v6_2.orchestration.main_config import DEFAULT_VOLUME_SAMPLE_SIZE_M
         from demo_v6_2.shape_prior import sample as shape_prior_sample
-        from demo_v6_2.shape_prior import warmup as shape_prior_warmup_module
         from demo_v6_2.streaming.data_payload import DATA_PROCESS_SAM3D_METRICS
 
-        # One code default (tracking) re-exported by the shape-prior stages,
-        # matching the authoritative config value.
-        self.assertEqual(tracking.DEFAULT_VOLUME_SAMPLE_SIZE_M, 0.005)
-        self.assertIs(
-            shape_prior_sample.DEFAULT_VOLUME_SAMPLE_SIZE_M,
-            tracking.DEFAULT_VOLUME_SAMPLE_SIZE_M,
-        )
-        self.assertIs(
-            shape_prior_warmup_module.DEFAULT_VOLUME_SAMPLE_SIZE_M,
-            tracking.DEFAULT_VOLUME_SAMPLE_SIZE_M,
-        )
+        # config/default.yaml is the only default location; 0.005 preserves
+        # data_process_origin volume-sampling parity.
         self.assertEqual(DEFAULT_VOLUME_SAMPLE_SIZE_M, 0.005)
 
-        # Camera CLI carries the knob and rejects non-positive values.
+        # The unified sampling happens ONLY in the orchestrator's tracking
+        # runtime at chunk 0: the camera CLI and the sample stage (raw
+        # candidates only) no longer carry a voxel-size knob at all.
         camera_args = mdp_cli.build_parser().parse_args([])
-        self.assertEqual(
-            float(camera_args.volume_sample_size_m),
-            tracking.DEFAULT_VOLUME_SAMPLE_SIZE_M,
+        self.assertFalse(hasattr(camera_args, "volume_sample_size_m"))
+        sample_args = shape_prior_sample.build_parser().parse_args(
+            ["--base_path", "/tmp/x", "--case_name", "case"]
         )
-        bad = mdp_cli.build_parser().parse_args(
-            ["--table-calibrate", "table_calibrate.pkl", "--volume-sample-size-m", "0"]
-        )
-        with self.assertRaisesRegex(ValueError, "volume-sample-size-m"):
-            mdp_cli.validate_and_normalize_args(bad)
-
-        # Orchestrator forwards the value into the camera subprocess command.
+        self.assertFalse(hasattr(sample_args, "volume_sample_size"))
         orch_args = main_cli.build_parser().parse_args(
             ["--volume-sample-size-m", "0.0075"]
         )
@@ -621,14 +640,13 @@ class VolumeSampleTests(unittest.TestCase):
             capture_dir=Path("/tmp/capture"),
             profile_json=Path("/tmp/profile.json"),
         )
-        flag_index = command.index("--volume-sample-size-m")
-        self.assertEqual(float(command[flag_index + 1]), 0.0075)
+        self.assertNotIn("--volume-sample-size-m", command)
 
         # The runtime consumes it, and the manifest constants no longer carry
         # a hardcoded copy (the true value is injected per run).
-        runtime = __import__("demo_v6_2.tracking", fromlist=["TrackingRuntime"])
+        tracking = __import__("demo_v6_2.tracking", fromlist=["TrackingRuntime"])
         self.assertEqual(
-            runtime.TrackingRuntime(volume_sample_size=0.0075).volume_sample_size,
+            tracking.TrackingRuntime(volume_sample_size=0.0075).volume_sample_size,
             0.0075,
         )
         self.assertNotIn("object_volume_sample_size_m", DATA_PROCESS_SAM3D_METRICS)
@@ -660,6 +678,89 @@ class PairedBuildResultTests(unittest.TestCase):
 
     def test_legacy_render_packet_is_absent(self) -> None:
         self.assertFalse(hasattr(mdp_packets, "PairedRenderPacket"))
+
+
+class WebVisualizerWiringTests(unittest.TestCase):
+    def test_web_frontend_builds_web_viewer_command(self) -> None:
+        from demo_v6_2 import main_cli
+        from demo_v6_2.main_subprocess import build_visualizer_command
+
+        args = main_cli.build_parser().parse_args([])
+        command = build_visualizer_command(args)
+        self.assertIn(
+            str(Path("demo_v6_2") / "visualization" / "visualize_track_web.py"),
+            command,
+        )
+        self.assertEqual(command[command.index("--port") + 1], "8767")
+        self.assertEqual(command[command.index("--host") + 1], "127.0.0.1")
+        self.assertNotIn("--layout", command)
+
+    def test_window_frontend_keeps_legacy_command(self) -> None:
+        from demo_v6_2 import main_cli
+        from demo_v6_2.main_subprocess import build_visualizer_command
+
+        args = main_cli.build_parser().parse_args(
+            ["--visualizer-frontend", "window"]
+        )
+        command = build_visualizer_command(args)
+        self.assertIn(
+            str(Path("demo_v6_2") / "visualization" / "visualize_track.py"),
+            command,
+        )
+        self.assertIn("--layout", command)
+
+    def test_web_frontend_starts_immediately_for_any_layout(self) -> None:
+        from demo_v6_2 import main_cli
+        from demo_v6_2.orchestration.run_config import OrchestratorRunConfig
+
+        for layout in ("side-by-side", "output-only"):
+            args = main_cli.build_parser().parse_args(
+                [
+                    "--downstream-mode",
+                    "demo_visualizer",
+                    "--visualizer-layout",
+                    layout,
+                ]
+            )
+            config = OrchestratorRunConfig.from_args(args)
+            self.assertEqual(config.visualizer_frontend, "web")
+            self.assertEqual(
+                config.visualizer_start_policy, "immediate_after_camera_start"
+            )
+
+        window_args = main_cli.build_parser().parse_args(
+            [
+                "--downstream-mode",
+                "demo_visualizer",
+                "--visualizer-frontend",
+                "window",
+                "--visualizer-layout",
+                "output-only",
+            ]
+        )
+        window_config = OrchestratorRunConfig.from_args(window_args)
+        self.assertEqual(
+            window_config.visualizer_start_policy,
+            "after_first_committed_online_chunk",
+        )
+
+    def test_web_port_is_validated_and_off_phystwin_defaults(self) -> None:
+        from demo_v6_2 import main_cli
+        from demo_v6_2.orchestration.run_config import OrchestratorRunConfig
+
+        args = main_cli.build_parser().parse_args(
+            [
+                "--downstream-mode",
+                "demo_visualizer",
+                "--visualizer-web-port",
+                "0",
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "visualizer-web-port"):
+            OrchestratorRunConfig.from_args(args)
+
+        default_port = main_cli.build_parser().parse_args([]).visualizer_web_port
+        self.assertNotIn(int(default_port), (8765, 8766))
 
 
 if __name__ == "__main__":

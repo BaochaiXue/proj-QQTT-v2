@@ -20,9 +20,12 @@ from demo_v6_2.orchestration.main_config import (
     DEFAULT_CAMERA_SERIALS,
     DEFAULT_DOWNSTREAM_MODE,
     DEFAULT_VISUALIZER_CUDA_VISIBLE_DEVICES,
+    DEFAULT_VISUALIZER_FRONTEND,
     DEFAULT_VISUALIZER_LAYOUT,
     DOWNSTREAM_MODE_DEMO_VISUALIZER,
     DOWNSTREAM_MODES,
+    VISUALIZER_FRONTEND_WEB,
+    VISUALIZER_FRONTENDS,
     VISUALIZER_LAYOUT_SIDE_BY_SIDE,
     VISUALIZER_LAYOUTS,
 )
@@ -93,6 +96,19 @@ def resolve_visualizer_layout(args: argparse.Namespace) -> str:
     if value not in VISUALIZER_LAYOUTS:
         raise ValueError(f"unsupported visualizer layout: {value!r}")
     return value
+
+
+def resolve_visualizer_frontend(args: argparse.Namespace) -> str:
+    """Validate and return the configured demo_visualizer frontend."""
+    value = str(getattr(args, "visualizer_frontend", DEFAULT_VISUALIZER_FRONTEND))
+    if value not in VISUALIZER_FRONTENDS:
+        raise ValueError(f"unsupported visualizer frontend: {value!r}")
+    return value
+
+
+def visualizer_uses_web_frontend(args: argparse.Namespace) -> bool:
+    """Return whether demo_visualizer serves the web page frontend."""
+    return resolve_visualizer_frontend(args) == VISUALIZER_FRONTEND_WEB
 
 
 def visualizer_uses_side_by_side(args: argparse.Namespace) -> bool:

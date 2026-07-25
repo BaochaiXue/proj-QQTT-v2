@@ -35,6 +35,7 @@ from demo_v6_2.mdp.plumbing import (
     LosslessPipeline,
     StageStatsBoard,
 )
+from demo_v6_2.mdp.preload import PerceptionPreloader
 from demo_v6_2.mdp.segmentation import SegmentationStage
 from demo_v6_2.mdp.session import CameraSession
 from demo_v6_2.mdp.shape_prior_flow import ShapePriorPublisher
@@ -99,6 +100,10 @@ class MainDataProcessingDemo:
             timeout_ms=int(args.shape_prior_timeout_ms),
         )
         self._first_frame_segmented = threading.Event()
+        # Camera-free model preloads (EdgeTAM, SAM3.1, TAPNext++): started at
+        # run() entry, consumed by the stage workers, and gating live frame-0
+        # designation via the capture readiness barrier.
+        self.preload = PerceptionPreloader(args=args, mode=self.mode)
 
         self.capture = CaptureStage(
             args=args,
@@ -108,6 +113,7 @@ class MainDataProcessingDemo:
             capture_slot=self.capture_slot,
             input_preview_slot=self.input_preview_slot,
             stage_stats=self.stage_stats,
+            preload=self.preload,
             first_frame_segmented=self._first_frame_segmented,
             stop_event=self.stop_event,
             fatal=self.fatal,
@@ -122,6 +128,7 @@ class MainDataProcessingDemo:
             stage_stats=self.stage_stats,
             shape_prior_manager=self.shape_prior_manager,
             warmup_rgb_preview=self.warmup_rgb_preview,
+            preload=self.preload,
             first_frame_segmented=self._first_frame_segmented,
             stop_event=self.stop_event,
             fatal=self.fatal,
@@ -143,6 +150,7 @@ class MainDataProcessingDemo:
             mask_slot=self.mask_slot,
             stage_stats=self.stage_stats,
             timeline_gate=self.timeline_gate,
+            preload=self.preload,
             stop_event=self.stop_event,
             fatal=self.fatal,
         )
@@ -174,11 +182,9 @@ class MainDataProcessingDemo:
                 controller_name=str(self.args.shape_prior_controller_name),
                 object_id=self.args.shape_prior_object,
                 cache_root=self.args.shape_prior_cache_root,
-                points_npz=Path(self.args.shape_prior_points_npz),
                 sam3d_root=self.args.shape_prior_sam3d_root,
                 sam3d_config=self.args.shape_prior_config,
                 sam31_device=str(self.args.device),
-                volume_sample_size_m=float(self.args.volume_sample_size_m),
             )
             if bool(self.args.shape_prior_prewarm_stage_workers):
                 client.prewarm()
@@ -267,7 +273,17 @@ class MainDataProcessingDemo:
                 cache_frames=DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES,
             )
             warm_up_numba_ffs_align()
+        # Camera-free perception preloads start before the camera opens. On
+        # ffs runs they start only after the FFS constructor above, so its
+        # global torch.compile disposition still precedes the EdgeTAM compile
+        # wrap (identical numerics to the old inline ordering).
+        self.preload.start()
         self.session.prepare_source(self.args, self.mode)
+        # Align PRERENDER hint from camera metadata: width/height/fx are known
+        # the moment the source is open, ~10s before frame 0 under the
+        # readiness barrier, so the mesh-cache-hit pre-render is fully
+        # absorbed before GO. Best-effort hint; align re-verifies at GO.
+        self._notify_frame0_geometry_from_camera()
         try:
             self.session.initialize_table_calibration(self.args)
             self.session.headless_capture_writer = HeadlessCaptureWriter(
@@ -284,6 +300,25 @@ class MainDataProcessingDemo:
         finally:
             self.stop()
         return 2 if self.fatal.snapshot() is not None else 0
+
+    def _notify_frame0_geometry_from_camera(self) -> None:
+        """Forward frame-0 width/height/fx to the shape-prior align prewarm.
+
+        The values match what frame-0 packets will carry (the recording
+        overrides session dimensions on fake-live; live packets copy the
+        runtime k_color), so the align worker's GO-time verification accepts
+        the pre-render. The manager logs and swallows hint failures.
+        """
+        if not bool(getattr(self.args, "shape_prior_warmup", False)):
+            return
+        runtime = self.session.camera_runtime
+        if runtime is None or runtime.k_color is None:
+            return
+        self.shape_prior_manager.notify_frame0_geometry(
+            width=int(self.session.width),
+            height=int(self.session.height),
+            fx_color=float(np.asarray(runtime.k_color)[0, 0]),
+        )
 
     def _finalize_headless_tracking_product(self) -> None:
         """Finalize headless tracking product."""
@@ -356,7 +391,12 @@ class MainDataProcessingDemo:
                 """Run worker."""
                 try:
                     worker_target()
-                except Exception as exc:
+                except BaseException as exc:
+                    # BaseException included: a preload leg re-raises e.g.
+                    # SystemExit from a model loader at its join, and only
+                    # fatal.record sets stop_event — swallowing it silently
+                    # would hang the barrier/pump loops instead of tearing
+                    # down. Worker threads never receive KeyboardInterrupt.
                     if not self.stop_event.is_set():
                         self.fatal.record(f"{worker_name} worker", exc)
 

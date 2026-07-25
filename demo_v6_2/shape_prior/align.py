@@ -1,8 +1,9 @@
 # Single-camera port of data_process_origin/align.py (original PhysTwin shape
 # alignment). The function bodies are kept structurally parallel to that
 # origin file on purpose -- keep them diffable. Demo-specific deltas are
-# limited to: package-local imports, VIS defaulting to False, and the
-# processed-mask camera_count validation.
+# limited to: package-local imports, VIS defaulting to False, the
+# processed-mask camera_count validation, stage timing, and the pre-GO
+# candidate prerender (mesh-cache hit; verified at GO, cold fallback).
 import json
 import os
 import pickle
@@ -18,8 +19,11 @@ import open3d as o3d  # noqa: E402
 import torch  # noqa: E402
 import trimesh  # noqa: E402
 from demo_v6_2.shape_prior.match_pairs import (  # noqa: E402
+    get_matching_model,
     image_pair_matching,
+    prepare_candidate_features,
 )
+from demo_v6_2.shape_prior.mesh_cache import sha256_file  # noqa: E402
 from demo_v6_2.shape_prior.timing import (  # noqa: E402
     StageProfileRun,
     elapsed_ms,
@@ -87,6 +91,82 @@ def existDir(dir_path):
         os.makedirs(dir_path)
 
 
+# Pre-GO candidate prerender (mesh-cache hit only). The orchestrator sends a
+# PRERENDER directive with frame-0 geometry while SAM3.1 still runs; the
+# waiting worker renders the 8x4 candidate views and their SuperPoint features
+# ahead of GO. main() verifies mesh sha + width/height/fov against the run's
+# real inputs before using it, so a stale or wrong prerender degrades to the
+# cold render instead of changing the output.
+_PRERENDER_STATE = None
+
+
+def _prerender_candidates(payload):
+    """Render pose candidates + SuperPoint features from a PRERENDER payload."""
+    mesh_path = str(payload["mesh_path"])
+    width = int(payload["width"])
+    height = int(payload["height"])
+    fx = float(payload["fx"])
+    # Same fov/radius math as main() + pose_selection_render_superglue; the
+    # cached mesh bytes equal the materialized case mesh (sha verified at GO).
+    fov = 2 * np.arctan(width / (2 * fx))
+    mesh = as_mesh(trimesh.load_mesh(mesh_path, force="mesh"))
+    bounding_box = mesh.bounds
+    max_dimension = np.linalg.norm(bounding_box[1] - bounding_box[0])
+    radius = 2 * (max_dimension / 2) / np.tan(fov / 2)
+    colors, depths, camera_poses, camera_intrinsics = render_multi_images(
+        mesh_path,
+        width,
+        height,
+        fov,
+        radius=radius,
+        num_samples=8,
+        num_ups=4,
+        device="cuda",
+    )
+    grays = [cv2.cvtColor(color, cv2.COLOR_BGR2GRAY) for color in colors]
+    matching = get_matching_model()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    candidate_features = [
+        prepare_candidate_features(matching, gray, device) for gray in grays
+    ]
+    return {
+        "mesh_sha256": str(payload["mesh_sha256"]),
+        "width": width,
+        "height": height,
+        "fov": float(fov),
+        "colors": colors,
+        "depths": depths,
+        "camera_poses": camera_poses,
+        "camera_intrinsics": camera_intrinsics,
+        "grays": grays,
+        "candidate_features": candidate_features,
+    }
+
+
+def _verify_prerender(state, *, mesh_path, raw_img, fov):
+    """Return the prerender state when it matches this run's inputs, else None."""
+    if state is None:
+        return None
+    mismatches = []
+    if (
+        int(raw_img.shape[1]) != state["width"]
+        or int(raw_img.shape[0]) != state["height"]
+    ):
+        mismatches.append("geometry")
+    if float(fov) != state["fov"]:
+        mismatches.append("fov")
+    if sha256_file(mesh_path) != state["mesh_sha256"]:
+        mismatches.append("mesh")
+    if mismatches:
+        print(
+            "[prewarm] align: discarding prerender "
+            f"(mismatch: {', '.join(mismatches)})",
+            flush=True,
+        )
+        return None
+    return state
+
+
 def pose_selection_render_superglue(
     raw_img,
     fov,
@@ -95,31 +175,48 @@ def pose_selection_render_superglue(
     crop_img,
     output_dir,
     timing_ms=None,
+    prerender=None,
 ):
     # Calculate suitable rendering radius
     """Return the pose selection render superglue."""
-    bounding_box = mesh.bounds
-    max_dimension = np.linalg.norm(bounding_box[1] - bounding_box[0])
-    radius = 2 * (max_dimension / 2) / np.tan(fov / 2)
-
-    # Render multimle images and feature matching
     render_started_s = time.perf_counter()
-    colors, depths, camera_poses, camera_intrinsics = render_multi_images(
-        mesh_path,
-        raw_img.shape[1],
-        raw_img.shape[0],
-        fov,
-        radius=radius,
-        num_samples=8,
-        num_ups=4,
-        device="cuda",
-    )
+    if prerender is not None:
+        # Verified prerender: identical mesh bytes + geometry, so these are
+        # the exact renders/features the cold branch below would produce.
+        colors = prerender["colors"]
+        depths = prerender["depths"]
+        camera_poses = prerender["camera_poses"]
+        camera_intrinsics = prerender["camera_intrinsics"]
+        grays = prerender["grays"]
+        candidate_features = prerender["candidate_features"]
+        print(
+            f"[prewarm] align: reusing {len(colors)} prerendered pose candidates",
+            flush=True,
+        )
+    else:
+        bounding_box = mesh.bounds
+        max_dimension = np.linalg.norm(bounding_box[1] - bounding_box[0])
+        radius = 2 * (max_dimension / 2) / np.tan(fov / 2)
+
+        # Render multimle images and feature matching
+        colors, depths, camera_poses, camera_intrinsics = render_multi_images(
+            mesh_path,
+            raw_img.shape[1],
+            raw_img.shape[0],
+            fov,
+            radius=radius,
+            num_samples=8,
+            num_ups=4,
+            device="cuda",
+        )
+        grays = [cv2.cvtColor(color, cv2.COLOR_BGR2GRAY) for color in colors]
+        candidate_features = None
     render_candidates_ms = elapsed_ms(render_started_s)
-    grays = [cv2.cvtColor(color, cv2.COLOR_BGR2GRAY) for color in colors]
     # Use superglue to match the features
     match_started_s = time.perf_counter()
     best_idx, match_result = image_pair_matching(
-        grays, crop_img, output_dir, viz_best=True
+        grays, crop_img, output_dir, viz_best=True,
+        candidate_features=candidate_features,
     )
     superglue_match_ms = elapsed_ms(match_started_s)
     print("matched point number", np.sum(match_result["matches"] > -1))
@@ -230,19 +327,27 @@ def get_matching_ray_registration(
     new_targets = []
     # trimesh used to do the ray-casting test
     mesh.vertices = np.asarray(vertices_cam)[trimesh_indices]
+    # One batched occlusion query instead of one intersects_location call per
+    # vertex. The trimesh backend resolves every ray independently (per-ray
+    # rtree candidates, per-ray closest-hit argmin under multiple_hits=False),
+    # so each per-vertex decision below is identical to the original
+    # one-ray-at-a-time loop; only the Python call overhead is removed.
+    ray_directions = np.array(
+        [vertex / np.linalg.norm(vertex) for vertex in vertices_cam]
+    )
+    locations, index_rays, _ = mesh.ray.intersects_location(
+        ray_origins=np.zeros((len(vertices_cam), 3)),
+        ray_directions=ray_directions,
+        multiple_hits=False,
+    )
+    first_hit = {}
+    for location, ray_index in zip(locations, index_rays):
+        first_hit.setdefault(int(ray_index), location)
     for index, vertex in enumerate(vertices_cam):
-        ray_origins = np.array([[0, 0, 0]])
-        ray_direction = vertex
-        ray_direction = ray_direction / np.linalg.norm(ray_direction)
-        ray_directions = np.array([ray_direction])
-        locations, _, _ = mesh.ray.intersects_location(
-            ray_origins=ray_origins, ray_directions=ray_directions, multiple_hits=False
-        )
-
         ignore_flag = False
 
-        if len(locations) > 0:
-            first_intersection = locations[0]
+        first_intersection = first_hit.get(index)
+        if first_intersection is not None:
             vertex_distance = np.linalg.norm(vertex)
             intersection_distance = np.linalg.norm(first_intersection)
             if intersection_distance < vertex_distance - 1e-4:
@@ -398,6 +503,7 @@ def main(argv=None):
         timing_ms={
             "module_import_ms": _MODULE_IMPORT_MS,
             "model_prewarm_ms": 0.0,
+            "prerender_ms": 0.0,
             "input_load_ms": 0.0,
             "render_candidates_ms": 0.0,
             "superglue_match_ms": 0.0,
@@ -432,7 +538,29 @@ def main(argv=None):
         _prewarm_models()
         timing_ms["model_prewarm_ms"] = elapsed_ms(prewarm_started_s)
         run.write_waiting()
-        if not run.wait_for_go():
+
+        def _handle_prerender_directive(payload_text):
+            # Prerender is a pre-GO optimization: any failure logs and falls
+            # back to the cold render at GO instead of killing the worker.
+            global _PRERENDER_STATE
+            directive_started_s = time.perf_counter()
+            try:
+                _PRERENDER_STATE = _prerender_candidates(json.loads(payload_text))
+                print(
+                    "[prewarm] align: prerendered "
+                    f"{len(_PRERENDER_STATE['colors'])} pose candidates pre-GO",
+                    flush=True,
+                )
+            except Exception as exc:
+                _PRERENDER_STATE = None
+                print(
+                    "[prewarm] align: prerender failed, will render cold: "
+                    f"{type(exc).__name__}: {exc}",
+                    flush=True,
+                )
+            timing_ms["prerender_ms"] = elapsed_ms(directive_started_s)
+
+        if not run.wait_for_go(on_directive=_handle_prerender_directive):
             return
 
     stage_started_s = time.perf_counter()
@@ -512,7 +640,15 @@ def main(argv=None):
         crop_img = cv2.cvtColor(crop_img, cv2.COLOR_RGB2GRAY)
         timing_ms["input_load_ms"] += elapsed_ms(crop_started_s)
 
-        # Render the object and match the features
+        # Render the object and match the features. A verified prerender
+        # (mesh sha + geometry + fov all matching) skips the candidate render
+        # and per-candidate SuperPoint; any mismatch renders cold.
+        prerender = _verify_prerender(
+            _PRERENDER_STATE,
+            mesh_path=mesh_path,
+            raw_img=raw_img,
+            fov=fov,
+        )
         best_color, best_depth, best_pose, match_result, camera_intrinsics = (
             pose_selection_render_superglue(
                 raw_img,
@@ -522,6 +658,7 @@ def main(argv=None):
                 crop_img,
                 output_dir=output_dir,
                 timing_ms=timing_ms,
+                prerender=prerender,
             )
         )
         with open(f"{output_dir}/best_match.pkl", "wb") as f:

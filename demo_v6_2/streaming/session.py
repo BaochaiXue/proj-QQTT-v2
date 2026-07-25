@@ -25,10 +25,11 @@ from demo_v6_2.streaming.jsonl_tail import (
     _relative_wall_s,
 )
 from demo_v6_2.streaming.warmup_trim import WarmupStartFilter
+from demo_v6_2.shape_prior.case import write_shape_prior_points_npz
 from demo_v6_2.streaming.capture_meta import (
     _read_json_file_stable,
     _wait_for_asap_case_dir,
-    _wait_for_shape_points,
+    _wait_for_shape_candidates,
 )
 from demo_v6_2.streaming.window_builder import _prepared_frame_from_row
 from demo_v6_2.streaming.materialize import _materialize_and_commit_window
@@ -80,18 +81,21 @@ class ChunkStreamSession:
         capture_dir: str | Path,
         *,
         base_path: str | Path,
-        case_prefix: str = "demo_v6_1",
-        chunk_size: int = 25,
-        fps: int = 5,
+        # Values with config/default.yaml knobs are required so this session
+        # never carries a second copy of a config default.
+        case_prefix: str,
+        chunk_size: int,
+        fps: int,
         max_chunks: int | None = None,
         capture_finished: Callable[[], bool],
         before_poll: Callable[[], None] | None = None,
-        poll_interval_s: float = 0.05,
+        poll_interval_s: float,
         surface_points: np.ndarray | None = None,
         interior_points: np.ndarray | None = None,
         require_shape_prior: bool = False,
-        shape_prior_wait_timeout_s: float = 300.0,
-        volume_sample_size_m: float = tracking.DEFAULT_VOLUME_SAMPLE_SIZE_M,
+        shape_prior_wait_timeout_s: float,
+        volume_sample_size_m: float,
+        points_npz: str | Path | None = None,
         on_chunk_written: Callable[[dict[str, Any]], None] | None = None,
         online_case_name: str | None = None,
         asap_augment: bool = True,
@@ -112,6 +116,11 @@ class ChunkStreamSession:
         self.require_shape_prior = bool(require_shape_prior)
         self.shape_prior_wait_timeout_s = float(shape_prior_wait_timeout_s)
         self.volume_sample_size_m = float(volume_sample_size_m)
+        # Final structure points are frozen by the chunk-0 unified sampling;
+        # points.npz (the downstream launch trigger) is written then.
+        self.points_npz = None if points_npz is None else Path(points_npz)
+        self.final_surface_points: np.ndarray | None = None
+        self.final_interior_points: np.ndarray | None = None
         self.on_chunk_written = on_chunk_written
         metadata = _wait_for_metadata(
             self.capture,
@@ -187,7 +196,19 @@ class ChunkStreamSession:
         pending: dict[str, Any],
         borrow_prepared: list[strict.PreparedPhysTwinFrame],
     ) -> dict[str, Any]:
-        latest_metadata, shape_surface, shape_interior = _wait_for_shape_points(self)
+        if self.final_surface_points is None:
+            # Chunk 0: wait for the RAW candidate pools; the unified sampling
+            # inside the identity freeze produces the final structure points.
+            latest_metadata, shape_surface, shape_interior = (
+                _wait_for_shape_candidates(self)
+            )
+        else:
+            latest_metadata = _wait_for_metadata(
+                self.capture,
+                capture_finished=self.capture_finished,
+                poll_interval_s=self.poll_interval_s,
+            )
+            shape_surface, shape_interior = None, None
         if (
             self.asap_runtime is not None
             and not self.asap_runtime.initialized
@@ -195,7 +216,7 @@ class ChunkStreamSession:
         ):
             latest_metadata = _wait_for_asap_case_dir(self, latest_metadata)
         try:
-            return _materialize_and_commit_window(
+            result = _materialize_and_commit_window(
                 self,
                 pending,
                 borrow_prepared,
@@ -209,6 +230,25 @@ class ChunkStreamSession:
             # "recording".
             self.online_writer.finish(status="failed")
             raise
+        if self.final_surface_points is None:
+            # Chunk 0 committed: freeze the unified structure points for the
+            # session and publish the downstream launch trigger.
+            surface, interior = self.tracking_runtime.frozen_structure_points()
+            self.final_surface_points = surface
+            self.final_interior_points = interior
+            if self.require_shape_prior and self.points_npz is not None:
+                write_shape_prior_points_npz(
+                    self.points_npz,
+                    surface_points=surface,
+                    interior_points=interior,
+                )
+                print(
+                    "[chunk-stream] unified structure points frozen "
+                    f"(surface={int(surface.shape[0])} "
+                    f"interior={int(interior.shape[0])}) -> {self.points_npz}",
+                    flush=True,
+                )
+        return result
 
     def _commit_pending(
         self, borrow_prepared: list[strict.PreparedPhysTwinFrame]

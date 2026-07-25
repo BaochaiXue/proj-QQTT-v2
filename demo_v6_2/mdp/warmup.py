@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -180,6 +181,77 @@ def release_sam31_runtime_resources(device: str = DEFAULT_SAM31_DEVICE) -> float
 
 
 # ---------------------------------------------------------------------------
+# SAM3.1 model preload (overlaps EdgeTAM load + frame-0 wait)
+# ---------------------------------------------------------------------------
+
+
+class Sam31PreloadThread:
+    """Load the SAM3.1 model on a daemon thread while frame 0 is still pending.
+
+    Today's frame-0 sequence pays the SAM3.1 checkpoint load only after frame 0
+    arrives; this thread moves that load to seg-worker start so it overlaps the
+    EdgeTAM load and the camera's first frame. ``wait_for_model`` re-raises any
+    load failure at the exact point the lazy in-line build would have raised.
+    """
+
+    def __init__(self, *, device: str) -> None:
+        """Initialize Sam31PreloadThread."""
+        self._device = str(device)
+        self._thread: threading.Thread | None = None
+        self._error: BaseException | None = None
+        self._preload_ms: float = 0.0
+
+    def start(self) -> None:
+        """Start the background load; safe to call at most once."""
+        if self._thread is not None:
+            raise RuntimeError("SAM3.1 preload already started")
+        self._thread = threading.Thread(
+            target=self._run,
+            name="sam31-preload",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _run(self) -> None:
+        from demo_v6_2.perception.sam31_image_segmentation import (  # noqa: PLC0415
+            preload_sam31_image_runtime,
+        )
+
+        started_s = time.perf_counter()
+        try:
+            preload_sam31_image_runtime(device=self._device)
+        except BaseException as exc:  # re-raised on the seg worker in wait
+            self._error = exc
+        finally:
+            self._preload_ms = (time.perf_counter() - started_s) * 1000.0
+
+    def wait_done(self, timeout: float) -> bool:
+        """Wait for the load to finish without re-raising; True when done.
+
+        Readiness-barrier probe only — failures still re-raise at
+        ``wait_for_model`` on the seg worker.
+        """
+        if self._thread is None:
+            return True
+        self._thread.join(max(0.0, float(timeout)))
+        return not self._thread.is_alive()
+
+    def wait_for_model(self) -> dict[str, float]:
+        """Block until the load finishes; re-raise its failure; return timings."""
+        if self._thread is None:
+            return {"preload_ms": 0.0, "join_wait_ms": 0.0}
+        join_started_s = time.perf_counter()
+        self._thread.join()
+        join_wait_ms = (time.perf_counter() - join_started_s) * 1000.0
+        if self._error is not None:
+            raise self._error
+        return {
+            "preload_ms": float(self._preload_ms),
+            "join_wait_ms": float(join_wait_ms),
+        }
+
+
+# ---------------------------------------------------------------------------
 # SAM3.1 frame-0 segmentation and initial-mask resolution
 # ---------------------------------------------------------------------------
 
@@ -190,8 +262,15 @@ def run_sam31_first_frame_mask_bundle(
     mode: RunMode,
     *,
     reuse_sam31_runtime: bool,
+    defer_release: bool = False,
 ) -> tuple[InitialMaskBundle, Sam31FrameTiming]:
-    """Run SAM3.1 on frame 0 and return the mask bundle plus its timings."""
+    """Run SAM3.1 on frame 0 and return the mask bundle plus its timings.
+
+    ``defer_release=True`` (cache-hit path only) skips the ~0.3s release
+    cleanup here so the caller can run it off the frame-0 critical path,
+    strictly after the frame-0 EdgeTAM forward; exception paths still release
+    inline so a failed warm-up never leaks the SAM3.1 runtime.
+    """
     from demo_v6_2.perception.sam31_image_segmentation import (
         parse_text_prompts,
         run_image_segmentation,
@@ -214,8 +293,10 @@ def run_sam31_first_frame_mask_bundle(
             Sam31FrameTiming(),
         )
     text_prompt = ",".join(prompt_labels)
-    # A cache miss (or disabled mesh cache) reuses this model for the second
-    # segmentation. A mesh-cache hit releases it after the initial mask.
+    # reuse_model=True consumes the Sam31PreloadThread cache entry (or caches
+    # the lazily built model). Whether the model SURVIVES this call is decided
+    # by reuse_sam31_runtime below: a mesh-cache miss keeps it for the second
+    # segmentation (trim only); a mesh-cache hit releases it entirely.
     reuse_sam31_runtime = bool(reuse_sam31_runtime)
     trim_cleanup_ms = 0.0
     release_cleanup_ms = 0.0
@@ -227,15 +308,20 @@ def run_sam31_first_frame_mask_bundle(
             compile_model=False,
             max_num_objects=16,
             device=str(args.device),
-            reuse_model=reuse_sam31_runtime,
+            reuse_model=True,
         )
-    finally:
+    except BaseException:
         if reuse_sam31_runtime:
-            trim_cleanup_ms = _reclaim_cuda_memory(
-                str(args.device), warn_context="CUDA trim"
-            )
+            _reclaim_cuda_memory(str(args.device), warn_context="CUDA trim")
         else:
-            release_cleanup_ms = release_sam31_runtime_resources(str(args.device))
+            release_sam31_runtime_resources(str(args.device))
+        raise
+    if reuse_sam31_runtime:
+        trim_cleanup_ms = _reclaim_cuda_memory(
+            str(args.device), warn_context="CUDA trim"
+        )
+    elif not defer_release:
+        release_cleanup_ms = release_sam31_runtime_resources(str(args.device))
     timing = Sam31FrameTiming(
         timing_ms=dict(result.get("timing_ms", {}) or {}),
         trim_cleanup_ms=float(trim_cleanup_ms),

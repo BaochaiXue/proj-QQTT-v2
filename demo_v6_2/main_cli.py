@@ -5,14 +5,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from demo_v6_2.mdp import constants as mdp_constants
-from demo_v6_2.shape_prior import warmup as shape_prior_warmup
 from demo_v6_2.orchestration.main_config import (
-    CAMERA_FPS_CHOICES,
     CONFIG_SHAPE_PRIOR_CONTROLLER_NAME,
     DEFAULT_CAMERA_COLOR_EXPOSURE,
     DEFAULT_CAMERA_COLOR_GAIN,
     DEFAULT_CAMERA_FPS,
+    DEFAULT_CAMERA_LOSSLESS_MAX_BACKLOG_SECONDS,
     DEFAULT_CASE_PREFIX,
     DEFAULT_CHUNK_POLL_INTERVAL_S,
     DEFAULT_VOLUME_SAMPLE_SIZE_M,
@@ -45,6 +43,7 @@ from demo_v6_2.orchestration.main_config import (
     DEFAULT_VISUALIZER_CONDA_ENV,
     DEFAULT_VISUALIZER_CONTROLLER_RADIUS,
     DEFAULT_VISUALIZER_CUDA_VISIBLE_DEVICES,
+    DEFAULT_VISUALIZER_FRONTEND,
     DEFAULT_VISUALIZER_LAYOUT,
     DEFAULT_VISUALIZER_OBJECT_COLOR_MODE,
     DEFAULT_VISUALIZER_OBJECT_RADIUS,
@@ -52,23 +51,13 @@ from demo_v6_2.orchestration.main_config import (
     DEFAULT_VISUALIZER_PLAYBACK_FPS,
     DEFAULT_VISUALIZER_POLL_SEC,
     DEFAULT_VISUALIZER_RENDER_MODE,
+    DEFAULT_VISUALIZER_WEB_HOST,
+    DEFAULT_VISUALIZER_WEB_PORT,
     DOWNSTREAM_MODES,
+    VISUALIZER_FRONTENDS,
     VISUALIZER_LAYOUTS,
 )
-
-
-assert (DEFAULT_SHAPE_PRIOR_TIMEOUT_MS, DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES) == (
-    shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
-    shape_prior_warmup.DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
-), "shape-prior timeout/warmup-devices defaults diverged: config/default.yaml vs demo_v6_2/shape_prior/warmup.py"
-
-assert (
-    DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD
-    == mdp_constants.DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD
-), (
-    "edgetam mask logit threshold defaults diverged: config/default.yaml vs "
-    "demo_v6_2/mdp/constants.py"
-)
+from demo_v6_2.utils.camera import SUPPORTED_CAPTURE_FPS
 
 
 # ---------------------------------------------------------------------------
@@ -199,16 +188,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--camera-lossless-max-backlog-seconds",
         type=float,
-        default=None,
+        default=DEFAULT_CAMERA_LOSSLESS_MAX_BACKLOG_SECONDS,
         help=(
-            "Optional strict lossless replay backlog window passed to Demo v6.2. "
-            "Omit it to keep Demo v6.2 defaults."
+            "Strict lossless replay backlog window forwarded to the camera "
+            "subprocess."
         ),
     )
     parser.add_argument(
         "--camera-fps",
         type=int,
-        choices=CAMERA_FPS_CHOICES,
+        choices=SUPPORTED_CAPTURE_FPS,
         default=DEFAULT_CAMERA_FPS,
         help=(
             "RealSense capture FPS passed to Demo v6.2 live camera. "
@@ -463,6 +452,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--phystwin-shen-cuda-visible-devices",
         default=DEFAULT_PHYSTWIN_SHEN_CUDA_VISIBLE_DEVICES,
+    )
+    parser.add_argument(
+        "--visualizer-frontend",
+        choices=VISUALIZER_FRONTENDS,
+        default=DEFAULT_VISUALIZER_FRONTEND,
+        help=(
+            "demo_visualizer frontend: web serves the chunk viewer as a local "
+            "web page; window opens the legacy viewer windows."
+        ),
+    )
+    parser.add_argument(
+        "--visualizer-web-host",
+        default=DEFAULT_VISUALIZER_WEB_HOST,
+        help="Bind host for the web viewer HTTP server.",
+    )
+    parser.add_argument(
+        "--visualizer-web-port",
+        type=int,
+        default=DEFAULT_VISUALIZER_WEB_PORT,
+        help="TCP port for the web viewer (phystwin_shen uses 8765/8766).",
     )
     parser.add_argument(
         "--visualizer-layout",

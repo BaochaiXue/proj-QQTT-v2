@@ -184,13 +184,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # start Phystwin
     def _ensure_phystwin_shen_running() -> None:
-        """Launch once at shape-prior readiness and enforce live health.
+        """Launch once at final structure readiness and enforce live health.
 
-        The warmup completion artifact (points.npz) doubles as the
-        "shape-prior GPU is free" signal: the SAM3D stage subprocesses have
-        exited by the time it is written. train_online_warp.py then keeps
-        waiting for the first committed chunk on its own. Without warmup there
-        is nothing to wait for, so the launch happens on the first poll.
+        points.npz now means "the chunk-0 unified origin sampling is done":
+        it is written by the chunk session right after chunk 0 commits, with
+        the final surface/interior points (the shape-prior heavy stages
+        exited earlier, at candidates-ready). Without warmup there is nothing
+        to wait for, so the launch happens on the first poll.
         """
         nonlocal phystwin_launch
         if not config.phystwin_shen_enabled:
@@ -237,12 +237,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             chunk_index=manifest.get("chunk_index"),
             track_status=manifest.get("track_process_status"),
         )
-        # Output-only viewing starts after the first committed chunk. The
-        # side-by-side visualizer starts immediately after launch so warmup
-        # RGB remains visible while the output side waits for chunks.
+        # The window output-only viewer starts after the first committed
+        # chunk; the web frontend and the side-by-side window start
+        # immediately (visualizer_start_policy).
         if (
-            config.demo_visualizer_enabled
-            and not config.side_by_side
+            config.visualizer_start_policy == "after_first_committed_online_chunk"
             and visualizer_process is None
         ):
             visualizer_process = start_visualizer(args)
@@ -266,7 +265,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             env=main_data_processing_env,
             start_new_session=True,
         )
-        if config.demo_visualizer_enabled and config.side_by_side:
+        if config.visualizer_start_policy == "immediate_after_camera_start":
             visualizer_process = start_visualizer(args, capture_dir=capture_dir)
             visualizer_started = True
             visualizer_start_wall_s = time.monotonic()
@@ -287,6 +286,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_chunks=args.max_chunks,
             capture_finished=lambda: main_data_processing.poll() is not None,
             require_shape_prior=bool(args.shape_prior_warmup),
+            points_npz=shape_prior_points_npz,
             shape_prior_wait_timeout_s=float(args.shape_prior_chunk_wait_timeout_s),
             poll_interval_s=float(args.chunk_poll_interval_s),
             surface_points=surface_points,

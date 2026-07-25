@@ -9,9 +9,9 @@ import signal
 import subprocess
 import time
 
+from demo_v6_2.mdp.constants import DEPTH_BACKEND_TO_DEPTH_SOURCE
 from demo_v6_2.orchestration.main_config import (
     CAPTURE_DIR_NAME,
-    DEFAULT_CAMERA_SOURCE_REPLAY_FPS,
     DEFAULT_TABLE_CALIBRATE_PATH,
     REPO_ROOT,
     VISUALIZER_LAYOUT_SIDE_BY_SIDE,
@@ -19,7 +19,6 @@ from demo_v6_2.orchestration.main_config import (
 from demo_v6_2.orchestration.main_layout import (
     resolve_online_dir,
     resolve_shape_prior_case_root,
-    resolve_shape_prior_points_npz,
     resolve_static_data_dir,
 )
 from demo_v6_2.main_options import (
@@ -30,6 +29,7 @@ from demo_v6_2.main_options import (
     resolve_visualizer_cuda_visible_devices,
     resolve_visualizer_layout,
     resolve_write_input_rgb_timeline,
+    visualizer_uses_web_frontend,
 )
 
 
@@ -39,6 +39,33 @@ def build_visualizer_command(
     capture_dir: Path | None = None,
 ) -> list[str]:
     """Build the viewer command; side-by-side mode also receives RGB timeline paths."""
+    if visualizer_uses_web_frontend(args):
+        # The web frontend serves now/past chunk rows itself; layout and
+        # capture-dir input timelines apply only to the window frontend.
+        return [
+            *python_command_prefix(getattr(args, "visualizer_conda_env", None)),
+            str(Path("demo_v6_2") / "visualization" / "visualize_track_web.py"),
+            "--online-dir",
+            str(resolve_online_dir(args)),
+            "--case-dir",
+            str(resolve_static_data_dir(args)),
+            "--host",
+            str(args.visualizer_web_host),
+            "--port",
+            str(int(args.visualizer_web_port)),
+            "--cam-idx",
+            str(int(args.visualizer_cam_idx)),
+            "--fps",
+            str(float(args.visualizer_playback_fps)),
+            "--object-stride",
+            str(int(args.visualizer_object_stride)),
+            "--object-radius",
+            str(int(args.visualizer_object_radius)),
+            "--controller-radius",
+            str(int(args.visualizer_controller_radius)),
+            "--object-color-mode",
+            str(args.visualizer_object_color_mode),
+        ]
     layout = resolve_visualizer_layout(args)
     capture_text = "" if capture_dir is None else str(capture_dir)
     input_timeline_text = (
@@ -96,12 +123,12 @@ def build_main_data_processing_command(
     """Build the subprocess command that emits prepared realtime frames."""
     script = Path("demo_v6_2") / "main_data_processing.py"
     camera_source_replay_fps = resolve_camera_source_replay_fps(args)
-    if str(args.depth_backend) == "ir-ffs":
-        depth_source = "ffs"
-    elif str(args.depth_backend) == "native-realsense":
-        depth_source = "realsense"
-    else:
-        raise ValueError(f"unsupported depth backend: {args.depth_backend!r}")
+    try:
+        depth_source = DEPTH_BACKEND_TO_DEPTH_SOURCE[str(args.depth_backend)]
+    except KeyError:
+        raise ValueError(
+            f"unsupported depth backend: {args.depth_backend!r}"
+        ) from None
     # Demo v6.2 chunks are bounded by the chunk publisher, not by the camera
     # subprocess; the camera runs until stopped, so shape-prior warmup time
     # never consumes the realtime RGB input timeline.
@@ -164,20 +191,15 @@ def build_main_data_processing_command(
         "--table-calibrate",
         str(DEFAULT_TABLE_CALIBRATE_PATH),
     ]
-    if args.camera_lossless_max_backlog_seconds is not None:
-        command.extend(
-            [
-                "--lossless-max-backlog-seconds",
-                str(float(args.camera_lossless_max_backlog_seconds)),
-            ]
-        )
+    command.extend(
+        [
+            "--lossless-max-backlog-seconds",
+            str(float(args.camera_lossless_max_backlog_seconds)),
+        ]
+    )
     if str(args.input_source) == "fake-live" and args.fake_live_case is not None:
         command.extend(["--fake-live-case", str(args.fake_live_case)])
-    if float(camera_source_replay_fps) != float(DEFAULT_CAMERA_SOURCE_REPLAY_FPS):
-        command.extend(["--lossless-input-fps", str(float(camera_source_replay_fps))])
-    command.extend(
-        ["--volume-sample-size-m", str(float(args.volume_sample_size_m))]
-    )
+    command.extend(["--lossless-input-fps", str(float(camera_source_replay_fps))])
     if bool(args.camera_headless_prepared_only):
         command.append("--headless-prepared-only")
     if resolve_write_input_rgb_timeline(args):
@@ -198,8 +220,6 @@ def build_main_data_processing_command(
                 str(args.shape_prior_cache_root),
                 "--shape-prior-case-root",
                 str(resolve_shape_prior_case_root(args)),
-                "--shape-prior-points-npz",
-                str(resolve_shape_prior_points_npz(args)),
             ]
         )
         # Absence of --shape-prior-object (YAML null) disables the cache; a

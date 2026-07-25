@@ -19,27 +19,34 @@ from qqtt.tracking.backends.point_tracker_adapter import (
 )
 
 from demo_v6_2.shape_prior import warmup as shape_prior_warmup
+# config/default.yaml (via main_config) is the single source of runtime
+# defaults; this parser must never carry its own copy of a config value.
 from demo_v6_2.orchestration.main_config import (
+    DEFAULT_CAMERA_FPS,
+    DEFAULT_CAMERA_LOSSLESS_MAX_BACKLOG_SECONDS,
+    DEFAULT_CAMERA_SOURCE_REPLAY_FPS,
+    DEFAULT_DATA_PROCESS_BASE_PATH,
+    DEFAULT_DEPTH_BACKEND,
+    DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD,
+    DEFAULT_INFERENCE_DTYPE,
+    DEFAULT_PERCEPTION_DEVICE,
     DEFAULT_SHAPE_PRIOR_CACHE_ROOT,
     DEFAULT_SHAPE_PRIOR_OBJECT_PROMPT,
+    DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
+    DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
+    DEFAULT_TRACKER_DEVICE,
+    DEFAULT_VOLUME_SAMPLE_SIZE_M,
+    SHAPE_PRIOR_CASE_DIR_NAME,
 )
-from demo_v6_2.tracking import DEFAULT_VOLUME_SAMPLE_SIZE_M
 from demo_v6_2.mdp.constants import (
     CONTROLLER_COLOR_RGB,
-    DEFAULT_DEPTH_SOURCE,
-    DEFAULT_DEVICE,
-    DEFAULT_DTYPE,
-    DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD,
-    DEFAULT_FAKE_LIVE_CASE,
     DEFAULT_FFS_REPO,
     DEFAULT_FFS_TRT_TWO_STAGE_MODEL_DIR,
-    DEFAULT_FPS,
-    DEFAULT_LOSSLESS_INPUT_FPS,
-    DEFAULT_LOSSLESS_MAX_BACKLOG_SECONDS,
     DEFAULT_PCD_MODE,
     DEFAULT_PROFILE,
     DEFAULT_TRACK_MODE,
     DEFAULT_TRACKER_BACKEND,
+    DEPTH_BACKEND_TO_DEPTH_SOURCE,
     DEPTH_SOURCES,
     EDGE_TAM_OBJECT_LABELS,
     HAND_A_ID,
@@ -102,7 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--fps",
         choices=SUPPORTED_CAPTURE_FPS,
         type=int,
-        default=DEFAULT_FPS,
+        default=DEFAULT_CAMERA_FPS,
         help="Capture FPS.",
     )
     parser.add_argument(
@@ -147,7 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="recording_case",
         type=Path,
         default=None,
-        help=f"Raw data_collect case for fake-live. Defaults to {DEFAULT_FAKE_LIVE_CASE}.",
+        help="Raw data_collect case; required for --input-source fake-live.",
     )
     parser.add_argument(
         "--replay-fps",
@@ -162,7 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lossless-max-backlog-seconds",
         type=float,
-        default=DEFAULT_LOSSLESS_MAX_BACKLOG_SECONDS,
+        default=DEFAULT_CAMERA_LOSSLESS_MAX_BACKLOG_SECONDS,
         help=(
             "Maximum strict lossless input-FPS backlog window before treating "
             "the run as stalled."
@@ -171,7 +178,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lossless-input-fps",
         type=float,
-        default=DEFAULT_LOSSLESS_INPUT_FPS,
+        default=DEFAULT_CAMERA_SOURCE_REPLAY_FPS,
         help=(
             "Strict lossless camera/fake-live cadence used by "
             "tracker-synchronized masked PCD replay."
@@ -189,7 +196,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--depth-source",
         choices=DEPTH_SOURCES,
-        default=DEFAULT_DEPTH_SOURCE,
+        default=DEPTH_BACKEND_TO_DEPTH_SOURCE[DEFAULT_DEPTH_BACKEND],
         help="Depth source. ffs streams color+IR stereo and runs local TensorRT FFS.",
     )
     parser.add_argument(
@@ -259,11 +266,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--tracker-device",
-        default="cuda:1",
-        help=(
-            "Device for the point-tracker backend. Use cuda:1 on the "
-            "dual-4090 demo machine."
-        ),
+        default=DEFAULT_TRACKER_DEVICE,
+        help="Device for the point-tracker backend.",
     )
     parser.add_argument(
         "--tracker-overlay-max-points",
@@ -272,17 +276,6 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Maximum visible tracker markers rendered per frame. "
             "0 renders all visible selected points."
-        ),
-    )
-    parser.add_argument(
-        "--volume-sample-size-m",
-        type=float,
-        default=DEFAULT_VOLUME_SAMPLE_SIZE_M,
-        help=(
-            "Voxel edge (meters) for the origin first-batch volume sampling "
-            "(data_process_origin/data_process_sample.py --volume_sample_size): "
-            "one object query per occupied voxel, frozen at chunk 0. Also "
-            "drives the shape-prior sample stage."
         ),
     )
     parser.add_argument(
@@ -326,22 +319,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--shape-prior-timeout-ms",
         type=int,
-        default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
+        default=DEFAULT_SHAPE_PRIOR_TIMEOUT_MS,
     )
     parser.add_argument("--shape-prior-profile-json", type=Path, default=None)
     parser.add_argument(
         "--shape-prior-case-root",
         type=Path,
-        default=Path("outputs") / "shape_prior_case",
-    )
-    parser.add_argument(
-        "--shape-prior-points-npz",
-        type=Path,
-        default=shape_prior_warmup.POINTS_NPZ,
+        default=DEFAULT_DATA_PROCESS_BASE_PATH / SHAPE_PRIOR_CASE_DIR_NAME,
     )
     parser.add_argument(
         "--shape-prior-warmup-cuda-visible-devices",
-        default=shape_prior_warmup.DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
+        default=DEFAULT_SHAPE_PRIOR_WARMUP_CUDA_VISIBLE_DEVICES,
     )
     parser.add_argument(
         "--shape-prior-controller-name",
@@ -380,12 +368,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(shape_prior_skip_route_visualizations=True)
     parser.add_argument(
-        "--device", default=DEFAULT_DEVICE, help="Inference device, usually cuda."
+        "--device",
+        default=DEFAULT_PERCEPTION_DEVICE,
+        help="Inference device, usually cuda.",
     )
     parser.add_argument(
         "--dtype",
         choices=("bfloat16", "float16", "float32"),
-        default=DEFAULT_DTYPE,
+        default=DEFAULT_INFERENCE_DTYPE,
         help="Inference dtype.",
     )
     parser.add_argument(
@@ -477,8 +467,6 @@ def validate_and_normalize_args(args: argparse.Namespace) -> None:
                 raise ValueError(message) from exc
             raise ValueError(f"Invalid table calibration file: {message}") from exc
         args.table_calibrate = table_path
-    if args.input_source == INPUT_SOURCE_FAKE_LIVE and args.recording_case is None:
-        args.recording_case = DEFAULT_FAKE_LIVE_CASE
     if _is_fake_live_input_source(str(args.input_source)):
         if args.recording_case is None:
             raise ValueError("--input-source fake-live requires --fake-live-case")
@@ -505,8 +493,6 @@ def validate_and_normalize_args(args: argparse.Namespace) -> None:
     args.shape_prior_object_prompt = object_prompt
     if not np.isfinite(float(args.edgetam_mask_logit_threshold)):
         raise ValueError("--edgetam-mask-logit-threshold must be finite")
-    if float(args.volume_sample_size_m) <= 0.0:
-        raise ValueError("--volume-sample-size-m must be positive")
     if int(args.shape_prior_timeout_ms) <= 0:
         raise ValueError("--shape-prior-timeout-ms must be positive")
     if args.table_calibrate is None:

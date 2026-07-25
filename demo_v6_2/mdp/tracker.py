@@ -56,7 +56,40 @@ from demo_v6_2.utils.query_rainbow import query_rainbow_colors_from_points_yx_rg
 
 
 if TYPE_CHECKING:
+    from demo_v6_2.mdp.preload import PerceptionPreloader
     from demo_v6_2.mdp.session import CameraSession
+
+
+def build_tracker_adapter(args: argparse.Namespace) -> Any:
+    """Build the TAPNext++ adapter and eagerly load its checkpoint.
+
+    Runs on the perception preload leg (before the camera opens): the 2.5GB
+    checkpoint load that used to happen lazily on the first mask packet is
+    part of the frame-0 readiness barrier instead. Same weights, same
+    inference path — only the load time moves.
+    """
+    config = PointTrackerAdapterConfig(
+        backend=str(args.tracker_backend),
+        device=str(args.tracker_device),
+        tapnet_repo_dir=str(DEFAULT_TAPNET_REPO_DIR),
+        tapnextpp_checkpoint=str(DEFAULT_TAPNEXTPP_CHECKPOINT),
+        tapnextpp_image_size=str("256,256"),
+        tapnextpp_autocast_dtype=str("fp16"),
+        tapnextpp_compile=bool(False),
+        tapnextpp_fast_postprocess=bool(True),
+    )
+    adapter = build_point_tracker_adapter_factory(config)(0)
+    availability = adapter.availability()
+    if not availability.available:
+        raise RuntimeError(availability.reason)
+    warmup_info = adapter.warmup()
+    print(
+        "[tapnextpp-tracker] "
+        f"preloaded checkpoint model_load_ms="
+        f"{float(warmup_info.get('model_load_ms', 0.0)):.1f}",
+        flush=True,
+    )
+    return adapter
 
 
 class TrackerStage:
@@ -71,6 +104,7 @@ class TrackerStage:
         mask_slot: LatestSlot[MaskPacket],
         stage_stats: StageStatsBoard,
         timeline_gate: FormalTimelineGate,
+        preload: PerceptionPreloader,
         stop_event: threading.Event,
         fatal: FatalErrorLatch,
     ) -> None:
@@ -81,27 +115,10 @@ class TrackerStage:
         self.mask_slot = mask_slot
         self.stage_stats = stage_stats
         self.timeline_gate = timeline_gate
+        self.preload = preload
         self.stop_event = stop_event
         self.fatal = fatal
         self._tracker_queries: TrackerQuerySet | None = None
-
-    def _build_tracker_adapter(self) -> Any:
-        """Build tracker adapter."""
-        config = PointTrackerAdapterConfig(
-            backend=str(self.args.tracker_backend),
-            device=str(self.args.tracker_device),
-            tapnet_repo_dir=str(DEFAULT_TAPNET_REPO_DIR),
-            tapnextpp_checkpoint=str(DEFAULT_TAPNEXTPP_CHECKPOINT),
-            tapnextpp_image_size=str("256,256"),
-            tapnextpp_autocast_dtype=str("fp16"),
-            tapnextpp_compile=bool(False),
-            tapnextpp_fast_postprocess=bool(True),
-        )
-        adapter = build_point_tracker_adapter_factory(config)(0)
-        availability = adapter.availability()
-        if not availability.available:
-            raise RuntimeError(availability.reason)
-        return adapter
 
     def _ensure_tracker_queries(
         self, mask_packet: MaskPacket, adapter: Any
@@ -376,7 +393,7 @@ class TrackerStage:
     def run_latest(self) -> None:
         """Latest-frame tracker worker loop (non-lossless)."""
         try:
-            adapter = self._build_tracker_adapter()
+            adapter = self.preload.join_tracker()
             print(
                 "[tapnextpp-tracker] "
                 f"backend={adapter.name} device={self.args.tracker_device} "
@@ -413,7 +430,7 @@ class TrackerStage:
     def run_lossless(self) -> None:
         """Strict same-seq tracker worker loop."""
         try:
-            adapter = self._build_tracker_adapter()
+            adapter = self.preload.join_tracker()
             print(
                 "[tapnextpp-tracker] "
                 f"backend={adapter.name} device={self.args.tracker_device} "

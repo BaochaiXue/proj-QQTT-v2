@@ -1,0 +1,7 @@
+{
+  "raw_superglue_matches": 64,
+  "depth_valid_matches": 39,
+  "pnp_reprojection_error_px": 11.274259434795093,
+  "final_correspondences": 39,
+  "optimal_scale": 0.4969992186986213
+}

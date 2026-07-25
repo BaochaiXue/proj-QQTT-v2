@@ -30,9 +30,12 @@ data_process_origin/data_process_track.py::filter_motion (0.01 m radius,
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Mapping
 
 import numpy as np
+
+from demo_v6_2.orchestration.main_config import DEFAULT_VOLUME_SAMPLE_SIZE_M
 
 MOTION_NEIGHBOR_DIST_M = 0.01
 MOTION_MIN_NEIGHBORS = 5
@@ -40,7 +43,6 @@ MOTION_SIMILARITY_M = 0.005
 CONTROLLER_FINAL_COUNT = 30
 NEIGHBOR_TABLE_SIZE = 100
 RECOVERY_NEIGHBOR_COUNT = 15
-DEFAULT_VOLUME_SAMPLE_SIZE_M = 0.005
 
 TRACK_STATUS_NORMAL = "normal"
 TRACK_STATUS_DEGRADED = "degraded"
@@ -169,39 +171,113 @@ def _farthest_point_sample_indices(points_xyz: np.ndarray, count: int) -> np.nda
     return np.asarray(selected, dtype=np.int64)
 
 
-def _volume_sample_indices(
-    first_frame_points: np.ndarray,
+@dataclass(frozen=True)
+class OriginUnifiedSample:
+    """Origin-parity unified structure sample (one shared 5mm occupancy).
+
+    ``object_source_indices`` index the INPUT object column axis, in origin's
+    claim order (``np.unique`` value order, not capture order).
+    """
+
+    object_source_indices: np.ndarray
+    surface_points: np.ndarray
+    interior_points: np.ndarray
+    min_bound: np.ndarray
+
+
+def _claim_unoccupied_voxel_indices(
+    points: np.ndarray,
     *,
-    surface_points: np.ndarray | None,
-    interior_points: np.ndarray | None,
-    volume_sample_size: float,
+    min_bound: np.ndarray,
+    voxel_size: float,
+    occupied: set[tuple[int, int, int]],
 ) -> np.ndarray:
-    """Origin first-frame volume sampling (one point per occupied voxel)."""
-    pts = np.asarray(first_frame_points, dtype=np.float32).reshape(-1, 3)
-    if pts.shape[0] == 0:
-        return np.empty((0,), dtype=np.int64)
+    """Indices of points landing in a not-yet-occupied voxel (mutates set)."""
+    kept: list[int] = []
+    for idx, point in enumerate(points):
+        key = tuple(
+            np.floor((point - min_bound) / voxel_size).astype(np.int64).tolist()
+        )
+        if key in occupied:
+            continue
+        occupied.add(key)
+        kept.append(int(idx))
+    return np.asarray(kept, dtype=np.int64)
+
+
+def sample_origin_unified_structure(
+    object_points: np.ndarray,
+    raw_surface_points: np.ndarray | None,
+    raw_interior_points: np.ndarray | None,
+    *,
+    volume_sample_size: float,
+) -> OriginUnifiedSample:
+    """Origin ``process_unique_points`` parity over the FINAL tracked object.
+
+    Mirrors data_process_origin/data_process_sample.py:47-119 exactly, with
+    the tracked object trajectories in place of the offline track data:
+    exact ``np.unique`` on frame 0 (value order kept — no re-sort to capture
+    order), the above-table ``z > 0 -> 0`` clamp on the published-trajectory
+    copy, ``min_bound`` over RAW surface/interior candidates plus the clamped
+    frame 0, and ONE shared occupied set claimed object -> surface ->
+    interior. float64 end to end (origin ran on numpy-default float64).
+    Motion gating stays upstream on the unclamped tracks, matching origin's
+    track-stage-then-sample-stage split.
+    """
     voxel = float(volume_sample_size)
     if voxel <= 0.0:
         raise ValueError("volume_sample_size must be positive")
-    bound_inputs = [pts]
-    for prior in (surface_points, interior_points):
-        if prior is None:
-            continue
-        prior_arr = np.asarray(prior, dtype=np.float32).reshape(-1, 3)
-        if prior_arr.size:
-            bound_inputs.append(prior_arr)
-    min_bound = np.min(np.concatenate(bound_inputs, axis=0), axis=0)
-    seen: set[tuple[int, int, int]] = set()
-    keep: list[int] = []
-    for idx, point in enumerate(pts):
-        grid_index = tuple(
-            np.floor((point - min_bound) / np.float32(voxel)).astype(np.int64).tolist()
+    pts = np.asarray(object_points, dtype=np.float64)
+    if pts.ndim != 3 or pts.shape[2] != 3:
+        raise ValueError(f"object_points must have shape (T, N, 3); got {pts.shape}")
+    surface = (
+        np.empty((0, 3), dtype=np.float64)
+        if raw_surface_points is None
+        else np.asarray(raw_surface_points, dtype=np.float64).reshape(-1, 3)
+    )
+    interior = (
+        np.empty((0, 3), dtype=np.float64)
+        if raw_interior_points is None
+        else np.asarray(raw_interior_points, dtype=np.float64).reshape(-1, 3)
+    )
+    if pts.shape[1]:
+        unique_idx = np.unique(pts[0], axis=0, return_index=True)[1]
+    else:
+        unique_idx = np.empty((0,), dtype=np.int64)
+    clamped = pts[:, unique_idx, :].copy()
+    clamped[clamped[..., 2] > 0, 2] = 0
+    bound_inputs = [
+        arr
+        for arr in (surface, interior, clamped[0] if clamped.shape[1] else None)
+        if arr is not None and arr.shape[0]
+    ]
+    if not bound_inputs:
+        return OriginUnifiedSample(
+            object_source_indices=np.empty((0,), dtype=np.int64),
+            surface_points=surface,
+            interior_points=interior,
+            min_bound=np.zeros((3,), dtype=np.float64),
         )
-        if grid_index in seen:
-            continue
-        seen.add(grid_index)
-        keep.append(int(idx))
-    return np.asarray(keep, dtype=np.int64)
+    min_bound = np.min(np.concatenate(bound_inputs, axis=0), axis=0)
+    occupied: set[tuple[int, int, int]] = set()
+    object_claims = _claim_unoccupied_voxel_indices(
+        clamped[0] if clamped.shape[1] else np.empty((0, 3), dtype=np.float64),
+        min_bound=min_bound,
+        voxel_size=voxel,
+        occupied=occupied,
+    )
+    surface_claims = _claim_unoccupied_voxel_indices(
+        surface, min_bound=min_bound, voxel_size=voxel, occupied=occupied
+    )
+    interior_claims = _claim_unoccupied_voxel_indices(
+        interior, min_bound=min_bound, voxel_size=voxel, occupied=occupied
+    )
+    return OriginUnifiedSample(
+        object_source_indices=np.asarray(unique_idx, dtype=np.int64)[object_claims],
+        surface_points=np.ascontiguousarray(surface[surface_claims]),
+        interior_points=np.ascontiguousarray(interior[interior_claims]),
+        min_bound=np.ascontiguousarray(min_bound, dtype=np.float64),
+    )
 
 
 def _rigid_transform(src: np.ndarray, dst: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -263,8 +339,18 @@ class TrackingRuntime:
         self._neighbor_table: dict[int, np.ndarray] = {}
         self._chunk0_controller_mask: np.ndarray | None = None
         self._object_column_indices: np.ndarray | None = None
+        # Frozen with the object columns by the chunk-0 unified sampling.
+        self._surface_points: np.ndarray | None = None
+        self._interior_points: np.ndarray | None = None
+        self._structure_min_bound: np.ndarray | None = None
         self._query_ids: np.ndarray | None = None
         self._query_semantic_labels: np.ndarray | None = None
+
+    def frozen_structure_points(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return the chunk-0-frozen final (surface, interior) points."""
+        if self._surface_points is None or self._interior_points is None:
+            raise RuntimeError("structure points are frozen at chunk 0")
+        return self._surface_points, self._interior_points
 
     def _freeze_identity(
         self,
@@ -337,15 +423,21 @@ class TrackingRuntime:
             valid_first = np.flatnonzero(obj_vis[0] & first_finite & first_nonzero)
         else:
             valid_first = np.empty((0,), dtype=np.int64)
-        sample_local = _volume_sample_indices(
-            obj_points[0, valid_first],
-            surface_points=surface_points,
-            interior_points=interior_points,
+        # Origin-parity unified sampling: the final tracked object claims the
+        # shared 5mm occupancy first, then the RAW surface/interior candidates
+        # — object columns AND the final structure points freeze together.
+        unified = sample_origin_unified_structure(
+            obj_points[:, valid_first, :],
+            surface_points,
+            interior_points,
             volume_sample_size=self.volume_sample_size,
         )
         self._object_column_indices = np.ascontiguousarray(
-            valid_first[sample_local], dtype=np.int64
+            valid_first[unified.object_source_indices], dtype=np.int64
         )
+        self._surface_points = unified.surface_points
+        self._interior_points = unified.interior_points
+        self._structure_min_bound = unified.min_bound
         self._query_ids = np.ascontiguousarray(window["query_ids"], dtype=np.int64)
         self._query_semantic_labels = np.ascontiguousarray(
             window["query_semantic_labels"], dtype=np.int8
@@ -625,7 +717,13 @@ class TrackingRuntime:
             dtype="<U8",
         )
 
-        result["object_points"] = np.ascontiguousarray(obj_points[:frame_count, cols, :])
+        # Origin data_process_sample.py:63 above-table clamp on the PUBLISHED
+        # trajectories (motion gating above already ran on the raw tracks).
+        published_object_points = np.ascontiguousarray(
+            obj_points[:frame_count, cols, :]
+        )
+        published_object_points[published_object_points[..., 2] > 0, 2] = 0
+        result["object_points"] = published_object_points
         result["object_colors"] = np.ascontiguousarray(
             np.asarray(result["object_colors"], dtype=np.float32)[:frame_count, cols, :]
         )

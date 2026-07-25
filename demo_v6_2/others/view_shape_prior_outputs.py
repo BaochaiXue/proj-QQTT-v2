@@ -252,7 +252,10 @@ def load_inspection(outputs_root: Path, case_name: str) -> ShapePriorInspection:
     if controller_mask.shape != points_world.shape[:2]:
         raise ValueError("controller mask shape does not match pcd image shape")
 
-    final_data_path = _require_file(case_dir / "final_data.pkl")
+    # The warmup case carries the frame-0 observations (track_process_data)
+    # and RAW candidates; the final surface/interior live in the
+    # chunk-0-frozen points.npz since the unified sampling.
+    final_data_path = _require_file(case_dir / "track_process_data.pkl")
     final_data = dict(_load_pickle(final_data_path))
     warmup_object_points = _frame_points(
         final_data["object_points"],
@@ -262,8 +265,14 @@ def load_inspection(outputs_root: Path, case_name: str) -> ShapePriorInspection:
         final_data["controller_points"],
         name="warmup controller_points",
     )
-    surface_points = _as_points(final_data["surface_points"], name="surface_points")
-    interior_points = _as_points(final_data["interior_points"], name="interior_points")
+    final_points = np.load(
+        _require_file(outputs_root / "shape_prior" / "points.npz"),
+        allow_pickle=False,
+    )
+    surface_points = _as_points(final_points["surface_points"], name="surface_points")
+    interior_points = _as_points(
+        final_points["interior_points"], name="interior_points"
+    )
 
     return ShapePriorInspection(
         outputs_root=outputs_root,

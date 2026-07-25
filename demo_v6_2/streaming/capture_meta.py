@@ -117,21 +117,23 @@ def _read_json_file_stable(
             time.sleep(max(0.0, float(poll_interval_s)))
 
 
-def _wait_for_shape_points(
+def _wait_for_shape_candidates(
     session: ChunkStreamSession,
 ) -> tuple[Mapping[str, Any], np.ndarray, np.ndarray]:
-    """Wait until required shape-prior points are available for final_data.
+    """Wait until the RAW shape-prior candidate pools are available.
 
-    Demo v6.2 keeps capture realtime, but ``final_data.pkl`` must contain
-    structure points when shape-prior warmup is enabled. Waiting happens here,
-    after a source window has closed, not inside the camera/tracker loop. The
-    ``ChunkStreamSession`` supplies the capture location, explicit point
-    overrides, and wait/poll policy.
+    The camera's warm-up publishes raw surface/interior CANDIDATES (origin
+    1024/10000 pools); the final origin-parity selection happens once, at
+    chunk-0 identity freeze, with the final tracked object claiming the
+    shared voxel occupancy first. Waiting happens here, after a source window
+    has closed, not inside the camera/tracker loop. Explicit NPY overrides
+    are also treated as candidates and go through the unified sampling.
     """
     explicit_points = (
         session.surface_points is not None or session.interior_points is not None
     )
     deadline = time.monotonic() + max(0.0, session.shape_prior_wait_timeout_s)
+    capture_already_finished = False
     while True:
         metadata = _read_json_file_stable(
             session.capture / "metadata.json",
@@ -170,10 +172,14 @@ def _wait_for_shape_points(
             )
         if session.before_poll is not None:
             session.before_poll()
-        if session.capture_finished() and time.monotonic() >= deadline:
+        # A finished capture can never produce candidates later; allow one
+        # extra poll so the camera's final metadata flush is not raced, then
+        # fail fast instead of waiting out the full timeout.
+        if capture_already_finished:
             raise RuntimeError(
                 "capture finished before required shape prior became ready"
             )
+        capture_already_finished = session.capture_finished()
         time.sleep(max(0.0, session.poll_interval_s))
 
 

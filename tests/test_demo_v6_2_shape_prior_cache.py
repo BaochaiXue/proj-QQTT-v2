@@ -376,6 +376,7 @@ class ClientCacheResolutionTests(unittest.TestCase):
         from demo_v6_2.shape_prior.warmup import (  # noqa: PLC0415
             PREWARM_STAGE_ALIGN,
             PREWARM_STAGE_GENERATE,
+            PREWARM_STAGE_SAMPLE,
             PREWARM_STAGE_UPSCALE,
             ShapePriorLocalClient,
         )
@@ -391,6 +392,7 @@ class ClientCacheResolutionTests(unittest.TestCase):
             "upscale": PREWARM_STAGE_UPSCALE,
             "generate": PREWARM_STAGE_GENERATE,
             "align": PREWARM_STAGE_ALIGN,
+            "sample": PREWARM_STAGE_SAMPLE,
         }
 
     def test_disabled_prewarms_full_chain(self) -> None:
@@ -404,7 +406,12 @@ class ClientCacheResolutionTests(unittest.TestCase):
             self.assertTrue(client.reuse_sam31_model)
             self.assertEqual(
                 set(client._prewarm_stages()),
-                {stages["upscale"], stages["generate"], stages["align"]},
+                {
+                    stages["upscale"],
+                    stages["generate"],
+                    stages["align"],
+                    stages["sample"],
+                },
             )
 
     def test_miss_prewarms_full_chain(self) -> None:
@@ -418,10 +425,15 @@ class ClientCacheResolutionTests(unittest.TestCase):
             self.assertTrue(client.reuse_sam31_model)
             self.assertEqual(
                 set(client._prewarm_stages()),
-                {stages["upscale"], stages["generate"], stages["align"]},
+                {
+                    stages["upscale"],
+                    stages["generate"],
+                    stages["align"],
+                    stages["sample"],
+                },
             )
 
-    def test_hit_prewarms_only_align(self) -> None:
+    def test_hit_prewarms_only_align_and_sample(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "cache"
             src = _write_box_glb(Path(tmp) / "gen" / "object.glb")
@@ -435,7 +447,10 @@ class ClientCacheResolutionTests(unittest.TestCase):
             )
             self.assertEqual(client.cache_resolution.status, CACHE_STATUS_HIT)
             self.assertFalse(client.reuse_sam31_model)
-            self.assertEqual(set(client._prewarm_stages()), {stages["align"]})
+            self.assertEqual(
+                set(client._prewarm_stages()),
+                {stages["align"], stages["sample"]},
+            )
 
     def test_corrupt_entry_fails_client_construction(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -505,7 +520,6 @@ class ClientRequestPathTests(unittest.TestCase):
             controller_name="hand",
             object_id=object_id,
             cache_root=cache_root,
-            points_npz=case_root.parent / "shape_prior_points.npz",
         )
 
     def _request_with_fake_stages(
@@ -519,6 +533,7 @@ class ClientRequestPathTests(unittest.TestCase):
         from demo_v6_2.shape_prior.warmup import (  # noqa: PLC0415
             PREWARM_STAGE_ALIGN,
             PREWARM_STAGE_GENERATE,
+            PREWARM_STAGE_SAMPLE,
             PREWARM_STAGE_UPSCALE,
         )
 
@@ -530,8 +545,9 @@ class ClientRequestPathTests(unittest.TestCase):
             *,
             env,
             prewarmed_stages,
+            defer_reap=None,
         ):
-            del env, prewarmed_stages
+            del env, prewarmed_stages, defer_reap
             calls.append(stage)
             if stage == fail_stage:
                 raise RuntimeError(f"forced {stage} failure")
@@ -543,6 +559,18 @@ class ClientRequestPathTests(unittest.TestCase):
                 _write_box_glb(shape_dir / mesh_cache.MESH_FILENAME)
             elif stage == PREWARM_STAGE_ALIGN:
                 _write_box_glb(shape_dir / "matching" / "final_mesh.glb")
+            elif stage == PREWARM_STAGE_SAMPLE:
+                from demo_v6_2.shape_prior import sample as sample_stage  # noqa: PLC0415
+
+                sample_stage.write_shape_prior_candidates(
+                    shape_dir / sample_stage.CANDIDATES_FILENAME,
+                    raw_surface_points=np.asarray(
+                        [[0.0, 0.0, 0.0]], dtype=np.float64
+                    ),
+                    raw_interior_points=np.asarray(
+                        [[0.1, 0.1, 0.1]], dtype=np.float64
+                    ),
+                )
             else:  # pragma: no cover - an unexpected stage is a test failure
                 raise AssertionError(f"unexpected subprocess stage: {stage}")
             return 0.1, {
@@ -566,26 +594,6 @@ class ClientRequestPathTests(unittest.TestCase):
             Image.fromarray(np.zeros((2, 2, 4), dtype=np.uint8)).save(output)
             return output, {"execution_mode": "in_process"}
 
-        def run_sample(_command, *, env):
-            del env
-            calls.append("sample")
-            if fail_stage == "sample":
-                raise RuntimeError("forced sample failure")
-            final_data_path = client.case_root / client.case_name / "final_data.pkl"
-            with final_data_path.open("wb") as handle:
-                pickle.dump(
-                    {
-                        "surface_points": np.asarray(
-                            [[0.0, 0.0, 0.0]], dtype=np.float32
-                        ),
-                        "interior_points": np.asarray(
-                            [[0.1, 0.1, 0.1]], dtype=np.float32
-                        ),
-                    },
-                    handle,
-                )
-            return 0.1
-
         with (
             patch.object(
                 client,
@@ -601,10 +609,6 @@ class ClientRequestPathTests(unittest.TestCase):
                 "demo_v6_2.perception.sam31_image_segmentation."
                 "segment_image_to_origin_rgba",
                 side_effect=segment_image,
-            ),
-            patch(
-                "demo_v6_2.shape_prior.warmup._run_stage",
-                side_effect=run_sample,
             ),
         ):
             return client.request_shape_prior(_frame0_request())

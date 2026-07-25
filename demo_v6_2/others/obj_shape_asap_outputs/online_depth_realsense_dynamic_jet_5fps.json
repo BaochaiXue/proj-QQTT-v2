@@ -1,9 +1,9 @@
 {
   "colorizer": "realsense_dynamic_jet",
   "depth_encoding": "uint16_millimeters_invalid_zero",
-  "first_window_grid_path": "outputs_v6_1/diagnostics/default_fake_live_first_window_raw_depth_full.png",
+  "first_window_grid_path": "outputs/diagnostics/default_fake_live_first_window_raw_depth_full.png",
   "fps": 5.0,
-  "frame_count": 560,
+  "frame_count": 840,
   "height": 480,
   "invalid_depth_rgb": [
     0,
@@ -12,7 +12,7 @@
   ],
   "output_video_path": "demo_v6_2/others/obj_shape_asap_outputs/online_depth_realsense_dynamic_jet_5fps.mp4",
   "source_frame_first": 0,
-  "source_frame_last": 5657,
+  "source_frame_last": 5652,
   "style_reference": "librealsense rs2::colorizer Dynamic Jet",
   "width": 848
 }

@@ -7,7 +7,7 @@ import math
 import os
 from pathlib import Path
 import time
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from demo_v6_2.utils import stage_prewarm
 from demo_v6_2.utils.atomic_io import atomic_json_dump
@@ -171,10 +171,19 @@ class StageProfileRun:
         self.ready_wall_time_s = time.time()
         self._write(STAGE_PROFILE_STATUS_WAITING)
 
-    def wait_for_go(self) -> bool:
-        """Block for GO, recording the idle wait; True means run the stage."""
+    def wait_for_go(
+        self,
+        *,
+        on_directive: Callable[[str], None] | None = None,
+    ) -> bool:
+        """Block for GO, recording the idle wait; True means run the stage.
+
+        ``on_directive`` handles optional pre-GO directive lines (see
+        stage_prewarm); their handling time is part of go_wait_ms, which stays
+        excluded from the stage's compute total.
+        """
         go_wait_started_s = time.perf_counter()
-        should_run = stage_prewarm.wait_for_go(self.stage)
+        should_run = stage_prewarm.wait_for_go(self.stage, on_directive=on_directive)
         self.timing_ms["go_wait_ms"] = elapsed_ms(go_wait_started_s)
         return should_run
 

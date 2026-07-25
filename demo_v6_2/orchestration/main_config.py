@@ -88,7 +88,6 @@ DEFAULT_CHUNK_POLL_INTERVAL_S = float(_cfg("chunking", "chunk_poll_interval_s"))
 DEFAULT_VOLUME_SAMPLE_SIZE_M = float(_cfg("chunking", "volume_sample_size_m"))
 DEFAULT_CAMERA_SOURCE_REPLAY_FPS = float(_cfg("input", "camera_source_replay_fps"))
 DEFAULT_CAMERA_FPS = int(_cfg("camera", "camera_fps"))
-CAMERA_FPS_CHOICES = tuple(int(item) for item in _cfg("camera", "camera_fps_choices"))
 # List schema so a future multi-camera runtime can extend it; the current
 # single-camera runtime enforces exactly one entry (resolve_camera_serials).
 DEFAULT_CAMERA_SERIALS = tuple(str(item) for item in _cfg("camera", "camera_serials"))
@@ -135,6 +134,9 @@ DEFAULT_INFERENCE_DTYPE = str(_cfg("camera", "inference_dtype"))
 DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD = float(
     _cfg("camera", "edgetam_mask_logit_threshold")
 )
+DEFAULT_CAMERA_LOSSLESS_MAX_BACKLOG_SECONDS = float(
+    _cfg("camera", "lossless_max_backlog_seconds")
+)
 # Downstream consumers are mutually exclusive per session: the Demo v6.2
 # viewer window or the Phystwin_shen online trainer + HTML viewer.
 DOWNSTREAM_MODE_DISABLED = "disabled"
@@ -167,6 +169,12 @@ DEFAULT_PHYSTWIN_SHEN_RUNTIME_CONFIG: dict[str, object] = {
 DEFAULT_PHYSTWIN_SHEN_CUDA_VISIBLE_DEVICES = str(
     _cfg("gpu", "phystwin_shen_cuda_visible_devices")
 )
+VISUALIZER_FRONTEND_WEB = "web"
+VISUALIZER_FRONTEND_WINDOW = "window"
+VISUALIZER_FRONTENDS = (VISUALIZER_FRONTEND_WEB, VISUALIZER_FRONTEND_WINDOW)
+DEFAULT_VISUALIZER_FRONTEND = str(_cfg("visualizer", "visualizer_frontend"))
+DEFAULT_VISUALIZER_WEB_HOST = str(_cfg("visualizer", "visualizer_web_host"))
+DEFAULT_VISUALIZER_WEB_PORT = int(_cfg("visualizer", "visualizer_web_port"))
 DEFAULT_VISUALIZER_CONDA_ENV = str(_cfg("visualizer", "visualizer_conda_env"))
 DEFAULT_VISUALIZER_CAM_IDX = int(_cfg("visualizer", "visualizer_cam_idx"))
 DEFAULT_VISUALIZER_POLL_SEC = float(_cfg("visualizer", "visualizer_poll_sec"))

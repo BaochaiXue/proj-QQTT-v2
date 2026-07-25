@@ -106,6 +106,33 @@ def get_matching_model(
     return model
 
 
+def extract_superpoint_features(matching, image_tensor):
+    """Run SuperPoint once on one prepared image tensor.
+
+    Returns the raw SuperPoint dict (values are per-item tensor lists) exactly
+    as Matching.forward produces internally; feeding it back through Matching
+    skips SuperPoint for that side with identical numerics.
+    """
+    return matching.superpoint({"image": image_tensor})
+
+
+def prepare_candidate_features(matching, image, device, resize=[-1], resize_float=False):
+    """read_image + SuperPoint for one candidate image, matching-loop style.
+
+    Uses the same read_image arguments as the image_pair_matching loop so a
+    feature set computed ahead of time (align prerender) is byte-identical to
+    one computed inside the loop.
+    """
+    image0, inp0, _scales = read_image(image, device, resize, 0, resize_float)
+    if image0 is None:
+        raise ValueError("Problem reading candidate image")
+    return {
+        "image": image0,
+        "input_tensor": inp0,
+        "features": extract_superpoint_features(matching, inp0),
+    }
+
+
 def image_pair_matching(
     input_images,
     ref_image,
@@ -125,9 +152,15 @@ def image_pair_matching(
     viz_extension="png",
     save=False,
     viz_best=True,
+    candidate_features=None,
 ):
 
-    """Return the image pair matching."""
+    """Return the image pair matching.
+
+    candidate_features optionally supplies prepare_candidate_features output
+    for every input image (align prerender); SuperPoint then runs zero times
+    for candidates and once for the reference instead of once per pair.
+    """
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print('Running inference on device "{}"'.format(device))
     matching = get_matching_model(
@@ -153,6 +186,18 @@ def image_pair_matching(
     best_match = {}
     best_match_num = -1
 
+    # Reference-side work is identical for every candidate pair: read the
+    # reference image and run its SuperPoint once, then hand the features to
+    # Matching (which skips SuperPoint whenever keypoints are supplied). Same
+    # inputs -> same features -> same matches as the per-pair version.
+    rot0, rot1 = 0, 0
+    image1, inp1, scales1 = read_image(ref_image, device, resize, rot1, resize_float)
+    if image1 is None:
+        print("Problem reading ref image")
+        exit(1)
+    ref_features = extract_superpoint_features(matching, inp1)
+    ref_kpts = ref_features["keypoints"][0].cpu().numpy()
+
     for i, image in enumerate(input_images):
         matches_path = output_dir / "matches_{}.npz".format(i)
         viz_path = output_dir / "matches_{}.{}".format(i, viz_extension)
@@ -173,21 +218,31 @@ def image_pair_matching(
                 do_viz = False
             timer.update("load_cache")
 
-        rot0, rot1 = 0, 0
-        image0, inp0, scales0 = read_image(image, device, resize, rot0, resize_float)
-        image1, inp1, scales1 = read_image(
-            ref_image, device, resize, rot1, resize_float
-        )
-        if image0 is None or image1 is None:
-            print("Problem reading image pair: {} and ref".format(i))
-            exit(1)
+        if candidate_features is not None:
+            candidate = candidate_features[i]
+            image0, inp0 = candidate["image"], candidate["input_tensor"]
+            cand_features = candidate["features"]
+        else:
+            image0, inp0, scales0 = read_image(
+                image, device, resize, rot0, resize_float
+            )
+            if image0 is None:
+                print("Problem reading image pair: {} and ref".format(i))
+                exit(1)
+            cand_features = None
         timer.update("load_image")
 
         if do_match:
-            pred = matching({"image0": inp0, "image1": inp1})
-            pred = {k: v[0].cpu().numpy() for k, v in pred.items()}
-            kpts0, kpts1 = pred["keypoints0"], pred["keypoints1"]
-            matches, conf = pred["matches0"], pred["matching_scores0"]
+            if cand_features is None:
+                cand_features = extract_superpoint_features(matching, inp0)
+            data = {"image0": inp0, "image1": inp1}
+            data.update({k + "0": v for k, v in cand_features.items()})
+            data.update({k + "1": v for k, v in ref_features.items()})
+            pred = matching(data)
+            kpts0 = cand_features["keypoints"][0].cpu().numpy()
+            kpts1 = ref_kpts
+            matches = pred["matches0"][0].cpu().numpy()
+            conf = pred["matching_scores0"][0].cpu().numpy()
             timer.update("matcher")
 
             out_matches = {

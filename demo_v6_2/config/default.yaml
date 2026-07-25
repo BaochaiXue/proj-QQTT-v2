@@ -55,8 +55,6 @@ camera:
   # sorted-first auto-pick it replaces could select a device without the
   # requested RGB profile (e.g. a D405) when several cameras are connected.
   camera_serials: ["239222300740"]
-  # Options: list of positive integer FPS values accepted by --camera-fps.
-  camera_fps_choices: [5, 15, 30, 60]
   # Options: non-negative finite float; manual RealSense RGB exposure.
   camera_color_exposure: 45.0
   # Options: non-negative finite float; manual RealSense RGB gain.
@@ -68,6 +66,9 @@ camera:
   depth_backend: "native-realsense"
   # Options: finite float logit threshold; lower values grow EdgeTAM masks.
   edgetam_mask_logit_threshold: 0
+  # Options: positive finite float seconds; maximum strict lossless input-FPS
+  # backlog window before the camera subprocess treats the run as stalled.
+  lossless_max_backlog_seconds: 3.0
   # Options: torch device string, usually cuda, cuda:N, or cpu.
   perception_device: "cuda"
   # Options: torch device string, usually cuda, cuda:N, or cpu.
@@ -106,11 +107,11 @@ shape_prior:
   # disables the cache (shape prior still runs a full on-the-fly generation
   # every run); or a single safe directory-name string to enable persistent
   # reuse. NOT a SAM3.1 prompt and never a cache key derived from the prompt.
-  object: null
+  object: "sloth"
   # SAM3.1 semantic label for the object in view (frame-0 object mask, EdgeTAM
   # object identity, case label, upscale category, and the shape-prior second
   # segmentation). Options: non-empty string, e.g. "sloth" or "stuffed animal".
-  object_prompt: "sloth"
+  object_prompt: "sloth stuffed animal"
   # Persistent storage root for cached canonical meshes. Options: absolute or
   # relative directory path that must NOT live under the run output directory
   # (so output cleanup never deletes cache entries).
@@ -214,7 +215,7 @@ phystwin_shen:
     checkpoint_interval: 10
     # true exits after the terminal iteration that observes manifest finished;
     # false ignores finished and runs exactly `iterations` total steps.
-    stop_when_finished: false
+    stop_when_finished: true
     realtime_vis: true
     realtime_vis_every: 1
     no_realtime_iteration_history: false
@@ -260,6 +261,16 @@ phystwin_shen:
 
 # Demo v6.1 point-cloud visualizer (downstream.mode: demo_visualizer).
 visualizer:
+  # Options: web | window. web serves the chunk viewer as a local web page
+  # (phystwin_shen-style now/past chunk rows rendered with the demo's own
+  # rainbow/controller overlay); window opens the legacy OpenCV/Open3D
+  # viewer selected by visualizer_layout.
+  visualizer_frontend: "web"
+  # Options: bind host string for the web viewer HTTP server.
+  visualizer_web_host: "127.0.0.1"
+  # Options: TCP port 1-65535 for the web viewer. phystwin_shen's viewers
+  # default to 8765/8766, so the demo viewer stays off those.
+  visualizer_web_port: 8767
   # Options: conda environment name string; empty string runs plain python.
   visualizer_conda_env: "demo_2_max"
   # Options: non-negative integer camera index displayed by the visualizer.

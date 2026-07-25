@@ -149,20 +149,24 @@ def _masked_raw_object_pcd(pcd_path: Path, mask_path: Path) -> np.ndarray:
 def load_shape_prior(outputs_root: Path, case_name: str) -> dict[str, Any]:
     """Load the static shape-prior assets used by the orbit preview."""
     case_dir = Path(outputs_root) / "shape_prior_case" / str(case_name)
-    final_data_path = _require_file(case_dir / "final_data.pkl")
+    # Final structure points live in the chunk-0-frozen points.npz (the
+    # warmup case only carries raw candidates since the unified sampling).
+    final_data_path = _require_file(
+        Path(outputs_root) / "shape_prior" / "points.npz"
+    )
     raw_pcd_path = _require_file(case_dir / "pcd" / "0.npz")
     processed_masks_path = _require_file(case_dir / "mask" / "processed_masks.pkl")
     mesh_path = _require_file(case_dir / "shape" / "matching" / "final_mesh.glb")
 
-    final_data = dict(_load_pickle(final_data_path))
+    final_points = np.load(final_data_path, allow_pickle=False)
     mesh_vertices, mesh_faces = _mesh_vertices_faces(mesh_path)
     raw_pcd_points = _masked_raw_object_pcd(raw_pcd_path, processed_masks_path)
     surface_points = _require_points(
-        final_data["surface_points"],
+        final_points["surface_points"],
         name="shape-prior surface_points",
     )
     interior_points = _require_points(
-        final_data["interior_points"],
+        final_points["interior_points"],
         name="shape-prior interior_points",
     )
     return {

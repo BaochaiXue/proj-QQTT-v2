@@ -268,9 +268,11 @@ class FfsDepthEngine:
                 t_ir_left_to_color=packet.t_ir_left_to_color,
                 k_color=packet.k_color,
             )
+            # align() returns the aligner's reused buffer; copy so the cached
+            # and returned depth stays valid after later align() calls.
             depth_color_m = np.ascontiguousarray(
                 aligner.align(depth_ir_left_m), dtype=np.float32
-            )
+            ).copy()
             result = (
                 depth_color_m,
                 (ffs_done_s - ffs_start_s) * 1000.0,

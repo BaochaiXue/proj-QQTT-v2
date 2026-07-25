@@ -26,10 +26,8 @@ from demo_v6_2.shape_prior import warmup as shape_prior_warmup
 from demo_v6_2.mdp import warmup
 from demo_v6_2.mdp.cli import active_object_ids
 from demo_v6_2.mdp.constants import (
-    DEFAULT_EDGETAM_COMPILE_MODE,
     DEFAULT_EDGETAM_LIVE_SESSION_KEEP_FRAMES,
-    DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD,
-    DEFAULT_EDGETAM_MODEL_ID,
+    DEFAULT_EDGETAM_PRECOMPILE_FIRST_FORWARD,
     HAND_A_ID,
     HAND_B_ID,
     OBJECT_ID,
@@ -47,6 +45,7 @@ from demo_v6_2.mdp.plumbing import (
 from demo_v6_2.utils.concurrency import LatestSlot
 
 if TYPE_CHECKING:
+    from demo_v6_2.mdp.preload import PerceptionPreloader
     from demo_v6_2.mdp.session import CameraSession
     from demo_v6_2.mdp.warmup_preview import WarmupRgbPreview
 
@@ -55,7 +54,7 @@ def extract_object_masks_from_hf_output(
     output: Any,
     post_masks: Any,
     *,
-    mask_logit_threshold: float = DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD,
+    mask_logit_threshold: float,
 ) -> dict[int, np.ndarray]:
     # HF EdgeTAM may hand back object ids as a torch tensor, ndarray, scalar, or list.
     """Extract object masks from HF output."""
@@ -137,6 +136,7 @@ class SegmentationStage:
         stage_stats: StageStatsBoard,
         shape_prior_manager: shape_prior_warmup.ShapePriorWarmupManager,
         warmup_rgb_preview: WarmupRgbPreview,
+        preload: PerceptionPreloader,
         first_frame_segmented: threading.Event,
         stop_event: threading.Event,
         fatal: FatalErrorLatch,
@@ -151,18 +151,43 @@ class SegmentationStage:
         self.stage_stats = stage_stats
         self.shape_prior_manager = shape_prior_manager
         self.warmup_rgb_preview = warmup_rgb_preview
+        self.preload = preload
         self._first_frame_segmented = first_frame_segmented
         self.stop_event = stop_event
         self.fatal = fatal
         self.warmup_perception_profile: dict[str, Any] = {}
+        self._sam31_release_deferred = False
         # Stamped by the composition root when run() begins.
         self.warmup_runtime_start_perf_s: float | None = None
 
     def _prepare_warmup(self) -> SegmentationWarmupState:
-        """Load EdgeTAM, wait for frame 0, and seed SAM3.1 initial masks."""
+        """Join the preloaded models, wait for frame 0, seed SAM3.1 masks.
+
+        EdgeTAM and SAM3.1 load on preload legs started at ``run()`` entry
+        (before the camera opens); both joins complete BEFORE the frame-0
+        wait, so the capture worker's readiness barrier can designate frame 0
+        the moment every consumer is ready.
+        """
         prepare_start_s = time.perf_counter()
-        hf_stream, torch_module, dtype, model, processor = self._init_hf_model()
+        edgetam = self.preload.join_edgetam()
+        hf_stream = edgetam.hf_stream
+        torch_module = edgetam.torch_module
+        dtype = edgetam.dtype
+        model = edgetam.model
+        processor = edgetam.processor
+        self.warmup_perception_profile["edgetam_runtime_init"] = dict(
+            edgetam.timing_ms
+        )
         model_ready_s = time.perf_counter()
+        # Pre-pay the deferred compile while the SAM3.1 checkpoint still
+        # loads on its preload thread (no-op unless the byte-A/B-gated
+        # constant is on).
+        self._precompile_first_forward(edgetam)
+        preload_timing = self.preload.join_sam31()
+        sam31_ready_s = time.perf_counter()
+        # From here frame 0 is consumed immediately: let the capture worker's
+        # readiness barrier designate it.
+        self.preload.mark_seg_frame0_ready()
         frame_wait_start_s = time.perf_counter()
         first_frame = self._wait_for_first_frame()
         frame_wait_end_s = time.perf_counter()
@@ -170,7 +195,8 @@ class SegmentationStage:
         # worker treats that state as a clean early exit rather than an error.
         if first_frame is None:
             self.warmup_perception_profile["segmentation_warmup"] = {
-                "edgetam_init_ms": (model_ready_s - prepare_start_s) * 1000.0,
+                "edgetam_join_wait_ms": (model_ready_s - prepare_start_s) * 1000.0,
+                "sam31_join_wait_ms": (sam31_ready_s - model_ready_s) * 1000.0,
                 "frame_wait_ms": (frame_wait_end_s - frame_wait_start_s) * 1000.0,
                 "total_ms": (frame_wait_end_s - prepare_start_s) * 1000.0,
                 "frame0_available": False,
@@ -186,13 +212,25 @@ class SegmentationStage:
             )
         initial_masks_start_s = time.perf_counter()
         # Resolve the initial mask bundle by running SAM3.1 on the live first
-        # frame.
+        # frame. On the cache-hit path the release cleanup is deferred to
+        # after the frame-0 EdgeTAM forward (off the critical path) — but
+        # ONLY when the precompile forward ran: without it, frame 0 is the
+        # eager compile warm-up and the CUDA-graph RECORD happens on the
+        # frame-1 forward, which the release thread's synchronize/empty_cache
+        # would invalidate. Inline release (pre-forward) is always capture-safe.
         expected_shape = tuple(first_frame.color_bgr.shape[:2])
+        reuse_sam31_runtime = self.shape_prior_manager.requires_sam31_reuse
+        precompile_ran = DEFAULT_EDGETAM_PRECOMPILE_FIRST_FORWARD and (
+            self.mode.object_tracking_enabled
+            or self.mode.controller_tracking_enabled
+        )
+        self._sam31_release_deferred = (not reuse_sam31_runtime) and precompile_ran
         initial_masks, sam31_timing = warmup.run_sam31_first_frame_mask_bundle(
             first_frame.color_bgr,
             self.args,
             self.mode,
-            reuse_sam31_runtime=self.shape_prior_manager.requires_sam31_reuse,
+            reuse_sam31_runtime=reuse_sam31_runtime,
+            defer_release=self._sam31_release_deferred,
         )
         if (
             initial_masks.controller_mask.shape != expected_shape
@@ -203,13 +241,16 @@ class SegmentationStage:
             )
         initial_masks_end_s = time.perf_counter()
         self.warmup_perception_profile["segmentation_warmup"] = {
-            "edgetam_init_ms": (model_ready_s - prepare_start_s) * 1000.0,
+            "edgetam_join_wait_ms": (model_ready_s - prepare_start_s) * 1000.0,
+            "sam31_join_wait_ms": (sam31_ready_s - model_ready_s) * 1000.0,
             "frame_wait_ms": (frame_wait_end_s - frame_wait_start_s) * 1000.0,
+            "sam31_preload": preload_timing,
             "initial_mask_bundle_ms": (initial_masks_end_s - initial_masks_start_s)
             * 1000.0,
             "initial_sam31": dict(sam31_timing.timing_ms),
             "sam31_trim_cleanup_ms": float(sam31_timing.trim_cleanup_ms),
             "sam31_release_cleanup_ms": float(sam31_timing.release_cleanup_ms),
+            "sam31_release_deferred": bool(self._sam31_release_deferred),
             "total_ms": (initial_masks_end_s - prepare_start_s) * 1000.0,
             "frame0_available": True,
         }
@@ -223,60 +264,106 @@ class SegmentationStage:
             initial_masks=initial_masks,
         )
 
-    def _init_hf_model(self) -> tuple[Any, Any, Any, Any, Any]:
-        """Return the init HF model."""
-        init_start_s = time.perf_counter()
-        runtime_load_start_s = time.perf_counter()
-        hf_stream = _load_hf_streaming_runtime()
-        torch_module = hf_stream.torch
-        if (
-            str(self.args.device).startswith("cuda")
-            and not torch_module.cuda.is_available()
+    def _precompile_first_forward(self, edgetam: Any) -> None:
+        """Pre-pay the frame-0 torch.compile tax with a throwaway forward.
+
+        Mirrors the real frame-0 call exactly — same prompt ids/order, same
+        session construction with the run's frame geometry, same autocast and
+        inference-mode contexts — on a scratch session that is discarded, so
+        the frame-0 forward replays the compiled graphs instead of paying the
+        ~4s 'vision-reduce-overhead' capture. Only the mask CONTENT differs
+        (synthetic squares), which does not enter any compile cache key.
+        """
+        if not DEFAULT_EDGETAM_PRECOMPILE_FIRST_FORWARD:
+            return
+        if not (
+            self.mode.object_tracking_enabled
+            or self.mode.controller_tracking_enabled
         ):
-            raise RuntimeError(
-                "CUDA device requested but torch.cuda.is_available() is false"
-            )
-        dtype = hf_stream._dtype_from_name(self.args.dtype)
-        runtime_load_end_s = time.perf_counter()
-        model_load_start_s = time.perf_counter()
-        model = hf_stream.EdgeTamVideoModel.from_pretrained(DEFAULT_EDGETAM_MODEL_ID).to(
-            self.args.device,
-            dtype=dtype,
+            return
+        start_s = time.perf_counter()
+        height = int(self.session.height)
+        width = int(self.session.width)
+        torch_module = edgetam.torch_module
+        session = edgetam.hf_stream.EdgeTamVideoInferenceSession(
+            video=None,
+            video_height=height,
+            video_width=width,
+            inference_device=self.args.device,
+            inference_state_device=self.args.device,
+            video_storage_device=self.args.device,
+            dtype=edgetam.dtype,
         )
-        model.eval()
-        model_load_end_s = time.perf_counter()
-        compile_start_s = time.perf_counter()
-        model, compile_metadata = hf_stream._apply_compile_mode(
-            model, DEFAULT_EDGETAM_COMPILE_MODE
+        image = bgr_to_pil_rgb(np.zeros((height, width, 3), dtype=np.uint8))
+        inputs = edgetam.processor(
+            images=image, device=self.args.device, return_tensors="pt"
         )
-        compile_end_s = time.perf_counter()
-        processor_load_start_s = time.perf_counter()
-        processor = hf_stream.Sam2VideoProcessor.from_pretrained(DEFAULT_EDGETAM_MODEL_ID)
-        processor_load_end_s = time.perf_counter()
-        self.warmup_perception_profile["edgetam_runtime_init"] = {
-            "runtime_import_ms": _elapsed_ms(
-                runtime_load_start_s,
-                runtime_load_end_s,
-            ),
-            "model_load_ms": _elapsed_ms(
-                model_load_start_s,
-                model_load_end_s,
-            ),
-            "compile_ms": _elapsed_ms(compile_start_s, compile_end_s),
-            "processor_load_ms": _elapsed_ms(
-                processor_load_start_s,
-                processor_load_end_s,
-            ),
-            "total_ms": _elapsed_ms(init_start_s, processor_load_end_s),
-        }
+        pixel_values = inputs.pixel_values[0].to(
+            device=self.args.device, dtype=edgetam.dtype
+        )
+
+        def dummy_mask(row: int) -> np.ndarray:
+            mask = np.zeros((height, width), dtype=bool)
+            mask[row : row + 8, 0:8] = True
+            return mask
+
+        prompt_obj_ids: list[int] = []
+        prompt_masks: list[np.ndarray] = []
+        if self.mode.controller_tracking_enabled:
+            prompt_obj_ids.append(HAND_A_ID)
+            prompt_masks.append(dummy_mask(0))
+        if self.mode.object_tracking_enabled:
+            prompt_obj_ids.append(OBJECT_ID)
+            prompt_masks.append(dummy_mask(16))
+        if self.mode.controller_tracking_enabled:
+            prompt_obj_ids.append(HAND_B_ID)
+            prompt_masks.append(dummy_mask(32))
+        with torch_module.inference_mode():
+            with self._autocast_context(torch_module):
+                edgetam.processor.add_inputs_to_inference_session(
+                    inference_session=session,
+                    frame_idx=0,
+                    obj_ids=prompt_obj_ids,
+                    input_masks=prompt_masks,
+                )
+                edgetam.model(
+                    inference_session=session,
+                    frame=pixel_values,
+                    frame_idx=0,
+                )
+        del session
+        if str(self.args.device).startswith("cuda"):
+            torch_module.cuda.synchronize()
+        precompile_ms = _elapsed_ms(start_s, time.perf_counter())
+        self.warmup_perception_profile["edgetam_precompile_forward_ms"] = (
+            precompile_ms
+        )
         print(
-            "[edgetam] "
-            f"model={DEFAULT_EDGETAM_MODEL_ID} device={self.args.device} dtype={self.args.dtype} "
-            f"track_mode={self.args.track_mode} compile_mode={DEFAULT_EDGETAM_COMPILE_MODE} "
-            f"applied={compile_metadata.get('applied_targets', [])}",
+            f"[edgetam] precompiled first forward in {precompile_ms / 1000.0:.2f}s",
             flush=True,
         )
-        return hf_stream, torch_module, dtype, model, processor
+
+    def _release_sam31_after_frame0(self) -> None:
+        """Release the SAM3.1 runtime on a daemon thread (cache-hit path).
+
+        Runs strictly after the frame-0 EdgeTAM forward, so the ~0.3s
+        gc/empty_cache cost never sits on the frame-0 critical path and never
+        overlaps the deferred torch.compile CUDA-graph capture.
+        """
+        if not self._sam31_release_deferred:
+            return
+
+        def release() -> None:
+            release_ms = warmup.release_sam31_runtime_resources(
+                str(self.args.device)
+            )
+            profile = self.warmup_perception_profile.get("segmentation_warmup")
+            if isinstance(profile, dict):
+                profile["sam31_release_cleanup_ms"] = float(release_ms)
+
+        threading.Thread(
+            target=release, name="sam31-deferred-release", daemon=True
+        ).start()
 
     def _publish_mask_packet(self, packet: MaskPacket) -> None:
         """Publish raw masks to diagnostics and the canonical formal stage."""
@@ -324,6 +411,10 @@ class SegmentationStage:
                 self.stage_stats.record("seg", first_packet.process_done_perf_s)
                 if self.mode.lossless_enabled or self.mode.fake_live_input:
                     self._first_frame_segmented.set()
+                # Cache-hit path: the SAM3.1 release deferred out of the mask
+                # bundle runs now, after the frame-0 forward's CUDA-graph
+                # capture has completed.
+                self._release_sam31_after_frame0()
                 if not self.shape_prior_manager.enabled:
                     # Without shape-prior warm-up the frame-0 seed IS the whole
                     # warm-up, so the live RGB preview closes here; with it the

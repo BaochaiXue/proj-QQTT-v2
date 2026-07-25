@@ -430,6 +430,10 @@ class AsapRuntime:
         # gate on those masks never treat an estimate as a measurement. The
         # deformed shape-prior trajectories are published as dedicated
         # per-frame keys instead of widening object_points.
+        # Keep the origin above-table clamp (data_process_sample.py:63) on the
+        # ARAP-filled estimates too — process_window clamped only the direct
+        # measurements this fill partially overwrites.
+        filled[filled[..., 2] > 0, 2] = 0
         result["object_points"] = np.ascontiguousarray(filled, dtype=np.float32)
         result["asap_surface_points"] = np.ascontiguousarray(
             surface_frames, dtype=np.float32

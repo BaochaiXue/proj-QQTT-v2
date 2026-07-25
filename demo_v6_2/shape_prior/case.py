@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import pickle
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 from PIL import Image
@@ -94,12 +95,16 @@ def write_shape_prior_points_npz(
     interior = points_array(interior_points, name="interior_points")
     points = np.concatenate([surface, interior], axis=0)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Atomic: this file is the downstream launch trigger, so it must never be
+    # observable half-written.
+    tmp_path = output_path.with_name(output_path.name + ".tmp.npz")
     np.savez_compressed(
-        output_path,
+        tmp_path,
         surface_points=surface,
         interior_points=interior,
         points=np.ascontiguousarray(points, dtype=np.float32),
     )
+    tmp_path.replace(output_path)
     return output_path
 
 
@@ -172,28 +177,6 @@ def write_shape_prior_case(
     controller_mask_path = case / "mask" / "0" / "1" / "0.png"
     pcd_path = case / "pcd" / "0.npz"
 
-    shape_dir.mkdir(parents=True, exist_ok=True)
-    color_path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(rgb).save(color_path)
-    _write_mask(object_mask, object_mask_path)
-    _write_mask(controller_mask, controller_mask_path)
-    _write_json(
-        {"0": object_name, "1": controller_name},
-        case / "mask" / "mask_info_0.json",
-    )
-    _write_json(
-        {
-            "frame_num": 1,
-            "intrinsics": [k_color.tolist()],
-            "input_source": str(frame0.input_source),
-            "depth_backend": str(frame0.depth_backend),
-            "depth_source_internal": str(frame0.depth_source_internal),
-        },
-        case / "metadata.json",
-    )
-    with (case / "calibrate.pkl").open("wb") as handle:
-        pickle.dump([c2w], handle, protocol=pickle.HIGHEST_PROTOCOL)
-
     object_points = points_world[object_mask]
     object_colors = rgb[object_mask].astype(np.float32) / 255.0
     if object_points.size == 0:
@@ -203,35 +186,81 @@ def write_shape_prior_case(
     if controller_points.size == 0:
         raise ValueError("shape prior controller observation has no valid points")
 
-    # pcd/0.npz keeps the dense HxW grid (leading axis = camera index) so the
-    # align stage can index it with the processed masks.
+    def _write_calibrate() -> None:
+        with (case / "calibrate.pkl").open("wb") as handle:
+            pickle.dump([c2w], handle, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def _write_pcd() -> None:
+        # pcd/0.npz keeps the dense HxW grid (leading axis = camera index) so
+        # the align stage can index it with the processed masks.
+        np.savez_compressed(
+            pcd_path,
+            points=np.ascontiguousarray(points_world[None], dtype=np.float32),
+            colors=np.ascontiguousarray((rgb[None].astype(np.float32) / 255.0)),
+            masks=np.ascontiguousarray(depth_valid[None], dtype=bool),
+        )
+
+    def _write_processed_masks() -> None:
+        with (case / "mask" / "processed_masks.pkl").open("wb") as handle:
+            pickle.dump(
+                [[{"object": object_mask, "controller": controller_mask}]],
+                handle,
+                protocol=pickle.HIGHEST_PROTOCOL,
+            )
+
+    def _write_track_process_data() -> None:
+        with (case / "track_process_data.pkl").open("wb") as handle:
+            pickle.dump(
+                {
+                    "object_points": object_points[None].astype(np.float32),
+                    "object_colors": object_colors[None].astype(np.float32),
+                    "object_visibilities": np.ones(
+                        (1, object_points.shape[0]), dtype=bool
+                    ),
+                    "object_motions_valid": np.ones(
+                        (1, object_points.shape[0]), dtype=bool
+                    ),
+                    "controller_points": controller_points[None].astype(np.float32),
+                },
+                handle,
+                protocol=pickle.HIGHEST_PROTOCOL,
+            )
+
+    shape_dir.mkdir(parents=True, exist_ok=True)
+    color_path.parent.mkdir(parents=True, exist_ok=True)
     pcd_path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(
-        pcd_path,
-        points=np.ascontiguousarray(points_world[None], dtype=np.float32),
-        colors=np.ascontiguousarray((rgb[None].astype(np.float32) / 255.0)),
-        masks=np.ascontiguousarray(depth_valid[None], dtype=bool),
-    )
-    with (case / "mask" / "processed_masks.pkl").open("wb") as handle:
-        pickle.dump(
-            [[{"object": object_mask, "controller": controller_mask}]],
-            handle,
-            protocol=pickle.HIGHEST_PROTOCOL,
-        )
-    with (case / "track_process_data.pkl").open("wb") as handle:
-        pickle.dump(
+    # processed_masks.pkl opens case/mask directly (no helper mkdir), so the
+    # directory must exist before the writers race.
+    (case / "mask").mkdir(parents=True, exist_ok=True)
+    # The nine artifacts are independent files with all inputs frozen above,
+    # so they write concurrently (PNG/zlib/pickle release the GIL); the
+    # join-all below re-raises the first failure before anyone reads the dir.
+    writers: list[Callable[[], object]] = [
+        lambda: Image.fromarray(rgb).save(color_path),
+        lambda: _write_mask(object_mask, object_mask_path),
+        lambda: _write_mask(controller_mask, controller_mask_path),
+        lambda: _write_json(
+            {"0": object_name, "1": controller_name},
+            case / "mask" / "mask_info_0.json",
+        ),
+        lambda: _write_json(
             {
-                "object_points": object_points[None].astype(np.float32),
-                "object_colors": object_colors[None].astype(np.float32),
-                "object_visibilities": np.ones((1, object_points.shape[0]), dtype=bool),
-                "object_motions_valid": np.ones(
-                    (1, object_points.shape[0]), dtype=bool
-                ),
-                "controller_points": controller_points[None].astype(np.float32),
+                "frame_num": 1,
+                "intrinsics": [k_color.tolist()],
+                "input_source": str(frame0.input_source),
+                "depth_backend": str(frame0.depth_backend),
+                "depth_source_internal": str(frame0.depth_source_internal),
             },
-            handle,
-            protocol=pickle.HIGHEST_PROTOCOL,
-        )
+            case / "metadata.json",
+        ),
+        _write_calibrate,
+        _write_pcd,
+        _write_processed_masks,
+        _write_track_process_data,
+    ]
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        for future in [executor.submit(writer) for writer in writers]:
+            future.result()
     return {
         "case": case,
         "color": color_path,

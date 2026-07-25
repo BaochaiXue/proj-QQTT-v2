@@ -123,11 +123,13 @@ class HeadlessCaptureWriter:
             colors_rgb_u8=np.ascontiguousarray(
                 result.colors_rgb_u8, dtype=np.uint8
             ).reshape(-1, 3),
+            # float64: raw candidate pools for the chunk-0 origin-parity
+            # voxel selection (a float32 round trip would shift floor bins).
             surface_points_m=np.ascontiguousarray(
-                result.surface_points_m, dtype=np.float32
+                result.surface_points_m, dtype=np.float64
             ).reshape(-1, 3),
             interior_points_m=np.ascontiguousarray(
-                result.interior_points_m, dtype=np.float32
+                result.interior_points_m, dtype=np.float64
             ).reshape(-1, 3),
             metadata_json=np.asarray(
                 [json.dumps(dict(result.metadata), sort_keys=True)]

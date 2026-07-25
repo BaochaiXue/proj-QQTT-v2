@@ -16,6 +16,7 @@ from demo_v6_2.main_options import (
     resolve_downstream_mode,
     resolve_shape_prior_warmup_cuda_visible_devices,
     resolve_visualizer_cuda_visible_devices,
+    resolve_visualizer_frontend,
     resolve_visualizer_layout,
     resolve_write_input_rgb_timeline,
 )
@@ -26,6 +27,7 @@ from demo_v6_2.orchestration.main_config import (
     DOWNSTREAM_MODE_DEMO_VISUALIZER,
     DOWNSTREAM_MODE_PHYSTWIN_SHEN,
     EDGE_TAM_TRACKING_IDENTITIES,
+    VISUALIZER_FRONTEND_WEB,
     VISUALIZER_LAYOUT_SIDE_BY_SIDE,
 )
 from demo_v6_2.orchestration.main_layout import (
@@ -70,6 +72,7 @@ class OrchestratorRunConfig:
     main_data_processing_cuda_visible_devices: str
     shape_prior_warmup_cuda_visible_devices: str
     visualizer_cuda_visible_devices: str
+    visualizer_frontend: str
     visualizer_layout: str
     visualizer_start_policy: str
     visualizer_fps: float
@@ -136,6 +139,7 @@ class OrchestratorRunConfig:
         downstream_mode = resolve_downstream_mode(args)
         demo_visualizer_enabled = downstream_mode == DOWNSTREAM_MODE_DEMO_VISUALIZER
         phystwin_shen_enabled = downstream_mode == DOWNSTREAM_MODE_PHYSTWIN_SHEN
+        visualizer_frontend = resolve_visualizer_frontend(args)
         visualizer_layout = resolve_visualizer_layout(args)
         side_by_side = visualizer_layout == VISUALIZER_LAYOUT_SIDE_BY_SIDE
         phystwin_shen_cuda_visible_devices = str(
@@ -187,9 +191,17 @@ class OrchestratorRunConfig:
                 raise ValueError("--visualizer-object-radius must be positive")
             if int(args.visualizer_controller_radius) <= 0:
                 raise ValueError("--visualizer-controller-radius must be positive")
+            if visualizer_frontend == VISUALIZER_FRONTEND_WEB:
+                if not str(args.visualizer_web_host).strip():
+                    raise ValueError("--visualizer-web-host must be non-empty")
+                if not 1 <= int(args.visualizer_web_port) <= 65535:
+                    raise ValueError("--visualizer-web-port must be in 1-65535")
         if not demo_visualizer_enabled:
             visualizer_start_policy = "disabled"
-        elif side_by_side:
+        elif visualizer_frontend == VISUALIZER_FRONTEND_WEB or side_by_side:
+            # The web page renders its own waiting/warm-up state, so it always
+            # starts with the camera; only the window output-only viewer must
+            # wait for the first committed chunk.
             visualizer_start_policy = "immediate_after_camera_start"
         else:
             visualizer_start_policy = "after_first_committed_online_chunk"
@@ -214,6 +226,7 @@ class OrchestratorRunConfig:
             shape_prior_warmup_cuda_visible_devices=(
                 resolve_shape_prior_warmup_cuda_visible_devices(args)
             ),
+            visualizer_frontend=visualizer_frontend,
             visualizer_cuda_visible_devices=resolve_visualizer_cuda_visible_devices(
                 args
             ),
