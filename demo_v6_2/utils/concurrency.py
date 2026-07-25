@@ -6,6 +6,13 @@ import threading
 import time
 from typing import Generic, TypeVar
 
+# Serializes the sys.path-sensitive IMPORT phases of the parallel perception
+# preload legs (tapnet inserts into sys.path while transformers et al. import
+# concurrently — CPython's import path iteration can skip entries mutated
+# mid-flight). Checkpoint IO stays outside the lock, so leg parallelism and
+# the frame-0 readiness barrier are unaffected.
+HEAVY_IMPORT_LOCK = threading.Lock()
+
 T = TypeVar("T")
 
 

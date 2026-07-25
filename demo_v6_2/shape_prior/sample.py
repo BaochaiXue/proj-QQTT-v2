@@ -24,7 +24,7 @@ from demo_v6_2.shape_prior.timing import (  # noqa: E402
     StageProfileRun,
     elapsed_ms,
 )
-from demo_v6_2.utils.align_util import as_mesh  # noqa: E402
+from demo_v6_2.utils.mesh_utils import as_mesh  # noqa: E402
 
 _MODULE_IMPORT_MS = elapsed_ms(_MODULE_IMPORT_STARTED_S)
 
@@ -147,8 +147,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     timing_ms = run.timing_ms
     if args.wait_signal:
-        # No models to load: the expensive part of this stage is the module
-        # import chain (torch/pytorch3d via align_util), already paid above.
+        # No models to load: only numpy/trimesh imports (as_mesh comes from
+        # the light mesh_utils), already paid above.
         run.write_waiting()
         if not run.wait_for_go():
             return

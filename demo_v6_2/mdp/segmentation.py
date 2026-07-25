@@ -318,6 +318,10 @@ class SegmentationStage:
         if self.mode.controller_tracking_enabled:
             prompt_obj_ids.append(HAND_B_ID)
             prompt_masks.append(dummy_mask(32))
+        # One pass only. Measured 2026-07-23: extra scratch passes reach
+        # steady state WITHIN the scratch session ([4989, 65, 19]ms) but the
+        # real session's first forward still pays ~2.3s — the residual cost
+        # is per-SESSION, not per-process, so more dummy passes buy nothing.
         with torch_module.inference_mode():
             with self._autocast_context(torch_module):
                 edgetam.processor.add_inputs_to_inference_session(

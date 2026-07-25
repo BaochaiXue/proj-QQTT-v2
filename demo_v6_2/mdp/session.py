@@ -8,6 +8,7 @@ attributes on a common ``self``.
 from __future__ import annotations
 
 import argparse
+from typing import TYPE_CHECKING
 from pathlib import Path
 
 import numpy as np
@@ -30,7 +31,8 @@ from demo_v6_2.mdp.constants import (
 from demo_v6_2.mdp.headless_writer import HeadlessCaptureWriter
 from demo_v6_2.mdp.packets import RealtimeCameraRuntime
 from demo_v6_2.utils.camera import parse_profile
-from demo_v6_2.utils.ffs_align import FfsDepthEngine
+if TYPE_CHECKING:
+    from demo_v6_2.utils.ffs_align import FfsDepthEngine
 
 
 class CameraSession:

@@ -69,6 +69,13 @@ parser.add_argument(
     default=None,
     help="Optional JSON path for detailed align-stage timing.",
 )
+parser.add_argument(
+    "--render-route-visualizations",
+    dest="render_route_visualizations",
+    action="store_true",
+    help="Render best_match.png (matplotlib) — diagnostics only, off the "
+    "formal realtime path by default.",
+)
 # Import-safe placeholder so the module can be imported without CLI args;
 # main() re-parses argv and rebinds these globals.
 args = Namespace(
@@ -77,6 +84,7 @@ args = Namespace(
     controller_name="",
     wait_signal=False,
     profile_json=None,
+    render_route_visualizations=False,
 )
 
 base_path = args.base_path
@@ -215,7 +223,8 @@ def pose_selection_render_superglue(
     # Use superglue to match the features
     match_started_s = time.perf_counter()
     best_idx, match_result = image_pair_matching(
-        grays, crop_img, output_dir, viz_best=True,
+        grays, crop_img, output_dir,
+        viz_best=bool(args.render_route_visualizations),
         candidate_features=candidate_features,
     )
     superglue_match_ms = elapsed_ms(match_started_s)

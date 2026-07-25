@@ -64,33 +64,9 @@ def plot_image_with_points(image, points, save_dir, points2=None):
     plt.clf()
 
 
-def as_mesh(scene_or_mesh):
-    """
-    Convert a possible scene to a mesh.
-
-    If conversion occurs, the returned mesh has only vertex and face data.
-    """
-    if isinstance(scene_or_mesh, trimesh.Scene):
-
-        # Extract all meshes from the scene
-        meshes = []
-        for name, geometry in scene_or_mesh.geometry.items():
-            if isinstance(geometry, trimesh.Trimesh):
-                meshes.append(geometry)
-
-        # Combine all meshes if there are multiple
-        if len(meshes) > 1:
-            combined_mesh = trimesh.util.concatenate(meshes)
-        elif len(meshes) == 1:
-            combined_mesh = meshes[0]
-        else:
-            raise ValueError("No valid meshes found in the GLB file")
-
-        mesh = combined_mesh
-    else:
-        assert isinstance(scene_or_mesh, trimesh.Trimesh)
-        mesh = scene_or_mesh
-    return mesh
+# as_mesh moved to the light demo_v6_2.utils.mesh_utils (no torch/pytorch3d
+# import tax for startup-path consumers); re-exported here for align users.
+from demo_v6_2.utils.mesh_utils import as_mesh  # noqa: F401,E402
 
 
 def project_2d_to_3d(image_points, depth, camera_intrinsics, camera_pose):

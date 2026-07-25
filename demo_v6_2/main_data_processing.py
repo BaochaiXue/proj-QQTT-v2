@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
+
+# Startup-tax visibility: everything between this stamp and run()'s
+# warmup_runtime_start (module imports, __init__, prewarm spawn) was
+# previously invisible to the warm-up metrics.
+_PROCESS_START_PERF_S = time.perf_counter()
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT_STR = str(REPO_ROOT)
@@ -18,6 +24,11 @@ from demo_v6_2.mdp.runtime import MainDataProcessingDemo  # noqa: E402
 
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line entry point."""
+    print(
+        "[startup] camera subprocess imports took "
+        f"{time.perf_counter() - _PROCESS_START_PERF_S:.2f}s",
+        flush=True,
+    )
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

@@ -13,7 +13,7 @@ from numba import njit  # type: ignore
 from demo_v6_2.utils.projection import build_projection_grid_from_matrix
 
 
-@njit
+@njit(cache=True, nogil=True)
 def _align_ir_to_color_numba(
     depth_ir_m: np.ndarray,
     a_x_flat: np.ndarray,

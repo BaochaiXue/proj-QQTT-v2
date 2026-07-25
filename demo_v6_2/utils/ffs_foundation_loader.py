@@ -7,13 +7,22 @@ imports resolved from the ``--ffs-repo`` checkout at runtime.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from demo_v6_2.utils.ffs_tensorrt_infra import _ensure_ffs_repo_on_sys_path
 
 
-def _disable_torch_compile(torch_module) -> None:
+@contextmanager
+def torch_compile_disabled(torch_module):
+    """Scoped identity ``torch.compile`` for FFS repo imports.
+
+    FoundationStereo module decorators must stay eager for the TensorRT
+    path, but the disposition must NOT leak to the rest of the process —
+    a permanent monkeypatch silently turned EdgeTAM's
+    'vision-reduce-overhead' wrap into a no-op on ffs runs.
+    """
     def identity_compile(fn=None, *args, **kwargs):
         if fn is None:
             def decorator(inner):
@@ -21,7 +30,12 @@ def _disable_torch_compile(torch_module) -> None:
             return decorator
         return fn
 
+    original_compile = torch_module.compile
     torch_module.compile = identity_compile
+    try:
+        yield
+    finally:
+        torch_module.compile = original_compile
 
 
 def _patch_batch_safe_gwc_volume_triton(foundation_stereo: Any, submodule: Any) -> None:

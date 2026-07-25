@@ -112,6 +112,40 @@ compute, chunk contents, or the fake-live replay semantics. demo_v6_1 frozen.
 - `tests/test_demo_v6_2_shape_prior_cache.py` — fake stage runner accepts
   `defer_reap`
 
+## Follow-up round 2 (2026-07-23, approved: "如果他说的对你就做")
+
+- Multi-pass precompile hypothesis TESTED AND REJECTED: three scratch
+  passes reach steady state within the scratch session ([4989, 65, 19]ms)
+  but the REAL session's frame-0 forward still pays ~2.33s (frame-1 33ms) —
+  the residual is per-SESSION (state/graph tied to the session), not
+  per-process, so extra dummy passes buy nothing. B1 stays single-pass;
+  masks stayed byte-identical throughout the experiment. Eliminating the
+  remaining ~2.3s would need warming the REAL session (e.g. a resettable
+  session or per-session graph reuse inside EdgeTAM) — out of scope.
+- FFS `_disable_torch_compile` global monkeypatch replaced by the scoped
+  `torch_compile_disabled` context manager (ffs_foundation_loader) wrapping
+  only the FFS repo imports — on ffs runs EdgeTAM's compile wrap was
+  silently a no-op before ("applied=[...]" logs the target list, not whether
+  torch.compile was real). Behavior change on ffs runs only (EdgeTAM now
+  really compiles there, matching the native path); the runtime start-order
+  comment is no longer load-bearing.
+- Startup-tax cleanup: `as_mesh` split into light `utils/mesh_utils.py`
+  (sample stage + mesh-cache validation + the camera import chain no longer
+  pull torch/PyTorch3D/matplotlib via align_util); FFS/numba imports lazy in
+  runtime.py + session.py (TYPE_CHECKING); `@njit(cache=True, nogil=True)`;
+  `[startup] camera subprocess imports took X.XXs` stamp in
+  main_data_processing.py (previously invisible pre-run() tax).
+- best_match.png (matplotlib) off the formal path: align gains
+  `--render-route-visualizations` (default off), wired from the camera's
+  previously-dead `--shape-prior-skip-route-visualizations` flag through
+  `ShapePriorLocalClient(render_route_visualizations=)`. best_match.pkl is
+  kept (align's own resume mechanism).
+- Assessed but deferred (need their own pass + GPU A/B): GeometryStage
+  depth/PCD ∥ segmentation; SuperGlue micro-batch / FRAME_PREMATCH;
+  SAM3.1-mask-sourced shape prior (semantic change, needs sign-off);
+  align+sample worker merge; ARAP bookkeeping vectorization; TAPNext dummy
+  forward; hold-still UI state split + warm-up frame buffering.
+
 ## Verification
 
 - Full suite: 90 passed + 15 subtests (12 new tests).

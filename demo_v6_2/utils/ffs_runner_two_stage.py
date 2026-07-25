@@ -16,7 +16,7 @@ import numpy as np
 
 from demo_v6_2.utils.ffs_disparity_products import finalize_tensorrt_disparity_batch_outputs
 from demo_v6_2.utils.ffs_foundation_loader import (
-    _disable_torch_compile,
+    torch_compile_disabled,
     _load_official_tensorrt_foundation_stereo,
 )
 from demo_v6_2.utils.ffs_tensorrt_infra import (
@@ -63,7 +63,6 @@ class FastFoundationStereoTensorRTRunner:
         import torch
         from omegaconf import OmegaConf
 
-        _disable_torch_compile(torch)
         if not torch.cuda.is_available():
             raise RuntimeError("FastFoundationStereoTensorRTRunner requires CUDA.")
 
@@ -73,12 +72,14 @@ class FastFoundationStereoTensorRTRunner:
             model_dir=self.model_dir,
             trt_root=self.trt_root,
         )
-        foundation_stereo = _load_official_tensorrt_foundation_stereo(
-            ffs_repo=self.ffs_repo,
-            batch_safe_gwc_volume=int(self.static_batch_size) > 1,
-        )
-        import tensorrt as trt
-        from Utils import set_logging_format, set_seed
+        # Scoped: only the FFS repo imports see the identity torch.compile.
+        with torch_compile_disabled(torch):
+            foundation_stereo = _load_official_tensorrt_foundation_stereo(
+                ffs_repo=self.ffs_repo,
+                batch_safe_gwc_volume=int(self.static_batch_size) > 1,
+            )
+            import tensorrt as trt
+            from Utils import set_logging_format, set_seed
 
         cfg_dict = load_tensorrt_model_config(self.model_dir)
         self.cfg = OmegaConf.create(cfg_dict)

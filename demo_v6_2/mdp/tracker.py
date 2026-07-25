@@ -45,7 +45,7 @@ from demo_v6_2.mdp.plumbing import (
     LosslessPipelineError,
     StageStatsBoard,
 )
-from demo_v6_2.utils.concurrency import LatestSlot
+from demo_v6_2.utils.concurrency import HEAVY_IMPORT_LOCK, LatestSlot
 from demo_v6_2.phystwin_strict_product import (
     PHYSTWIN_DEPTH_MAX_M,
     PHYSTWIN_DEPTH_MIN_M,
@@ -78,8 +78,12 @@ def build_tracker_adapter(args: argparse.Namespace) -> Any:
         tapnextpp_compile=bool(False),
         tapnextpp_fast_postprocess=bool(True),
     )
-    adapter = build_point_tracker_adapter_factory(config)(0)
-    availability = adapter.availability()
+    # availability() prepends the tapnet repo to sys.path and imports it —
+    # serialized against the other preload legs' import phases; the heavy
+    # checkpoint load below stays parallel.
+    with HEAVY_IMPORT_LOCK:
+        adapter = build_point_tracker_adapter_factory(config)(0)
+        availability = adapter.availability()
     if not availability.available:
         raise RuntimeError(availability.reason)
     warmup_info = adapter.warmup()

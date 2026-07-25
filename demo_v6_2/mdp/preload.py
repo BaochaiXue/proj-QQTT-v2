@@ -28,7 +28,10 @@ from demo_v6_2.mdp.constants import (
     DEFAULT_EDGETAM_COMPILE_MODE,
     DEFAULT_EDGETAM_MODEL_ID,
 )
-from demo_v6_2.utils.concurrency import elapsed_ms as _elapsed_ms
+from demo_v6_2.utils.concurrency import (
+    HEAVY_IMPORT_LOCK,
+    elapsed_ms as _elapsed_ms,
+)
 
 
 @dataclass(frozen=True)
@@ -49,7 +52,8 @@ def load_edgetam_runtime(args: argparse.Namespace) -> EdgetamRuntime:
 
     init_start_s = time.perf_counter()
     runtime_load_start_s = time.perf_counter()
-    hf_stream = _load_hf_streaming_runtime()
+    with HEAVY_IMPORT_LOCK:
+        hf_stream = _load_hf_streaming_runtime()
     torch_module = hf_stream.torch
     if (
         str(args.device).startswith("cuda")

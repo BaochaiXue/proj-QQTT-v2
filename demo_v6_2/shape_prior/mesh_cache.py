@@ -149,7 +149,7 @@ def validate_mesh_glb(path: str | Path) -> None:
         raise ShapePriorMeshCacheError(f"cache mesh is empty: {mesh_path}")
     import trimesh  # noqa: PLC0415
 
-    from demo_v6_2.utils.align_util import as_mesh  # noqa: PLC0415
+    from demo_v6_2.utils.mesh_utils import as_mesh  # noqa: PLC0415
 
     try:
         mesh = as_mesh(trimesh.load(str(mesh_path), force="mesh"))

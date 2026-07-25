@@ -44,7 +44,6 @@ from demo_v6_2.mdp.warmup_preview import WarmupRgbPreview
 from demo_v6_2.phystwin_strict_product import finalize_headless_capture
 from demo_v6_2.pipeline_status import STAGE_CAPTURE_START, PipelineStatusWriter
 from demo_v6_2.utils.concurrency import LatestSlot
-from demo_v6_2.utils.ffs_align import FfsDepthEngine, warm_up_numba_ffs_align
 from demo_v6_2.utils.render import apply_wslg_open3d_env_defaults
 
 
@@ -185,6 +184,9 @@ class MainDataProcessingDemo:
                 sam3d_root=self.args.shape_prior_sam3d_root,
                 sam3d_config=self.args.shape_prior_config,
                 sam31_device=str(self.args.device),
+                render_route_visualizations=not bool(
+                    self.args.shape_prior_skip_route_visualizations
+                ),
             )
             if bool(self.args.shape_prior_prewarm_stage_workers):
                 client.prewarm()
@@ -262,6 +264,13 @@ class MainDataProcessingDemo:
         self.warmup_rgb_preview.start()
         apply_wslg_open3d_env_defaults()
         if self.args.depth_source == "ffs":
+            # Lazy: the FFS/TensorRT/numba import chain must not tax the
+            # default native-realsense startup path.
+            from demo_v6_2.utils.ffs_align import (  # noqa: PLC0415
+                FfsDepthEngine,
+                warm_up_numba_ffs_align,
+            )
+
             self.session.depth_engine = FfsDepthEngine(
                 ffs_repo=Path(self.args.ffs_repo),
                 model_dir=Path(self.args.ffs_trt_model_dir),
@@ -273,10 +282,10 @@ class MainDataProcessingDemo:
                 cache_frames=DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES,
             )
             warm_up_numba_ffs_align()
-        # Camera-free perception preloads start before the camera opens. On
-        # ffs runs they start only after the FFS constructor above, so its
-        # global torch.compile disposition still precedes the EdgeTAM compile
-        # wrap (identical numerics to the old inline ordering).
+        # Camera-free perception preloads start before the camera opens.
+        # (FFS's torch.compile disposition is scoped to its own imports now,
+        # so the ordering with the FFS block above is no longer load-bearing;
+        # it just keeps the main thread free while the TRT engines build.)
         self.preload.start()
         self.session.prepare_source(self.args, self.mode)
         # Align PRERENDER hint from camera metadata: width/height/fx are known

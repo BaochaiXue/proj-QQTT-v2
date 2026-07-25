@@ -325,8 +325,10 @@ class ShapePriorLocalClient:
         sam3d_root: str | Path | None = None,
         sam3d_config: str | Path | None = None,
         sam31_device: str = "cuda",
+        render_route_visualizations: bool = False,
     ) -> None:
         """Initialize ShapePriorLocalClient and resolve the mesh cache."""
+        self.render_route_visualizations = bool(render_route_visualizations)
         self.case_root = Path(case_root)
         self.cuda_visible_devices = str(cuda_visible_devices)
         # object_prompt is the SAM3.1 semantic label; object_id is the cache
@@ -436,6 +438,8 @@ class ShapePriorLocalClient:
             "--profile-json",
             str(self._stage_profile_path(PREWARM_STAGE_ALIGN)),
         ]
+        if self.render_route_visualizations:
+            align.append("--render-route-visualizations")
         sample = [
             sys.executable,
             "-m",
