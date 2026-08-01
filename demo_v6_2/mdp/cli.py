@@ -28,6 +28,7 @@ from demo_v6_2.orchestration.main_config import (
     DEFAULT_DATA_PROCESS_BASE_PATH,
     DEFAULT_DEPTH_BACKEND,
     DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD,
+    DEFAULT_LIVE_DATAPROCESS_VIEWER,
     DEFAULT_INFERENCE_DTYPE,
     DEFAULT_PERCEPTION_DEVICE,
     DEFAULT_SHAPE_PRIOR_CACHE_ROOT,
@@ -139,6 +140,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable the warm-up live RGB input preview window.",
     )
     parser.set_defaults(warmup_rgb_preview=True)
+    parser.add_argument(
+        "--live-dataprocess-viewer",
+        dest="live_dataprocess_viewer",
+        action="store_true",
+        help=(
+            "Show the realtime data-process viewer (latest processed masks, "
+            "PCD, tracks, shape-prior state, diagnostics). Pure observer: "
+            "drops only display frames, never blocks or mutates the "
+            "pipeline; the window opens on the first published pair (may "
+            "coexist with the warm-up preview) via the shared GUI thread."
+        ),
+    )
+    parser.add_argument(
+        "--no-live-dataprocess-viewer",
+        dest="live_dataprocess_viewer",
+        action="store_false",
+        help="Disable the realtime data-process viewer window.",
+    )
+    parser.set_defaults(live_dataprocess_viewer=DEFAULT_LIVE_DATAPROCESS_VIEWER)
     parser.add_argument(
         "--input-source",
         choices=INPUT_SOURCES,

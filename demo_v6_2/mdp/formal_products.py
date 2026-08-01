@@ -62,6 +62,7 @@ class FormalProductStage:
         capture: CaptureStage,
         stop_event: threading.Event,
         fatal: FatalErrorLatch,
+        live_viz_slot: object | None = None,
     ) -> None:
         """Initialize FormalProductStage."""
         self.args = args
@@ -73,6 +74,7 @@ class FormalProductStage:
         self.capture = capture
         self.stop_event = stop_event
         self.fatal = fatal
+        self.live_viz_slot = live_viz_slot
 
     def _publish_strict_pair(self, pair: PairedBuildResult) -> None:
         """Publish one validated same-sequence PCD and tracker result."""
@@ -85,6 +87,12 @@ class FormalProductStage:
         )
         self.stage_stats.record("pcd", pcd_result.pcd_packet.process_done_perf_s)
         self.stage_stats.record("tracker", tracker_packet.process_done_perf_s)
+        if self.live_viz_slot is not None:
+            # Pure-observer tap for the live data-process viewer: one O(1)
+            # latest-wins put (a slow or absent viewer silently drops DISPLAY
+            # frames only); the shape-prior-enriched packet is what the
+            # formal write below sees.
+            self.live_viz_slot.put(replace(pair, pcd_result=pcd_result))
         if pair.seq == 0:
             self.lossless.first_pair_published.set()
         if self.session.headless_capture_writer is not None:

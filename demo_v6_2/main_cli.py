@@ -19,6 +19,7 @@ from demo_v6_2.orchestration.main_config import (
     DEFAULT_DEPTH_BACKEND,
     DEFAULT_DOWNSTREAM_MODE,
     DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD,
+    DEFAULT_LIVE_DATAPROCESS_VIEWER,
     DEFAULT_FAKE_LIVE_CASE,
     DEFAULT_INFERENCE_DTYPE,
     DEFAULT_INPUT_SOURCE,
@@ -236,6 +237,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable the warm-up live RGB input preview window.",
     )
     parser.set_defaults(warmup_rgb_preview=True)
+    parser.add_argument(
+        "--live-dataprocess-viewer",
+        dest="live_dataprocess_viewer",
+        action="store_true",
+        help=(
+            "Show the in-process realtime data-process viewer alongside any "
+            "--downstream-mode (it is NOT a downstream consumer): latest "
+            "processed masks, PCD, TAPNext++ tracks, shape-prior state, and "
+            "latency/FPS diagnostics, straight from the camera subprocess."
+        ),
+    )
+    parser.add_argument(
+        "--no-live-dataprocess-viewer",
+        dest="live_dataprocess_viewer",
+        action="store_false",
+        help="Disable the realtime data-process viewer window.",
+    )
+    parser.set_defaults(live_dataprocess_viewer=DEFAULT_LIVE_DATAPROCESS_VIEWER)
     parser.add_argument(
         "--camera-color-exposure",
         type=float,

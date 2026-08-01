@@ -254,3 +254,63 @@ Fact-check verdicts on the round-3 external list:
   candidate win, full-video mask byte gate required), GeometryStage
   (depth/PCD parallel to seg), FFS engine deserialization as a preload
   leg, SAM3.1-mask-sourced shape prior (semantic change, owner sign-off).
+
+## Round 4 (2026-07-26): EdgeTAM compile-policy A/B (deterministic offline gate)
+
+Owner: FFS is NOT the default going forward — ffs-only items dropped from
+the queue. Instrument: scratchpad/compile_ab/edgetam_compile_ab.py mirrors
+the demo seg path exactly (same runtime loader/model id/dtype/autocast/
+prompt order/post-process/threshold/session pruning) over a FIXED 150-frame
+list (recording steps 902+6k) with FIXED frame-0 prompts (fixtures from the
+baseline run's frame-0 masks, controller split into two hands by connected
+components). One mode per fresh process; per-frame per-object mask sha256.
+
+Results:
+- Determinism control PASSED: vision-reduce-overhead run twice -> all
+  150x3 hashes IDENTICAL (the harness is a valid byte gate; EdgeTAM
+  streaming is run-to-run deterministic on this GPU).
+- `none` (eager): session frame-0 tax 445ms (vs 2329/2171ms compiled!),
+  steady p50 25.1ms / p95 27.7ms (vs 19.4/22.2 compiled; 5 FPS budget is
+  200ms), zero compile cost. BUT masks DIFFER from the compiled mode:
+  frame 0 identical, then 447/450 (frame,object) pairs differ (low-order
+  numeric differences compound through the streaming memory). Under the
+  zero-quality-change bar this CANNOT be adopted unilaterally — owner
+  decision pending, IoU quantification in progress.
+- `model-default`: NOT RUNNABLE — full-model torch.compile graph-breaks in
+  transformers' EdgeTAM streaming (`get_frame` in _prepare_vision_features,
+  dynamo error). External claim falsified.
+- 12s precompile mystery: in a quiet process the same precompile costs
+  10.8s cold / 4.0s WARM. The demo pays ~12.1s on consecutive runs and
+  writes fresh inductor cache entries each time -> the demo side misses the
+  FX graph cache every run. Fixing that miss (not changing modes) is the
+  no-quality-risk win: ~8s off the pre-barrier path. Cache-miss-reason
+  probe (TORCH_LOGS=+torch._inductor.codecache) in progress.
+
+### Round-4 resolutions (2026-07-26 evening)
+
+- IoU between `vision-reduce-overhead` and `none` masks over the 150-frame
+  gate: mean 0.987-0.991, min 0.94-0.97; object-mask xor mean 222 px on a
+  ~21.5k-px mask (~1% boundary pixels). Boundary noise, not a quality
+  regression in either direction — but byte-level output change, so the
+  mode switch is an OWNER DECISION (gain if switched: frame-0 session tax
+  2.3s -> 0.45s, precompile 4.5-15s -> 0, steady p50 19 -> 25ms vs the
+  200ms/5FPS budget; every downstream product re-baselines).
+- 12s precompile mystery RESOLVED: not load contention — a full demo run
+  with TORCH_LOGS=+torch._inductor.codecache showed 2 fx-cache HITS, 0
+  misses, precompile 4.53s WITH sam31/tapnext loading in parallel. The two
+  12.1s runs were fx-cache misses right after the 3-pass-precompile
+  experiment churned the compiled-graph set. Warm steady state is ~4.0-4.9s.
+- Hardening landed: `TORCHINDUCTOR_CACHE_DIR` pinned to
+  `~/.cache/qqtt_torchinductor` (main_data_processing.py, setdefault so an
+  operator override wins). The torch default under /tmp is wiped every
+  reboot, re-imposing the ~10-15s cold compile on the first run after boot.
+  Verified: cold first run 15.05s -> warm second run 4.85s; frame-0 masks
+  byte-identical; cache location cannot affect numerics.
+- BASELINE SHIFT (not a regression): owner regenerated the shape-prior
+  mesh cache entry (schema_v1/sloth object.glb + manifest, 2026-07-25
+  18:04) and committed be79eb0/1bf8bd0 (rounds 2-3 work). All align byte
+  baselines from before that (best_match.pkl / final_mesh.glb, e.g.
+  run_p02final/run_r3) are STALE — SAM3D generate is nondeterministic, so
+  a new mesh means new (equally valid) align products. Today's three runs
+  (cacheprobe / cachedir1 / cachedir2) are byte-identical to EACH OTHER;
+  run_cachedir2 is the new golden baseline for future byte gates.

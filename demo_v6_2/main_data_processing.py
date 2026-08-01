@@ -2,6 +2,7 @@
 """Demo v6.2 main data processing runtime (camera subprocess entry)."""
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -10,6 +11,16 @@ from pathlib import Path
 # warmup_runtime_start (module imports, __init__, prewarm spawn) was
 # previously invisible to the warm-up metrics.
 _PROCESS_START_PERF_S = time.perf_counter()
+
+# torch.compile artifact cache. The torch default lives under /tmp and is
+# wiped on reboot, which re-imposes the ~10s cold EdgeTAM precompile on the
+# first run after every boot; a persistent dir pays it once per torch/model
+# change instead. Cache location never affects compiled numerics. setdefault
+# keeps any operator-provided override authoritative.
+os.environ.setdefault(
+    "TORCHINDUCTOR_CACHE_DIR",
+    str(Path.home() / ".cache" / "qqtt_torchinductor"),
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT_STR = str(REPO_ROOT)

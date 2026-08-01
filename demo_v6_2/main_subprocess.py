@@ -158,6 +158,14 @@ def build_main_data_processing_command(
             if bool(args.warmup_rgb_preview)
             else "--no-warmup-rgb-preview"
         ),
+        # Realtime data-process viewer also lives in the camera process (it
+        # observes the strict pair publish); forwarded for every downstream
+        # mode — it is an observer, not a downstream consumer.
+        (
+            "--live-dataprocess-viewer"
+            if bool(args.live_dataprocess_viewer)
+            else "--no-live-dataprocess-viewer"
+        ),
         "--color-gain",
         str(float(args.camera_color_gain)),
         "--input-source",

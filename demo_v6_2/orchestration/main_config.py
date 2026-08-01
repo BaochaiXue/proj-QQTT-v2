@@ -134,6 +134,7 @@ DEFAULT_INFERENCE_DTYPE = str(_cfg("camera", "inference_dtype"))
 DEFAULT_EDGETAM_MASK_LOGIT_THRESHOLD = float(
     _cfg("camera", "edgetam_mask_logit_threshold")
 )
+DEFAULT_LIVE_DATAPROCESS_VIEWER = bool(_cfg("live_viewer", "enabled"))
 DEFAULT_CAMERA_LOSSLESS_MAX_BACKLOG_SECONDS = float(
     _cfg("camera", "lossless_max_backlog_seconds")
 )

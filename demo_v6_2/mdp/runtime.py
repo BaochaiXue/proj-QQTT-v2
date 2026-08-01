@@ -40,6 +40,8 @@ from demo_v6_2.mdp.segmentation import SegmentationStage
 from demo_v6_2.mdp.session import CameraSession
 from demo_v6_2.mdp.shape_prior_flow import ShapePriorPublisher
 from demo_v6_2.mdp.tracker import TrackerStage
+from demo_v6_2.mdp.gui_loop import CvGuiLoop
+from demo_v6_2.mdp.live_viewer import LiveDataProcessViewer
 from demo_v6_2.mdp.warmup_preview import WarmupRgbPreview
 from demo_v6_2.phystwin_strict_product import finalize_headless_capture
 from demo_v6_2.pipeline_status import STAGE_CAPTURE_START, PipelineStatusWriter
@@ -84,10 +86,28 @@ class MainDataProcessingDemo:
         # Live RGB input preview shown ONLY during warm-up, in every downstream
         # mode; closes at warm-up end and immediately on failure/cancel/early
         # exit (stop_event + stop()). Not the tracking-chunk visualizer.
+        # One process-wide GUI thread owns every OpenCV window (Qt/GTK
+        # HighGUI hangs if window ownership moves between threads); the
+        # preview and the live viewer only compose frames and submit here.
+        self.gui_loop = CvGuiLoop(stop_event=self.stop_event)
         self.warmup_rgb_preview = WarmupRgbPreview(
             input_preview_slot=self.input_preview_slot,
+            gui=self.gui_loop,
             stop_event=self.stop_event,
             enabled=bool(args.warmup_rgb_preview),
+        )
+        # Live data-process viewer: pure observer of the strict pair publish
+        # (latest-wins DISPLAY slot fed in FormalProductStage; formal data
+        # never dropped). Pairs exist only on the lossless path.
+        self.live_viz_slot: LatestSlot = LatestSlot()
+        self.live_viewer = LiveDataProcessViewer(
+            pair_slot=self.live_viz_slot,
+            stage_stats=self.stage_stats,
+            gui=self.gui_loop,
+            stop_event=self.stop_event,
+            enabled=bool(args.live_dataprocess_viewer)
+            and self.mode.lossless_enabled,
+            table_c2w=lambda: self.session.table_c2w,
         )
         manager = self.shape_prior_manager
         self.timeline_gate = FormalTimelineGate(
@@ -163,6 +183,7 @@ class MainDataProcessingDemo:
             capture=self.capture,
             stop_event=self.stop_event,
             fatal=self.fatal,
+            live_viz_slot=self.live_viz_slot,
         )
 
     def _create_shape_prior_manager(
@@ -262,6 +283,10 @@ class MainDataProcessingDemo:
         # mode; closed at the warm-up-finished banner, in stop(), and by
         # stop_event on fatal errors.
         self.warmup_rgb_preview.start()
+        # Started here (before capture) so the very first published pair is
+        # displayed; its window opens (via the shared GUI loop) on the first
+        # pair and may coexist with the warm-up preview window.
+        self.live_viewer.start()
         apply_wslg_open3d_env_defaults()
         if self.args.depth_source == "ffs":
             # Lazy: the FFS/TensorRT/numba import chain must not tax the
@@ -354,6 +379,8 @@ class MainDataProcessingDemo:
         # Warm-up failure, cancellation, or early exit must close the live RGB
         # preview immediately (the render loop also watches stop_event).
         self.warmup_rgb_preview.close()
+        self.live_viewer.close()
+        self.gui_loop.shutdown()
         self.lossless.close_queues()
         for thread in list(self._threads):
             if thread.is_alive():

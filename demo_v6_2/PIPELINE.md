@@ -1139,6 +1139,36 @@ ID 时由 per-object 文件锁串行化，已存在 entry 永不覆盖。
       [`ShapePriorWarmupManager._run`](shape_prior/warmup.py#L694) 与
       [`main.main`](main.py) 给出 terminal fatal 与 downstream PGID 清理边界。
 
+## 实时 data-process viewer（live_viewer，纯 observer）
+
+`downstream.mode` 仍然一次只运行一个下游消费者（Phystwin_shen 或 chunk
+可视化器），但 **实时 data-process viewer 不是下游消费者**：它是相机子进程
+内的一个 daemon 线程（`mdp/live_viewer.py`），订阅 `FormalProductStage.
+_publish_strict_pair` 里的一个 latest-wins `LatestSlot`（生产者侧只有一次
+O(1) put），因此与任何 `downstream.mode` 并存——正式运行同时开
+Phystwin_shen combined viewer 和本 viewer 是默认形态。
+
+显示内容（每个已完成配对帧，不等 chunk）：左面板 RGB + processed object/
+hand mask 着色 + TAPNext++ 可见 track 点（frozen query-rainbow 颜色）；右
+面板 object/controller 世界点云 + shape-prior 点经彩色相机内参重投影；HUD
+显示 seq、端到端延迟（与 headless writer 同式）、capture/seg/pcd/tracker
+FPS、display-dropped 计数、点数/track 数、mask/pcd/tracker 用时、
+shape-prior 状态与 formal timeline 状态。
+
+保证：纯 observer（只读 packet 数组、在副本上绘制，绝不回写）；永不阻塞
+流水线（viewer 落后只丢**显示**帧，正式数据零丢失）；无 CUDA context、无
+torch、无磁盘 I/O（numpy+OpenCV CPU 绘制，跟随相机进程的 GPU-1
+namespace 但不占 GPU）；best-effort GUI（无显示环境时一行日志自禁用）；
+单 GUI 线程纪律由进程级 `CvGuiLoop`（`mdp/gui_loop.py`）承担——Qt/GTK
+HighGUI 的窗口所有权不能跨线程转移（实测第一个 GUI 线程退出后第二个线程
+的 `namedWindow` 永久挂死），因此预览与 viewer 都只在自己线程合成帧后
+`submit`，全部 `namedWindow/imshow/waitKey/destroyWindow` 只发生在这一个
+常驻线程上；viewer 窗口在第一个 pair 发布时打开，warm-up 期间与预览窗口
+并存。开关：
+`live_viewer.enabled`（default.yaml）→ `--live-dataprocess-viewer/--no-…`
+（orchestrator 与相机 CLI 同名转发）。非 lossless 模式没有 pair 发布，
+viewer 自动不启用。
+
 ## 队列健康、丢帧与延迟实测（P1 验证）
 
 验证目标：formal 5 FPS 各级队列不随时间增长、正式路径 seq gap 为 0、正式丢帧为

@@ -1,21 +1,27 @@
 """Warm-up live RGB camera-input preview window (every downstream mode).
 
 During the hold-still warm-up window the operator needs to see what the camera
-sees (framing, both hands visible) — this small OpenCV window opens with
-capture in EVERY ``downstream.mode`` (it is NOT the tracking-chunk visualizer,
-whose per-mode policy is unchanged) and mirrors the live RGB input straight
-from ``input_preview_slot`` at frame cadence, with zero disk IO.
+sees (framing, both hands visible) — this small window opens with capture in
+EVERY ``downstream.mode`` (it is NOT the tracking-chunk visualizer, whose
+per-mode policy is unchanged) and mirrors the live RGB input straight from
+``input_preview_slot`` at frame cadence, with zero disk IO.
+
+The preview thread only composes frames (copy + text raster); the actual
+window is driven by the process-wide ``CvGuiLoop`` GUI thread — Qt/GTK
+HighGUI cannot survive window ownership moving between threads, so no client
+ever calls ``imshow`` itself.
 
 Lifecycle: it closes the moment warm-up ends —
 - normal end: shape prior ready / formal timeline opens (the WARMUP_FINISHED
   banner site calls ``close()``), or seg-warm-up completion when shape-prior
   warm-up is disabled;
 - failure / cancel / early exit: ``stop_event`` (set by fatal worker errors and
-  process teardown) ends the render loop immediately, and ``stop()`` also calls
-  ``close()`` so the window never outlives the run.
+  process teardown) ends the compose loop immediately, and ``stop()`` also
+  calls ``close()`` so the window never outlives the run.
 
-Best-effort GUI: any display/backend failure disables the preview with one log
-line and never touches the capture pipeline (same policy as pipeline_status).
+Best-effort GUI: composition failures disable the preview with one log line
+(display/backend failures are already absorbed inside the GUI loop) and never
+touch the capture pipeline.
 """
 
 from __future__ import annotations
@@ -34,11 +40,13 @@ class WarmupRgbPreview:
         self,
         *,
         input_preview_slot: Any,
+        gui: Any,
         stop_event: threading.Event,
         enabled: bool = True,
         cv2_module: Any | None = None,
     ) -> None:
         self._slot = input_preview_slot
+        self._gui = gui
         self._stop_event = stop_event
         self._close_event = threading.Event()
         self._enabled = bool(enabled)
@@ -47,7 +55,7 @@ class WarmupRgbPreview:
         self._started_perf_s: float | None = None
 
     def start(self) -> None:
-        """Open the preview window thread; a GUI-less environment disables it."""
+        """Start the compose thread; a GUI-less environment disables it."""
         if not self._enabled or self._thread is not None:
             return
         if self._cv2 is None:
@@ -70,10 +78,10 @@ class WarmupRgbPreview:
         thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)
+        self._gui.close_window(self.WINDOW_NAME)
 
     def _run(self) -> None:
         cv2 = self._cv2
-        window_created = False
         last_seq = -1
         try:
             while not self._stop_event.is_set() and not self._close_event.is_set():
@@ -91,27 +99,9 @@ class WarmupRgbPreview:
                         frame, label, (12, 28),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA,
                     )
-                    if not window_created:
-                        cv2.namedWindow(self.WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
-                        window_created = True
-                        print(
-                            "[demo_v6_1] warmup rgb preview: window opened",
-                            flush=True,
-                        )
-                    cv2.imshow(self.WINDOW_NAME, frame)
-                # waitKey pumps the GUI event loop and paces the loop (~30 Hz).
-                cv2.waitKey(33)
+                    # The GUI loop owns the buffer from here on.
+                    self._gui.submit(self.WINDOW_NAME, frame)
+                time.sleep(0.033)
         except Exception as exc:
-            # A broken/absent display must never break capture or warm-up.
+            # Composition failure must never break capture or warm-up.
             print(f"[demo_v6_1] warmup rgb preview disabled: {exc}", flush=True)
-        finally:
-            if window_created:
-                try:
-                    cv2.destroyWindow(self.WINDOW_NAME)
-                    cv2.waitKey(1)
-                except Exception:
-                    pass
-                print(
-                    "[demo_v6_1] warmup rgb preview: window closed",
-                    flush=True,
-                )

@@ -1,0 +1,2 @@
+{"detail": "input=fake-live downstream=phystwin_shen", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1785114768.341829}
+{"detail": "capture finished before metadata appeared: outputs/capture/metadata.json", "ok": false, "source": "orchestrator", "stage": "fatal_error", "t": 1785114768.3643618}

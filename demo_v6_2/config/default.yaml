@@ -41,7 +41,7 @@ chunking:
   # --volume_sample_size parity: one object query per occupied voxel on the
   # first batch (identity frozen at chunk 0); also drives the shape-prior
   # sample stage voxel. 0.005 preserves origin parity.
-  volume_sample_size_m: 0.005
+  volume_sample_size_m: 0.05
 
 # Camera capture, depth, masks, and local model runtime.
 camera:
@@ -122,6 +122,16 @@ shape_prior:
   # Options: null or relative/absolute SAM3D pipeline config path; null uses
   # the SAM3D default config resolution.
   shape_prior_config: null
+
+# In-process realtime data-process viewer (camera subprocess, pure observer).
+live_viewer:
+  # Options: true | false. Shows the latest fully processed frame (processed
+  # masks, object/controller PCD, TAPNext++ tracks, shape-prior state, and
+  # latency/FPS diagnostics) the moment it exists — no chunk wait. Coexists
+  # with every downstream.mode, drops only DISPLAY frames when behind, uses
+  # numpy+OpenCV on the CPU (no CUDA context, no disk IO), and never blocks
+  # or mutates the formal pipeline.
+  enabled: true
 
 # Downstream consumer of the online stream. Exactly one runs per session.
 downstream:
