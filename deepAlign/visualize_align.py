@@ -95,8 +95,9 @@ def assemble_case() -> Path:
 # ---------------------------------------------------------------------------
 
 
-def replay_align(case: Path) -> dict:
+def replay_align(case: Path, out_dir: Path | None = None, with_counts: bool = True) -> dict:
     """Mirror align.main() step by step, returning every intermediate."""
+    out_dir = Path(out_dir) if out_dir is not None else OUT_DIR / "replay"
     raw_img = cv2.cvtColor(cv2.imread(str(case / "color/0/0.png")), cv2.COLOR_BGR2RGB)
     mask_img = cv2.imread(str(case / "mask/0/0/0.png"), cv2.IMREAD_GRAYSCALE)
     metadata = json.loads((case / "metadata.json").read_text())
@@ -136,12 +137,13 @@ def replay_align(case: Path) -> dict:
     grays = [cv2.cvtColor(color, cv2.COLOR_BGR2GRAY) for color in colors]
 
     # Formal winner (same call as align) + per-candidate counts for the sweep.
-    matching_dir = OUT_DIR / "replay" / "matching"
+    matching_dir = out_dir / "matching"
     matching_dir.mkdir(parents=True, exist_ok=True)
     best_idx, match_result = image_pair_matching(
         grays, crop_img, matching_dir, viz=False, cache=False, save=False, viz_best=False,
     )
-    counts = per_candidate_match_counts(grays, crop_img)
+    counts = (per_candidate_match_counts(grays, crop_img) if with_counts
+              else np.zeros(len(grays), dtype=np.int64))
     print(f"[replay] best candidate {best_idx}: "
           f"{int(np.sum(match_result['matches'] > -1))} matches "
           f"(max over candidates {int(counts.max())})")
@@ -220,8 +222,8 @@ def replay_align(case: Path) -> dict:
     verts_final = np.asarray(final_mesh_world.vertices).copy()
 
     mesh.vertices = verts_final[trimesh_indices]
-    replay_dir = OUT_DIR / "replay"
-    mesh.export(replay_dir / "final_mesh.glb")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    mesh.export(out_dir / "final_mesh.glb")
 
     return {
         "raw_img": raw_img, "mask_img": mask_img, "crop_img": crop_img, "bbox": bbox,
