@@ -7,7 +7,7 @@ directory exported by ``export_stitched_case_for_futurephystwin.py``, then:
 
   1. renders the ground-truth tracking video (``gt.mp4``),
   2. runs full-sequence inference with the best checkpoint (``inference.mp4``),
-  3. copies the visualization videos into ``demo_v6_1/others``.
+  3. copies the visualization videos into ``demo_v6_2/others``.
 
 Must run with the ``phystwin-max`` environment python. The stock code writes
 videos with the ``avc1`` fourcc, which this machine's OpenCV/FFmpeg build cannot
@@ -31,8 +31,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_FUTUREPHYSTWIN_ROOT = Path.home() / "FuturePhysTwin"
 DEFAULT_CASE_NAME = "demo_v6_1_stitched_805"
-DEFAULT_CASES_ROOT = REPO_ROOT / "demo_v6_1/others/futurephystwin_stitched/cases"
-DEFAULT_VIDEOS_DIR = REPO_ROOT / "demo_v6_1/others"
+DEFAULT_CASES_ROOT = REPO_ROOT / "demo_v6_2/others/futurephystwin_stitched/cases"
+DEFAULT_VIDEOS_DIR = REPO_ROOT / "demo_v6_2/others"
 SEED = 42
 
 

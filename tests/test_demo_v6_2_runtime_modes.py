@@ -619,9 +619,10 @@ class VolumeSampleTests(unittest.TestCase):
         from demo_v6_2.shape_prior import sample as shape_prior_sample
         from demo_v6_2.streaming.data_payload import DATA_PROCESS_SAM3D_METRICS
 
-        # config/default.yaml is the only default location; 0.005 preserves
-        # data_process_origin volume-sampling parity.
-        self.assertEqual(DEFAULT_VOLUME_SAMPLE_SIZE_M, 0.005)
+        # config/default.yaml is the only default location; 0.05 is the
+        # owner's unified-structure sampling voxel (2026-07-23 exec plan;
+        # deviates from data_process_origin's 0.005 deliberately).
+        self.assertEqual(DEFAULT_VOLUME_SAMPLE_SIZE_M, 0.05)
 
         # The unified sampling happens ONLY in the orchestrator's tracking
         # runtime at chunk 0: the camera CLI and the sample stage (raw

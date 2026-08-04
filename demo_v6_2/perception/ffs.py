@@ -1,4 +1,4 @@
-"""FFS depth / PCD gates for Demo v6.2 tracking (see demo_v6_1/design_spec.md).
+"""FFS depth / PCD gates for Demo v6.2 tracking (see demo_v6_2/design_spec_v6_1.md).
 
 This module owns the "PCD/depth 是否有效" half of the per-frame observation
 gate: sampling the dense world PCD grid at track pixels and deciding whether
