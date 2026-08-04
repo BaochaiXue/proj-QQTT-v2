@@ -192,8 +192,74 @@ def main() -> int:
             V.label(right, "parts + skeleton vs obs PCD (grey)", color=V.WHITE)
             V.hold(writer, V.two_panel(left, right), 1 / FPS, CANVAS)
 
+    # H: sample stage (补点) — candidates.npz produced from final_mesh.glb
+    cand = np.load(OUT_DIR / "sample_case" / V.CASE_NAME / "shape/candidates.npz")
+    surf, interior = cand["raw_surface_points"], cand["raw_interior_points"]
+    SURF_C, INT_C = (90, 225, 130), (250, 120, 210)
+
+    def dots_on(base, points, color, K_, w2c_, r=2):
+        pts = project_pts(points, K_, w2c_)
+        h_, w_ = base.shape[:2]
+        for i in range(len(pts)):
+            u, v_px = int(round(pts[i, 0])), int(round(pts[i, 1]))
+            if 0 <= u < w_ and 0 <= v_px < h_ and pts[i, 2] > 0:
+                cv2.circle(base, (u, v_px), r, color, -1)
+        return base
+
+    art_colors, art_depths = V.render_world_mesh(
+        S["verts_art"], template, tidx, [w2c], fov)
+    base = (0.35 * raw).astype(np.uint8)
+    vis = art_depths[0] > 0
+    base[vis] = (0.5 * art_colors[0][vis] + 0.5 * base[vis]).astype(np.uint8)
+    surf_cam = V.label(dots_on(base.copy(), surf, SURF_C, K, w2c),
+                       f"sample stage: {len(surf)} surface candidates", color=SURF_C)
+    int_cam = V.label(dots_on(base.copy(), interior, INT_C, K, w2c),
+                      f"{len(interior)} interior candidates (volume fill)",
+                      color=INT_C)
+    emit(V.two_panel(surf_cam, int_cam), 3.0)
+
+    orbit_stills = {}
+    for chunk_start in range(0, len(w2cs_orbit), 12):
+        chunk = w2cs_orbit[chunk_start:chunk_start + 12]
+        colors, depths = V.render_world_mesh(S["verts_art"], template, tidx, chunk, fov)
+        for k in range(len(chunk)):
+            left = np.full((V.H, V.W, 3), 12, dtype=np.uint8)
+            vis = depths[k] > 0
+            left[vis] = colors[k][vis]
+            dots_on(left, surf, SURF_C, K_orbit, chunk[k])
+            V.label(left, "final mesh + surface candidates", color=SURF_C)
+            right = np.full((V.H, V.W, 3), 12, dtype=np.uint8)
+            dots_on(right, S["verts_art"][::3], (90, 90, 90), K_orbit, chunk[k], r=1)
+            dots_on(right, surf, SURF_C, K_orbit, chunk[k], r=1)
+            dots_on(right, interior, INT_C, K_orbit, chunk[k])
+            V.label(right, "interior fill inside the volume (mesh=grey)",
+                    color=INT_C)
+            V.hold(writer, V.two_panel(left, right), 1 / FPS, CANVAS)
+            if chunk_start + k == 16:
+                orbit_stills = {"left": left.copy(), "right": right.copy()}
+
     writer.close()
     print(f"[video] {OUT_DIR / 'articulated_alignment.mp4'}")
+
+    # ---- stills: final result + sampling ----
+    result_row = np.concatenate([
+        overlay(S["verts_art"],
+                f"articulated final  obs->mesh p90 {art['obs_to_mesh_p90_mm']}mm  "
+                f"limb distortion {art['part_rigid_intra_mean_pct']}%", V.RED),
+        xor_panel(S["verts_art"],
+                  f"silhouette XOR  IoU {art['silhouette_iou']}  "
+                  "(green=missed blue=extra)", V.RED),
+        heat_panel(S["verts_art"], "distance to obs 0-60mm", V.RED),
+    ], axis=1)
+    cv2.imwrite(str(OUT_DIR / "final_result.png"),
+                cv2.cvtColor(result_row, cv2.COLOR_RGB2BGR))
+
+    sample_row = np.concatenate(
+        [surf_cam, int_cam, V.two_panel(orbit_stills["left"], orbit_stills["right"])],
+        axis=1)
+    cv2.imwrite(str(OUT_DIR / "sample_points.png"),
+                cv2.cvtColor(sample_row, cv2.COLOR_RGB2BGR))
+    print(f"[stills] final_result.png, sample_points.png")
     return 0
 
 
