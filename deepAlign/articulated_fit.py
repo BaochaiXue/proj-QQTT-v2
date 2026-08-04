@@ -272,8 +272,15 @@ def main() -> int:
             opt.step()
             sched.step()
             if it % 20 == 0 or it == iters - 1:
-                snapshots.append((f"{tag} {it}", verts.detach().cpu().numpy()))
-                losses.append(float(loss))
+                verts_now, G_now = pose_verts()
+                with torch.no_grad():
+                    ph = torch.cat(
+                        [pivots, torch.ones(len(pivots), 1, device=dev)], 1)
+                    j_now = torch.einsum(
+                        "jab,jb->ja", G_now, ph)[:, :3].cpu().numpy()
+                snapshots.append(
+                    (f"{tag} {it}", verts_now.detach().cpu().numpy(), j_now))
+                losses.append(loss.item())
                 print(f"[fit] {tag} {it:4d} loss {float(loss):.5f} "
                       f"(om {float(l_om):.5f} mo {float(l_mo):.5f})", flush=True)
 
@@ -303,6 +310,18 @@ def main() -> int:
         joints_w[1:] - joints_w[parents[1:]], axis=1)
     bone_len_final = np.linalg.norm(
         joints_final[1:] - joints_final[parents[1:]], axis=1)
+
+    np.savez_compressed(
+        OUT_DIR / "fit_states.npz",
+        snapshots=np.stack([s[1] for s in snapshots]),
+        snapshot_joints=np.stack([s[2] for s in snapshots]),
+        tags=np.array([s[0] for s in snapshots]),
+        losses=np.array(losses, dtype=np.float32),
+        verts_initial=verts_initial, verts_root=verts_root,
+        verts_art=verts_art, verts_legacy=verts_legacy,
+        joints_rest=joints_w, joints_final=joints_final,
+        parents=parents, dominant=dominant,
+    )
 
     # ---- metrics ----
     stages = {
@@ -397,7 +416,7 @@ def main() -> int:
 
     # fit process video
     writer = imageio.get_writer(OUT_DIR / "fit_process.mp4", fps=8)
-    for i, (tag, verts_snap) in enumerate(snapshots):
+    for i, (tag, verts_snap, _joints_snap) in enumerate(snapshots):
         frame = overlay(verts_snap, f"articulated ICP  [{tag}]  loss {losses[i]:.4f}",
                         V.RED)
         writer.append_data(frame)
