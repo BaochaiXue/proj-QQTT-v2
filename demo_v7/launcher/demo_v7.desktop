@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Demo v7
+Name[zh_CN]=Demo v7 实时演示
+Comment=demo_v6_2 realtime pipeline with GUI (PySide6)
+Comment[zh_CN]=demo_v6_2 实时管线的图形界面版本
+Exec=/home/xinjie/single_proj_qqtt/demo_v7/launcher/demo_v7.sh
+Icon=/home/xinjie/single_proj_qqtt/demo_v7/launcher/demo_v7.png
+Terminal=false
+Categories=Graphics;
+StartupNotify=true
+Path=/home/xinjie/single_proj_qqtt

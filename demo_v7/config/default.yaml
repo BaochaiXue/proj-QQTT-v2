@@ -1,0 +1,38 @@
+# demo_v7-only configuration.
+#
+# Pipeline knobs are deliberately NOT duplicated here: every demo_v6_2
+# orchestrator option (chunking, camera, shape prior, GPU namespaces,
+# downstream/phystwin settings, ...) keeps its default from
+# demo_v6_2/config/default.yaml via demo_v6_2.main_cli.build_parser().
+# demo_v7 callers override those per run with CLI-style argv
+# (OrchestratorSession(extra_v62_argv=...)); this file holds only the keys
+# that exist solely because of the v7 GUI + camera-service split.
+
+session:
+  # Options: fake-live | live. Source used when neither the CLI nor the GUI
+  # source-select dialog picked one.
+  source: "fake-live"
+  # Options: data_collect case directory path or null. null inherits the
+  # demo_v6_2 default (input.fake_live_case in demo_v6_2/config/default.yaml)
+  # so the recording is configured in exactly one place.
+  fake_live_case: null
+  # Options: template string containing "{base_path}". Directory that holds
+  # control.sock and frames.sock for one run. It lives under the run output
+  # dir so parallel runs with different --base-path never collide; keep the
+  # expansion short because Unix socket paths are limited to ~107 bytes.
+  socket_dir_template: "{base_path}/v7_sockets"
+  # Options: positive finite float seconds. How long the parent process
+  # retries connecting to the service sockets after spawning it. The service
+  # binds its sockets before model preloads, but slow disks/first-run
+  # imports can still delay the bind by tens of seconds.
+  connect_timeout_s: 180.0
+  # Options: positive finite float seconds between connect retries.
+  connect_poll_interval_s: 0.25
+
+preview:
+  # Options: mapping of frame channel -> positive finite float Hz that
+  # overrides demo_v7/ipc/protocol.py CHANNEL_MAX_HZ on the service encode
+  # side. An empty mapping keeps the protocol defaults. Known channels:
+  # rgb, depth, overlay, composite. Read via
+  # demo_v7.orchestration.session.resolve_preview_channel_max_hz.
+  channel_max_hz: {}
