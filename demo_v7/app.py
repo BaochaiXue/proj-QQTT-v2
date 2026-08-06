@@ -40,6 +40,7 @@ sys.path.insert(0, _BOOTSTRAP_REPO_ROOT_STR)
 from PySide6.QtCore import QObject, Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -52,9 +53,24 @@ from PySide6.QtWidgets import (
 )
 
 from demo_v7.gui.main_window import MainWindow, shutdown_session_on_thread
+from demo_v7.service.backend_options import (  # import-light (stdlib only)
+    BACKEND_NONE,
+    BACKEND_SAM3D,
+    BACKEND_TRELLIS2,
+    DEFAULT_SHAPE_PRIOR_BACKEND,
+    SHAPE_PRIOR_BACKENDS,
+    normalize_backend,
+)
 
 SOURCE_REAL = "real"
 SOURCE_FAKE_LIVE = "fake-live"
+
+# Combo order + GUI labels for the shape-prior generation backend.
+_BACKEND_LABELS: tuple[tuple[str, str], ...] = (
+    (BACKEND_SAM3D, "SAM3D(默认)"),
+    (BACKEND_TRELLIS2, "TRELLIS.2"),
+    (BACKEND_NONE, "无(不生成 shape prior)"),
+)
 
 # session.shutdown() can block on a dying service / chunk-stream tail; the
 # GUI waits at most this long (daemon thread keeps draining), then continues.
@@ -104,6 +120,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Run output base path (defaults to the v7/v6.2 config default).",
     )
+    parser.add_argument(
+        "--shape-prior-backend",
+        choices=SHAPE_PRIOR_BACKENDS,
+        default=None,
+        help=(
+            "Shape-prior generation backend; omit to pick interactively "
+            "(config default preselected)."
+        ),
+    )
     return parser
 
 
@@ -135,6 +160,21 @@ def config_default_source_and_case() -> tuple[str, Path | None]:
     return source, Path(case) if case else None
 
 
+def config_default_shape_prior_backend() -> str:
+    """Dialog default for the generation backend (config, then sam3d)."""
+    import yaml
+
+    try:
+        loaded = yaml.safe_load(
+            (Path(__file__).parent / "config" / "default.yaml").read_text()
+        )
+        if isinstance(loaded, dict) and isinstance(loaded.get("session"), dict):
+            return normalize_backend(loaded["session"].get("shape_prior_backend"))
+    except Exception:
+        pass
+    return DEFAULT_SHAPE_PRIOR_BACKEND
+
+
 class SourceSelectDialog(QDialog):
     """Modal 源选择: 真实相机 vs fake-live + case folder."""
 
@@ -143,6 +183,7 @@ class SourceSelectDialog(QDialog):
         *,
         default_case: Path | None = None,
         default_source: str = SOURCE_FAKE_LIVE,
+        default_backend: str = DEFAULT_SHAPE_PRIOR_BACKEND,
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
@@ -164,6 +205,18 @@ class SourceSelectDialog(QDialog):
         case_row.addWidget(QLabel("回放素材:", self))
         case_row.addWidget(self._case_edit, 1)
         case_row.addWidget(browse_btn)
+        # Shape-prior 生成后端 (sam3d / trellis2 / none): decided here because
+        # the service prewarms the chosen backend's worker at spawn — it
+        # cannot change without a 回到开始 relaunch.
+        self._backend_combo = QComboBox(self)
+        for backend_id, label in _BACKEND_LABELS:
+            self._backend_combo.addItem(label, backend_id)
+        index = self._backend_combo.findData(default_backend)
+        if index >= 0:
+            self._backend_combo.setCurrentIndex(index)
+        backend_row = QHBoxLayout()
+        backend_row.addWidget(QLabel("Shape prior 生成:", self))
+        backend_row.addWidget(self._backend_combo, 1)
         buttons = QDialogButtonBox(self)
         start_btn = buttons.addButton("开始", QDialogButtonBox.ButtonRole.AcceptRole)
         buttons.addButton("退出", QDialogButtonBox.ButtonRole.RejectRole)
@@ -175,11 +228,12 @@ class SourceSelectDialog(QDialog):
         layout.addWidget(self._real_radio)
         layout.addWidget(self._fake_radio)
         layout.addLayout(case_row)
+        layout.addLayout(backend_row)
         layout.addWidget(buttons)
         self._error = QLabel("", self)
         self._error.setStyleSheet("color: #f28b82;")
         layout.addWidget(self._error)
-        self.resize(560, 220)
+        self.resize(560, 250)
 
     def _browse_case(self) -> None:
         chosen = QFileDialog.getExistingDirectory(self, "选择 data_collect case 目录")
@@ -193,15 +247,19 @@ class SourceSelectDialog(QDialog):
             return
         self.accept()
 
-    def selection(self) -> tuple[str, Path | None]:
-        """Return (source, fake_live_case) after ``exec`` accepted."""
+    def selection(self) -> tuple[str, Path | None, str]:
+        """Return (source, fake_live_case, backend) after ``exec`` accepted."""
+        backend = str(self._backend_combo.currentData())
         if self._fake_radio.isChecked():
-            return SOURCE_FAKE_LIVE, Path(self._case_edit.text().strip())
-        return SOURCE_REAL, None
+            return SOURCE_FAKE_LIVE, Path(self._case_edit.text().strip()), backend
+        return SOURCE_REAL, None, backend
 
 
 def create_session(
-    source: str, fake_live_case: Path | None, base_path: Path | None
+    source: str,
+    fake_live_case: Path | None,
+    base_path: Path | None,
+    shape_prior_backend: str | None = None,
 ) -> Any:
     """Build an OrchestratorSession (lazy import; see module docstring).
 
@@ -218,6 +276,8 @@ def create_session(
         kwargs["fake_live_case"] = fake_live_case
     if base_path is not None:
         kwargs["base_path"] = base_path
+    if shape_prior_backend is not None:
+        kwargs["shape_prior_backend"] = shape_prior_backend
     return OrchestratorSession(**kwargs)
 
 
@@ -235,7 +295,11 @@ class AppController(QObject):
     def start(self) -> bool:
         """First launch; returns False when the user cancelled the dialog."""
         if self._args.source is not None:
-            return self._launch(self._args.source, self._args.fake_live_case)
+            return self._launch(
+                self._args.source,
+                self._args.fake_live_case,
+                self._args.shape_prior_backend,
+            )
         return self._ask_and_launch()
 
     def _ask_and_launch(self) -> bool:
@@ -243,16 +307,28 @@ class AppController(QObject):
         dialog = SourceSelectDialog(
             default_case=self._args.fake_live_case or cfg_case,
             default_source=cfg_source,
+            default_backend=(
+                self._args.shape_prior_backend
+                or config_default_shape_prior_backend()
+            ),
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return False
-        source, case = dialog.selection()
-        return self._launch(source, case)
+        source, case, backend = dialog.selection()
+        return self._launch(source, case, backend)
 
-    def _launch(self, source: str, fake_live_case: Path | None) -> bool:
+    def _launch(
+        self,
+        source: str,
+        fake_live_case: Path | None,
+        shape_prior_backend: str | None = None,
+    ) -> bool:
         try:
             self._session = create_session(
-                source, fake_live_case, self._args.base_path
+                source,
+                fake_live_case,
+                self._args.base_path,
+                shape_prior_backend,
             )
             # start() spawns the camera service and connects both sockets; it
             # blocks up to connect_timeout_s and self-cleans on failure.

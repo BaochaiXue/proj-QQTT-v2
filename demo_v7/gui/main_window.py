@@ -285,8 +285,16 @@ class MainWindow(QMainWindow):
             if isinstance(state, str) and state:
                 self._apply_state(state, None)
             source_kind = event.get("source_kind")
+            backend = event.get("shape_prior_backend")
             if source_kind:
-                self.setWindowTitle(f"demo_v7 — 实时物理孪生 [{source_kind}]")
+                suffix = f" | prior:{backend}" if backend else ""
+                self.setWindowTitle(
+                    f"demo_v7 — 实时物理孪生 [{source_kind}{suffix}]"
+                )
+            if isinstance(backend, str) and backend:
+                # Review screen adapts its Shape Prior/补点 tabs (backend
+                # "none" renders the observed points alone, no candidates).
+                self._review.set_shape_prior_backend(backend)
 
     def _on_artifacts(self, event: dict) -> None:
         kind = event.get("kind")

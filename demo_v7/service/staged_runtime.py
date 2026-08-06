@@ -61,7 +61,7 @@ from demo_v6_2.utils.render import apply_wslg_open3d_env_defaults
 
 from demo_v7.ipc import protocol
 from demo_v7.ipc.channel import ControlServer, FrameStreamServer
-from demo_v7.service import frame0_pipeline
+from demo_v7.service import backend_options, frame0_pipeline, shape_prior_backends
 from demo_v7.service._acquisition import AcquisitionLoop
 from demo_v7.service._formal import (
     FormalPipeline,
@@ -120,14 +120,22 @@ class StagedRuntime:
         socket_dir: Path,
         session: CameraSession | None = None,
         channel_max_hz: dict[str, float] | None = None,
+        shape_prior_backend: str | None = None,
     ) -> None:
         """Build shared services and bind both protocol sockets.
 
         ``channel_max_hz`` overrides the per-channel encode caps used by
         ``_publish_frame`` (cross-agent contract: camera_service forwards the
         config value); channels it omits keep the protocol defaults.
+        ``shape_prior_backend`` selects the generate backend (sam3d /
+        trellis2 / none; camera_service forwards the GUI choice) — it must be
+        resolved here in ``__init__`` because the prewarm pool spawns the
+        chosen backend's worker before the sockets even bind.
         """
         self.args = args
+        self.shape_prior_backend = backend_options.normalize_backend(
+            shape_prior_backend
+        )
         self.mode = RunMode.from_args(args)
         self.session = session if session is not None else CameraSession()
         self.socket_dir = Path(socket_dir)
@@ -212,11 +220,21 @@ class StagedRuntime:
     def _create_shape_prior_manager(
         self,
     ) -> shape_prior_warmup.ShapePriorWarmupManager:
-        """Create the shape-prior warmup manager (mirrors v6.2 runtime.py)."""
-        enabled = bool(self.args.shape_prior_warmup)
+        """Create the shape-prior warmup manager (mirrors v6.2 runtime.py).
+
+        The backend selector only swaps WHICH client class builds the stage
+        commands (shape_prior_backends); manager semantics, prewarm, and the
+        request flow are the unchanged v6.2 machinery. Backend ``none`` keeps
+        the manager disabled even if a stray --shape-prior-warmup was
+        forwarded (camera_service also normalizes, this is the last belt).
+        """
+        enabled = bool(self.args.shape_prior_warmup) and (
+            self.shape_prior_backend != backend_options.BACKEND_NONE
+        )
         client = None
         if enabled:
-            client = shape_prior_warmup.ShapePriorLocalClient(
+            client = shape_prior_backends.create_shape_prior_client(
+                self.shape_prior_backend,
                 case_root=Path(self.args.shape_prior_case_root),
                 cuda_visible_devices=str(
                     self.args.shape_prior_warmup_cuda_visible_devices
@@ -452,13 +470,14 @@ class StagedRuntime:
     def _cmd_hello(
         self, message: dict
     ) -> tuple[dict, Callable[[], None] | None]:
-        """hello -> ack with version/state/source_kind."""
+        """hello -> ack with version/state/source_kind/shape_prior_backend."""
         ack = _ack(
             protocol.CMD_HELLO,
             ok=True,
             version=protocol.PROTOCOL_VERSION,
             state=self.state,
             source_kind=str(self.args.input_source),
+            shape_prior_backend=self.shape_prior_backend,
         )
         return ack, None
 
@@ -763,7 +782,29 @@ class StagedRuntime:
             )
             return
         if not manager.enabled:
-            self._emit_progress("shape_prior_submit", "shape prior disabled; skipping")
+            # Backend "none" (or an explicit --no-shape-prior-warmup): skip
+            # generation/align/sample entirely but keep the review data the
+            # GUI can honestly show — the OBSERVED frame-0 object points are
+            # the whole tracking structure in this mode. Best-effort: this
+            # branch has consumed nothing one-shot, so failures stay
+            # display-only and never block the REVIEW transition.
+            try:
+                processed = frame0_pipeline.build_frame0_processed(
+                    bundle, args=self.args, session=self.session
+                )
+                self._emit_observed_points(processed)
+            except Exception as exc:
+                print(
+                    f"[v7] observed-points review data skipped: {exc}", flush=True
+                )
+            self._emit_progress(
+                "shape_prior_submit",
+                "shape prior disabled(backend=none);跳过生成/对齐/补点",
+            )
+            self._emit_progress("shape_prior", "skipped(无 shape prior)")
+            # shape_prior_ready is the GUI's 查看结果 gate; emitting it here
+            # keeps the button flow identical across backends.
+            self._emit_progress("shape_prior_ready", "shape prior 已跳过")
             self._warmup_done = True
             self._enter_state(protocol.STATE_REVIEW)
             return
@@ -771,29 +812,7 @@ class StagedRuntime:
             processed = frame0_pipeline.build_frame0_processed(
                 bundle, args=self.args, session=self.session
             )
-            # 补点 review data: the frame-0 OBSERVED object points, so the GUI
-            # can contrast them with the shape-prior surface/interior fill
-            # (candidates.npz ships via the shape-prior artifact list).
-            # Display-only; a write failure never blocks the warmup.
-            try:
-                observed_path = (
-                    self._review_dir() / "frame0" / "frame0_object_points.npz"
-                )
-                np.savez_compressed(
-                    observed_path,
-                    object_xyz_m=np.asarray(
-                        processed.pcd_packet.object_xyz_m, dtype=np.float32
-                    ),
-                    object_colors_rgb_u8=np.asarray(
-                        processed.pcd_packet.object_colors_rgb_u8, dtype=np.uint8
-                    ),
-                )
-                self._emit_artifacts(
-                    protocol.ARTIFACT_KIND_FRAME0,
-                    {"object_points_npz": str(observed_path)},
-                )
-            except Exception as exc:
-                print(f"[v7] frame0 object-points artifact skipped: {exc}", flush=True)
+            self._emit_observed_points(processed)
             submit_s = time.perf_counter()
             frame0_pipeline.submit_shape_prior(
                 manager,
@@ -826,6 +845,34 @@ class StagedRuntime:
             # a second frame-0 request in-process.
             if not self.stop_event.is_set():
                 self.fatal.record("frame-0 warmup", exc)
+
+    def _emit_observed_points(self, processed: Any) -> None:
+        """补点 review data: save + announce the frame-0 OBSERVED object points.
+
+        Lets the GUI contrast the observed cloud with the shape-prior
+        surface/interior fill (candidates.npz ships via the shape-prior
+        artifact list) — or show it alone under backend "none".
+        Display-only; a write failure never blocks the warmup.
+        """
+        try:
+            observed_path = (
+                self._review_dir() / "frame0" / "frame0_object_points.npz"
+            )
+            np.savez_compressed(
+                observed_path,
+                object_xyz_m=np.asarray(
+                    processed.pcd_packet.object_xyz_m, dtype=np.float32
+                ),
+                object_colors_rgb_u8=np.asarray(
+                    processed.pcd_packet.object_colors_rgb_u8, dtype=np.uint8
+                ),
+            )
+            self._emit_artifacts(
+                protocol.ARTIFACT_KIND_FRAME0,
+                {"object_points_npz": str(observed_path)},
+            )
+        except Exception as exc:
+            print(f"[v7] frame0 object-points artifact skipped: {exc}", flush=True)
 
     def _poll_shape_prior_until_terminal(self) -> None:
         """Poll the manager profile until READY; raise on FAILED/stop."""

@@ -28,6 +28,13 @@ session:
   connect_timeout_s: 180.0
   # Options: positive finite float seconds between connect retries.
   connect_poll_interval_s: 0.25
+  # Options: sam3d | trellis2 | none. Shape-prior generation backend used
+  # when neither the CLI nor the source-select dialog picked one. sam3d is
+  # the unchanged v6.2 generate stage; trellis2 swaps ONLY that stage for
+  # microsoft/TRELLIS.2 (trellis2 conda env; align/sample stay v6.2); none
+  # skips the shape-prior chain entirely (observed-only tracking structure,
+  # ASAP + PhysTwin downstream off).
+  shape_prior_backend: "sam3d"
 
 preview:
   # Options: mapping of frame channel -> positive finite float Hz that

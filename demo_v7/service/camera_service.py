@@ -73,6 +73,15 @@ def _build_v7_parser() -> argparse.ArgumentParser:
             "preview.channel_max_hz caps (defaults to protocol.CHANNEL_MAX_HZ)."
         ),
     )
+    parser.add_argument(
+        "--shape-prior-backend",
+        type=str,
+        default=None,
+        help=(
+            "Shape-prior generation backend: sam3d (v6.2 default), trellis2, "
+            "or none (skip the shape-prior chain entirely)."
+        ),
+    )
     return parser
 
 
@@ -211,6 +220,32 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
     args.shape_prior_object = None
+    # Shape-prior generate backend (GUI selector). Validate + fail fast here:
+    # the trellis2 worker would otherwise die opaquely inside the prewarm
+    # pool, and a "none" run must never leave the v6.2 warmup flag on.
+    from demo_v7.service import backend_options  # noqa: PLC0415
+
+    try:
+        shape_prior_backend = backend_options.normalize_backend(
+            v7_args.shape_prior_backend
+        )
+        if shape_prior_backend == backend_options.BACKEND_TRELLIS2:
+            backend_options.ensure_trellis2_available()
+    except (ValueError, FileNotFoundError) as exc:
+        print(
+            f"camera_service: error: --shape-prior-backend {exc}", file=sys.stderr
+        )
+        return 2
+    if shape_prior_backend == backend_options.BACKEND_NONE and bool(
+        args.shape_prior_warmup
+    ):
+        print(
+            "[camera-service] shape-prior backend 'none': forcing "
+            "--no-shape-prior-warmup",
+            flush=True,
+        )
+        args.shape_prior_warmup = False
+    runtime_kwargs["shape_prior_backend"] = shape_prior_backend
     from demo_v7.service.staged_runtime import StagedRuntime  # noqa: PLC0415
 
     try:

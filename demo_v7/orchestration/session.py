@@ -76,6 +76,7 @@ from demo_v6_2.pipeline_status import (
 from demo_v6_2.streaming.session import ChunkStreamSession
 from demo_v7.ipc import protocol
 from demo_v7.ipc.channel import ControlClient, FrameStreamClient
+from demo_v7.service import backend_options
 
 V7_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "default.yaml"
 CAMERA_SERVICE_SCRIPT = Path("demo_v7") / "service" / "camera_service.py"
@@ -203,6 +204,7 @@ class OrchestratorSession:
         fake_live_case: str | Path | None = None,
         base_path: str | Path | None = None,
         downstream_mode: str | None = None,
+        shape_prior_backend: str | None = None,
         extra_v62_argv: Sequence[str] = (),
         v7_config_path: str | Path = V7_CONFIG_PATH,
         on_event: Callable[[dict], None] | None = None,
@@ -214,11 +216,26 @@ class OrchestratorSession:
         resolved_source = str(source if source is not None else session_cfg["source"])
         if fake_live_case is None:
             fake_live_case = session_cfg.get("fake_live_case")
+        # Shape-prior generate backend (GUI selector; sam3d/trellis2/none).
+        # Resolved before the strict v6.2 parse because backend "none" maps
+        # onto existing v6.2 switches: the shape-prior chain off, ASAP off
+        # (it hard-requires a mesh), and — unless the caller explicitly chose
+        # a downstream — PhysTwin off too (phystwin_shen rejects no-ASAP runs
+        # at parse time by design).
+        self.shape_prior_backend = backend_options.normalize_backend(
+            shape_prior_backend
+            if shape_prior_backend is not None
+            else session_cfg.get("shape_prior_backend")
+        )
         argv: list[str] = ["--input-source", resolved_source]
         if resolved_source == "fake-live" and fake_live_case is not None:
             argv.extend(["--fake-live-case", str(fake_live_case)])
         if base_path is not None:
             argv.extend(["--base-path", str(base_path)])
+        if self.shape_prior_backend == backend_options.BACKEND_NONE:
+            argv.extend(["--no-shape-prior-warmup", "--no-asap-augment"])
+            if downstream_mode is None:
+                downstream_mode = "disabled"
         if downstream_mode is not None:
             argv.extend(["--downstream-mode", str(downstream_mode)])
         # The v7 GUI replaces every v6.2 window: the camera service must not
@@ -326,6 +343,7 @@ class OrchestratorSession:
         command.extend(
             ["--channel-max-hz-json", json.dumps(self.preview_channel_max_hz)]
         )
+        command.extend(["--shape-prior-backend", self.shape_prior_backend])
         self._camera_service_command = command
         try:
             self._service = subprocess.Popen(

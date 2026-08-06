@@ -195,6 +195,12 @@ class MeshOrbitView(QWidget):
         except Exception:
             pass
 
+    def setPlaceholderText(self, text: str) -> None:  # noqa: N802 (Qt style)
+        """Replace the idle placeholder line (shown until content loads)."""
+        self._placeholder = str(text)
+        if self._pixmap is None:
+            self.update()
+
     def clear(self) -> None:
         """Drop the loaded mesh/points and return to the placeholder."""
         self._mesh_path = None

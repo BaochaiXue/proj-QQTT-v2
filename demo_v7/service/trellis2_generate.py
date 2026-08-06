@@ -1,0 +1,285 @@
+"""TRELLIS.2 generate-stage CLI: shape/masked_image.png -> shape/object.glb.
+
+Drop-in replacement for ``demo_v6_2.shape_prior.generate`` (same CLI surface,
+same StageProfileRun WAITING/GO/COMPLETED lifecycle, same output contract) so
+the untouched v6.2 align/sample stages run unchanged afterwards. It is meant
+to run under the ``trellis2`` conda env python — the parent-side argv is built
+by ``demo_v7.service.shape_prior_backends.Trellis2ShapePriorClient``.
+
+Environment landmines handled here (memory: trellis2-integration):
+
+- the ``trellis2`` package is repo-local, never pip-installed -> the checkout
+  passed via ``--trellis2-repo`` is prepended to ``sys.path`` before any
+  heavy import;
+- ``briaai/RMBG-2.0`` (rembg) is a gated HF repo -> stubbed out before
+  ``from_pretrained``; our input is always an RGBA masked image, for which
+  ``preprocess_image`` never calls rembg;
+- CUDA_HOME must point at the env's own cuda-toolkit 12.4 (system has only
+  12.8/13.x) for any first-use nvdiffrast JIT build during texture baking;
+- align renders the glb through pytorch3d's experimental GLB loader, which
+  cannot decode EXT_texture_webp -> PNG textures (``extension_webp=False``).
+"""
+
+import time
+
+
+_MODULE_IMPORT_START_S = time.perf_counter()
+
+
+import os  # noqa: E402
+import sys  # noqa: E402
+from argparse import ArgumentParser  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+
+# align's candidate rendering + ARAP are tuned for SAM3D-scale meshes (the
+# sloth reference: 5.6k verts / 8.6k faces); TRELLIS.2's native ~490k faces
+# would be ~57x that, so decimate to the same order of magnitude.
+DECIMATION_TARGET_FACES = 16000
+TEXTURE_SIZE = 2048
+DEFAULT_SEED = 42
+_ACTIVE_TIMING_FIELDS = (
+    "module_import_ms",
+    "pre_go_prepare_ms",
+    "model_load_ms",
+    "input_decode_ms",
+    "pipeline_run_ms",
+    "mesh_export_ms",
+    # SAM3D-only fields kept at 0.0 so generate.json stays field-uniform
+    # across backends for timeline consumers.
+    "gaussian_export_ms",
+    "visualization_export_ms",
+)
+
+
+def build_parser():
+    """Build the command-line argument parser (generate.py CLI mirror)."""
+    parser = ArgumentParser(
+        description="Generate shape prior via TRELLIS.2 (demo_v7 backend)."
+    )
+    parser.add_argument("--img_path", type=str, required=True)
+    parser.add_argument("--output_dir", type=str, required=True)
+    parser.add_argument(
+        "--trellis2-repo",
+        type=str,
+        required=True,
+        help="TRELLIS.2 checkout (repo-local `trellis2` package).",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="microsoft/TRELLIS.2-4B",
+        help="HF pipeline id (must already be in the local HF cache).",
+    )
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--profile-json", type=Path, default=None)
+    parser.add_argument(
+        "--skip-visualization",
+        action="store_true",
+        help="Accepted for generate.py argv parity; TRELLIS.2 emits no video.",
+    )
+    parser.add_argument(
+        "--wait-signal",
+        dest="wait_signal",
+        action="store_true",
+        help="Load the pipeline to CPU RAM, then block on stdin for GO.",
+    )
+    return parser
+
+
+def _bootstrap_paths(trellis2_repo):
+    """Front-load sys.path + CUDA env before any torch/trellis2 import.
+
+    Must win over the parent's _stage_env PYTHONPATH (repo_root +
+    repo_root/demo_v6_2 come first there and would otherwise shadow module
+    names inside the TRELLIS.2 checkout).
+    """
+    repo = Path(trellis2_repo).expanduser().resolve()
+    if not (repo / "trellis2" / "__init__.py").is_file():
+        raise FileNotFoundError(f"not a TRELLIS.2 checkout: {repo}")
+    repo_str = str(repo)
+    if repo_str in sys.path:
+        sys.path.remove(repo_str)
+    sys.path.insert(0, repo_str)
+    # The env's own cuda-toolkit (12.4) for potential nvdiffrast JIT builds;
+    # setdefault keeps an operator override authoritative.
+    env_prefix = Path(sys.executable).resolve().parents[1]
+    if (env_prefix / "bin" / "nvcc").is_file():
+        os.environ.setdefault("CUDA_HOME", str(env_prefix))
+        os.environ["PATH"] = os.pathsep.join(
+            [str(env_prefix / "bin"), os.environ.get("PATH", "")]
+        )
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+
+def _stub_gated_rembg():
+    """Disable the gated briaai/RMBG-2.0 background-removal model.
+
+    ``preprocess_image`` uses the input's own alpha channel whenever it is
+    RGBA with a real mask (our case, always), so the stub is never invoked;
+    it exists purely so ``from_pretrained`` does not 403 on the gated repo.
+    """
+    from trellis2.pipelines import rembg as rembg_mod
+
+    class _NoRembg:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def to(self, *args, **kwargs):
+            return self
+
+        def cpu(self):
+            return self
+
+        def __call__(self, image):
+            raise RuntimeError(
+                "rembg is disabled (gated HF repo); the input must be an "
+                "RGBA masked image"
+            )
+
+    rembg_mod.BiRefNet = _NoRembg
+
+
+def _load_pipeline(model_id):
+    """from_pretrained to CPU RAM only (VRAM stays untouched until run)."""
+    _stub_gated_rembg()
+    from trellis2.pipelines import Trellis2ImageTo3DPipeline
+
+    pipeline = Trellis2ImageTo3DPipeline.from_pretrained(model_id)
+    # low_vram mode (checkpoint default) stages models on/off the GPU per
+    # pipeline step; .cuda() only records the target device.
+    pipeline.cuda()
+    return pipeline
+
+
+def _validated_rgba(img_path):
+    """Open the masked image, enforcing the RGBA-with-mask input contract."""
+    import numpy as np
+    from PIL import Image
+
+    image = Image.open(img_path).convert("RGBA")
+    alpha = np.asarray(image)[:, :, 3]
+    if bool(np.all(alpha == 255)):
+        # Same guard as generate.py's rgba_to_sam3d_inputs: without a real
+        # alpha mask the (stubbed) rembg path would be taken.
+        raise ValueError("Image must contain an alpha foreground mask.")
+    return image
+
+
+def run_trellis2_shape_prior(args, pipeline=None, *, timing_ms=None):
+    """Generate + bake + export object.glb; returns the active timings."""
+    timings = {} if timing_ms is None else timing_ms
+    if pipeline is None:
+        prepare_start_s = time.perf_counter()
+        _bootstrap_paths(args.trellis2_repo)
+        timings["pre_go_prepare_ms"] = _elapsed_ms(prepare_start_s)
+
+        model_load_start_s = time.perf_counter()
+        pipeline = _load_pipeline(args.model)
+        timings["model_load_ms"] = _elapsed_ms(model_load_start_s)
+
+    input_decode_start_s = time.perf_counter()
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    image = _validated_rgba(args.img_path)
+    timings["input_decode_ms"] = _elapsed_ms(input_decode_start_s)
+
+    pipeline_run_start_s = time.perf_counter()
+    mesh = pipeline.run(image, seed=int(args.seed))[0]
+    timings["pipeline_run_ms"] = _elapsed_ms(pipeline_run_start_s)
+
+    mesh_export_start_s = time.perf_counter()
+    import o_voxel
+
+    mesh.simplify(16777216)
+    glb = o_voxel.postprocess.to_glb(
+        vertices=mesh.vertices,
+        faces=mesh.faces,
+        attr_volume=mesh.attrs,
+        coords=mesh.coords,
+        attr_layout=mesh.layout,
+        voxel_size=mesh.voxel_size,
+        aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
+        decimation_target=DECIMATION_TARGET_FACES,
+        texture_size=TEXTURE_SIZE,
+        remesh=True,
+        verbose=False,
+    )
+    # PNG textures: pytorch3d's experimental GLB reader (align) and Open3D
+    # (the GUI mesh view) cannot decode EXT_texture_webp.
+    glb.export(str(output_dir / "object.glb"), extension_webp=False)
+    timings["mesh_export_ms"] = _elapsed_ms(mesh_export_start_s)
+    return timings
+
+
+def _elapsed_ms(start_s):
+    """Local perf-counter delta in ms (timing.elapsed_ms mirror, pre-import)."""
+    duration_ms = (time.perf_counter() - float(start_s)) * 1000.0
+    if duration_ms < 0.0:
+        raise ValueError(f"invalid timing duration: {duration_ms}")
+    return float(duration_ms)
+
+
+def _import_stage_profile_run():
+    """Import the v6.2 timing contract (stdlib-only import chain).
+
+    The parent's _stage_env already puts the repo root on PYTHONPATH; the
+    fallback covers direct CLI invocations of this script.
+    """
+    try:
+        from demo_v6_2.shape_prior.timing import StageProfileRun
+    except ModuleNotFoundError:
+        repo_root = str(Path(__file__).resolve().parents[2])
+        if repo_root not in sys.path:
+            sys.path.append(repo_root)
+        from demo_v6_2.shape_prior.timing import StageProfileRun
+    return StageProfileRun
+
+
+def main(argv=None):
+    """Run the command-line entry point (generate.py lifecycle mirror)."""
+    module_import_ms = _elapsed_ms(_MODULE_IMPORT_START_S)
+    args = build_parser().parse_args(argv)
+    StageProfileRun = _import_stage_profile_run()
+    run = StageProfileRun(
+        stage="generate",
+        profile_json=args.profile_json,
+        wait_signal=args.wait_signal,
+        timing_ms=dict.fromkeys(
+            (*_ACTIVE_TIMING_FIELDS, "go_wait_ms", "total_ms", "process_lifetime_ms"),
+            0.0,
+        ),
+        active_fields=_ACTIVE_TIMING_FIELDS,
+        process_started_s=_MODULE_IMPORT_START_S,
+    )
+    timing_ms = run.timing_ms
+    timing_ms["module_import_ms"] = float(module_import_ms)
+
+    if args.wait_signal:
+        # Pre-GO work is CPU-only: sys.path/CUDA bootstrap plus
+        # from_pretrained into CPU RAM (~17G; the box has 251G). low_vram
+        # staging keeps VRAM free until the post-GO run, so the upscale
+        # stage's inference peak never overlaps model weights — the same
+        # sequencing contract as the SAM3D worker, at a much lower VRAM
+        # footprint (TRELLIS.2 peaks ~2.7G allocated).
+        prepare_start_s = time.perf_counter()
+        _bootstrap_paths(args.trellis2_repo)
+        timing_ms["pre_go_prepare_ms"] = _elapsed_ms(prepare_start_s)
+
+        model_load_start_s = time.perf_counter()
+        pipeline = _load_pipeline(args.model)
+        timing_ms["model_load_ms"] = _elapsed_ms(model_load_start_s)
+
+        run.write_waiting()
+        if not run.wait_for_go():
+            return
+
+        run_trellis2_shape_prior(args, pipeline=pipeline, timing_ms=timing_ms)
+    else:
+        run_trellis2_shape_prior(args, timing_ms=timing_ms)
+
+    run.write_completed()
+
+
+if __name__ == "__main__":
+    main()

@@ -286,6 +286,10 @@ class ReviewScreen(QWidget):
         self._sampling_view = MeshOrbitView("等待补点数据(warmup 完成后可查看)…")
         self._sampling_paths: dict[str, str] = {}
         self._sampling_loaded = False
+        # Generation backend for this service run (hello-ack echo); "none"
+        # switches the 补点 view to observed-only. Survives reset(): the
+        # backend is fixed for the service's lifetime (回到开始 relaunches).
+        self._shape_prior_backend: str | None = None
         self._sampling_checks: dict[str, QCheckBox] = {}
         sampling_bar = QHBoxLayout()
         for key, label, color in _SAMPLING_SOURCES:
@@ -313,6 +317,21 @@ class ReviewScreen(QWidget):
         layout = QVBoxLayout(self)
         layout.addWidget(self._tabs, 1)
         layout.addLayout(buttons)
+
+    def set_shape_prior_backend(self, backend: str) -> None:
+        """Adapt the tabs to the run's generation backend (hello-ack echo).
+
+        Backend "none" produces no mesh and no candidates.npz: the mesh view
+        says so instead of waiting forever, and the 补点 view renders the
+        observed frame-0 points alone (they ARE the tracking structure in
+        that mode).
+        """
+        self._shape_prior_backend = str(backend)
+        if self._shape_prior_backend == "none":
+            self._mesh_view.setPlaceholderText(
+                "本次运行未生成 shape prior(backend=none)。"
+            )
+            self._maybe_build_sampling_view()
 
     def set_mask_artifacts(self, paths: dict[str, str]) -> None:
         self._masks_grid.clear()
@@ -348,29 +367,41 @@ class ReviewScreen(QWidget):
         self._maybe_build_sampling_view()
 
     def _maybe_build_sampling_view(self) -> None:
-        """Load the 补点 view once both npz sources are on disk."""
+        """Load the 补点 view once its npz sources are on disk.
+
+        Normally needs BOTH the observed points and candidates.npz; under
+        backend "none" no candidates ever come, so the observed cloud renders
+        alone (surface/interior legends show 0).
+        """
         if self._sampling_loaded:
             return
         observed = self._sampling_paths.get("observed")
         candidates = self._sampling_paths.get("candidates")
-        if observed is None or candidates is None:
+        observed_only = candidates is None and self._shape_prior_backend == "none"
+        if observed is None or (candidates is None and not observed_only):
             return
         try:
             import numpy as np  # noqa: PLC0415
 
             observed_npz = np.load(observed)
-            candidates_npz = np.load(candidates)
+            empty = np.zeros((0, 3), dtype=np.float32)
+            if observed_only:
+                surface_points, interior_points = empty, empty
+            else:
+                candidates_npz = np.load(candidates)
+                surface_points = candidates_npz["raw_surface_points"]
+                interior_points = candidates_npz["raw_interior_points"]
             sets = {
                 "observed": (
                     observed_npz["object_xyz_m"],
                     _SAMPLING_COLORS_U8["observed"],
                 ),
                 "surface": (
-                    candidates_npz["raw_surface_points"],
+                    surface_points,
                     _SAMPLING_COLORS_U8["surface"],
                 ),
                 "interior": (
-                    candidates_npz["raw_interior_points"],
+                    interior_points,
                     _SAMPLING_COLORS_U8["interior"],
                 ),
             }
