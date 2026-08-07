@@ -521,3 +521,57 @@ class TestWhitenBackground:
         # Out-of-range amounts clamp instead of exploding.
         assert np.allclose(whiten_background(frame, 2.0), 255.0)
         assert np.allclose(whiten_background(frame, -1.0), 100.0)
+
+
+class TestQuaternionHemisphereBlend:
+    @staticmethod
+    def _rot_z(angle_deg: float) -> torch.Tensor:
+        angle = np.radians(angle_deg)
+        return torch.tensor(
+            [
+                [np.cos(angle), -np.sin(angle), 0.0],
+                [np.sin(angle), np.cos(angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=torch.float32,
+        )
+
+    def test_antipodal_neighbor_quats_do_not_cancel(self) -> None:
+        """q and -q encode the same rotation; blending must not cancel.
+
+        Two bone clusters rotate +179.9 and -179.9 deg about z — a mere
+        0.2 deg apart as ROTATIONS, but mat2quat emits near-antipodal
+        quats ([~0,0,0,+1] vs [~0,0,0,-1]). A raw weighted sum collapses
+        toward identity (the pre-fix behavior); hemisphere alignment must
+        keep the blend a ~180-deg z rotation."""
+        offsets = torch.tensor(
+            [[0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [-0.1, -0.1, 0.0]]
+        )
+        center_a = torch.tensor([0.0, 0.0, 0.0])
+        center_b = torch.tensor([1.0, 0.0, 0.0])
+        bones = torch.cat([center_a + offsets, center_b + offsets])
+        rot_a, rot_b = self._rot_z(179.9), self._rot_z(-179.9)
+        motions = torch.cat(
+            [
+                (offsets @ rot_a.T + center_a) - bones[:3],
+                (offsets @ rot_b.T + center_b) - bones[3:],
+            ]
+        )
+        relations = torch.tensor(
+            [[1, 2], [0, 2], [0, 1], [4, 5], [3, 5], [3, 4]]
+        )
+        particles = torch.tensor([[0.5, 0.0, 0.0]])
+        quats = torch.tensor([[1.0, 0.0, 0.0, 0.0]])
+        weights, indices = gaussian_dynamics.knn_weights_sparse(
+            bones, particles, K=6
+        )
+        _new_xyz, new_quat = gaussian_dynamics.interpolate_motions_sparse(
+            bones, motions, relations, particles, quats, weights, indices,
+            device="cpu",
+        )
+        blended = new_quat / torch.linalg.norm(new_quat, dim=1, keepdim=True)
+        # ~180 deg about z: |z| ~ 1, w ~ 0. The pre-fix raw sum measured
+        # w=+0.199 / z=+0.980 here (partial cancellation normalized into a
+        # ~23-deg w error); the aligned blend gives w=0.000 / z=1.000.
+        assert abs(float(blended[0, 3])) > 0.999
+        assert abs(float(blended[0, 0])) < 0.05

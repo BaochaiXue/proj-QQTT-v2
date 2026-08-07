@@ -57,7 +57,9 @@ class GaussianAlignment:
     canonical_reg: np.ndarray  # 4x4 ply-canonical -> mesh-canonical (similarity)
     mesh2world: np.ndarray  # 4x4 mesh-canonical -> world (similarity)
     composed: np.ndarray  # 4x4 ply-canonical -> world (pre-ARAP)
-    chamfer_after_m: float  # symmetric chamfer in mesh-canonical units
+    # Symmetric chamfer in mesh-canonical units (object spans ~1.0; NOT
+    # meters — mesh2world's uniform scale has not been applied yet).
+    chamfer_after_canonical: float
     arap_residual_mean_m: float
     registration_suspect: bool = False
 
@@ -66,7 +68,7 @@ class GaussianAlignment:
             "canonical_reg": self.canonical_reg.tolist(),
             "mesh2world": self.mesh2world.tolist(),
             "composed": self.composed.tolist(),
-            "chamfer_after_m": self.chamfer_after_m,
+            "chamfer_after_canonical": self.chamfer_after_canonical,
             "arap_residual_mean_m": self.arap_residual_mean_m,
             "registration_suspect": self.registration_suspect,
         }
@@ -312,7 +314,7 @@ def align_gaussian_to_world(
         canonical_reg=canonical_reg,
         mesh2world=mesh2world,
         composed=composed,
-        chamfer_after_m=chamfer_after,
+        chamfer_after_canonical=chamfer_after,
         arap_residual_mean_m=float(np.linalg.norm(displacement, axis=1).mean()),
         registration_suspect=suspect,
     )

@@ -355,10 +355,15 @@ class GaussianLiveRenderer:
             )
             base = whiten_background(frame_bgr, background_whiten)
             blend = (alpha[..., None] * _OVERLAY_ALPHA).astype(np.float32)
-            composed = base * (1.0 - blend) + rgb[..., ::-1].astype(
-                np.float32
-            ) * blend
-            return composed.astype(np.uint8)
+            # rgb is already alpha-premultiplied (composited over the black
+            # background by gsplat) — multiplying it by blend again would
+            # double-count alpha and draw dark halos around soft splat
+            # edges. Over-composite: fg_premult * opacity + bg * (1 - a*o).
+            composed = (
+                base * (1.0 - blend)
+                + rgb[..., ::-1].astype(np.float32) * _OVERLAY_ALPHA
+            )
+            return np.clip(composed, 0.0, 255.0).astype(np.uint8)
         except Exception as exc:
             self.failed = True
             print(f"[gaussian-live] render failed: {exc}", flush=True)

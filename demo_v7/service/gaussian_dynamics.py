@@ -7,8 +7,10 @@ references it in dead code — the live path uses the local ``mat2quat``), the
 ipdb debug traps become identity-rotation fallbacks, the dense
 (particles x bones) code path is removed in favor of the sparse K-nearest
 formulation (``interpolate_motions_sparse`` = upstream
-``interpolate_motions_speedup``), and the per-frame KNN is chunked on GPU
-instead of upstream's CPU round-trip.
+``interpolate_motions_speedup``), the per-frame KNN is chunked on GPU
+instead of upstream's CPU round-trip, and the quaternion blend hemisphere-
+aligns each particle's neighbor quats first (upstream sums raw signs, so
+antipodal near-pi quats could cancel).
 
 Semantics (unchanged): bones are control points; per frame each bone gets a
 rigid transform estimated from its K-adjacent bones' motion (weighted Kabsch
@@ -206,7 +208,19 @@ def interpolate_motions_sparse(
             selected_transforms[:, :, :3, :3].reshape(-1, 3, 3)
         ).reshape(xyz.shape[0], -1, 4)
         base_quats = torch.nn.functional.normalize(base_quats, dim=-1)
-        blended = torch.sum(base_quats * weights[:, :, None], dim=1)
+        # Hemisphere alignment before the weighted sum: q and -q encode the
+        # same rotation, and mat2quat's near-pi branches can emit either
+        # sign — antipodal neighbors would cancel instead of average. Align
+        # every neighbor to the particle's highest-weight bone.
+        reference = base_quats[
+            torch.arange(base_quats.shape[0], device=base_quats.device),
+            weights.argmax(dim=1),
+        ]
+        sign = torch.sign(
+            torch.sum(base_quats * reference[:, None, :], dim=-1, keepdim=True)
+        )
+        sign = torch.where(sign == 0, torch.ones_like(sign), sign)
+        blended = torch.sum(base_quats * sign * weights[:, :, None], dim=1)
         blended = torch.nn.functional.normalize(blended, dim=-1)
         new_quat = quaternion_multiply(blended, quat)
     return new_xyz, new_quat

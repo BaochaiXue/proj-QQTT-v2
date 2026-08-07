@@ -402,9 +402,13 @@ class GaussianManager:
             background=(0.0, 0.0, 0.0),
         )
         blend = alpha[..., None] * 0.65
-        overlay = (
+        # rgb is alpha-premultiplied (black-background gsplat composite):
+        # over-composite without re-multiplying alpha (dark-halo trap).
+        overlay = np.clip(
             frame_bgr.astype(np.float32) * (1 - blend)
-            + rgb[..., ::-1].astype(np.float32) * blend
+            + rgb[..., ::-1].astype(np.float32) * 0.65,
+            0.0,
+            255.0,
         ).astype(np.uint8)
         overlay_path = self.out_dir / "gaussian_world_overlay.png"
         cv2.imwrite(str(overlay_path), overlay)

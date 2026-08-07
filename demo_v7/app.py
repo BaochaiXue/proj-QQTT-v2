@@ -37,7 +37,7 @@ if _BOOTSTRAP_REPO_ROOT_STR in sys.path:
     sys.path.remove(_BOOTSTRAP_REPO_ROOT_STR)
 sys.path.insert(0, _BOOTSTRAP_REPO_ROOT_STR)
 
-from PySide6.QtCore import QObject, QProcess, Qt, QTimer
+from PySide6.QtCore import QObject, Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -498,9 +498,8 @@ class SourceSelectDialog(QDialog):
             "snapshot.",
             self,
         )
-        self._calibrate_process: QProcess | None = None
-        # (state, detail): state in {"ok","missing","running","failed"};
-        # rendered in _retranslate so live language switches re-render it.
+        # (state, detail): state in {"ok","missing"}; rendered in
+        # _retranslate so live language switches re-render it.
         self._calibrate_state: tuple[str, str] = ("missing", "")
         calibrate_row = QHBoxLayout()
         calibrate_row.addWidget(self._calibrate_btn)
@@ -588,19 +587,6 @@ class SourceSelectDialog(QDialog):
             self._calibrate_status.setText(
                 tr("当前标定: ", "Current calibration: ") + detail
             )
-        elif state == "running":
-            self._calibrate_status.setStyleSheet("")
-            self._calibrate_status.setText(
-                tr(
-                    "标定中… 请把 ChArUco 标定板平放在桌面上",
-                    "Calibrating… place the ChArUco board flat on the table",
-                )
-            )
-        elif state == "failed":
-            self._calibrate_status.setStyleSheet("color: #f28b82;")
-            self._calibrate_status.setText(
-                tr("标定失败: ", "Calibration failed: ") + detail
-            )
         else:  # missing
             self._calibrate_status.setStyleSheet("color: #f28b82;")
             self._calibrate_status.setText(
@@ -612,8 +598,7 @@ class SourceSelectDialog(QDialog):
             )
 
     def _run_table_calibration(self) -> None:
-        if self._calibrate_process is not None:
-            return  # already running
+        """Open the live visual calibration dialog (in-GUI, not headless)."""
         self._error.setText("")
         # Calibrate the camera the runtime will actually open (config
         # camera.camera_serials), not whichever enumerates first — several
@@ -621,52 +606,22 @@ class SourceSelectDialog(QDialog):
         from demo_v6_2.orchestration.main_config import (  # noqa: PLC0415
             DEFAULT_CAMERA_SERIALS,
         )
-
-        # -u: unbuffered child stdout so MergedChannels keeps the traceback
-        # ordered after the progress prints (the failure line must be last).
-        argv = [
-            "-u",
-            str(Path(_BOOTSTRAP_REPO_ROOT_STR) / "cameras_calibrate_table.py"),
-        ]
-        if DEFAULT_CAMERA_SERIALS:
-            argv.extend(["--serial", str(DEFAULT_CAMERA_SERIALS[0])])
-        process = QProcess(self)
-        process.setWorkingDirectory(_BOOTSTRAP_REPO_ROOT_STR)
-        process.setProcessChannelMode(
-            QProcess.ProcessChannelMode.MergedChannels
+        from demo_v7.gui.calibrate_dialog import (  # noqa: PLC0415
+            CalibrationDialog,
         )
-        process.finished.connect(self._on_calibration_finished)
-        self._calibrate_process = process
-        self._calibrate_btn.setEnabled(False)
-        self._start_btn.setEnabled(False)
-        self._calibrate_state = ("running", "")
-        self._render_calibrate_state()
-        process.start(sys.executable, argv)
 
-    def _on_calibration_finished(self, exit_code: int, _status: Any) -> None:
-        process = self._calibrate_process
-        self._calibrate_process = None
-        self._calibrate_btn.setEnabled(self._real_radio.isChecked())
-        self._start_btn.setEnabled(True)
-        if exit_code == 0:
-            self._refresh_calibrate_state()
-        else:
-            output = ""
-            if process is not None:
-                raw = bytes(process.readAllStandardOutput()).decode(
-                    "utf-8", "replace"
-                )
-                lines = [ln for ln in raw.strip().splitlines() if ln.strip()]
-                # The exception message is the last line of the traceback;
-                # prefer an explicit error line over trailing progress noise.
-                error_lines = [
-                    ln for ln in lines if "Error" in ln or "error" in ln
-                ]
-                picked = error_lines[-1] if error_lines else (
-                    lines[-1] if lines else f"exit {exit_code}"
-                )
-                output = picked.strip()[-200:]
-            self._calibrate_state = ("failed", output)
+        root = Path(_BOOTSTRAP_REPO_ROOT_STR)
+        dialog = CalibrationDialog(
+            serial=(
+                str(DEFAULT_CAMERA_SERIALS[0]) if DEFAULT_CAMERA_SERIALS
+                else None
+            ),
+            output_path=root / "table_calibrate.pkl",
+            diagnostic_path=root / "table_calibrate_diagnostic.png",
+            parent=self,
+        )
+        dialog.exec()
+        self._refresh_calibrate_state()
         self._render_calibrate_state()
 
     def _browse_record_dir(self) -> None:
