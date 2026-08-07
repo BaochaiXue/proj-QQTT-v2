@@ -489,6 +489,31 @@ def check_gaussian_follow(session, observer: DriveObserver) -> None:
             f"moved: {stats}"
         )
     observer.log("gaussian follow verified")
+    check_self_align_attempt(gaussian_dir, observer)
+
+
+def check_self_align_attempt(gaussian_dir, observer: DriveObserver) -> None:
+    """The background self-align upgrade must have run and recorded its
+    decision (swap or keep — both fine; silence is a regression)."""
+    import os
+
+    if os.environ.get("DEMO_V7_GAUSSIAN_SELF_ALIGN", "1") == "0":
+        return
+    provenance_path = gaussian_dir / "gaussian_provenance.json"
+    if not provenance_path.is_file():
+        raise RuntimeError(f"gaussian provenance missing: {provenance_path}")
+    alignment = json.loads(provenance_path.read_text()).get("alignment", {})
+    record = alignment.get("self_align")
+    if not record:
+        raise RuntimeError(
+            "self-align upgrade never recorded a decision in provenance "
+            f"(method={alignment.get('method')})"
+        )
+    observer.log(
+        f"self-align verified: {record.get('decision')} "
+        f"(improvement {record.get('improvement')}, "
+        f"scores {record.get('scores')})"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

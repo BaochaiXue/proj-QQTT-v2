@@ -372,15 +372,22 @@ class TestGaussianLiveRestSeed:
         }
         live._bone_ids = None
         live._relations = None
+        live._ctrl_rest = None
         live._ctrl_prev = None
+        live._rest_means = None
+        live._rest_quats = None
+        live._skin_weights = None
+        live._skin_indices = None
         live._buffer = {}
         live._rest_positions = {}
         live.rest_seeded = False
         live._seed_grace_left = 25
+        live._last_seen_step = None
         live.frames_stepped = 0
-        live.last_substeps = 0
         live.bones_moved_m = 0.0
         live.splats_moved_m = 0.0
+        live.bone_outliers = 0
+        live.bone_stale = 0
         return live, means
 
     def _grid(self) -> np.ndarray:
@@ -399,8 +406,6 @@ class TestGaussianLiveRestSeed:
         shift = np.array([0.09, 0.0, 0.0], dtype=np.float32)
         live.step(rest + shift, ids, np.ones(len(ids), dtype=bool))
         assert live.rest_seeded
-        # ceil(0.09 / 0.02) = 5 substeps for the catch-up
-        assert live.last_substeps == 5
         assert torch.allclose(
             live._tensors["means"], means + torch.as_tensor(shift), atol=1e-3
         )
@@ -575,3 +580,229 @@ class TestQuaternionHemisphereBlend:
         # ~23-deg w error); the aligned blend gives w=0.000 / z=1.000.
         assert abs(float(blended[0, 3])) > 0.999
         assert abs(float(blended[0, 0])) < 0.05
+
+
+class TestBoneHygiene:
+    """Rogue tracks and occlusion-stale bones must ride their neighbors'
+    consensus instead of dragging (or anchoring) their bound splats."""
+
+    def _seeded(self, helper: "TestGaussianLiveRestSeed"):
+        live, means = helper._bare_renderer()
+        rest = helper._grid()
+        ids = np.arange(len(rest), dtype=np.int64)
+        live.seed_rest_positions({int(i): rest[i] for i in ids})
+        live.step(rest, ids, np.ones(len(ids), dtype=bool))  # init at rest
+        return live, means, rest, ids
+
+    def test_rogue_bone_is_overridden_by_neighbors(self) -> None:
+        helper = TestGaussianLiveRestSeed()
+        live, means, rest, ids = self._seeded(helper)
+        shift = np.array([0.03, 0.0, 0.0], dtype=np.float32)
+        target = rest + shift
+        target[0] = rest[0] + np.array([0.0, 0.0, 0.5], dtype=np.float32)
+        live.step(target, ids, np.ones(len(ids), dtype=bool))
+        assert live.bone_outliers >= 1
+        # The rogue bone's 50cm z-jump must NOT reach the splats: consensus
+        # replaces it with the neighborhood's +3cm x translation.
+        assert torch.allclose(
+            live._tensors["means"], means + torch.as_tensor(shift), atol=2e-3
+        )
+
+    def test_stale_bones_ride_the_visible_half(self) -> None:
+        helper = TestGaussianLiveRestSeed()
+        live, means, rest, ids = self._seeded(helper)
+        seen = ids[ids % 2 == 0]
+        step = np.array([0.01, 0.0, 0.0], dtype=np.float32)
+        # 14 packets (> _BONE_STALE_STEPS) where only even bones update.
+        for k in range(1, 15):
+            live.step(
+                rest[seen] + step * k, seen, np.ones(len(seen), dtype=bool)
+            )
+        assert live.bone_stale > 0
+        # Stale odd bones must not anchor the object at the rest pose: the
+        # whole cloud rides the visible bones' translation.
+        assert torch.allclose(
+            live._tensors["means"],
+            means + torch.as_tensor(step * 14),
+            atol=2e-3,
+        )
+
+
+class TestFloaterPruning:
+    def test_disconnected_island_pruned_even_near_mesh(self) -> None:
+        """The measured failure: a small solid island 10cm from every other
+        splat but within mesh distance (the mesh arm tip passed nearby) —
+        connectivity must catch what mesh distance cannot."""
+        from demo_v7.service.gaussian_align import _floater_keep_mask
+
+        rng = np.random.default_rng(4)
+        # Uniform cube: ~5mm spacing keeps the body one component at the
+        # 8mm link radius (a gaussian ball's sparse tail would fragment).
+        blob = rng.uniform(-0.05, 0.05, size=(8000, 3))
+        island = rng.uniform(-0.004, 0.004, size=(60, 3)) + np.array(
+            [0.30, 0.0, 0.0]
+        )
+        fuzz_on_blob = rng.uniform(-0.05, 0.05, size=(40, 3))
+        fuzz_on_island = rng.uniform(-0.004, 0.004, size=(20, 3)) + np.array(
+            [0.30, 0.0, 0.0]
+        )
+        means = np.concatenate([blob, island, fuzz_on_blob, fuzz_on_island])
+        opacities = np.concatenate(
+            [
+                np.full(8000, 0.9),
+                np.full(60, 0.9),
+                np.full(40, 0.1),
+                np.full(20, 0.1),
+            ]
+        ).astype(np.float32)
+        count = len(means)
+        world = GaussianSplats(
+            means=means.astype(np.float32),
+            quats=np.tile(np.array([1, 0, 0, 0], np.float32), (count, 1)),
+            scales=np.full((count, 3), 0.005, np.float32),
+            opacities=opacities,
+            colors=np.full((count, 3), 0.5, np.float32),
+        )
+        # Mesh passes through the blob AND right next to the island, so the
+        # mesh-distance criterion alone keeps everything.
+        mesh = np.concatenate(
+            [blob, island + np.array([0.01, 0.0, 0.0])]
+        )
+        keep = _floater_keep_mask(world, mesh)
+        assert keep[:8000].all(), "main body must be kept"
+        assert not keep[8000:8060].any(), "solid island must be pruned"
+        assert keep[8060:8100].all(), "fuzz on the body must be kept"
+        assert not keep[8100:].any(), "island fuzz must follow its island"
+
+
+class TestSelfAlignHelpers:
+    def test_pure_articulation_strips_similarity(self, tmp_path, monkeypatch) -> None:
+        """A purely-similar ARAP field (rigid+scale, no articulation) must
+        strip to ~zero displacement — transplanting it raw onto an
+        independently-registered gaussian double-corrects (benchmarked)."""
+        from demo_v7.service import gaussian_selfalign as sa
+
+        rng = np.random.default_rng(6)
+        canonical = rng.normal(size=(500, 3))
+        mesh2world = np.eye(4)
+        angle = np.radians(20)
+        similarity = np.array(
+            [
+                [np.cos(angle), -np.sin(angle), 0.0],
+                [np.sin(angle), np.cos(angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        ) * 1.1
+        target = canonical @ similarity.T + np.array([0.05, -0.02, 0.01])
+        monkeypatch.setattr(
+            "demo_v7.service.gaussian_align.arap_residual_field",
+            lambda case_dir, m2w: (canonical, target - canonical),
+        )
+        anchors, articulation, final = sa.pure_articulation_field(
+            tmp_path, mesh2world
+        )
+        assert float(np.abs(articulation).max()) < 1e-6
+        assert np.allclose(anchors, final, atol=1e-6)
+
+    def test_combined_score_and_gates(self) -> None:
+        from demo_v7.service import gaussian_selfalign as sa
+
+        good = {"iou": 0.90, "c2g_p90_cm": 1.0}
+        flat = {"iou": 0.92, "c2g_p90_cm": 2.0}
+        # 2 IoU points do not pay for 1cm of coverage tail at the 3pt/cm rate.
+        assert sa.combined_score(good) > sa.combined_score(flat)
+
+    def test_subprocess_error_json_is_fail_soft(self, tmp_path) -> None:
+        """A child that writes an error payload must yield None, not raise."""
+        import json as json_mod
+
+        from demo_v7.service import gaussian_selfalign as sa
+
+        work = tmp_path / "work"
+        work.mkdir()
+        (work / "self_align_result.json").write_text(
+            json_mod.dumps({"error": "boom"})
+        )
+        # Monkey-free: call the parse path by faking the subprocess via a
+        # tiny script that exits immediately (result json already present).
+        import subprocess as sp
+        import sys as sys_mod
+
+        real_run = sp.run
+        try:
+            sp.run = lambda *a, **k: sp.CompletedProcess(a, 0, "", "")
+            assert sa.run_self_align_subprocess(
+                tmp_path, tmp_path / "raw.ply", work
+            ) is None
+        finally:
+            sp.run = real_run
+
+
+class TestAsapIslandCleanup:
+    def test_patched_loader_drops_tiny_components(self, tmp_path, monkeypatch) -> None:
+        o3d = pytest.importorskip("open3d")
+        from demo_v7.service import arap_rescue
+        from demo_v6_2.streaming import asap
+
+        # Body: a box (12 tris). Island: one far-away triangle.
+        body = o3d.geometry.TriangleMesh.create_box()
+        island_v = np.array([[5.0, 5, 5], [5.1, 5, 5], [5, 5.1, 5]])
+        verts = np.concatenate([np.asarray(body.vertices), island_v])
+        tris = np.concatenate(
+            [np.asarray(body.triangles), [[8, 9, 10]]]
+        ).astype(np.int32)
+        combined = o3d.geometry.TriangleMesh(
+            o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(tris)
+        )
+        # island = 1/13 of faces ≈ 7.7% > default 1% threshold... use a
+        # bigger body so the island is under the fraction gate.
+        body2 = o3d.geometry.TriangleMesh.create_sphere(resolution=10)
+        base = np.asarray(body2.vertices).shape[0]
+        verts = np.concatenate([np.asarray(body2.vertices), island_v])
+        tris = np.concatenate(
+            [np.asarray(body2.triangles), [[base, base + 1, base + 2]]]
+        ).astype(np.int32)
+        combined = o3d.geometry.TriangleMesh(
+            o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(tris)
+        )
+
+        stock = lambda path: o3d.geometry.TriangleMesh(combined)
+        monkeypatch.setattr(asap, "_load_clean_mesh", stock, raising=True)
+        arap_rescue.patch_asap_island_cleanup()
+        try:
+            cleaned = asap._load_clean_mesh(tmp_path / "x.glb")
+            _labels, counts, _ = cleaned.cluster_connected_triangles()
+            assert len(np.asarray(counts)) == 1
+            assert np.asarray(cleaned.triangles).shape[0] == np.asarray(
+                body2.triangles
+            ).shape[0]
+        finally:
+            # Un-patch so other tests see the real loader.
+            monkeypatch.undo()
+
+
+class TestSelfAlignDefaultPolicy:
+    """Owner decision: self-align is demo 7's DEFAULT alignment — B wins
+    ties, and the chamfer incumbent survives only a clear loss."""
+
+    def test_b_is_default_among_candidates(self) -> None:
+        from demo_v7.service import gaussian_selfalign as sa
+
+        scored = [
+            ("self_align", {"iou": 0.90, "c2g_p90_cm": 1.5}),
+            ("self_align_art", {"iou": 0.905, "c2g_p90_cm": 1.5}),  # +0.005
+        ]
+        assert sa.pick_candidate(scored)[0] == "self_align"
+        scored[1] = ("self_align_art", {"iou": 0.95, "c2g_p90_cm": 1.5})
+        assert sa.pick_candidate(scored)[0] == "self_align_art"
+
+    def test_swap_default_unless_clear_loss(self) -> None:
+        from demo_v7.service import gaussian_selfalign as sa
+
+        incumbent = {"iou": 0.70, "c2g_p90_cm": 2.0}
+        tie = {"iou": 0.695, "c2g_p90_cm": 2.0}  # -0.005: within tolerance
+        assert sa.should_swap(tie, incumbent)
+        clear_loss = {"iou": 0.60, "c2g_p90_cm": 5.0}  # drive21-gen1 class
+        assert not sa.should_swap(clear_loss, incumbent)
+        win = {"iou": 0.92, "c2g_p90_cm": 3.3}
+        assert sa.should_swap(win, incumbent)

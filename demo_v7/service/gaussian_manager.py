@@ -86,6 +86,7 @@ class GaussianManager:
         # Written to <out_dir>/gaussian_timing.json + one stdout line each.
         self._timing: dict[str, float] = {}
         self._generation_timings: list[dict[str, Any]] = []
+        self._align_epoch = 0  # guards background upgrades across re-rolls
         self._submit_wall: float | None = None
         self._submit_perf: float | None = None
         self._request_perf: float | None = None
@@ -328,9 +329,144 @@ class GaussianManager:
                     f"{event.get('generation_s')}s)",
                 )
                 self._record_generation_timing(event, park_s, align_s)
+                self._start_self_align_upgrade(event, artifacts)
             finally:
                 with self._lock:
                     self._busy = False
+
+    # -- background self-align upgrade (phase 2) -----------------------------
+
+    def _start_self_align_upgrade(
+        self, done_event: dict[str, Any], artifacts: dict[str, str]
+    ) -> None:
+        """Kick the visual-metric re-alignment in the background (fail-soft).
+
+        The fast chamfer-chain artifacts are already published (REVIEW keeps
+        its zero-wait entry); this thread tries to do better and swaps the
+        world ply/overlay/provenance only if the observation-metric score
+        improves. An epoch guard drops the result if a re-roll superseded
+        this generation meanwhile.
+        """
+        if os.environ.get("DEMO_V7_GAUSSIAN_SELF_ALIGN", "1") == "0":
+            return
+        with self._lock:
+            self._align_epoch += 1
+            epoch = self._align_epoch
+        thread = threading.Thread(
+            target=self._self_align_upgrade,
+            args=(dict(done_event), dict(artifacts), epoch),
+            name="gaussian-selfalign",
+            daemon=True,
+        )
+        thread.start()
+
+    def _self_align_upgrade(
+        self, done_event: dict[str, Any], artifacts: dict[str, str], epoch: int
+    ) -> None:
+        try:
+            import numpy as np
+
+            from demo_v7.service import gaussian_selfalign as selfalign
+            from demo_v7.service.gaussian_utils import (
+                load_gaussian_ply,
+                save_gaussian_ply,
+            )
+
+            started_s = time.perf_counter()
+            result = selfalign.run_self_align_subprocess(
+                self.case_dir,
+                Path(done_event["ply"]),
+                self.out_dir / "selfalign",
+            )
+            if result is None or self._is_closed():
+                return
+            transform, gates = result
+            observation = selfalign.load_case_observation(self.case_dir)
+            provenance_path = Path(done_event["provenance"])
+            mesh2world = json.loads(provenance_path.read_text())["alignment"][
+                "mesh2world"
+            ]
+            raw = load_gaussian_ply(Path(done_event["ply"]))
+            candidates = selfalign.build_candidates(
+                raw, transform, self.case_dir, mesh2world
+            )
+            incumbent = load_gaussian_ply(self.world_ply_path)
+            scores = {
+                "mesh_chain": selfalign.score_alignment(incumbent, observation)
+            }
+            scored = []
+            for name, splats in candidates:
+                metrics = selfalign.score_alignment(splats, observation)
+                scores[name] = metrics
+                scored.append((name, metrics))
+            candidate_splats = dict(candidates)
+            best_name, best_score = selfalign.pick_candidate(scored)
+            best_splats = candidate_splats[best_name]
+            spent_s = time.perf_counter() - started_s
+            score_line = " ".join(
+                f"{name}:iou={m['iou']}/c2g_p90={m['c2g_p90_cm']}"
+                for name, m in scores.items()
+            )
+            print(
+                f"[gaussian-selfalign] scored in {spent_s:.1f}s: {score_line}",
+                flush=True,
+            )
+            improvement = selfalign.combined_score(
+                best_score
+            ) - selfalign.combined_score(scores["mesh_chain"])
+            # Self-align is the default (owner decision): keep the chamfer
+            # incumbent only when the candidate clearly loses to it.
+            swap = selfalign.should_swap(best_score, scores["mesh_chain"])
+            with self._lock:
+                # A re-roll superseded this generation, or we are closing:
+                # its own upgrade pass owns the artifacts now.
+                if self._align_epoch != epoch or self._closed or self._busy:
+                    return
+                if swap:
+                    tmp_path = self.world_ply_path.with_suffix(
+                        ".upgrade.tmp.ply"
+                    )
+                    save_gaussian_ply(tmp_path, best_splats)
+                    os.replace(tmp_path, self.world_ply_path)
+                # Record the attempt either way — the decision must be
+                # auditable (and E2E-assertable) even when nothing swaps.
+                provenance = json.loads(provenance_path.read_text())
+                provenance["alignment"]["method"] = (
+                    best_name if swap else "mesh_chain"
+                )
+                provenance["alignment"]["self_align"] = {
+                    "gates": gates,
+                    "scores": scores,
+                    "decision": (
+                        f"swapped_to_{best_name}" if swap else "kept_mesh_chain"
+                    ),
+                    "improvement": round(improvement, 4),
+                    "transform": np.asarray(transform).tolist(),
+                }
+                provenance_path.write_text(json.dumps(provenance, indent=1))
+            if not swap:
+                print(
+                    f"[gaussian-selfalign] keeping mesh_chain "
+                    f"(default candidate {best_name} clearly loses: "
+                    f"{improvement:+.4f})",
+                    flush=True,
+                )
+                return
+            self._render_world_overlay(best_splats)
+            self._emit_artifacts("gaussian", dict(artifacts))
+            self._emit_progress(
+                "gaussian",
+                f"对齐已后台升级(self-align {best_name}, IoU "
+                f"{scores['mesh_chain']['iou']}→{best_score['iou']})",
+            )
+        except Exception as exc:
+            # Display-only refinement: any failure keeps the published
+            # alignment and never touches the pipeline.
+            print(
+                f"[gaussian-selfalign] upgrade skipped "
+                f"({type(exc).__name__}: {exc})",
+                flush=True,
+            )
 
     def _record_generation_timing(
         self, done_event: dict[str, Any], park_s: float, align_s: float
@@ -386,6 +522,30 @@ class GaussianManager:
         save_gaussian_ply(self.world_ply_path, world)
 
         self._emit_progress("gaussian", "渲染世界系叠加图…")
+        overlay_path = self._render_world_overlay(world)
+
+        provenance_path = Path(done_event["provenance"])
+        provenance = json.loads(provenance_path.read_text())
+        provenance["alignment"] = alignment.provenance()
+        provenance["alignment"]["method"] = "mesh_chain"
+        provenance_path.write_text(json.dumps(provenance, indent=1))
+
+        return {
+            "turntable": str(done_event["contact_sheet"]),
+            "prepared": str(done_event["prepared"]),
+            "world_overlay": str(overlay_path),
+            "ply": str(ply_path),
+            "world_ply": str(self.world_ply_path),
+            "provenance": str(provenance_path),
+        }
+
+    def _render_world_overlay(self, world) -> Path:
+        """Render the frame-0 overlay still for a world-frame splat set."""
+        import cv2
+        import numpy as np
+
+        from demo_v7.service.gaussian_utils import render_gaussians
+
         with open(self.case_dir / "calibrate.pkl", "rb") as handle:
             c2w = np.asarray(pickle.load(handle)[0], dtype=np.float64)
         intrinsics = np.asarray(
@@ -412,17 +572,4 @@ class GaussianManager:
         ).astype(np.uint8)
         overlay_path = self.out_dir / "gaussian_world_overlay.png"
         cv2.imwrite(str(overlay_path), overlay)
-
-        provenance_path = Path(done_event["provenance"])
-        provenance = json.loads(provenance_path.read_text())
-        provenance["alignment"] = alignment.provenance()
-        provenance_path.write_text(json.dumps(provenance, indent=1))
-
-        return {
-            "turntable": str(done_event["contact_sheet"]),
-            "prepared": str(done_event["prepared"]),
-            "world_overlay": str(overlay_path),
-            "ply": str(ply_path),
-            "world_ply": str(self.world_ply_path),
-            "provenance": str(provenance_path),
-        }
+        return overlay_path
