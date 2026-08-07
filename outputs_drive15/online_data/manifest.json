@@ -1,0 +1,17 @@
+{
+  "case_name": "demo_v6_1",
+  "chunk_size": 5,
+  "latest_committed_chunk": 4,
+  "latest_committed_frame": 25,
+  "num_frames_total": 25,
+  "online_num_frames_total": 25,
+  "query_schema_hash": "35e424e59bb5aad6100836e45e0ea22c535ed92fdd2dca74989fd55fb09a13de",
+  "query_schema_version": "data_process_sam3d_realtime_query_schema_v1",
+  "runtime_contract": "data_process_sam3d_realtime_final_data_v1",
+  "source_end_frame": 25,
+  "source_frame_step": 1,
+  "source_num_frames_total": 25,
+  "source_start_frame": 0,
+  "status": "finished",
+  "version": 6
+}

@@ -1,0 +1,19 @@
+{
+  "execution_mode": "prewarmed",
+  "ready_wall_time_s": 1786097722.5710936,
+  "schema_version": 1,
+  "snapshot_wall_time_s": 1786097778.0451307,
+  "stage": "sample",
+  "status": "completed",
+  "timing_ms": {
+    "go_wait_ms": 52197.9107040097,
+    "mesh_load_ms": 252.02080700546503,
+    "module_import_ms": 453.3875080232974,
+    "output_write_ms": 0.446363992523402,
+    "process_lifetime_ms": 55927.97148501268,
+    "surface_sample_ms": 3.045122022740543,
+    "total_ms": 3728.263955039438,
+    "volume_sample_ms": 3019.3641539954115
+  },
+  "worker_pid": 3440501
+}

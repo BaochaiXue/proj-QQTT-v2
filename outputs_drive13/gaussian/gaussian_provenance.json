@@ -1,0 +1,8 @@
+{
+ "image": "/home/xinjie/single_proj_qqtt/outputs_drive13/shape_prior_case/shape_prior_frame0/shape/masked_image.png",
+ "seed": 42,
+ "steps": 20,
+ "num_gaussians": 131072,
+ "num_finite_splats": 45668,
+ "generation_s": 10.14
+}

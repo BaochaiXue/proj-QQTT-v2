@@ -1,0 +1,20 @@
+{
+  "depth_backend": "native-realsense",
+  "depth_source_internal": "realsense",
+  "input_source": "fake-live",
+  "shape_prior_cache_enabled": false,
+  "shape_prior_cache_hit": null,
+  "shape_prior_cache_object_id": null,
+  "shape_prior_cache_root": "/home/xinjie/qqtt_shape_prior_cache",
+  "shape_prior_cache_status": "disabled",
+  "shape_prior_enabled": true,
+  "shape_prior_error": "Command '['/home/xinjie/miniforge3/envs/trellis2/bin/python', '/home/xinjie/single_proj_qqtt/demo_v7/service/trellis2_generate.py', '--img_path', '/home/xinjie/single_proj_qqtt/outputs_drive13/shape_prior_case/shape_prior_frame0/shape/masked_image.png', '--output_dir', '/home/xinjie/single_proj_qqtt/outputs_drive13/shape_prior_case/shape_prior_frame0/shape', '--trellis2-repo', '/home/xinjie/TRELLIS.2', '--seed', '42', '--skip-visualization', '--profile-json', '/home/xinjie/single_proj_qqtt/outputs_drive13/shape_prior_case/shape_prior_frame0/shape/timing/generate.json', '--wait-signal']' returned non-zero exit status 1.",
+  "shape_prior_request_total_ms": 25978.88346199761,
+  "shape_prior_source_seq": 0,
+  "shape_prior_source_time_s": 1783307202.3486116,
+  "shape_prior_status": "failed",
+  "warmup_runtime_start_to_shape_prior_failure_ms": 41304.496116004884,
+  "warmup_runtime_start_to_shape_prior_ready_ms": null,
+  "warmup_shape_prior_ready_to_gate_open_ms": null,
+  "warmup_total_ms": null
+}
