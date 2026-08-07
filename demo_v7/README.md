@@ -26,7 +26,13 @@ demo_v7 把 demo_v6_2 的命令行 demo 变成一个图形界面软件。**数�
 1. **frame-0 由按钮拍摄**,不再是就绪屏障自动指定;拍摄后可"重拍/确认"。
 2. **warmup 阶段不做任何追踪**(EdgeTAM/tracker 均不启动):确认 frame-0
    后人和物体即可离开;后台只跑 frame-0 派生管线(SAM3.1 三 mask →
-   PCD → shape-prior 全链:upscale/generate/align/sample,全部 6.2 原码)。
+   PCD → shape-prior 全链:upscale/generate/align/sample)。生成后端可在
+   源选择时挑 **sam3d / trellis2 / none**(`session.shape_prior_backend`
+   配置默认 sam3d):sam3d = 全链 6.2 原码;trellis2 只把 generate 换成
+   TRELLIS.2(`service/trellis2_generate.py`,trellis2 conda env)并经
+   `service/sample_asap_safe.py` 在 sample 前清理 final_mesh 的零延展面,
+   upscale/segment/align/sample 仍是 6.2 原码;none = 走 6.2 自身的
+   `--no-shape-prior-warmup` 跳过链(观测点 only,ASAP/PhysTwin 关闭)。
 3. **正式开始前有摆位步骤**:实时画面上以 50% 透明度叠加 frame-0 的
    object/hand mask,操作者把物体和双手摆回原位;点击开始后,以摆位后的
    帧为"正式 frame 0",**用保存的 frame-0 SAM3.1 mask 种一个全新的

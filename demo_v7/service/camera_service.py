@@ -4,8 +4,8 @@
 Mirrors the demo_v6_2/main_data_processing.py bootstrap (persistent
 TORCHINDUCTOR_CACHE_DIR, repo sys.path pin, import-time stamp) and reuses
 ``demo_v6_2.mdp.cli.build_parser()`` via ``parse_known_args`` for the v6.2
-flag subset; only ``--socket-dir``, ``--self-check`` and
-``--channel-max-hz-json`` are v7 flags. The
+flag subset; only ``--socket-dir``, ``--self-check``,
+``--channel-max-hz-json`` and ``--shape-prior-backend`` are v7 flags. The
 v6.2 GUI windows are force-disabled — demo_v7's GUI owns every window and the
 service streams frames over the frames socket instead.
 """
@@ -80,6 +80,15 @@ def _build_v7_parser() -> argparse.ArgumentParser:
         help=(
             "Shape-prior generation backend: sam3d (v6.2 default), trellis2, "
             "or none (skip the shape-prior chain entirely)."
+        ),
+    )
+    parser.add_argument(
+        "--shape-prior-upscale",
+        type=str,
+        default=None,
+        help=(
+            "Upscale (SD x4) stage toggle: on (v6.2 default) or off "
+            "(crop-only passthrough; faster warmup)."
         ),
     )
     return parser
@@ -231,9 +240,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         if shape_prior_backend == backend_options.BACKEND_TRELLIS2:
             backend_options.ensure_trellis2_available()
+        shape_prior_use_upscale = backend_options.normalize_upscale(
+            v7_args.shape_prior_upscale
+        )
     except (ValueError, FileNotFoundError) as exc:
         print(
-            f"camera_service: error: --shape-prior-backend {exc}", file=sys.stderr
+            f"camera_service: error: shape-prior options: {exc}", file=sys.stderr
         )
         return 2
     if shape_prior_backend == backend_options.BACKEND_NONE and bool(
@@ -245,7 +257,19 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
         args.shape_prior_warmup = False
+    if shape_prior_backend != backend_options.BACKEND_NONE and not bool(
+        args.shape_prior_warmup
+    ):
+        # Truthful echo the other way round: with the warmup chain off no
+        # generator runs, so the hello ack / GUI must not claim one.
+        print(
+            f"[camera-service] --no-shape-prior-warmup: backend "
+            f"{shape_prior_backend!r} -> 'none' (nothing generates)",
+            flush=True,
+        )
+        shape_prior_backend = backend_options.BACKEND_NONE
     runtime_kwargs["shape_prior_backend"] = shape_prior_backend
+    runtime_kwargs["shape_prior_use_upscale"] = shape_prior_use_upscale
     from demo_v7.service.staged_runtime import StagedRuntime  # noqa: PLC0415
 
     try:

@@ -34,6 +34,32 @@ from demo_v7.service.backend_options import (
 )
 
 TRELLIS2_RUNNER = Path(__file__).resolve().parent / "trellis2_generate.py"
+SAMPLE_ASAP_SAFE_RUNNER = Path(__file__).resolve().parent / "sample_asap_safe.py"
+UPSCALE_PASSTHROUGH_RUNNER = (
+    Path(__file__).resolve().parent / "upscale_passthrough.py"
+)
+
+
+class _NoUpscaleStageMixin:
+    """Swap the upscale stage for the crop-only passthrough runner.
+
+    Same interpreter, same CLI flags, same WAITING/GO lifecycle and profile
+    schema — ``high_resolution.png`` just holds the original-resolution
+    mask-bbox crop, so the untouched SAM3.1 segment + generate + align +
+    sample chain runs unchanged on it. Composes with any client class whose
+    ``_stage_commands`` keeps the v6.2 upscale argv shape.
+    """
+
+    def _stage_commands(self) -> dict[str, list[str]]:
+        commands = dict(super()._stage_commands())  # type: ignore[misc]
+        upscale = list(commands[shape_prior_warmup.PREWARM_STAGE_UPSCALE])
+        assert upscale[1:3] == ["-m", "demo_v6_2.shape_prior.upscale"], upscale
+        commands[shape_prior_warmup.PREWARM_STAGE_UPSCALE] = [
+            upscale[0],
+            str(UPSCALE_PASSTHROUGH_RUNNER),
+            *upscale[3:],
+        ]
+        return commands
 
 
 class Trellis2ShapePriorClient(shape_prior_warmup.ShapePriorLocalClient):
@@ -68,21 +94,51 @@ class Trellis2ShapePriorClient(shape_prior_warmup.ShapePriorLocalClient):
                 self._stage_profile_path(shape_prior_warmup.PREWARM_STAGE_GENERATE)
             ),
         ]
+        # Sample runs via the zero-extent cleanup wrapper (same CLI, same
+        # interpreter, same GO protocol): align's final ARAP leaves a few
+        # hundred exactly-zero-extent collapsed faces in final_mesh.glb, and
+        # on the TRELLIS.2 topology those make the downstream ASAP
+        # deformation's solver fail to factorize (see sample_asap_safe.py).
+        sample = list(commands[shape_prior_warmup.PREWARM_STAGE_SAMPLE])
+        assert sample[1:3] == ["-m", "demo_v6_2.shape_prior.sample"], sample
+        commands[shape_prior_warmup.PREWARM_STAGE_SAMPLE] = [
+            sample[0],
+            str(SAMPLE_ASAP_SAFE_RUNNER),
+            *sample[3:],
+        ]
         return commands
 
 
+class NoUpscaleShapePriorClient(
+    _NoUpscaleStageMixin, shape_prior_warmup.ShapePriorLocalClient
+):
+    """sam3d chain with the upscale stage swapped for the crop passthrough."""
+
+
+class NoUpscaleTrellis2ShapePriorClient(
+    _NoUpscaleStageMixin, Trellis2ShapePriorClient
+):
+    """trellis2 chain with the upscale stage swapped for the passthrough."""
+
+
 def create_shape_prior_client(
-    backend: str | None, **kwargs
+    backend: str | None, *, use_upscale: bool = True, **kwargs
 ) -> shape_prior_warmup.ShapePriorLocalClient:
     """Construct the client for ``backend`` (sam3d/trellis2; none has none).
 
-    ``kwargs`` are the unchanged ``ShapePriorLocalClient`` constructor
-    arguments (the staged runtime passes the same set for every backend).
+    ``use_upscale`` False swaps ONLY the upscale stage for the crop-only
+    passthrough (GUI 上采样 toggle); ``kwargs`` are the unchanged
+    ``ShapePriorLocalClient`` constructor arguments (the staged runtime
+    passes the same set for every backend).
     """
     resolved = normalize_backend(backend)
     if resolved == BACKEND_SAM3D:
-        return shape_prior_warmup.ShapePriorLocalClient(**kwargs)
+        if use_upscale:
+            return shape_prior_warmup.ShapePriorLocalClient(**kwargs)
+        return NoUpscaleShapePriorClient(**kwargs)
     if resolved == BACKEND_TRELLIS2:
         ensure_trellis2_available()
-        return Trellis2ShapePriorClient(**kwargs)
+        if use_upscale:
+            return Trellis2ShapePriorClient(**kwargs)
+        return NoUpscaleTrellis2ShapePriorClient(**kwargs)
     raise ValueError(f"backend {resolved!r} does not use a shape-prior client")

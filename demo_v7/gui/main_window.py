@@ -22,6 +22,8 @@ and every send failure surfaces in the status bar instead of raising.
 from __future__ import annotations
 
 import threading
+import time
+from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from PySide6.QtCore import QTimer, Qt, Signal
@@ -109,6 +111,7 @@ class MainWindow(QMainWindow):
         self._shutdown_thread: threading.Thread | None = None
         self._state = protocol.STATE_STARTING
         self._saw_any_event = False
+        self._event_log_path: Path | None = None
         self.setWindowTitle("demo_v7 — 实时物理孪生")
         self.resize(1440, 900)
 
@@ -197,6 +200,9 @@ class MainWindow(QMainWindow):
         self._review.repositionRequested.connect(
             lambda: self._send({"cmd": protocol.CMD_BEGIN_REPOSITION})
         )
+        self._review.regenGaussianRequested.connect(
+            lambda: self._send({"cmd": protocol.CMD_REGEN_GAUSSIAN})
+        )
         self._reposition.startFormalRequested.connect(
             lambda: self._send({"cmd": protocol.CMD_START_FORMAL})
         )
@@ -239,26 +245,68 @@ class MainWindow(QMainWindow):
         if on_frame is not None:
             on_frame(channel, payload)
 
+    def _log_event(self, event: dict) -> None:
+        """Archive one service event: stdout + <run_dir>/v7_gui_events.log.
+
+        Owner rule 2026-08-06: the GUI shows progress visually; the textual
+        event stream lives on the command line and in a per-run log file.
+        High-frequency formal stats are skipped (they'd swamp the file and
+        already reach the status bar). Best-effort: logging never breaks the
+        event path.
+        """
+        name = str(event.get("event", "?"))
+        if name == protocol.EVT_FORMAL_STATS:
+            return
+        parts = [f"[{name}]"]
+        for key in ("cmd", "state", "stage", "detail", "kind", "where",
+                    "message", "error"):
+            value = event.get(key)
+            if value not in (None, ""):
+                parts.append(f"{key}={value}")
+        if event.get("ok") is False:
+            parts.append("ok=False")
+        if event.get("elapsed_ms") is not None:
+            parts.append(f"elapsed_ms={event['elapsed_ms']:.0f}")
+        if name == protocol.EVT_ARTIFACTS:
+            parts.append(f"paths={sorted(dict(event.get('paths') or {}))}")
+        line = (
+            time.strftime("%H:%M:%S") + " " + " ".join(str(p) for p in parts)
+        )
+        print(f"[v7-gui] {line}", flush=True)
+        try:
+            if self._event_log_path is None:
+                run_dir = self._resolve_run_dir()
+                if run_dir is None:
+                    return
+                self._event_log_path = Path(run_dir) / "v7_gui_events.log"
+            with self._event_log_path.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+        except Exception:
+            pass
+
     def _on_event(self, event: dict) -> None:
         self._saw_any_event = True
+        self._log_event(event)
         name = event.get("event")
         if name == protocol.EVT_ACK:
             self._on_ack(event)
         elif name == protocol.EVT_STATE:
             self._apply_state(str(event.get("state", "")), event.get("detail"))
         elif name == protocol.EVT_PROGRESS:
-            self._warmup.on_progress(
-                str(event.get("stage", "")),
-                str(event.get("detail", "")),
-                bool(event.get("ok", True)),
-                event.get("elapsed_ms"),
-            )
+            stage = str(event.get("stage", ""))
+            detail = str(event.get("detail", ""))
+            ok = bool(event.get("ok", True))
+            if stage == "gaussian":
+                # TripoSplat generation runs while the operator sits on the
+                # REVIEW screen; its status lives in the Gaussian tab.
+                self._review.set_gaussian_progress(detail, ok)
+            else:
+                self._warmup.on_progress(stage, detail, ok, event.get("elapsed_ms"))
         elif name == protocol.EVT_ARTIFACTS:
             self._on_artifacts(event)
         elif name == protocol.EVT_ERROR:
             message = f"错误 [{event.get('where', '?')}]: {event.get('message', '')}"
             self.statusBar().showMessage(message)
-            self._warmup.append_log(message)
         elif name == protocol.EVT_REPLAY_EXHAUSTED:
             if event.get("wrapped", False):
                 # Pre-formal wrap: the stream keeps running (a camera never
@@ -286,15 +334,22 @@ class MainWindow(QMainWindow):
                 self._apply_state(state, None)
             source_kind = event.get("source_kind")
             backend = event.get("shape_prior_backend")
+            # Truthful echo of the 上采样 toggle (service-resolved; absent in
+            # older acks -> treated as the on default and not annotated).
+            no_upscale = event.get("shape_prior_upscale") is False
             if source_kind:
                 suffix = f" | prior:{backend}" if backend else ""
+                if suffix and no_upscale and backend != "none":
+                    suffix += "(无超分)"
                 self.setWindowTitle(
                     f"demo_v7 — 实时物理孪生 [{source_kind}{suffix}]"
                 )
             if isinstance(backend, str) and backend:
                 # Review screen adapts its Shape Prior/补点 tabs (backend
-                # "none" renders the observed points alone, no candidates).
+                # "none" renders the observed points alone, no candidates);
+                # warmup screen renames its generate row.
                 self._review.set_shape_prior_backend(backend)
+                self._warmup.set_shape_prior_backend(backend)
 
     def _on_artifacts(self, event: dict) -> None:
         kind = event.get("kind")
@@ -313,6 +368,8 @@ class MainWindow(QMainWindow):
             self._review.set_shape_prior_artifacts(paths)
         elif kind == protocol.ARTIFACT_KIND_ALIGNMENT:
             self._review.set_alignment_artifacts(paths)
+        elif kind == protocol.ARTIFACT_KIND_GAUSSIAN:
+            self._review.set_gaussian_artifacts(paths)
 
     def _apply_state(self, state: str, detail: Any) -> None:
         if state not in self._state_to_screen:

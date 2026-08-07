@@ -101,15 +101,21 @@ def _bootstrap_paths(trellis2_repo):
     if repo_str in sys.path:
         sys.path.remove(repo_str)
     sys.path.insert(0, repo_str)
-    # The env's own cuda-toolkit (12.4) for potential nvdiffrast JIT builds;
-    # setdefault keeps an operator override authoritative.
+    # The env's own cuda-toolkit (12.4) for potential nvdiffrast JIT builds.
+    # FORCED, not setdefault: the parent forwards the ambient shell env, and
+    # this machine's ambient CUDA_HOME points at the system toolkit (13.x) —
+    # a JIT build against it would mismatch torch cu124.
     env_prefix = Path(sys.executable).resolve().parents[1]
     if (env_prefix / "bin" / "nvcc").is_file():
-        os.environ.setdefault("CUDA_HOME", str(env_prefix))
+        os.environ["CUDA_HOME"] = str(env_prefix)
         os.environ["PATH"] = os.pathsep.join(
             [str(env_prefix / "bin"), os.environ.get("PATH", "")]
         )
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    # The checkpoint contract is cache-only (backend_options fail-fasts on a
+    # missing snapshot); offline mode also kills per-boot etag revalidation
+    # round-trips. setdefault keeps an operator override authoritative.
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 
 def _stub_gated_rembg():
@@ -150,6 +156,36 @@ def _load_pipeline(model_id):
     # pipeline step; .cuda() only records the target device.
     pipeline.cuda()
     return pipeline
+
+
+def _arap_safe_face_mask(vertices, faces):
+    """Faces that survive align's exact-weld + ARAP (True = keep).
+
+    align.py builds its ARAP mesh via o3d ``remove_duplicated_vertices()``
+    (exact position weld). A face whose corners collapse to duplicate
+    indices under that weld — or whose area is ~0 (collinear corners) —
+    yields nan/inf cotangent weights and the ARAP solver fails to factorize
+    ("Failed to build solver"). o_voxel's atlas export produces a handful of
+    such slivers along UV seams; SAM3D's exporter never does, which is why
+    the unchanged align stage only breaks on this backend.
+    """
+    import numpy as np
+
+    verts = np.asarray(vertices, dtype=np.float64)
+    tris = np.asarray(faces, dtype=np.int64)
+    _, weld = np.unique(verts, axis=0, return_inverse=True)
+    welded = weld[tris]
+    distinct = (
+        (welded[:, 0] != welded[:, 1])
+        & (welded[:, 1] != welded[:, 2])
+        & (welded[:, 0] != welded[:, 2])
+    )
+    corners = verts[tris]
+    areas = 0.5 * np.linalg.norm(
+        np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]),
+        axis=1,
+    )
+    return distinct & (areas > 1e-12)
 
 
 def _validated_rgba(img_path):
@@ -205,6 +241,29 @@ def run_trellis2_shape_prior(args, pipeline=None, *, timing_ms=None):
         remesh=True,
         verbose=False,
     )
+    keep = _arap_safe_face_mask(glb.vertices, glb.faces)
+    if not bool(keep.all()):
+        dropped = int((~keep).sum())
+        # Quality guarantee (owner rule 2026-08-06): the filter may only ever
+        # remove zero-extent junk — faces with no renderable area, hence no
+        # effect on SuperGlue matching, PnP, scale, or sampling (verified
+        # pixel-identical across 16 candidate-render viewpoints). A drop
+        # fraction beyond this bound cannot be that; fail the stage loudly
+        # instead of silently shipping a degraded mesh.
+        if dropped > max(2, len(keep) // 1000):
+            raise ValueError(
+                f"ARAP-safety filter wants to drop {dropped}/{len(keep)} "
+                "faces — far beyond zero-extent junk; refusing to degrade "
+                "the mesh (inspect the o_voxel export)"
+            )
+        print(
+            f"[trellis2-generate] dropping {dropped} zero-extent ARAP-unsafe "
+            f"sliver face(s) of {len(keep)} (render-invisible; "
+            "alignment inputs unchanged)",
+            flush=True,
+        )
+        glb.update_faces(keep)
+        glb.remove_unreferenced_vertices()
     # PNG textures: pytorch3d's experimental GLB reader (align) and Open3D
     # (the GUI mesh view) cannot decode EXT_texture_webp.
     glb.export(str(output_dir / "object.glb"), extension_webp=False)

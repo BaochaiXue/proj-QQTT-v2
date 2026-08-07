@@ -35,6 +35,12 @@ session:
   # skips the shape-prior chain entirely (observed-only tracking structure,
   # ASAP + PhysTwin downstream off).
   shape_prior_backend: "sam3d"
+  # Options: true | false. Whether the shape-prior chain runs the SD x4
+  # upscale stage (true, the unchanged v6.2 chain) or the crop-only
+  # passthrough (false; faster warmup — generation conditions on the
+  # original-resolution mask-bbox crop). Used when neither the CLI nor the
+  # source-select dialog picked one.
+  shape_prior_upscale: true
 
 preview:
   # Options: mapping of frame channel -> positive finite float Hz that

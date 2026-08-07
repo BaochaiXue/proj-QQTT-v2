@@ -40,6 +40,7 @@ sys.path.insert(0, _BOOTSTRAP_REPO_ROOT_STR)
 from PySide6.QtCore import QObject, Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -60,6 +61,7 @@ from demo_v7.service.backend_options import (  # import-light (stdlib only)
     DEFAULT_SHAPE_PRIOR_BACKEND,
     SHAPE_PRIOR_BACKENDS,
     normalize_backend,
+    normalize_upscale,
 )
 
 SOURCE_REAL = "real"
@@ -129,6 +131,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "(config default preselected)."
         ),
     )
+    parser.add_argument(
+        "--shape-prior-upscale",
+        choices=("on", "off"),
+        default=None,
+        help=(
+            "Upscale (SD x4) stage: on keeps the v6.2 chain, off uses the "
+            "crop-only passthrough (faster warmup); omit to pick "
+            "interactively (config default preselected)."
+        ),
+    )
     return parser
 
 
@@ -175,6 +187,21 @@ def config_default_shape_prior_backend() -> str:
     return DEFAULT_SHAPE_PRIOR_BACKEND
 
 
+def config_default_shape_prior_upscale() -> bool:
+    """Dialog default for the upscale toggle (config, then on)."""
+    import yaml
+
+    try:
+        loaded = yaml.safe_load(
+            (Path(__file__).parent / "config" / "default.yaml").read_text()
+        )
+        if isinstance(loaded, dict) and isinstance(loaded.get("session"), dict):
+            return normalize_upscale(loaded["session"].get("shape_prior_upscale"))
+    except Exception:
+        pass
+    return True
+
+
 class SourceSelectDialog(QDialog):
     """Modal 源选择: 真实相机 vs fake-live + case folder."""
 
@@ -184,6 +211,7 @@ class SourceSelectDialog(QDialog):
         default_case: Path | None = None,
         default_source: str = SOURCE_FAKE_LIVE,
         default_backend: str = DEFAULT_SHAPE_PRIOR_BACKEND,
+        default_upscale: bool = True,
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
@@ -217,6 +245,11 @@ class SourceSelectDialog(QDialog):
         backend_row = QHBoxLayout()
         backend_row.addWidget(QLabel("Shape prior 生成:", self))
         backend_row.addWidget(self._backend_combo, 1)
+        # 上采样 (SD x4) toggle: off swaps the stage for the crop-only
+        # passthrough — faster warmup, generation conditions on the
+        # original-resolution crop. Backend "none" ignores it (no chain).
+        self._upscale_check = QCheckBox("上采样(SD ×4 超分;关闭可加速 warmup)", self)
+        self._upscale_check.setChecked(bool(default_upscale))
         buttons = QDialogButtonBox(self)
         start_btn = buttons.addButton("开始", QDialogButtonBox.ButtonRole.AcceptRole)
         buttons.addButton("退出", QDialogButtonBox.ButtonRole.RejectRole)
@@ -229,6 +262,7 @@ class SourceSelectDialog(QDialog):
         layout.addWidget(self._fake_radio)
         layout.addLayout(case_row)
         layout.addLayout(backend_row)
+        layout.addWidget(self._upscale_check)
         layout.addWidget(buttons)
         self._error = QLabel("", self)
         self._error.setStyleSheet("color: #f28b82;")
@@ -247,12 +281,18 @@ class SourceSelectDialog(QDialog):
             return
         self.accept()
 
-    def selection(self) -> tuple[str, Path | None, str]:
-        """Return (source, fake_live_case, backend) after ``exec`` accepted."""
+    def selection(self) -> tuple[str, Path | None, str, bool]:
+        """Return (source, fake_live_case, backend, upscale) after accepted."""
         backend = str(self._backend_combo.currentData())
+        upscale = bool(self._upscale_check.isChecked())
         if self._fake_radio.isChecked():
-            return SOURCE_FAKE_LIVE, Path(self._case_edit.text().strip()), backend
-        return SOURCE_REAL, None, backend
+            return (
+                SOURCE_FAKE_LIVE,
+                Path(self._case_edit.text().strip()),
+                backend,
+                upscale,
+            )
+        return SOURCE_REAL, None, backend, upscale
 
 
 def create_session(
@@ -260,6 +300,7 @@ def create_session(
     fake_live_case: Path | None,
     base_path: Path | None,
     shape_prior_backend: str | None = None,
+    shape_prior_upscale: bool | str | None = None,
 ) -> Any:
     """Build an OrchestratorSession (lazy import; see module docstring).
 
@@ -278,6 +319,8 @@ def create_session(
         kwargs["base_path"] = base_path
     if shape_prior_backend is not None:
         kwargs["shape_prior_backend"] = shape_prior_backend
+    if shape_prior_upscale is not None:
+        kwargs["shape_prior_upscale"] = shape_prior_upscale
     return OrchestratorSession(**kwargs)
 
 
@@ -299,6 +342,7 @@ class AppController(QObject):
                 self._args.source,
                 self._args.fake_live_case,
                 self._args.shape_prior_backend,
+                self._args.shape_prior_upscale,
             )
         return self._ask_and_launch()
 
@@ -311,17 +355,23 @@ class AppController(QObject):
                 self._args.shape_prior_backend
                 or config_default_shape_prior_backend()
             ),
+            default_upscale=(
+                normalize_upscale(self._args.shape_prior_upscale)
+                if self._args.shape_prior_upscale is not None
+                else config_default_shape_prior_upscale()
+            ),
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return False
-        source, case, backend = dialog.selection()
-        return self._launch(source, case, backend)
+        source, case, backend, upscale = dialog.selection()
+        return self._launch(source, case, backend, upscale)
 
     def _launch(
         self,
         source: str,
         fake_live_case: Path | None,
         shape_prior_backend: str | None = None,
+        shape_prior_upscale: bool | str | None = None,
     ) -> bool:
         try:
             self._session = create_session(
@@ -329,6 +379,7 @@ class AppController(QObject):
                 fake_live_case,
                 self._args.base_path,
                 shape_prior_backend,
+                shape_prior_upscale,
             )
             # start() spawns the camera service and connects both sockets; it
             # blocks up to connect_timeout_s and self-cleans on failure.

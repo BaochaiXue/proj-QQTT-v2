@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import threading
 import time
 from collections import deque
@@ -121,6 +122,7 @@ class StagedRuntime:
         session: CameraSession | None = None,
         channel_max_hz: dict[str, float] | None = None,
         shape_prior_backend: str | None = None,
+        shape_prior_use_upscale: bool | None = None,
     ) -> None:
         """Build shared services and bind both protocol sockets.
 
@@ -135,6 +137,11 @@ class StagedRuntime:
         self.args = args
         self.shape_prior_backend = backend_options.normalize_backend(
             shape_prior_backend
+        )
+        # 上采样 toggle (GUI selector; camera_service forwards). Off swaps the
+        # upscale stage for the crop-only passthrough in _stage_commands.
+        self.shape_prior_use_upscale = backend_options.normalize_upscale(
+            shape_prior_use_upscale
         )
         self.mode = RunMode.from_args(args)
         self.session = session if session is not None else CameraSession()
@@ -176,6 +183,10 @@ class StagedRuntime:
         self._edgetam_precompiled = False
         self._formal_seg_start = threading.Event()
         self._fatal_announced = False
+        # Gaussian-splats feature (TripoSplat; display-only, fail-soft):
+        # manager spawns after shape-prior READY, dies before FORMAL; the
+        # live renderer is created lazily by the formal gaussian worker.
+        self._gaussian_manager: Any = None
         self._deferred: deque[Callable[[], None]] = deque()
         self._last_publish_s: dict[str, float] = {}
         self._acq_thread: threading.Thread | None = None
@@ -210,6 +221,7 @@ class StagedRuntime:
             protocol.CMD_START_FORMAL: self._cmd_start_formal,
             protocol.CMD_STOP_FORMAL: self._cmd_stop_formal,
             protocol.CMD_SHUTDOWN: self._cmd_shutdown,
+            protocol.CMD_REGEN_GAUSSIAN: self._cmd_regen_gaussian,
         }
         self.control = ControlServer(
             self.socket_dir / protocol.CONTROL_SOCKET_NAME,
@@ -235,6 +247,7 @@ class StagedRuntime:
         if enabled:
             client = shape_prior_backends.create_shape_prior_client(
                 self.shape_prior_backend,
+                use_upscale=self.shape_prior_use_upscale,
                 case_root=Path(self.args.shape_prior_case_root),
                 cuda_visible_devices=str(
                     self.args.shape_prior_warmup_cuda_visible_devices
@@ -478,6 +491,7 @@ class StagedRuntime:
             state=self.state,
             source_kind=str(self.args.input_source),
             shape_prior_backend=self.shape_prior_backend,
+            shape_prior_upscale=self.shape_prior_use_upscale,
         )
         return ack, None
 
@@ -649,6 +663,37 @@ class StagedRuntime:
             self._state = protocol.STATE_FORMAL
         return _ack(protocol.CMD_START_FORMAL, ok=True), self._launch_formal
 
+    def _cmd_regen_gaussian(
+        self, message: dict
+    ) -> tuple[dict, Callable[[], None] | None]:
+        """REVIEW 拣选/换seed: re-roll the TripoSplat generation."""
+        manager = self._gaussian_manager
+        if self.state != protocol.STATE_REVIEW:
+            ack = _ack(
+                protocol.CMD_REGEN_GAUSSIAN,
+                ok=False,
+                error=f"regen_gaussian requires REVIEW (state={self.state})",
+            )
+            return ack, None
+        if manager is None:
+            ack = _ack(
+                protocol.CMD_REGEN_GAUSSIAN,
+                ok=False,
+                error="gaussian feature is not active in this run",
+            )
+            return ack, None
+        if manager.busy:
+            ack = _ack(
+                protocol.CMD_REGEN_GAUSSIAN,
+                ok=False,
+                error="a gaussian generation is already in flight",
+            )
+            return ack, None
+        seed = message.get("seed")
+        seed = int(seed) if seed is not None else None
+        ack = _ack(protocol.CMD_REGEN_GAUSSIAN, ok=True)
+        return ack, lambda: manager.regenerate(seed)
+
     def _cmd_stop_formal(
         self, message: dict
     ) -> tuple[dict, Callable[[], None] | None]:
@@ -797,6 +842,9 @@ class StagedRuntime:
                 print(
                     f"[v7] observed-points review data skipped: {exc}", flush=True
                 )
+                self._emit_error(
+                    "observed_points", f"{type(exc).__name__}: {exc}"
+                )
             self._emit_progress(
                 "shape_prior_submit",
                 "shape prior disabled(backend=none);跳过生成/对齐/补点",
@@ -840,10 +888,19 @@ class StagedRuntime:
             # GUI already got the shape_prior_ready EVT_PROGRESS above.
             self._warmup_done = True
             self._enter_state(protocol.STATE_REVIEW)
+            # Gaussian splats ride AFTER the chain (its align artifacts feed
+            # the world transform; the shape-prior GPU is free again).
+            # Display-only: failures disable the feature, never the run.
+            self._start_gaussian_manager()
         except Exception as exc:
             # Irrecoverable: the one-shot ShapePriorWarmupManager cannot accept
-            # a second frame-0 request in-process.
+            # a second frame-0 request in-process. The failed progress event
+            # settles the GUI timeline (✗ + stopped spinners) before the
+            # fatal path takes over the status band.
             if not self.stop_event.is_set():
+                self._emit_progress(
+                    "shape_prior", f"{type(exc).__name__}: {exc}", ok=False
+                )
                 self.fatal.record("frame-0 warmup", exc)
 
     def _emit_observed_points(self, processed: Any) -> None:
@@ -873,6 +930,98 @@ class StagedRuntime:
             )
         except Exception as exc:
             print(f"[v7] frame0 object-points artifact skipped: {exc}", flush=True)
+
+    def _start_gaussian_manager(self) -> None:
+        """Spawn the TripoSplat manager (fail-soft; env kill switch)."""
+        if os.environ.get("DEMO_V7_GAUSSIAN_SPLATS", "1") == "0":
+            return
+        if self._gaussian_manager is not None:
+            return
+        try:
+            from demo_v7.service.gaussian_manager import GaussianManager
+
+            case_dir = self._shape_prior_case_dir()
+            if case_dir is None:
+                return
+            manager = GaussianManager(
+                case_dir=case_dir,
+                out_dir=self._review_dir() / "gaussian",
+                controller_name=str(self.args.shape_prior_controller_name),
+                cuda_visible_devices=str(
+                    self.args.shape_prior_warmup_cuda_visible_devices
+                ),
+                emit_progress=lambda stage, detail="", **kw: self._emit_progress(
+                    stage, detail, **kw
+                ),
+                emit_artifacts=self._emit_artifacts,
+                emit_error=self._emit_error,
+            )
+            manager.start()
+            self._gaussian_manager = manager
+        except Exception as exc:
+            self._emit_error("gaussian", f"{type(exc).__name__}: {exc}")
+
+    def _shutdown_gaussian_manager(self) -> None:
+        """Free the shape-prior GPU before FORMAL (idempotent)."""
+        manager = self._gaussian_manager
+        if manager is None:
+            return
+        try:
+            manager.shutdown()
+        except Exception:
+            pass
+
+    def _gaussian_worker(self) -> None:
+        """FORMAL: deform the aligned splats by tracked object motion and
+        publish CH_GAUSSIAN (pure observer of live_viz_slot; own cursor)."""
+        formal = self._formal
+        manager = self._gaussian_manager
+        if formal is None or manager is None or not manager.has_world_ply():
+            return
+        try:
+            from demo_v6_2.mdp.constants import TABLE_WORLD_FRAME_KIND
+            from demo_v7.service.gaussian_live import GaussianLiveRenderer
+
+            live = GaussianLiveRenderer(str(manager.world_ply_path))
+        except Exception as exc:
+            print(f"[gaussian-live] init failed: {exc}", flush=True)
+            return
+        table_c2w = self.session.table_c2w
+        if table_c2w is None:
+            return
+        viewmat = np.linalg.inv(np.asarray(table_c2w, dtype=np.float64))
+        slot = formal.live_viz_slot
+        rendered_seq = -1
+        min_interval_s = 1.0 / self._channel_max_hz[protocol.CH_GAUSSIAN]
+        last_render_s = 0.0
+        while not self.stop_event.is_set():
+            if formal.lossless.processing_done.is_set() or live.failed:
+                return
+            pair = slot.get_latest_after(rendered_seq)
+            if pair is None:
+                time.sleep(0.02)
+                continue
+            rendered_seq = int(pair.seq)
+            tracker = pair.tracker_packet
+            if str(tracker.coordinate_frame) != str(TABLE_WORLD_FRAME_KIND):
+                return  # uncalibrated run: world-frame gaussians undefined
+            live.step(
+                tracker.marker_xyz_m,
+                tracker.query_indices,
+                tracker.query_is_object,
+            )
+            now_s = time.perf_counter()
+            if now_s - last_render_s < min_interval_s:
+                continue
+            last_render_s = now_s
+            mask_packet = pair.pcd_result.processed_frame.mask_packet
+            frame = live.render_over(
+                mask_packet.color_bgr,
+                viewmat=viewmat,
+                intrinsics=mask_packet.intrinsics,
+            )
+            if frame is not None:
+                self._publish_frame(protocol.CH_GAUSSIAN, frame)
 
     def _poll_shape_prior_until_terminal(self) -> None:
         """Poll the manager profile until READY; raise on FAILED/stop."""
@@ -1022,6 +1171,9 @@ class StagedRuntime:
         masks = self._frame0_masks
         if masks is None:
             raise RuntimeError("formal stage requires saved frame-0 masks")
+        # The TripoSplat worker's job is done (world ply on disk); its GPU
+        # goes to the PhysTwin children now.
+        self._shutdown_gaussian_manager()
         formal = build_formal_pipeline(
             args=self.args,
             mode=self.mode,
@@ -1041,6 +1193,7 @@ class StagedRuntime:
             ("tracker", formal.tracker.run_lossless),
             ("pair-output", formal.product.pair_output_worker),
             ("composite", self._composite_worker),
+            ("gaussian", self._gaussian_worker),
         ]
         formal.threads = [self._spawn_worker(name, target) for name, target in workers]
         # The seg stage runs on the persistent seg-host thread (cudagraph

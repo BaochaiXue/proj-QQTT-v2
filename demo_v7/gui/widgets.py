@@ -16,6 +16,7 @@ Constraints these widgets enforce (see ``demo_v7/DESIGN_CONTRACTS.md``):
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import cv2
@@ -216,9 +217,22 @@ class VideoLoop(QWidget):
         self._view.setImage(bgr_to_qimage(frame))
 
 
+def _format_elapsed_ms(elapsed_ms: float) -> str:
+    """Human elapsed: sub-second in ms, then seconds, then m+s."""
+    if elapsed_ms < 1000.0:
+        return f"{elapsed_ms:.0f} ms"
+    seconds = elapsed_ms / 1000.0
+    if seconds < 120.0:
+        return f"{seconds:.1f} s"
+    return f"{int(seconds // 60)} m {int(seconds % 60)} s"
+
+
 _GLYPH_PENDING = "○"
 _GLYPH_OK = "✓"
 _GLYPH_FAIL = "✗"
+# Spinner frames for rows in the running state (ticked by the shared timer).
+_SPINNER_FRAMES = ("◐", "◓", "◑", "◒")
+_SPINNER_STYLE = "color: #8ab4f8; font-weight: bold;"
 
 _GLYPH_STYLES = {
     _GLYPH_PENDING: "color: #5f6368;",
@@ -226,13 +240,20 @@ _GLYPH_STYLES = {
     _GLYPH_FAIL: "color: #f28b82; font-weight: bold;",
 }
 
+_TICK_INTERVAL_MS = 250
+
 
 class ProgressTimeline(QWidget):
-    """Ordered stage rows with a status glyph, detail text and elapsed ms.
+    """Ordered stage rows with a status glyph, detail text and elapsed time.
 
     Stages are pre-declared with ``setStages`` so the operator sees the whole
     plan up front; unknown stage names reported later append extra rows (the
     service may forward demo_v6_2 pipeline_status stages verbatim).
+
+    Visual-first (owner rule 2026-08-06: the GUI shows progress, logs go to
+    stdout + file): ``begin`` puts a row into a live running state — spinner
+    glyph + elapsed seconds ticking on a timer — and ``report`` settles it
+    to ✓/✗ with the final duration.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -244,6 +265,12 @@ class ProgressTimeline(QWidget):
         self._grid.setColumnStretch(2, 1)
         # stage -> (glyph, name, detail, elapsed) labels
         self._rows: dict[str, tuple[QLabel, QLabel, QLabel, QLabel]] = {}
+        # stage -> perf-counter start of the running state
+        self._running: dict[str, float] = {}
+        self._spin_phase = 0
+        self._ticker = QTimer(self)
+        self._ticker.setInterval(_TICK_INTERVAL_MS)
+        self._ticker.timeout.connect(self._tick)
 
     def setStages(self, stages: list[tuple[str, str]]) -> None:
         """Declare the expected (stage_key, human_label) rows in order."""
@@ -258,6 +285,29 @@ class ProgressTimeline(QWidget):
             if widget is not None:
                 widget.deleteLater()
         self._rows.clear()
+        self._running.clear()
+        self._ticker.stop()
+
+    def setRowLabel(self, stage: str, label: str) -> None:  # noqa: N802
+        """Rename a declared row (e.g. the generate row per backend)."""
+        row = self._rows.get(stage)
+        if row is not None:
+            row[1].setText(label)
+
+    def begin(self, stage: str, detail: str = "") -> None:
+        """Put ``stage`` into the running state (spinner + live elapsed)."""
+        glyph_label, _name, detail_label, elapsed_label = self._ensure_row(
+            stage, stage
+        )
+        if stage not in self._running:
+            self._running[stage] = time.perf_counter()
+        glyph_label.setText(_SPINNER_FRAMES[self._spin_phase])
+        glyph_label.setStyleSheet(_SPINNER_STYLE)
+        if detail:
+            detail_label.setText(detail)
+        elapsed_label.setText("0 s")
+        if not self._ticker.isActive():
+            self._ticker.start()
 
     def report(
         self,
@@ -269,13 +319,42 @@ class ProgressTimeline(QWidget):
     ) -> None:
         """Record one progress event for ``stage`` (row appended if unknown)."""
         glyph_label, _name, detail_label, elapsed_label = self._ensure_row(stage, stage)
+        started_s = self._running.pop(stage, None)
+        if not self._running:
+            self._ticker.stop()
         glyph = _GLYPH_OK if ok else _GLYPH_FAIL
         glyph_label.setText(glyph)
         glyph_label.setStyleSheet(_GLYPH_STYLES[glyph])
         if detail:
             detail_label.setText(detail)
+        if elapsed_ms is None and started_s is not None:
+            elapsed_ms = (time.perf_counter() - started_s) * 1000.0
         if elapsed_ms is not None:
-            elapsed_label.setText(f"{float(elapsed_ms):.0f} ms")
+            elapsed_label.setText(_format_elapsed_ms(float(elapsed_ms)))
+
+    def stopAll(self) -> None:  # noqa: N802 (Qt style)
+        """Settle every running row back to pending and stop the ticker.
+
+        Used when the chain dies (a failure event or a fatal): rows that
+        were spinning did not fail themselves, but nothing will ever
+        complete them — a frozen spinner would read as live progress.
+        """
+        for stage in list(self._running):
+            glyph_label, _name, _detail, _elapsed = self._rows[stage]
+            glyph_label.setText(_GLYPH_PENDING)
+            glyph_label.setStyleSheet(_GLYPH_STYLES[_GLYPH_PENDING])
+        self._running.clear()
+        self._ticker.stop()
+
+    def _tick(self) -> None:
+        """Advance the spinner + live elapsed of every running row."""
+        self._spin_phase = (self._spin_phase + 1) % len(_SPINNER_FRAMES)
+        frame = _SPINNER_FRAMES[self._spin_phase]
+        now_s = time.perf_counter()
+        for stage, started_s in self._running.items():
+            glyph_label, _name, _detail, elapsed_label = self._rows[stage]
+            glyph_label.setText(frame)
+            elapsed_label.setText(_format_elapsed_ms((now_s - started_s) * 1000.0))
 
     def _ensure_row(self, key: str, label: str) -> tuple[QLabel, QLabel, QLabel, QLabel]:
         if key in self._rows:

@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QTabWidget,
@@ -34,22 +33,42 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from demo_v7.ipc.protocol import CH_COMPOSITE, CH_DEPTH, CH_OVERLAY, CH_RGB
+from demo_v7.ipc.protocol import (
+    CH_COMPOSITE,
+    CH_DEPTH,
+    CH_GAUSSIAN,
+    CH_OVERLAY,
+    CH_RGB,
+)
 from demo_v7.gui.mesh_view import MeshOrbitView
 from demo_v7.gui.widgets import CaptionedImage, ImageView, ProgressTimeline
 
 _ARTIFACT_GRID_COLUMNS = 3
 
-# Warm-up stage plan shown before any progress event arrives. Keys follow
-# EVT_PROGRESS ("preload"/"sam31_masks"/"shape_prior_submit"/
-# "shape_prior_ready" plus demo_v6_2 pipeline_status's "shape_prior").
+# Warm-up stage plan shown before any progress event arrives. The service's
+# EVT_PROGRESS vocabulary is "sam31_masks"/"shape_prior_submit"/"shape_prior"
+# (with "<sub-stage> finished" details from case-dir milestones)/
+# "shape_prior_ready"; the shape_prior details are fanned out onto the sp:*
+# sub-rows so every chain step is its own live row (owner rule 2026-08-06:
+# progress is VISUAL — spinners + elapsed — while text logs go to
+# stdout + the run's log file, never a GUI text box).
 WARMUP_STAGE_PLAN: list[tuple[str, str]] = [
-    ("preload", "模型预加载"),
     ("sam31_masks", "SAM3.1 三 mask 分割"),
     ("shape_prior_submit", "提交 shape-prior 任务"),
-    ("shape_prior", "shape-prior 生成(upscale / generate / align / sample)"),
+    ("sp:upscale", "  ├ 超分(upscale)"),
+    ("sp:generate", "  ├ 生成(generate)"),
+    ("sp:align", "  ├ 对齐(align)"),
+    ("sp:sample", "  └ 补点采样(sample)"),
     ("shape_prior_ready", "shape-prior 就绪"),
 ]
+# Backend id -> generate-row label (dialog vocabulary; sam3d is the default).
+_GENERATE_ROW_LABELS = {
+    "sam3d": "  ├ 生成(SAM3D)",
+    "trellis2": "  ├ 生成(TRELLIS.2)",
+    "none": "  ├ 生成(无,已跳过)",
+}
+# The shape_prior milestone order used to chain sub-row spinners.
+_SP_SUB_ORDER = ("sp:upscale", "sp:generate", "sp:align", "sp:sample")
 
 
 def _is_image(path: str) -> bool:
@@ -196,7 +215,12 @@ class CaptureScreen(QWidget):
 
 
 class WarmupScreen(QWidget):
-    """warmup 屏: 人可离开 banner + stage timeline + log + 查看结果."""
+    """warmup 屏: 人可离开 banner + live stage timeline + 查看结果.
+
+    Pure visual progress: every chain step is a timeline row with a spinner
+    and live elapsed while running, settling to ✓/✗ + duration. No text-log
+    widget — event lines go to stdout and the run's log file (main_window).
+    """
 
     viewResultsRequested = Signal()
 
@@ -208,11 +232,9 @@ class WarmupScreen(QWidget):
             "background-color: #1e3a2f; color: #81c995; font-size: 18px;"
             " font-weight: bold; padding: 12px; border-radius: 6px;"
         )
+        self._backend: str | None = None
         self._timeline = ProgressTimeline(self)
         self._timeline.setStages(WARMUP_STAGE_PLAN)
-        self._log = QPlainTextEdit(self)
-        self._log.setReadOnly(True)
-        self._log.setMaximumBlockCount(2000)
         self._results_btn = QPushButton("查看结果", self)
         self._results_btn.setEnabled(False)
         self._results_btn.clicked.connect(self.viewResultsRequested.emit)
@@ -223,29 +245,66 @@ class WarmupScreen(QWidget):
         layout = QVBoxLayout(self)
         layout.addWidget(banner)
         layout.addWidget(self._timeline)
-        layout.addWidget(QLabel("日志:", self))
-        layout.addWidget(self._log, 1)
+        layout.addStretch(1)
         layout.addLayout(buttons)
+
+    def set_shape_prior_backend(self, backend: str) -> None:
+        """Rename the generate row for the run's backend (hello-ack echo)."""
+        self._backend = str(backend)
+        label = _GENERATE_ROW_LABELS.get(self._backend)
+        if label is not None:
+            self._timeline.setRowLabel("sp:generate", label)
 
     def on_progress(
         self, stage: str, detail: str, ok: bool, elapsed_ms: float | None
     ) -> None:
-        self._timeline.report(stage, detail, ok=ok, elapsed_ms=elapsed_ms)
-        suffix = "" if ok else "(失败)"
-        ms = f" [{elapsed_ms:.0f} ms]" if elapsed_ms is not None else ""
-        self.append_log(f"{stage}{suffix}: {detail}{ms}")
+        """Fan service progress onto the visual rows + chain the spinners."""
+        skipped = "跳过" in detail or "skipped" in detail or "disabled" in detail
+        if stage == "sam31_masks":
+            self._timeline.report(stage, detail, ok=ok, elapsed_ms=elapsed_ms)
+            if ok:
+                self._timeline.begin("shape_prior_submit")
+        elif stage == "shape_prior_submit":
+            self._timeline.report(stage, detail, ok=ok, elapsed_ms=elapsed_ms)
+            if ok and not skipped:
+                self._timeline.begin("sp:upscale")
+        elif stage == "shape_prior":
+            if skipped:
+                for key in _SP_SUB_ORDER:
+                    self._timeline.report(key, "跳过", ok=True)
+            else:
+                # Milestone details: "<sub-stage> finished" (no sample
+                # milestone — sp:sample settles on shape_prior_ready).
+                sub = f"sp:{detail.split(' ', 1)[0]}"
+                if sub in _SP_SUB_ORDER:
+                    self._timeline.report(sub, ok=ok, elapsed_ms=elapsed_ms)
+                    if ok:
+                        index = _SP_SUB_ORDER.index(sub)
+                        if index + 1 < len(_SP_SUB_ORDER):
+                            self._timeline.begin(_SP_SUB_ORDER[index + 1])
+                else:
+                    self._timeline.report(stage, detail, ok=ok, elapsed_ms=elapsed_ms)
+        elif stage == "shape_prior_ready":
+            if ok and not skipped:
+                self._timeline.report("sp:sample")
+            self._timeline.report(stage, detail, ok=ok, elapsed_ms=elapsed_ms)
+        else:
+            self._timeline.report(stage, detail, ok=ok, elapsed_ms=elapsed_ms)
+        if not ok:
+            # The chain is dead (retake or fatal follows): freeze the board
+            # honestly — the failed row keeps its ✗, siblings stop spinning.
+            self._timeline.stopAll()
         if stage == "shape_prior_ready" and ok:
             self._results_btn.setEnabled(True)
 
-    def append_log(self, line: str) -> None:
-        self._log.appendPlainText(line)
-
     def reset(self) -> None:
-        """Fresh timeline/log for a new run (after 回到开始/重拍 cycles)."""
+        """Fresh timeline for a new run (after 回到开始/重拍 cycles)."""
         self._results_btn.setEnabled(False)
         self._timeline.clear()
         self._timeline.setStages(WARMUP_STAGE_PLAN)
-        self._log.clear()
+        if self._backend is not None:
+            self.set_shape_prior_backend(self._backend)
+        self._timeline.begin("sam31_masks")
 
 
 class ReviewScreen(QWidget):
@@ -257,6 +316,7 @@ class ReviewScreen(QWidget):
     """
 
     repositionRequested = Signal()
+    regenGaussianRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -308,6 +368,22 @@ class ReviewScreen(QWidget):
         sampling_layout.addLayout(sampling_bar)
         sampling_layout.addWidget(self._sampling_view, 1)
         self._tabs.addTab(sampling_page, "补点")
+        # Gaussian tab: TripoSplat 拣选 — turntable contact sheet + world
+        # overlay stills, generation status, and 换seed re-roll.
+        self._gaussian_status = QLabel("等待 gaussian 生成…", self)
+        self._gaussian_status.setStyleSheet("color: #9aa0a6;")
+        self._gaussian_regen_btn = QPushButton("换 seed 重新生成", self)
+        self._gaussian_regen_btn.setEnabled(False)
+        self._gaussian_regen_btn.clicked.connect(self.regenGaussianRequested.emit)
+        gaussian_bar = QHBoxLayout()
+        gaussian_bar.addWidget(self._gaussian_status, 1)
+        gaussian_bar.addWidget(self._gaussian_regen_btn)
+        self._gaussian_grid = _ArtifactGrid()
+        gaussian_page = QWidget()
+        gaussian_layout = QVBoxLayout(gaussian_page)
+        gaussian_layout.addLayout(gaussian_bar)
+        gaussian_layout.addWidget(_wrap_scroll(self._gaussian_grid), 1)
+        self._tabs.addTab(gaussian_page, "Gaussian")
         self._reposition_btn = QPushButton("进入摆位", self)
         self._reposition_btn.clicked.connect(self.repositionRequested.emit)
         buttons = QHBoxLayout()
@@ -418,6 +494,20 @@ class ReviewScreen(QWidget):
     def set_alignment_artifacts(self, paths: dict[str, str]) -> None:
         self._prior_grid.add_images(paths)
 
+    def set_gaussian_artifacts(self, paths: dict[str, str]) -> None:
+        """A generation (or re-roll) landed: refresh stills, enable 换seed."""
+        self._gaussian_grid.clear()
+        self._gaussian_grid.add_images(paths)
+        self._gaussian_regen_btn.setEnabled(True)
+
+    def set_gaussian_progress(self, detail: str, ok: bool) -> None:
+        self._gaussian_status.setText(detail if ok else f"失败: {detail}")
+        if not ok:
+            # A failed roll still leaves the previous artifacts usable.
+            self._gaussian_regen_btn.setEnabled(
+                self._gaussian_grid._count > 0  # noqa: SLF001 (own widget)
+            )
+
     def _on_mesh_pick(self, index: int) -> None:
         self._show_picked_mesh()
 
@@ -430,6 +520,9 @@ class ReviewScreen(QWidget):
     def reset(self) -> None:
         self._masks_grid.clear()
         self._prior_grid.clear()
+        self._gaussian_grid.clear()
+        self._gaussian_status.setText("等待 gaussian 生成…")
+        self._gaussian_regen_btn.setEnabled(False)
         self._mesh_paths.clear()
         self._mesh_view.clear()
         self._sampling_paths.clear()
@@ -481,6 +574,7 @@ class FormalScreen(QWidget):
 
     _CHANNEL_CHOICES: list[tuple[str, str]] = [
         ("复合", CH_COMPOSITE),
+        ("高斯", CH_GAUSSIAN),
         ("RGB", CH_RGB),
         ("深度", CH_DEPTH),
     ]

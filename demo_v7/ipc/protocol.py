@@ -63,6 +63,7 @@ CMD_BEGIN_REPOSITION = "begin_reposition"  # REVIEW -> REPOSITION
 CMD_START_FORMAL = "start_formal"  # REPOSITION -> FORMAL
 CMD_STOP_FORMAL = "stop_formal"  # FORMAL -> FINISHED
 CMD_SHUTDOWN = "shutdown"  # any -> exit(0)
+CMD_REGEN_GAUSSIAN = "regen_gaussian"  # REVIEW: {"seed"?} re-roll the splats
 
 COMMANDS = (
     CMD_HELLO,
@@ -74,6 +75,7 @@ COMMANDS = (
     CMD_START_FORMAL,
     CMD_STOP_FORMAL,
     CMD_SHUTDOWN,
+    CMD_REGEN_GAUSSIAN,
 )
 
 # ---------------------------------------------------------------------------
@@ -95,11 +97,13 @@ ARTIFACT_KIND_FRAME0 = "frame0"  # frame0 rgb png + depth npy preview png
 ARTIFACT_KIND_MASKS = "masks"  # object/hand_a/hand_b pngs + overlay png
 ARTIFACT_KIND_SHAPE_PRIOR = "shape_prior"  # turntable mp4, mesh glb, renders
 ARTIFACT_KIND_ALIGNMENT = "alignment"  # aligned overlay png(s)
+ARTIFACT_KIND_GAUSSIAN = "gaussian"  # triposplat turntable/overlay/ply paths
 ARTIFACT_KINDS = (
     ARTIFACT_KIND_FRAME0,
     ARTIFACT_KIND_MASKS,
     ARTIFACT_KIND_SHAPE_PRIOR,
     ARTIFACT_KIND_ALIGNMENT,
+    ARTIFACT_KIND_GAUSSIAN,
 )
 
 # ---------------------------------------------------------------------------
@@ -109,10 +113,17 @@ CH_RGB = "rgb"  # live color (all states)
 CH_DEPTH = "depth"  # live depth colormap (all states)
 CH_OVERLAY = "overlay"  # REPOSITION: rgb + 50% mask tint (service-side)
 CH_COMPOSITE = "composite"  # FORMAL: v6.2 live-viewer pair composite
-FRAME_CHANNELS = (CH_RGB, CH_DEPTH, CH_OVERLAY, CH_COMPOSITE)
+CH_GAUSSIAN = "gaussian"  # FORMAL: tracked-motion gaussian over live rgb
+FRAME_CHANNELS = (CH_RGB, CH_DEPTH, CH_OVERLAY, CH_COMPOSITE, CH_GAUSSIAN)
 
 # Per-channel encode caps (service side), Hz.
-CHANNEL_MAX_HZ = {CH_RGB: 20.0, CH_DEPTH: 10.0, CH_OVERLAY: 20.0, CH_COMPOSITE: 15.0}
+CHANNEL_MAX_HZ = {
+    CH_RGB: 20.0,
+    CH_DEPTH: 10.0,
+    CH_OVERLAY: 20.0,
+    CH_COMPOSITE: 15.0,
+    CH_GAUSSIAN: 10.0,
+}
 JPEG_QUALITY = 85
 
 

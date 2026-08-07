@@ -7,9 +7,10 @@ service:
 - run output-dir preparation + ``pipeline_status.jsonl`` run lifecycle
   (reusing ``prepare_realtime_output_for_new_run`` / ``PipelineStatusWriter``);
 - spawning ``demo_v7/service/camera_service.py`` with the exact demo_v6_2
-  camera argv (reusing ``build_main_data_processing_command`` and swapping
-  only the script target + ``--socket-dir``) and the same env resolution
-  (SAM3.1 checkpoint env, ``CUDA_VISIBLE_DEVICES``);
+  camera argv (reusing ``build_main_data_processing_command``, swapping the
+  script target and appending the v7-only flags ``--socket-dir`` /
+  ``--channel-max-hz-json`` / ``--shape-prior-backend``) and the same env
+  resolution (SAM3.1 checkpoint env, ``CUDA_VISIBLE_DEVICES``);
 - connect-with-retry ``ControlClient``/``FrameStreamClient`` bridging;
 - one background ``ChunkStreamSession`` started when the service reports
   ``STATE_FORMAL``, wired identically to demo_v6_2/main.py:279-299 including
@@ -205,6 +206,7 @@ class OrchestratorSession:
         base_path: str | Path | None = None,
         downstream_mode: str | None = None,
         shape_prior_backend: str | None = None,
+        shape_prior_upscale: bool | str | None = None,
         extra_v62_argv: Sequence[str] = (),
         v7_config_path: str | Path = V7_CONFIG_PATH,
         on_event: Callable[[dict], None] | None = None,
@@ -227,6 +229,25 @@ class OrchestratorSession:
             if shape_prior_backend is not None
             else session_cfg.get("shape_prior_backend")
         )
+        if self.shape_prior_backend == backend_options.BACKEND_TRELLIS2:
+            # GUI-side fail-fast: without this the missing-install error only
+            # lands in the service's stderr and the operator sees a generic
+            # connect timeout.
+            backend_options.ensure_trellis2_available()
+        # 上采样 toggle (GUI selector; off = crop-only passthrough stage).
+        self.shape_prior_upscale = backend_options.normalize_upscale(
+            shape_prior_upscale
+            if shape_prior_upscale is not None
+            else session_cfg.get("shape_prior_upscale")
+        )
+        if (
+            self.shape_prior_backend == backend_options.BACKEND_NONE
+            and downstream_mode == "phystwin_shen"
+        ):
+            raise ValueError(
+                "shape-prior backend 'none' 关闭 ASAP(无 mesh 可用),无法与 "
+                "downstream phystwin_shen 共存(run_config 会在解析期拒绝)"
+            )
         argv: list[str] = ["--input-source", resolved_source]
         if resolved_source == "fake-live" and fake_live_case is not None:
             argv.extend(["--fake-live-case", str(fake_live_case)])
@@ -344,6 +365,9 @@ class OrchestratorSession:
             ["--channel-max-hz-json", json.dumps(self.preview_channel_max_hz)]
         )
         command.extend(["--shape-prior-backend", self.shape_prior_backend])
+        command.extend(
+            ["--shape-prior-upscale", "on" if self.shape_prior_upscale else "off"]
+        )
         self._camera_service_command = command
         try:
             self._service = subprocess.Popen(
@@ -850,8 +874,15 @@ class OrchestratorSession:
                 pass
         service = self._service
         if service is not None:
+            # The service's CMD_SHUTDOWN contract drains + finalizes an
+            # in-flight FORMAL run before exiting (StagedRuntime bounds that
+            # work with a 120s deadline); SIGTERM at 15s would truncate the
+            # phystwin-strict product mid-finalize. Idle states exit fast.
+            drain_s = (
+                130.0 if self.service_state == protocol.STATE_FORMAL else 15.0
+            )
             try:
-                service.wait(timeout=15.0)
+                service.wait(timeout=drain_s)
             except subprocess.TimeoutExpired:
                 pass
             stop_process(service)
