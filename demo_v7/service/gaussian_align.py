@@ -45,6 +45,23 @@ _OPACITY_KEEP = 0.3
 # (capped) and keep the best REFINED symmetric chamfer.
 _REFINE_MARGIN = 1.3
 _REFINE_MAX_CANDIDATES = 5
+# Floater pruning: TripoSplat generations carry small solid blobs floating
+# off the body (survive the opacity filter, land off-object after the
+# world transform, and read as "points outside the object" in every view).
+# Two complementary criteria (measured case: a 212-splat island sat 10.6cm
+# from every other splat yet within 3.2cm of the mesh arm tip — mesh
+# distance alone missed it):
+# 1. mesh distance — the ARAP-fitted final mesh is a COMPLETE closed
+#    surface (belly included), so distance to it separates far junk from
+#    real fuzz safely;
+_FLOATER_DIST_M = 0.03
+# 2. connectivity — solid splats form one dense body; a small cluster
+#    disconnected at this radius is a floater island wherever it sits.
+_FLOATER_LINK_RADIUS_M = 0.008
+_FLOATER_MIN_COMPONENT_FRACTION = 0.05
+# Refuse to prune more than this fraction — a misregistration would put
+# many splats far from the mesh, and pruning must never mask that.
+_FLOATER_MAX_FRACTION = 0.15
 # Refined symmetric chamfer above this (mesh-canonical units, object spans
 # ~1.0) means the registration is likely wrong (good runs measure ~0.02,
 # the known-bad flip measured 0.066): flag it loudly instead of silently
@@ -62,6 +79,7 @@ class GaussianAlignment:
     chamfer_after_canonical: float
     arap_residual_mean_m: float
     registration_suspect: bool = False
+    floaters_pruned: int = 0
 
     def provenance(self) -> dict:
         return {
@@ -71,6 +89,7 @@ class GaussianAlignment:
             "chamfer_after_canonical": self.chamfer_after_canonical,
             "arap_residual_mean_m": self.arap_residual_mean_m,
             "registration_suspect": self.registration_suspect,
+            "floaters_pruned": self.floaters_pruned,
         }
 
 
@@ -301,6 +320,34 @@ def align_gaussian_to_world(
         np.float32
     )
 
+    # Floater pruning (see constants for the two criteria).
+    floaters_pruned = 0
+    rigid_world = canonical_verts @ mesh2world[:3, :3].T + mesh2world[:3, 3]
+    final_verts_world = rigid_world + displacement
+    keep = _floater_keep_mask(world, final_verts_world)
+    prune_fraction = float((~keep).mean())
+    if prune_fraction > _FLOATER_MAX_FRACTION:
+        print(
+            f"[gaussian-align] WARNING: floater pruning wanted to drop "
+            f"{prune_fraction:.0%} of splats — that is a registration "
+            "problem, not floaters; pruning skipped",
+            flush=True,
+        )
+    elif not keep.all():
+        floaters_pruned = int((~keep).sum())
+        world = GaussianSplats(
+            means=world.means[keep],
+            quats=world.quats[keep],
+            scales=world.scales[keep],
+            opacities=world.opacities[keep],
+            colors=world.colors[keep],
+        )
+        print(
+            f"[gaussian-align] pruned {floaters_pruned} floater splat(s) "
+            "(off-mesh junk + disconnected islands)",
+            flush=True,
+        )
+
     suspect = chamfer_after > _CHAMFER_SUSPECT
     if suspect:
         print(
@@ -317,8 +364,55 @@ def align_gaussian_to_world(
         chamfer_after_canonical=chamfer_after,
         arap_residual_mean_m=float(np.linalg.norm(displacement, axis=1).mean()),
         registration_suspect=suspect,
+        floaters_pruned=floaters_pruned,
     )
     return world, alignment
+
+
+def _floater_keep_mask(
+    world: GaussianSplats, final_verts_world: np.ndarray
+) -> np.ndarray:
+    """True = keep. Drops off-mesh junk AND disconnected solid islands.
+
+    Connectivity runs on SOLID splats (opacity > _OPACITY_KEEP): components
+    below _FLOATER_MIN_COMPONENT_FRACTION of the solid count are islands.
+    Low-opacity fuzz inherits the verdict of its nearest solid splat so a
+    dropped island takes its halo along and the body keeps its fur.
+    """
+    import scipy.sparse as sp
+    from scipy.spatial import cKDTree
+    from scipy.sparse.csgraph import connected_components
+
+    means = world.means.astype(np.float64)
+    mesh_dist, _ = cKDTree(final_verts_world).query(means, k=1, workers=-1)
+    keep = mesh_dist <= _FLOATER_DIST_M
+
+    solid = world.opacities > _OPACITY_KEEP
+    solid_idx = np.flatnonzero(solid)
+    if len(solid_idx) >= 100:
+        solid_means = means[solid_idx]
+        pairs = cKDTree(solid_means).query_pairs(
+            _FLOATER_LINK_RADIUS_M, output_type="ndarray"
+        )
+        adjacency = sp.coo_matrix(
+            (np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])),
+            shape=(len(solid_idx), len(solid_idx)),
+        )
+        _n, labels = connected_components(adjacency, directed=False)
+        sizes = np.bincount(labels)
+        island = sizes[labels] < max(
+            2, int(len(solid_idx) * _FLOATER_MIN_COMPONENT_FRACTION)
+        )
+        solid_keep = np.ones(len(means), dtype=bool)
+        solid_keep[solid_idx[island]] = False
+        # Fuzz rides its nearest solid splat's verdict.
+        _dist, nearest_solid = cKDTree(solid_means).query(
+            means[~solid], k=1, workers=-1
+        )
+        fuzz_keep = ~island[nearest_solid]
+        solid_keep[np.flatnonzero(~solid)[~fuzz_keep]] = False
+        keep = keep & solid_keep
+    return keep
 
 
 def rigid_world_catchup(

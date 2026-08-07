@@ -61,3 +61,57 @@ def patch_arap_factorize_rescue() -> None:
 
     deform_with_rescue._v7_arap_rescue = True
     o3d.geometry.TriangleMesh.deform_as_rigid_as_possible = deform_with_rescue
+
+
+# A post-cleanup triangle component below this fraction of the mesh is
+# debris, not object geometry.
+_ISLAND_FRACTION = 0.01
+
+
+def patch_asap_island_cleanup() -> None:
+    """Drop tiny disconnected components from the chunk-stream ASAP mesh.
+
+    Failure shape (drive21, trellis2): ``_load_clean_mesh``'s own
+    ``remove_non_manifold_edges`` pass CUTS a handful of 1-31-triangle
+    islands loose; a free-floating island that receives no constraint
+    handle makes the ARAP system singular and factorize throws at ANY
+    scale (the x10 rescue cannot help — verified). Whether a run survives
+    is numerical luck: a mesh with 100 islands passed E2E, one with 80
+    died. The islands are cleanup debris with no valid deformation of
+    their own; removing them AFTER the stock cleanup (module-global
+    rebind, align_fast_safe precedent) makes factorization deterministic.
+    """
+    from demo_v6_2.streaming import asap
+
+    if getattr(asap._load_clean_mesh, "_v7_island_cleanup", False):
+        return
+    stock_load_clean_mesh = asap._load_clean_mesh
+
+    def load_clean_mesh_no_islands(path):
+        import numpy as np
+
+        mesh = stock_load_clean_mesh(path)
+        try:
+            labels, counts, _areas = mesh.cluster_connected_triangles()
+            counts = np.asarray(counts)
+            if len(counts) > 1:
+                faces_total = int(np.asarray(mesh.triangles).shape[0])
+                tiny = counts < max(2, int(faces_total * _ISLAND_FRACTION))
+                if bool(tiny.any()) and not bool(tiny.all()):
+                    remove = tiny[np.asarray(labels)]
+                    mesh.remove_triangles_by_mask(remove.tolist())
+                    mesh.remove_unreferenced_vertices()
+                    print(
+                        f"[arap-rescue] dropped {int(remove.sum())} island "
+                        f"face(s) across {int(tiny.sum())} tiny component(s) "
+                        "from the ASAP mesh (unconstrained islands make the "
+                        "ARAP factorization singular)",
+                        flush=True,
+                    )
+        except Exception as exc:
+            # Robustness patch must never become its own failure mode.
+            print(f"[arap-rescue] island cleanup skipped: {exc}", flush=True)
+        return mesh
+
+    load_clean_mesh_no_islands._v7_island_cleanup = True
+    asap._load_clean_mesh = load_clean_mesh_no_islands

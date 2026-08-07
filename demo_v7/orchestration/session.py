@@ -794,6 +794,19 @@ class OrchestratorSession:
         args = self._args
         config = self._config
         try:
+            # Robustness: the chunk stream's ASAP factorization has two
+            # known singularity classes this process was unprotected from
+            # (both killed real runs): small absolute scale (exact x10
+            # scale-equivariant retry) and unconstrained debris islands cut
+            # loose by o3d's own mesh cleanup (drop tiny components after
+            # that cleanup). Zero quality cost; see arap_rescue.py.
+            from demo_v7.service.arap_rescue import (
+                patch_arap_factorize_rescue,
+                patch_asap_island_cleanup,
+            )
+
+            patch_arap_factorize_rescue()
+            patch_asap_island_cleanup()
             chunk_stream = ChunkStreamSession(
                 self.capture_dir,
                 base_path=self.base_path,

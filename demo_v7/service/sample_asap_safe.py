@@ -68,6 +68,46 @@ def _zero_extent_face_mask(vertices, faces):
     return distinct & (areas > 0.0)
 
 
+# A weld-connected face component below this fraction of all faces is a
+# detached ARAP/weld artifact, not object geometry.
+_ISLAND_COMPONENT_FRACTION = 0.01
+
+
+def _island_face_mask(vertices, faces):
+    """True = keep. Drops faces of TINY disconnected components.
+
+    Why: the FORMAL chunk-stream ASAP deforms this mesh with constraint
+    handles that live on the main body. A free-floating island with no
+    constraint makes the ARAP system singular — open3d's factorize then
+    throws and (before this) took the whole run down; whether it survives
+    is numerical luck (measured: a run with 100 islands passed, one with
+    80 died). Islands are weld/ARAP debris a few triangles big; dropping
+    their FACES (vertices stay — the gaussian residual-transfer contract
+    depends on vertex order) removes the singularity deterministically.
+    """
+    import numpy as np
+    import scipy.sparse as sp
+    from scipy.sparse.csgraph import connected_components
+
+    verts = np.asarray(vertices, dtype=np.float64)
+    tris = np.asarray(faces, dtype=np.int64)
+    _, weld = np.unique(verts, axis=0, return_inverse=True)
+    welded = weld[tris]
+    n_welded = int(weld.max()) + 1
+    edges = np.concatenate(
+        [welded[:, [0, 1]], welded[:, [1, 2]], welded[:, [0, 2]]]
+    )
+    adjacency = sp.coo_matrix(
+        (np.ones(len(edges)), (edges[:, 0], edges[:, 1])),
+        shape=(n_welded, n_welded),
+    )
+    _n, labels = connected_components(adjacency, directed=False)
+    face_labels = labels[welded[:, 0]]
+    face_counts = np.bincount(face_labels, minlength=labels.max() + 1)
+    threshold = max(2, int(len(tris) * _ISLAND_COMPONENT_FRACTION))
+    return face_counts[face_labels] >= threshold
+
+
 def clean_final_mesh(mesh_path: Path) -> None:
     """Drop zero-extent faces from ``mesh_path`` in place (atomic replace)."""
     import trimesh
@@ -84,7 +124,9 @@ def clean_final_mesh(mesh_path: Path) -> None:
         geom = geoms[0]
     else:
         geom = loaded
-    keep = _zero_extent_face_mask(geom.vertices, geom.faces)
+    keep = _zero_extent_face_mask(geom.vertices, geom.faces) & _island_face_mask(
+        geom.vertices, geom.faces
+    )
     dropped = int((~keep).sum())
     if dropped == 0:
         print("[sample-asap-safe] final_mesh already clean", flush=True)
@@ -92,7 +134,8 @@ def clean_final_mesh(mesh_path: Path) -> None:
     if dropped > max(2, int(len(keep) * _MAX_DROP_FRACTION)):
         raise ValueError(
             f"final_mesh cleanup wants to drop {dropped}/{len(keep)} faces — "
-            "beyond zero-extent junk; refusing (inspect the align output)"
+            "beyond zero-extent/island junk; refusing (inspect the align "
+            "output)"
         )
     geom.update_faces(keep)
     # Deliberately KEEP now-unreferenced vertices: final_mesh.glb shares
@@ -107,9 +150,9 @@ def clean_final_mesh(mesh_path: Path) -> None:
     finally:
         tmp_path.unlink(missing_ok=True)
     print(
-        f"[sample-asap-safe] dropped {dropped} zero-extent face(s) of "
-        f"{len(keep)} from {mesh_path.name} (render-invisible; ARAP-safe "
-        "for the downstream ASAP deformation)",
+        f"[sample-asap-safe] dropped {dropped} zero-extent/island face(s) of "
+        f"{len(keep)} from {mesh_path.name} (weld/ARAP debris; keeps the "
+        "downstream ASAP deformation factorizable)",
         flush=True,
     )
 
