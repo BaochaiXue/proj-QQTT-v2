@@ -18,8 +18,19 @@ late on a latest-wins slot — freezing bones on the first packet it happens
 to see silently discards all object motion since seq 0. The caller
 therefore seeds the seq-0 world positions of the SAME query ids via
 ``seed_rest_positions`` (reconstructed from prepared_phystwin/000000.npz),
-and the first packet becomes a substepped catch-up deformation instead of
-a new rest pose. Without a seed the old first-packet behavior remains.
+and the first packet becomes a one-shot catch-up pose. Without a seed the
+old first-packet behavior remains.
+
+Rest-ANCHORED deformation (the erosion trap, root-caused 2026-08-07 on a
+448-frame operator session): an incremental prev->cur scheme that re-binds
+skinning to the already-deformed splats every frame lets tracker jitter
+and binding churn accumulate — the splat cloud visibly thins/tears after
+a few hundred frames of manipulation. Every frame here is instead solved
+FROM THE REST STATE: bindings (weights + indices + bone relations) are
+computed once against the rest bones, and per-bone rotations come from
+the TOTAL rest->current displacement (exact weighted Kabsch, valid for
+arbitrary magnitude) applied to the pristine rest splats. Nothing ever
+compounds; frame N is bit-identical whether reached live or by replay.
 
 Fail-soft: every public call catches internally-raised errors and flips
 ``self.failed`` — the worker then stops publishing the channel instead of
@@ -27,8 +38,6 @@ taking the pipeline down (display-only feature).
 """
 
 from __future__ import annotations
-
-import math
 
 import numpy as np
 
@@ -43,15 +52,23 @@ _BONE_RELATION_K = 8
 _SKIN_K = 16
 _MIN_BONES = 12
 _OVERLAY_ALPHA = 0.85
-# Catch-up substepping: the interpolation's per-bone rigid estimation is
-# built for small per-frame motions, so a large one-shot displacement
-# (seq-0 rest -> current pose after this worker's slow start) is applied
-# as a sequence of small steps along the straight-line control path.
-_SUBSTEP_MAX_M = 0.02
-_MAX_SUBSTEPS = 25
 # knn_weights_sparse chunk: ~4k object bones x 16k splats per chunk keeps
 # the per-step distance matrix around 256MB on the shared camera GPU.
 _KNN_CHUNK = 16384
+# Bone hygiene (measured on a real 542-frame operator session: 71/3969
+# bones went rogue — track slid onto the hand / depth-boundary lift, up to
+# 17cm off-object — and up to 160 at a time sat occlusion-frozen >2s;
+# with the frozen rest binding both classes drag their splats visibly).
+# A bone whose rest->current displacement deviates from its rest-neighbor
+# median by more than this is a rogue track this frame:
+_BONE_RIGID_DEV_M = 0.05
+# A bone unseen for this many packets (~2s at 5Hz) is stale — its
+# last-known world position anchors old pose instead of riding the object:
+_BONE_STALE_STEPS = 10
+# Rogue/stale bones ride the mean displacement of their VALID rest
+# neighbors instead; need at least this many valid neighbors, else the
+# global valid-median displacement (fully-occluded patch fallback):
+_BONE_MIN_VALID_NEIGHBORS = 3
 
 
 def load_formal_frame0_rest_positions(
@@ -102,17 +119,25 @@ class GaussianLiveRenderer:
         self._tensors = splats_to_tensors(splats, device=device)
         self._torch = torch
         self._bone_ids: np.ndarray | None = None  # frozen query-id subset
-        self._relations = None  # (B, K) torch
-        self._ctrl_prev = None  # (B, 3) torch, last-known bone positions
+        self._relations = None  # (B, K) torch, on the REST bones
+        self._ctrl_rest = None  # (B, 3) torch, frozen rest bone positions
+        self._ctrl_prev = None  # (B, 3) torch, last applied bone positions
+        self._rest_means = None  # pristine rest splat positions
+        self._rest_quats = None  # pristine rest splat orientations
+        self._skin_weights = None  # (N, K) one-time rest binding
+        self._skin_indices = None  # (N, K) one-time rest binding
         self._buffer: dict[int, np.ndarray] = {}  # query id -> last position
         self._rest_positions: dict[int, np.ndarray] = {}  # seq-0 world xyz
         self.rest_seeded = False  # bones initialized from seq-0 rest pose
         self._seed_grace_left = 25  # packets to wait for a seedable set
+        self._last_seen_step: np.ndarray | None = None  # per-bone packet idx
         self.frames_stepped = 0
-        self.last_substeps = 0
         # Cumulative follow telemetry (world meters), read by the worker.
         self.bones_moved_m = 0.0
         self.splats_moved_m = 0.0
+        # Last hygiene-pass counts (rogue tracks / occlusion-stale bones).
+        self.bone_outliers = 0
+        self.bone_stale = 0
         # Warm the gsplat CUDA extension before the live loop (a cold cache
         # would stall the first frame for minutes).
         try:
@@ -190,7 +215,7 @@ class GaussianLiveRenderer:
                 rest = np.stack(
                     [self._rest_positions[i] for i in ids]
                 ).astype(np.float32)
-                self._ctrl_prev = torch.as_tensor(rest, device=self.device)
+                self._ctrl_rest = torch.as_tensor(rest, device=self.device)
                 self.rest_seeded = True
             elif self._seed_grace_left > 0:
                 # A marginal first packet (occlusion, depth dropouts) must
@@ -209,11 +234,23 @@ class GaussianLiveRenderer:
         if self._bone_ids is None:
             self._bone_ids = np.array(sorted(self._buffer), dtype=np.int64)
             positions = np.stack([self._buffer[i] for i in self._bone_ids])
-            self._ctrl_prev = torch.as_tensor(
+            self._ctrl_rest = torch.as_tensor(
                 positions.astype(np.float32), device=self.device
             )
+        # Freeze the WHOLE rest state once: pristine splats, bone graph and
+        # skinning binding. Every later frame is solved from here — binding
+        # churn and incremental error cannot accumulate by construction.
+        self._ctrl_prev = self._ctrl_rest
+        self._rest_means = self._tensors["means"].clone()
+        self._rest_quats = self._tensors["quats"].clone()
         self._relations = gaussian_dynamics.get_topk_indices(
-            self._ctrl_prev, K=min(_BONE_RELATION_K, len(self._bone_ids) - 1)
+            self._ctrl_rest, K=min(_BONE_RELATION_K, len(self._bone_ids) - 1)
+        )
+        self._skin_weights, self._skin_indices = gaussian_dynamics.knn_weights_sparse(
+            self._ctrl_rest,
+            self._rest_means,
+            K=_SKIN_K,
+            chunk_size=_KNN_CHUNK,
         )
         return True
 
@@ -233,58 +270,115 @@ class GaussianLiveRenderer:
         if self._bone_ids is None:
             if not self._init_bones():
                 return  # not enough object markers yet
+            self._last_seen_step = np.full(
+                len(self._bone_ids), self.frames_stepped, dtype=np.int64
+            )
             if not self.rest_seeded:
                 return  # rest pose = this packet; no motion to apply yet
+        packet_ids = np.asarray(query_ids, dtype=np.int64)[keep]
+        seen = np.isin(self._bone_ids, packet_ids)
+        self._last_seen_step[seen] = self.frames_stepped
         cur_np = np.stack([self._buffer[i] for i in self._bone_ids])
         ctrl_target = torch.as_tensor(
             cur_np.astype(np.float32), device=self.device
         )
-        self._move_to(ctrl_target)
+        stale = torch.as_tensor(
+            (self.frames_stepped - self._last_seen_step) > _BONE_STALE_STEPS,
+            device=self.device,
+        )
+        self._pose_to(self._hygiene(ctrl_target, stale))
 
-    def _move_to(self, ctrl_target) -> None:
-        """Deform splats along the control path to ``ctrl_target``.
+    def _hygiene(self, ctrl_target, stale):
+        """Replace rogue/stale bone targets with neighbor consensus.
 
-        Motions beyond _SUBSTEP_MAX_M per bone are applied in straight-line
-        substeps (skinning weights recomputed each substep) so the per-bone
-        rigid estimation always sees a small motion — this is what makes
-        the one-shot seq-0 catch-up safe.
+        Measured failure classes on a real operator session (both are
+        amplified by the frozen rest binding, which gives every bone
+        PERMANENT influence over its splats):
+        - rogue tracks: the 2D track slides onto the hand or a depth
+          boundary and the lift lands centimeters off the object — its
+          splats get dragged into free space;
+        - occlusion-stale bones: an unseen marker keeps its last-known
+          world position and anchors its splats in the old pose while the
+          object moves on.
+        Detection is LOCAL RIGIDITY on the frozen rest-neighbor graph: a
+        plush's rest neighborhood moves together, so a bone whose
+        rest->current displacement deviates from the neighborhood median
+        by >_BONE_RIGID_DEV_M is a rogue this frame. Rogue and stale bones
+        ride the mean displacement of their VALID neighbors instead (whole
+        patch occluded -> global valid-median fallback), so they follow
+        the object rather than freezing or flying off.
         """
         torch = self._torch
-        total = ctrl_target - self._ctrl_prev
-        max_disp = float(total.norm(dim=1).max())
-        if max_disp < 1e-6:
-            self.last_substeps = 0
-            return  # nothing moved; skip the solve
-        substeps = int(min(_MAX_SUBSTEPS, max(1, math.ceil(max_disp / _SUBSTEP_MAX_M))))
-        self.last_substeps = substeps
-        self.bones_moved_m += float(total.norm(dim=1).mean())
-        start = self._ctrl_prev
+        disp = ctrl_target - self._ctrl_rest
+        nbr_disp = disp[self._relations]  # (B, K, 3)
+        # Stale bones carry frozen last-known positions — known-bad data
+        # that must not vote in the rigidity reference (a half-occluded
+        # patch would otherwise drag the median and flag the GOOD bones).
+        nbr_for_median = nbr_disp.clone()
+        nbr_for_median[stale[self._relations]] = float("nan")
+        median = nbr_for_median.nanmedian(dim=1).values  # NaN if all stale
+        deviation = (disp - median).norm(dim=1)
+        outlier = (
+            ~stale & torch.isfinite(deviation) & (deviation > _BONE_RIGID_DEV_M)
+        )
+        invalid = outlier | stale
+        self.bone_outliers = int(outlier.sum())
+        self.bone_stale = int(stale.sum())
+        if not bool(invalid.any()):
+            return ctrl_target
+        valid = ~invalid
+        if not bool(valid.any()):
+            return ctrl_target  # nothing trustworthy to lean on
+        valid_nbr = valid[self._relations]  # (B, K)
+        valid_count = valid_nbr.sum(dim=1)
+        consensus = (nbr_disp * valid_nbr[..., None]).sum(dim=1) / (
+            valid_count.clamp(min=1)[:, None]
+        )
+        fallback = disp[valid].median(dim=0).values
+        consensus = torch.where(
+            valid_count[:, None] >= _BONE_MIN_VALID_NEIGHBORS,
+            consensus,
+            fallback.expand_as(consensus),
+        )
+        healed = torch.where(
+            invalid[:, None], self._ctrl_rest + consensus, ctrl_target
+        )
+        return healed
+
+    def _pose_to(self, ctrl_target) -> None:
+        """Solve the splat pose for ``ctrl_target`` from the REST state.
+
+        Per-bone rotations come from the TOTAL rest->target displacement
+        field (exact weighted Kabsch — valid for arbitrary magnitude, no
+        substepping needed) applied to the pristine rest splats through the
+        one-time rest binding. Frame N's pose depends only on frame N's
+        bones: tracker jitter and binding churn cannot accumulate, which is
+        what eroded the splat cloud over long sessions in the incremental
+        prev->cur scheme this replaces.
+        """
+        torch = self._torch
+        step = ctrl_target - self._ctrl_prev
+        if float(step.norm(dim=1).max()) < 1e-6:
+            return  # nothing moved since the last applied pose
+        self.bones_moved_m += float(step.norm(dim=1).mean())
         centroid_before = self._tensors["means"].mean(dim=0)
-        for index in range(1, substeps + 1):
-            target = start + total * (index / substeps)
-            motions = target - self._ctrl_prev
-            weights, indices = gaussian_dynamics.knn_weights_sparse(
-                self._ctrl_prev,
-                self._tensors["means"],
-                K=_SKIN_K,
-                chunk_size=_KNN_CHUNK,
+        total = ctrl_target - self._ctrl_rest
+        new_means, new_quats = gaussian_dynamics.interpolate_motions_sparse(
+            self._ctrl_rest,
+            total,
+            self._relations,
+            self._rest_means,
+            self._rest_quats,
+            self._skin_weights,
+            self._skin_indices,
+            device=self.device,
+        )
+        self._tensors["means"] = new_means
+        if new_quats is not None:
+            self._tensors["quats"] = torch.nn.functional.normalize(
+                new_quats, dim=-1
             )
-            new_means, new_quats = gaussian_dynamics.interpolate_motions_sparse(
-                self._ctrl_prev,
-                motions,
-                self._relations,
-                self._tensors["means"],
-                self._tensors["quats"],
-                weights,
-                indices,
-                device=self.device,
-            )
-            self._tensors["means"] = new_means
-            if new_quats is not None:
-                self._tensors["quats"] = torch.nn.functional.normalize(
-                    new_quats, dim=-1
-                )
-            self._ctrl_prev = target
+        self._ctrl_prev = ctrl_target
         self.splats_moved_m += float(
             (self._tensors["means"].mean(dim=0) - centroid_before).norm()
         )
@@ -321,6 +415,8 @@ class GaussianLiveRenderer:
             "rest_seeded": bool(self.rest_seeded),
             "failed": bool(self.failed),
             "frames_stepped": int(self.frames_stepped),
+            "bone_outliers": int(self.bone_outliers),
+            "bone_stale": int(self.bone_stale),
             "bones_moved_cm": round(self.bones_moved_m * 100.0, 2),
             "splats_moved_cm": round(self.splats_moved_m * 100.0, 2),
             "bone2splat_p50_cm": round(float(quantiles[0]) * 100.0, 2),
