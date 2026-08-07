@@ -42,7 +42,6 @@ _ACTIVE_TIMING_FIELDS = (
     "module_import_ms",
     "pre_go_prepare_ms",
     "model_load_ms",
-    "bulk_cuda_ms",
     "input_decode_ms",
     "pipeline_run_ms",
     "mesh_export_ms",
@@ -257,41 +256,12 @@ def _load_pipeline(model_id):
     return pipeline
 
 
-# Bulk residency needs the full weight set (~9G fp16) plus the run's
-# activation peak with headroom for cublasLt workspaces; below this free-VRAM
-# line the staged low_vram path is the safe choice (measured: a crowded GPU
-# fails inside cublasLt heuristics, not with a clean OOM).
-_BULK_CUDA_MIN_FREE_BYTES = 14 * 1024**3
-
-
-def _bulk_cuda(pipeline, timing_ms):
-    """Move the whole pipeline to the GPU once (drop low_vram staging).
-
-    low_vram=True (checkpoint default) round-trips each model over PCIe per
-    pipeline step, serialized with compute. One bulk transfer after GO is
-    strictly the same math on the same device — only the staging disappears,
-    so the output is unchanged either way. Adaptive: on a crowded GPU
-    (foreign processes; the shape-prior GPU is contested on this box) the
-    staged path is kept — robustness over the ~5s win. Must not run pre-GO:
-    the WAITING contract keeps VRAM free for the upscale stage's peak.
-    """
-    if os.environ.get("DEMO_V7_T2_FAST", "1") == "0":
-        return
-    import torch
-
-    bulk_start_s = time.perf_counter()
-    free_bytes, _total = torch.cuda.mem_get_info()
-    if free_bytes < _BULK_CUDA_MIN_FREE_BYTES:
-        print(
-            f"[trellis2-generate] {free_bytes / 1024**3:.1f}G free VRAM < "
-            f"{_BULK_CUDA_MIN_FREE_BYTES / 1024**3:.0f}G: keeping low_vram "
-            "staging (same output, slower)",
-            flush=True,
-        )
-        return
-    pipeline.low_vram = False
-    pipeline.cuda()
-    timing_ms["bulk_cuda_ms"] = _elapsed_ms(bulk_start_s)
+# NOTE deliberately NO bulk-residency (low_vram=False) fast path: it saves
+# only ~4s of pipeline_run, but with the full weight set (~9G) resident,
+# decode_latent's 12M-face CuMesh processing OOMs whenever the shared
+# shape-prior GPU carries any foreign load (measured twice, two failure
+# shapes: CUBLAS_STATUS_NOT_SUPPORTED in sampling, CuMesh get_edges OOM in
+# decode). The checkpoint-default low_vram staging stays.
 
 
 def _arap_safe_face_mask(vertices, faces):
@@ -404,7 +374,6 @@ def run_trellis2_shape_prior(args, pipeline=None, *, timing_ms=None):
         model_load_start_s = time.perf_counter()
         pipeline = _load_pipeline(args.model)
         timings["model_load_ms"] = _elapsed_ms(model_load_start_s)
-        _bulk_cuda(pipeline, timings)
 
     input_decode_start_s = time.perf_counter()
     output_dir = Path(args.output_dir)
@@ -527,7 +496,6 @@ def main(argv=None):
         if not run.wait_for_go():
             return
 
-        _bulk_cuda(pipeline, timing_ms)
         run_trellis2_shape_prior(args, pipeline=pipeline, timing_ms=timing_ms)
     else:
         run_trellis2_shape_prior(args, timing_ms=timing_ms)

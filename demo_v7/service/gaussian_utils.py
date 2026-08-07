@@ -10,12 +10,55 @@ display rgb = 0.5 + 0.2820948 * f_dc.
 
 from __future__ import annotations
 
+import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 SH_C0 = 0.28209479177387814
+
+# v7-private gsplat JIT cache. The default shared torch_extensions dir is
+# rebuilt by whichever environment touched it last (another session's shell
+# resolves a different nvcc -> different build hash -> full ~137s recompile
+# INSIDE a live run; measured twice). Pinning both the cache dir and
+# CUDA_HOME during the one import that builds the extension makes the build
+# hash identical for every v7 caller (service process, worker subprocess,
+# ad-hoc smokes), so the compile happens once ever.
+_V7_TORCH_EXTENSIONS_DIR = Path.home() / ".cache" / "demo_v7_torch_extensions"
+_PINNED_CUDA_HOME = "/usr/local/cuda"
+
+
+def _import_gsplat_rasterization():
+    """Import gsplat with its CUDA backend loaded under the pinned env.
+
+    The JIT build fires at the first ``gsplat.cuda._backend`` import (NOT at
+    ``import gsplat`` — the backend is lazy), so that import must happen
+    inside the pinned scope or the env pin is a no-op.
+    """
+    if "gsplat.cuda._backend" in sys.modules:
+        from gsplat import rasterization
+
+        return rasterization
+    saved = {
+        name: os.environ.get(name)
+        for name in ("TORCH_EXTENSIONS_DIR", "CUDA_HOME")
+    }
+    os.environ["TORCH_EXTENSIONS_DIR"] = str(_V7_TORCH_EXTENSIONS_DIR)
+    if Path(_PINNED_CUDA_HOME, "bin", "nvcc").is_file():
+        os.environ["CUDA_HOME"] = _PINNED_CUDA_HOME
+    try:
+        from gsplat import rasterization
+
+        import gsplat.cuda._backend  # noqa: F401  (forces the JIT load now)
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+    return rasterization
 
 
 @dataclass
@@ -178,7 +221,8 @@ def render_gaussians(
     colors} for the realtime path (avoids per-frame host->device copies).
     """
     import torch
-    from gsplat import rasterization
+
+    rasterization = _import_gsplat_rasterization()
 
     if isinstance(splats_or_tensors, GaussianSplats):
         tensors = splats_to_tensors(splats_or_tensors, device=device)

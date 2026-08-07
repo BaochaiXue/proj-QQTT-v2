@@ -26,7 +26,12 @@ SHAPE_PRIOR_BACKENDS: tuple[str, ...] = (
     BACKEND_TRELLIS2,
     BACKEND_NONE,
 )
-DEFAULT_SHAPE_PRIOR_BACKEND = BACKEND_SAM3D
+# Default per the 2026-08-07 same-frame quality comparison (sloth fake-live,
+# seed 42): TRELLIS.2 beats SAM3D on aligned silhouette IoU (0.905 vs
+# 0.852), candidate-to-observation distance (median 5.3 vs 12.0mm), texture
+# (2048^2 vs 1024^2) and ships a guarded zero-collapsed-face final mesh;
+# warmup time is comparable after the trellis2 runner speedups.
+DEFAULT_SHAPE_PRIOR_BACKEND = BACKEND_TRELLIS2
 
 # Upscale (SD x4) stage toggle. On is the unchanged v6.2 chain; off swaps the
 # stage for demo_v7/service/upscale_passthrough.py (mask-bbox crop only) —

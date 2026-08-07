@@ -17,9 +17,11 @@ from demo_v7.service.trellis2_generate import _arap_safe_face_mask
 
 
 class TestBackendOptions:
-    def test_normalize_defaults_to_sam3d(self) -> None:
-        assert backend_options.normalize_backend(None) == "sam3d"
-        assert backend_options.normalize_backend("") == "sam3d"
+    def test_normalize_defaults_to_trellis2(self) -> None:
+        # Default flipped 2026-08-07 after the same-frame quality comparison
+        # (TRELLIS.2: IoU 0.905 vs 0.852, candidates 2.3x closer to obs).
+        assert backend_options.normalize_backend(None) == "trellis2"
+        assert backend_options.normalize_backend("") == "trellis2"
 
     def test_normalize_accepts_known_ids_case_insensitive(self) -> None:
         assert backend_options.normalize_backend("TRELLIS2") == "trellis2"
@@ -216,7 +218,7 @@ class TestSessionBackendArgv:
 
     def test_default_backend_keeps_v62_defaults(self, tmp_path) -> None:
         session = self._session(tmp_path)
-        assert session.shape_prior_backend == "sam3d"
+        assert session.shape_prior_backend == "trellis2"
         assert session._args.shape_prior_warmup is True
         assert session._args.asap_augment is True
 

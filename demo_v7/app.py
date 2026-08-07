@@ -80,8 +80,8 @@ SOURCE_FAKE_LIVE = "fake-live"
 # Combo order + GUI label (zh, en) pairs for the generation backend;
 # translated at dialog (re)build time, never at import (i18n contract).
 _BACKEND_LABELS: tuple[tuple[str, tuple[str, str]], ...] = (
-    (BACKEND_SAM3D, ("SAM3D(默认)", "SAM3D (default)")),
-    (BACKEND_TRELLIS2, ("TRELLIS.2", "TRELLIS.2")),
+    (BACKEND_TRELLIS2, ("TRELLIS.2(默认)", "TRELLIS.2 (default)")),
+    (BACKEND_SAM3D, ("SAM3D", "SAM3D")),
     (BACKEND_NONE, ("无(不生成 shape prior)", "None (no shape prior)")),
 )
 # Combo order + GUI label (zh, en) pairs for the gaussian generator; one
@@ -332,13 +332,15 @@ class SourceSelectDialog(QDialog):
         )
         self._backend_info = InfoDot(
             "决定 warmup 阶段如何生成物体的 shape prior(先验网格):<br>"
-            "• SAM3D — v6.2 默认生成器;<br>"
-            "• TRELLIS.2 — microsoft/TRELLIS.2-4B,几何/纹理更精细;<br>"
+            "• TRELLIS.2 — microsoft/TRELLIS.2-4B,几何/纹理更精细,对齐更贴合"
+            "(默认);<br>"
+            "• SAM3D — v6.2 原生成器;<br>"
             "• 无 — 跳过生成:没有 mesh 和补点,ASAP/PhysTwin 下游关闭,"
             "仅用观测点云跟踪。<br>启动后不可更改(回到开始可重选)。",
             "How the warmup builds the object's shape prior (mesh):<br>"
-            "• SAM3D — the v6.2 default generator;<br>"
-            "• TRELLIS.2 — microsoft/TRELLIS.2-4B, finer geometry/texture;<br>"
+            "• TRELLIS.2 — microsoft/TRELLIS.2-4B, finer geometry/texture, "
+            "tighter alignment (default);<br>"
+            "• SAM3D — the original v6.2 generator;<br>"
             "• None — skip generation: no mesh, no point filling, ASAP/"
             "PhysTwin downstream disabled, tracking uses observed points "
             "only.<br>Fixed once started (Back-to-start to change).",

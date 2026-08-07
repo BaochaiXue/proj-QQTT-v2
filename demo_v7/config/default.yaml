@@ -28,13 +28,15 @@ session:
   connect_timeout_s: 180.0
   # Options: positive finite float seconds between connect retries.
   connect_poll_interval_s: 0.25
-  # Options: sam3d | trellis2 | none. Shape-prior generation backend used
-  # when neither the CLI nor the source-select dialog picked one. sam3d is
-  # the unchanged v6.2 generate stage; trellis2 swaps ONLY that stage for
-  # microsoft/TRELLIS.2 (trellis2 conda env; align/sample stay v6.2); none
-  # skips the shape-prior chain entirely (observed-only tracking structure,
-  # ASAP + PhysTwin downstream off).
-  shape_prior_backend: "sam3d"
+  # Options: trellis2 | sam3d | none. Shape-prior generation backend used
+  # when neither the CLI nor the source-select dialog picked one. trellis2
+  # (default per the 2026-08-07 same-frame comparison: aligned IoU 0.905 vs
+  # 0.852, candidates 2.3x closer to the observation, 2048^2 texture) swaps
+  # ONLY the generate stage for microsoft/TRELLIS.2 (trellis2 conda env;
+  # align/sample stay v6.2); sam3d is the unchanged v6.2 generate stage;
+  # none skips the shape-prior chain entirely (observed-only tracking
+  # structure, ASAP + PhysTwin downstream off).
+  shape_prior_backend: "trellis2"
   # Options: true | false. Whether the shape-prior chain runs the SD x4
   # upscale stage (true, the unchanged v6.2 chain) or the crop-only
   # passthrough (false; faster warmup — generation conditions on the
