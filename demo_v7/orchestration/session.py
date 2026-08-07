@@ -208,6 +208,7 @@ class OrchestratorSession:
         shape_prior_backend: str | None = None,
         shape_prior_upscale: bool | str | None = None,
         gaussian_backend: str | None = None,
+        record_dir: str | Path | None = None,
         extra_v62_argv: Sequence[str] = (),
         v7_config_path: str | Path = V7_CONFIG_PATH,
         on_event: Callable[[dict], None] | None = None,
@@ -252,6 +253,21 @@ class OrchestratorSession:
         )
         if self.shape_prior_backend == backend_options.BACKEND_NONE:
             self.gaussian_backend = gaussian_options.GAUSSIAN_NONE
+        # 录制 option: tee the whole run into a data_collect-format fake-live
+        # case. GUI-side fail-fast on a dirty target so the operator sees the
+        # error before the service spawns; relative paths resolve against the
+        # repo root (same convention as --fake-live-case).
+        self.record_dir: Path | None = None
+        if record_dir is not None:
+            resolved_record = Path(record_dir).expanduser()
+            if not resolved_record.is_absolute():
+                resolved_record = REPO_ROOT / resolved_record
+            if resolved_record.exists() and any(resolved_record.iterdir()):
+                raise ValueError(
+                    f"record dir is not empty: {resolved_record} — pick a "
+                    "fresh directory"
+                )
+            self.record_dir = resolved_record
         if (
             self.shape_prior_backend == backend_options.BACKEND_NONE
             and downstream_mode == "phystwin_shen"
@@ -381,6 +397,8 @@ class OrchestratorSession:
             ["--shape-prior-upscale", "on" if self.shape_prior_upscale else "off"]
         )
         command.extend(["--gaussian-backend", self.gaussian_backend])
+        if self.record_dir is not None:
+            command.extend(["--record-dir", str(self.record_dir)])
         self._camera_service_command = command
         try:
             self._service = subprocess.Popen(

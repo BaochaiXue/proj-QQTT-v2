@@ -150,34 +150,45 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     _emit({"event": "ready", "load_s": round(time.perf_counter() - load_start, 2)})
 
-    # Warm the gsplat CUDA extension NOW (tiny dummy render): a stale JIT
-    # cache costs ~140s to rebuild, and paying it here — in parallel with
-    # the shape-prior chain — keeps the first turntable render off the
-    # critical path (measured: cold rebuild after an env change pushed the
-    # first done event ~60s past REVIEW).
-    try:
-        import numpy as np
+    # Warm the gsplat CUDA extension in a BACKGROUND thread: sampling (the
+    # first generate) is pure torch and does not need gsplat — only the
+    # turntable render at the end does, and the render path join()s this
+    # thread first. A warm cache costs 0.1s; a cold rebuild (~137s, seen
+    # when a foreign environment poisons the JIT cache) then overlaps
+    # sampling + the alignment park window instead of stalling the queue.
+    import threading
 
-        warm_start = time.perf_counter()
-        render_gaussians(
-            _warm_splats(),
-            viewmat=np.eye(4),
-            intrinsics=np.array([[100.0, 0, 16], [0, 100.0, 16], [0, 0, 1.0]]),
-            width=32,
-            height=32,
-        )
-        print(
-            f"[triposplat-worker] gsplat warmed in "
-            f"{time.perf_counter() - warm_start:.1f}s",
-            file=sys.stderr,
-            flush=True,
-        )
-    except Exception as exc:
-        print(
-            f"[triposplat-worker] gsplat warmup failed: {exc}",
-            file=sys.stderr,
-            flush=True,
-        )
+    def _warm_gsplat() -> None:
+        try:
+            import numpy as np
+
+            warm_start = time.perf_counter()
+            render_gaussians(
+                _warm_splats(),
+                viewmat=np.eye(4),
+                intrinsics=np.array(
+                    [[100.0, 0, 16], [0, 100.0, 16], [0, 0, 1.0]]
+                ),
+                width=32,
+                height=32,
+            )
+            print(
+                f"[triposplat-worker] gsplat warmed in "
+                f"{time.perf_counter() - warm_start:.1f}s",
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"[triposplat-worker] gsplat warmup failed: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    warmup_thread = threading.Thread(
+        target=_warm_gsplat, name="gsplat-warmup", daemon=True
+    )
+    warmup_thread.start()
 
     for line in sys.stdin:
         line = line.strip()
@@ -212,12 +223,20 @@ def main(argv: list[str] | None = None) -> int:
                 num_gaussians=num_gaussians,
                 callback=_progress,
             )
+            sampling_s = time.perf_counter() - generation_start
             ply_path = out_dir / "gaussian.ply"
             prepared_path = out_dir / "gaussian_prepared.png"
             sheet_path = out_dir / "gaussian_turntable.png"
             gaussian.save_ply(str(ply_path))
             prepared.save(str(prepared_path))
+            # The turntable is the first gsplat consumer: make sure the
+            # background warmup (possibly a cold JIT rebuild) is done. The
+            # stage event keeps the GUI status honest during that window.
+            _emit({"event": "stage", "name": "turntable"})
+            turntable_start = time.perf_counter()
+            warmup_thread.join()
             _render_contact_sheet(ply_path, sheet_path, args.device)
+            turntable_s = time.perf_counter() - turntable_start
             generation_s = time.perf_counter() - generation_start
             num_splats = len(load_gaussian_ply(ply_path))
             provenance = {
@@ -240,6 +259,8 @@ def main(argv: list[str] | None = None) -> int:
                     "contact_sheet": str(sheet_path),
                     "provenance": str(out_dir / "gaussian_provenance.json"),
                     "generation_s": round(generation_s, 2),
+                    "sampling_s": round(sampling_s, 2),
+                    "turntable_s": round(turntable_s, 2),
                     "num_splats": num_splats,
                 }
             )

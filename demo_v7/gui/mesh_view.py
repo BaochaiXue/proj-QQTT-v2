@@ -187,6 +187,61 @@ class MeshOrbitView(QWidget):
             self._pixmap = None
             self.update()
 
+    def setColoredCloud(  # noqa: N802 (Qt style)
+        self,
+        points: np.ndarray,
+        colors_srgb_u8: np.ndarray,
+        *,
+        point_size: float = 2.5,
+    ) -> None:
+        """Show ONE per-point-colored cloud (gaussian 拣选 view).
+
+        ``colors_srgb_u8`` is (N,3) display sRGB u8, converted to the linear
+        values the renderer expects (same contract as ``setPointSets``).
+        Always reloads — re-rolled artifacts reuse the same file path.
+        """
+        try:
+            self._ensure_renderer()
+            self._renderer.scene.clear_geometry()
+            self._point_names = []
+            pts = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+            if pts.shape[0] == 0:
+                self._error = tr("点云数据为空", "point cloud is empty")
+                self._pixmap = None
+                self.update()
+                return
+            cloud = self._o3d.geometry.PointCloud()
+            cloud.points = self._o3d.utility.Vector3dVector(pts)
+            cloud.colors = self._o3d.utility.Vector3dVector(
+                _srgb_decode(
+                    np.asarray(colors_srgb_u8, dtype=np.float64).reshape(-1, 3)
+                    / 255.0
+                )
+            )
+            material = self._o3d.visualization.rendering.MaterialRecord()
+            material.shader = "defaultUnlit"
+            material.point_size = float(point_size)
+            self._renderer.scene.add_geometry("colored_cloud", cloud, material)
+            self._point_names.append("colored_cloud")
+            low, high = pts.min(axis=0), pts.max(axis=0)
+            self._center = (low + high) / 2.0
+            extent = float(np.linalg.norm(high - low))
+            self._home_distance = max(extent, 1e-6) * 1.8
+            self._distance = self._home_distance
+            self._azimuth_deg = 35.0
+            self._elevation_deg = 20.0
+            # Non-None sentinel so the interaction handlers engage.
+            self._mesh_path = "<points>"
+            self._error = None
+            self._schedule_render()
+        except Exception as exc:
+            self._error = (
+                tr("gaussian 预览不可用", "gaussian preview unavailable")
+                + f": {exc}"
+            )
+            self._pixmap = None
+            self.update()
+
     def setSourceVisible(self, name: str, visible: bool) -> None:  # noqa: N802
         """Toggle one named point set from ``setPointSets``."""
         if self._renderer is None or name not in self._point_names:

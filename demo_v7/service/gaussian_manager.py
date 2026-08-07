@@ -79,17 +79,27 @@ class GaussianManager:
         self._lock = threading.Lock()
         self._busy = False
         self._closed = False
+        self._submitted = False
         self._case_ready = threading.Event()
         self.world_ply_path = self.out_dir / "gaussian_world.ply"
+        # Per-generation timing breakdown (owner ask: warmup timing logs).
+        # Written to <out_dir>/gaussian_timing.json + one stdout line each.
+        self._timing: dict[str, float] = {}
+        self._generation_timings: list[dict[str, Any]] = []
+        self._submit_wall: float | None = None
+        self._submit_perf: float | None = None
+        self._request_perf: float | None = None
 
     # -- lifecycle -----------------------------------------------------------
 
     def start(self) -> None:
-        """Spawn the worker and queue the first generation (non-blocking).
+        """Spawn the worker (non-blocking; call as early as PREVIEW).
 
-        The first generate waits for the segment stage's masked_image.png
-        (waiter thread) — safe to call at chain SUBMIT, before any stage
-        output exists; the ~8s model load overlaps the chain either way.
+        Spawn and generation are SPLIT: the ~8s TripoSplat load hides in
+        the pre-confirm window, but the first generate only arms via
+        ``notify_submitted()`` — the masked-image waiter must not run
+        before this run's chain submit, or a stale masked_image.png from a
+        previous run in the same base_path could feed the generation.
         """
         try:
             gaussian_options.ensure_triposplat_available()
@@ -118,6 +128,22 @@ class GaussianManager:
             target=self._reader_loop, name="gaussian-worker-reader", daemon=True
         )
         self._reader.start()
+        self._timing["spawn_perf"] = time.perf_counter()
+        self._emit_progress("gaussian", "启动 TripoSplat worker(相机 GPU)…")
+
+    def notify_submitted(self) -> None:
+        """This run's shape-prior chain submitted: arm the first generate.
+
+        Only images written AFTER this moment count — the mtime gate below
+        rejects a stale masked_image.png left by a previous run in the
+        same base_path (silent wrong-input hazard).
+        """
+        with self._lock:
+            if self._closed or self._submitted or self._proc is None:
+                return
+            self._submitted = True
+        self._submit_wall = time.time()
+        self._submit_perf = time.perf_counter()
         self._first_gen = threading.Thread(
             target=self._queue_first_generate,
             name="gaussian-first-generate",
@@ -134,24 +160,37 @@ class GaussianManager:
             return self._closed
 
     def _queue_first_generate(self) -> None:
-        """Wait for the segment output image, then queue generation #1.
+        """Wait for THIS run's segment output image, then queue generation #1.
 
-        Size-stable double-read guards against a half-written png (the v6.2
-        segment stage writes the file directly, no atomic rename).
+        Freshness gate: mtime must be at/after this run's submit (stale
+        files from a previous run are ignored). Size-stable double-read
+        guards against a half-written png (the v6.2 segment stage writes
+        the file directly, no atomic rename).
         """
         image = self.case_dir / "shape" / "masked_image.png"
+        announced = False
         last_size = -1
         while not self._is_closed():
+            fresh = False
             if image.is_file():
                 try:
-                    size = image.stat().st_size
+                    stat = image.stat()
+                    fresh = stat.st_mtime >= (self._submit_wall or 0.0) - 1.0
+                    size = stat.st_size
                 except OSError:
                     size = -1
-                if size > 0 and size == last_size:
+                if fresh and size > 0 and size == last_size:
+                    if self._submit_perf is not None:
+                        self._timing["image_wait_s"] = round(
+                            time.perf_counter() - self._submit_perf, 2
+                        )
                     self.regenerate(self.seed)
                     return
-                last_size = size
-            time.sleep(0.3)
+                last_size = size if fresh else -1
+            if not fresh and not announced:
+                announced = True
+                self._emit_progress("gaussian", "等待分割图(masked_image)…")
+            time.sleep(0.15)
 
     def shutdown(self) -> None:
         """Ask the worker to exit (idempotent; bounded wait then kill)."""
@@ -188,6 +227,7 @@ class GaussianManager:
                 # A fresh die roll that never repeats the current seed.
                 seed = (self.seed + int(time.time())) % 1_000_000 or 1
             self.seed = int(seed)
+            self._request_perf = time.perf_counter()
             request = {
                 "cmd": "generate",
                 "image": str(self.case_dir / "shape" / "masked_image.png"),
@@ -242,6 +282,7 @@ class GaussianManager:
     def _on_worker_event(self, event: dict[str, Any]) -> None:
         kind = event.get("event")
         if kind == "ready":
+            self._timing["model_load_s"] = float(event.get("load_s", 0.0))
             self._emit_progress(
                 "gaussian", f"TripoSplat 就绪({event.get('load_s', '?')}s)"
             )
@@ -249,6 +290,13 @@ class GaussianManager:
             step, total = int(event.get("step", 0)), int(event.get("total", 1))
             if step in (1, total // 2, total):
                 self._emit_progress("gaussian", f"采样 {step}/{total}")
+        elif kind == "stage":
+            # Post-sampling window (was a silent gap in the GUI): turntable
+            # render, then the alignment chain below on "done".
+            if event.get("name") == "turntable":
+                self._emit_progress(
+                    "gaussian", "渲染 turntable 预览…(首次运行可能较慢)"
+                )
         elif kind == "error":
             with self._lock:
                 self._busy = False
@@ -257,6 +305,7 @@ class GaussianManager:
             self._emit_progress("gaussian", str(event.get("message")), ok=False)
         elif kind == "done":
             try:
+                park_start = time.perf_counter()
                 if not self._case_ready.is_set():
                     # Generation beat the shape-prior chain (the normal case
                     # now): park until align's outputs exist, then proceed.
@@ -266,7 +315,11 @@ class GaussianManager:
                     while not self._case_ready.wait(timeout=0.5):
                         if self._is_closed():
                             return
+                park_s = time.perf_counter() - park_start
+                self._emit_progress("gaussian", "对齐到世界系(canonical 配准)…")
+                align_start = time.perf_counter()
                 artifacts = self._align_and_collect(event)
+                align_s = time.perf_counter() - align_start
                 self._emit_artifacts("gaussian", artifacts)
                 self._emit_progress(
                     "gaussian",
@@ -274,9 +327,42 @@ class GaussianManager:
                     f"{event.get('num_splats')} splats, "
                     f"{event.get('generation_s')}s)",
                 )
+                self._record_generation_timing(event, park_s, align_s)
             finally:
                 with self._lock:
                     self._busy = False
+
+    def _record_generation_timing(
+        self, done_event: dict[str, Any], park_s: float, align_s: float
+    ) -> None:
+        """Append this generation's breakdown to the run's timing log."""
+        entry = {
+            "seed": done_event.get("seed"),
+            "num_splats": done_event.get("num_splats"),
+            "model_load_s": self._timing.get("model_load_s"),
+            "image_wait_s": self._timing.get("image_wait_s"),
+            "sampling_s": done_event.get("sampling_s"),
+            "turntable_s": done_event.get("turntable_s"),
+            "park_for_chain_s": round(park_s, 2),
+            "align_and_overlay_s": round(align_s, 2),
+            "request_to_artifacts_s": (
+                round(time.perf_counter() - self._request_perf, 2)
+                if self._request_perf is not None
+                else None
+            ),
+        }
+        self._generation_timings.append(entry)
+        try:
+            (self.out_dir / "gaussian_timing.json").write_text(
+                json.dumps(self._generation_timings, indent=1)
+            )
+        except OSError:
+            pass
+        print(
+            "[gaussian-timing] "
+            + " ".join(f"{k}={v}" for k, v in entry.items() if v is not None),
+            flush=True,
+        )
 
     # -- alignment -----------------------------------------------------------
 
@@ -299,6 +385,7 @@ class GaussianManager:
         )
         save_gaussian_ply(self.world_ply_path, world)
 
+        self._emit_progress("gaussian", "渲染世界系叠加图…")
         with open(self.case_dir / "calibrate.pkl", "rb") as handle:
             c2w = np.asarray(pickle.load(handle)[0], dtype=np.float64)
         intrinsics = np.asarray(

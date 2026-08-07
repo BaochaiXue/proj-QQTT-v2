@@ -43,11 +43,16 @@ def _import_gsplat_rasterization():
         return rasterization
     saved = {
         name: os.environ.get(name)
-        for name in ("TORCH_EXTENSIONS_DIR", "CUDA_HOME")
+        for name in ("TORCH_EXTENSIONS_DIR", "CUDA_HOME", "TORCH_CUDA_ARCH_LIST")
     }
     os.environ["TORCH_EXTENSIONS_DIR"] = str(_V7_TORCH_EXTENSIONS_DIR)
     if Path(_PINNED_CUDA_HOME, "bin", "nvcc").is_file():
         os.environ["CUDA_HOME"] = _PINNED_CUDA_HOME
+    # Both GPUs on this box are Ada (8.9); pinning removes the derive-from-
+    # visible-devices variance from the build hash.
+    os.environ["TORCH_CUDA_ARCH_LIST"] = os.environ.get(
+        "DEMO_V7_TORCH_CUDA_ARCH", "8.9"
+    )
     try:
         from gsplat import rasterization
 

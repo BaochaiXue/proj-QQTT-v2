@@ -100,6 +100,16 @@ def _build_v7_parser() -> argparse.ArgumentParser:
             "(display-only feature off)."
         ),
     )
+    parser.add_argument(
+        "--record-dir",
+        type=str,
+        default=None,
+        help=(
+            "Record every published RGB-D frame into this directory as a "
+            "data_collect-format fake-live case (dir must not exist or be "
+            "empty)."
+        ),
+    )
     return parser
 
 
@@ -312,6 +322,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             gaussian_backend = gaussian_options.GAUSSIAN_NONE
     runtime_kwargs["gaussian_backend"] = gaussian_backend
+    runtime_kwargs["record_dir"] = (
+        Path(v7_args.record_dir) if v7_args.record_dir else None
+    )
     from demo_v7.service.staged_runtime import StagedRuntime  # noqa: PLC0415
 
     try:

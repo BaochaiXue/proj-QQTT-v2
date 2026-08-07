@@ -129,6 +129,7 @@ class StagedRuntime:
         shape_prior_backend: str | None = None,
         shape_prior_use_upscale: bool | None = None,
         gaussian_backend: str | None = None,
+        record_dir: Path | None = None,
     ) -> None:
         """Build shared services and bind both protocol sockets.
 
@@ -141,6 +142,16 @@ class StagedRuntime:
         chosen backend's worker before the sockets even bind.
         """
         self.args = args
+        # Optional fake-live case recorder (GUI 录制 option): every published
+        # RGB-D packet is teed into a data_collect-format case directory via
+        # a non-blocking bounded queue (see service/recorder.py).
+        self.recorder = None
+        if record_dir is not None:
+            from demo_v7.service.recorder import (  # noqa: PLC0415
+                FakeLiveCaseRecorder,
+            )
+
+            self.recorder = FakeLiveCaseRecorder(Path(record_dir))
         self.shape_prior_backend = backend_options.normalize_backend(
             shape_prior_backend
         )
@@ -195,9 +206,10 @@ class StagedRuntime:
         self._formal_seg_start = threading.Event()
         self._fatal_announced = False
         # Gaussian-splats feature (TripoSplat; display-only, fail-soft):
-        # manager spawns at shape-prior SUBMIT (camera GPU, parallel with
-        # the mesh chain), dies before FORMAL; the live renderer is created
-        # lazily by the formal gaussian worker.
+        # worker spawns at PREVIEW (camera GPU; model load hides pre-
+        # confirm), generation arms at chain submit, manager dies before
+        # FORMAL; the live renderer is created lazily by the formal
+        # gaussian worker.
         self._gaussian_manager: Any = None
         self._deferred: deque[Callable[[], None]] = deque()
         self._last_publish_s: dict[str, float] = {}
@@ -447,6 +459,10 @@ class StagedRuntime:
 
     def _publish_preview_channels(self, packet: FramePacket) -> None:
         """Publish CH_RGB / CH_DEPTH (and CH_OVERLAY during REPOSITION)."""
+        if self.recorder is not None:
+            # Single choke point every producer loop passes through (preview,
+            # formal raw stream, reposition); submit never blocks.
+            self.recorder.submit(packet)
         self._publish_frame(protocol.CH_RGB, packet.color_bgr)
         depth_preview = self._depth_preview_bgr(packet)
         if depth_preview is not None:
@@ -780,7 +796,18 @@ class StagedRuntime:
         perception_profile: dict[str, Any] = {}
         try:
             sam31_start_s = time.perf_counter()
-            self.preload.join_sam31()
+            sam31_preload = self.preload.join_sam31()
+            if sam31_preload:
+                # The decisive number for a slow sam31 row: how long the
+                # 3.5G checkpoint preload made THIS confirm wait (compute
+                # itself is ~0.5s warm). Rides the run log.
+                print(
+                    "[v7-timing] sam31 preload "
+                    + " ".join(
+                        f"{k}={v:.0f}ms" for k, v in sam31_preload.items()
+                    ),
+                    flush=True,
+                )
             object_mask, hand_a_mask, hand_b_mask = (
                 frame0_pipeline.compute_sam31_masks(
                     candidate.color_bgr,
@@ -889,13 +916,15 @@ class StagedRuntime:
             self._emit_progress(
                 "shape_prior_submit", "frame-0 shape-prior request submitted"
             )
-            # Gaussian generation rides IN PARALLEL with the chain: the
-            # worker loads TripoSplat on the camera GPU while the mesh
-            # backend owns the shape-prior GPU, and the first generate fires
-            # as soon as the segment stage writes masked_image.png (the same
-            # image the mesh generator conditions on). Alignment parks until
+            # Gaussian generation rides IN PARALLEL with the chain (worker
+            # already spawned at PREVIEW): arm the first generate — it fires
+            # as soon as THIS run's segment writes masked_image.png (the
+            # same image the mesh generator conditions on; mtime-gated
+            # against stale files). Alignment parks until
             # notify_case_ready() below. Display-only, fail-soft.
-            self._start_gaussian_manager()
+            self._start_gaussian_manager()  # no-op if PREVIEW spawned it
+            if self._gaussian_manager is not None:
+                self._gaussian_manager.notify_submitted()
             self._poll_shape_prior_until_terminal()
             self._emit_progress(
                 "shape_prior_ready",
@@ -1060,10 +1089,17 @@ class StagedRuntime:
                 self._publish_frame(protocol.CH_GAUSSIAN, frame)
 
     def _poll_shape_prior_until_terminal(self) -> None:
-        """Poll the manager profile until READY; raise on FAILED/stop."""
+        """Poll the manager profile until READY; raise on FAILED/stop.
+
+        Logs a one-line milestone timing summary at READY (owner ask:
+        warmup timing in the run log to steer optimization) — seconds
+        since submit for each stage-milestone file plus the ready total.
+        """
         manager = self.shape_prior_manager
         case_dir = self._shape_prior_case_dir()
-        seen: set[str] = set()
+        poll_start_s = time.perf_counter()
+        seen: dict[str, float] = {}
+        gaussian_release_sent = False
         while not self.stop_event.is_set():
             profile = manager.profile()
             status = str(
@@ -1074,18 +1110,44 @@ class StagedRuntime:
                     if stage in seen:
                         continue
                     if case_dir.joinpath(*parts).is_file():
-                        seen.add(stage)
+                        seen[stage] = time.perf_counter() - poll_start_s
                         self._emit_progress("shape_prior", f"{stage} finished")
+                # Gaussian alignment needs only the ALIGN stage's settled
+                # outputs (best_match.pkl + final_mesh.glb) — release it at
+                # the align profile's COMPLETED (written after every export),
+                # not at chain READY: the splats land ~7s earlier. The
+                # sample stage's concurrent final_mesh cleanup is an atomic
+                # os.replace (readers get old-or-new, both valid).
+                if not gaussian_release_sent and self._gaussian_manager is not None:
+                    align_profile = case_dir / "shape" / "timing" / "align.json"
+                    if align_profile.is_file():
+                        try:
+                            align_status = json.loads(
+                                align_profile.read_text()
+                            ).get("status")
+                        except (OSError, json.JSONDecodeError):
+                            align_status = None
+                        if align_status == "completed":
+                            gaussian_release_sent = True
+                            self._gaussian_manager.notify_case_ready()
             if status in (
                 shape_prior_warmup.STATUS_READY,
                 shape_prior_warmup.STATUS_DISABLED,
             ):
+                milestones = " ".join(
+                    f"{stage}={elapsed:.1f}s" for stage, elapsed in seen.items()
+                )
+                print(
+                    f"[v7-timing] chain since submit: {milestones} "
+                    f"ready={time.perf_counter() - poll_start_s:.1f}s",
+                    flush=True,
+                )
                 return
             if status == shape_prior_warmup.STATUS_FAILED:
                 raise RuntimeError(
                     f"shape prior failed: {profile.get('shape_prior_error')}"
                 )
-            time.sleep(0.25)
+            time.sleep(0.1)
         raise RuntimeError("service stopped during shape-prior warmup")
 
     def _emit_shape_prior_artifacts(self) -> None:
@@ -1337,6 +1399,10 @@ class StagedRuntime:
         self.preload.start()
         self._emit_progress("preload", "perception preloads started")
         self.session.prepare_source(self.args, self.mode)
+        if self.recorder is not None:
+            runtime = self.session.camera_runtime
+            if runtime is not None and getattr(runtime, "serial", None):
+                self.recorder.serial = str(runtime.serial)
         self._notify_frame0_geometry_from_camera()
         self.session.initialize_table_calibration(self.args)
         self._acq_thread = self._spawn_worker("acquisition", self._acquisition.run)
@@ -1366,6 +1432,11 @@ class StagedRuntime:
             ):
                 self._enter_state(protocol.STATE_PREVIEW)
                 self._spawn_early_precompile()
+                # NOTE deliberately NO TripoSplat spawn here: its ~8s load
+                # (disk + camera GPU) competes with the SAM3.1 3.5G
+                # checkpoint preload — the very thing frame-0 confirm waits
+                # on. It spawns after the chain submit instead; the
+                # gaussian park window (~30s) absorbs the later start.
             formal = self._formal
             if formal is not None and not self._formal_finalized:
                 if formal.lossless.processing_done.is_set():
@@ -1461,6 +1532,11 @@ class StagedRuntime:
             if thread is not None and thread.is_alive():
                 thread.join(timeout=1.0)
         self.session.release_camera()
+        if self.recorder is not None:
+            try:
+                self.recorder.close()
+            except Exception as exc:
+                print(f"[camera-service] recorder close failed: {exc}", flush=True)
         try:
             self.shape_prior_manager.write_profile_json()
         except Exception:

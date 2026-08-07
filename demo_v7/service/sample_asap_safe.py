@@ -23,10 +23,13 @@ The sample stage is strictly ordered after align (the parent gates on the
 align profile), so final_mesh.glb is complete when the cleanup runs:
 - cold: clean before calling the real ``sample.main``;
 - prewarmed: ``stage_prewarm.wait_for_go`` is wrapped so the cleanup runs
-  exactly between GO and the sample compute. Timing caveat: the cleanup
-  cost (~100s of ms) is therefore booked into the profile's ``go_wait_ms``
-  (excluded from ``total_ms`` by the schema's accounting rule) — the
-  parent-side critical-path wall time still covers it; accepted drift.
+  right after GO — as a DETACHED subprocess, concurrent with the sample
+  compute. The cleanup's cost is ~3.2s (glb load + PNG-texture re-export
+  dominate), which used to sit on the READY critical path; its only
+  consumer is the FORMAL-period ASAP minutes later, while sample itself
+  reads whatever is on disk at load time — old or new inode via the atomic
+  ``os.replace``, both exactly what stock v6.2 sampled (the stock stage
+  always sampled the uncleaned mesh).
 """
 
 from __future__ import annotations
@@ -114,6 +117,11 @@ def clean_final_mesh(mesh_path: Path) -> None:
 def main(argv: list[str] | None = None) -> None:
     argv = list(sys.argv[1:] if argv is None else argv)
 
+    if argv[:1] == ["--clean-only"]:
+        # Detached-cleanup child entry (see _spawn_detached_cleanup).
+        clean_final_mesh(Path(argv[1]))
+        return
+
     def _value_of(flag: str) -> str:
         return argv[argv.index(flag) + 1]
 
@@ -133,7 +141,7 @@ def main(argv: list[str] | None = None) -> None:
         def wait_for_go_then_clean(stage, *, on_directive=None):
             should_run = real_wait_for_go(stage, on_directive=on_directive)
             if should_run:
-                clean_final_mesh(mesh_path)
+                _spawn_detached_cleanup(mesh_path)
             return should_run
 
         stage_prewarm.wait_for_go = wait_for_go_then_clean
@@ -143,6 +151,41 @@ def main(argv: list[str] | None = None) -> None:
     from demo_v6_2.shape_prior import sample
 
     sample.main(argv)
+    # Skip interpreter teardown (this worker imports trimesh/scipy only, no
+    # CUDA): the parent's worker_reap barrier sits on the READY critical
+    # path, and the profile snapshot is already on disk by now.
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
+
+
+def _spawn_detached_cleanup(mesh_path: Path) -> None:
+    """Run clean_final_mesh in a detached child, concurrent with sample.
+
+    Falls back to inline cleanup if the spawn fails — the FORMAL-period
+    ASAP depends on the cleaned mesh (landmine: exact-zero-extent faces
+    make its solver fail to factorize).
+    """
+    import subprocess
+
+    try:
+        subprocess.Popen(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--clean-only",
+                str(mesh_path),
+            ],
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        print(
+            f"[sample-asap-safe] detached cleanup spawn failed ({exc}); "
+            "cleaning inline",
+            flush=True,
+        )
+        clean_final_mesh(mesh_path)
 
 
 if __name__ == "__main__":

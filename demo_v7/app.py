@@ -428,6 +428,36 @@ class SourceSelectDialog(QDialog):
         gaussian_row.addWidget(self._gaussian_label)
         gaussian_row.addWidget(self._gaussian_info)
         gaussian_row.addWidget(self._gaussian_combo, 1)
+        # 录制 (real camera only): tee the whole run into a data_collect-
+        # format directory that later replays as a fake-live case.
+        self._record_check = QCheckBox(self)
+        self._record_check.setChecked(False)
+        self._record_info = InfoDot(
+            "把本次真实相机运行的每一帧 RGB-D(含相机内参/时间戳)录制成 "
+            "data_collect 格式的目录 —— 之后可以在本对话框选「fake-live 回放」"
+            "直接重放这次运行。目录须为空;录制在后台线程写盘,不影响流水线。",
+            "Record every RGB-D frame of this real-camera run (with camera "
+            "intrinsics and timestamps) into a data_collect-format directory "
+            "— it can later be replayed via the fake-live option in this "
+            "dialog. The directory must be empty; writing happens on a "
+            "background thread and never stalls the pipeline.",
+            self,
+        )
+        from datetime import datetime  # noqa: PLC0415 (dialog-open timestamp)
+
+        self._record_edit = QLineEdit(self)
+        self._record_edit.setText(
+            f"data_collect/record_{datetime.now():%Y%m%d_%H%M%S}"
+        )
+        self._record_browse_btn = QPushButton(self)
+        self._record_browse_btn.clicked.connect(self._browse_record_dir)
+        record_row = QHBoxLayout()
+        record_row.addWidget(self._record_check)
+        record_row.addWidget(self._record_info)
+        record_row.addWidget(self._record_edit, 1)
+        record_row.addWidget(self._record_browse_btn)
+        # Only meaningful for the real camera; fake-live already IS a case.
+        self._real_radio.toggled.connect(self._update_record_enabled)
         buttons = QDialogButtonBox(self)
         self._start_btn = buttons.addButton(
             "", QDialogButtonBox.ButtonRole.AcceptRole
@@ -456,12 +486,31 @@ class SourceSelectDialog(QDialog):
         upscale_row.addStretch(1)
         layout.addLayout(upscale_row)
         layout.addLayout(gaussian_row)
+        layout.addLayout(record_row)
         layout.addWidget(buttons)
         self._error = QLabel("", self)
         self._error.setStyleSheet("color: #f28b82;")
         layout.addWidget(self._error)
+        self._update_record_enabled()
         self._retranslate()
-        self.resize(560, 280)
+        self.resize(560, 300)
+
+    def _update_record_enabled(self) -> None:
+        real = self._real_radio.isChecked()
+        for widget in (
+            self._record_check,
+            self._record_edit,
+            self._record_browse_btn,
+        ):
+            widget.setEnabled(real)
+
+    def _browse_record_dir(self) -> None:
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            tr("选择录制保存目录", "Select the recording destination"),
+        )
+        if chosen:
+            self._record_edit.setText(chosen)
 
     def _on_language_changed(self) -> None:
         i18n.set_language(str(self._language_combo.currentData()))
@@ -500,6 +549,14 @@ class SourceSelectDialog(QDialog):
         )
         for i, (_gaussian_id, pair) in enumerate(_GAUSSIAN_LABELS):
             self._gaussian_combo.setItemText(i, tr(*pair))
+        self._record_check.setText(
+            tr("录制(可作 fake-live 素材)", "Record (reusable as fake-live)")
+        )
+        self._record_edit.setPlaceholderText(
+            tr("录制保存目录(须为空)", "Recording directory (must be empty)")
+        )
+        self._record_browse_btn.setText(tr("浏览…", "Browse…"))
+        self._record_info.retranslate()
         self._start_btn.setText(tr("开始", "Start"))
         self._quit_btn.setText(tr("退出", "Quit"))
         for dot in self._info_dots:
@@ -523,10 +580,29 @@ class SourceSelectDialog(QDialog):
                 )
             )
             return
+        if self._real_radio.isChecked() and self._record_check.isChecked():
+            record_text = self._record_edit.text().strip()
+            if not record_text:
+                self._error.setText(
+                    tr("录制需要一个保存目录。", "Recording needs a directory.")
+                )
+                return
+            target = Path(record_text).expanduser()
+            if target.exists() and any(target.iterdir()):
+                self._error.setText(
+                    tr(
+                        "录制目录已存在且非空,请换一个。",
+                        "Recording directory exists and is not empty; pick "
+                        "another.",
+                    )
+                )
+                return
         self.accept()
 
-    def selection(self) -> tuple[str, Path | None, str, bool, str, str]:
-        """(source, case, backend, upscale, gaussian, language) after accepted."""
+    def selection(
+        self,
+    ) -> tuple[str, Path | None, str, bool, str, str, Path | None]:
+        """(source, case, backend, upscale, gaussian, language, record_dir)."""
         backend = str(self._backend_combo.currentData())
         upscale = bool(self._upscale_check.isChecked())
         gaussian = str(self._gaussian_combo.currentData())
@@ -539,8 +615,14 @@ class SourceSelectDialog(QDialog):
                 upscale,
                 gaussian,
                 lang,
+                None,
             )
-        return SOURCE_REAL, None, backend, upscale, gaussian, lang
+        record_dir = (
+            Path(self._record_edit.text().strip())
+            if self._record_check.isChecked() and self._record_edit.text().strip()
+            else None
+        )
+        return SOURCE_REAL, None, backend, upscale, gaussian, lang, record_dir
 
 
 def create_session(

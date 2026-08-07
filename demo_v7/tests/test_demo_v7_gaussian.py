@@ -199,3 +199,50 @@ class TestGaussianBackendSelector:
         )
         assert v7_args.gaussian_backend == "none"
         assert "--gaussian-backend" not in rest
+
+
+class TestFirstGenerateFreshnessGate:
+    """The first-generate waiter must ignore a stale masked_image from a
+    previous run in the same base_path (mtime gate)."""
+
+    def _manager(self, tmp_path):
+        import demo_v7.service.gaussian_manager as gm
+
+        manager = gm.GaussianManager(
+            case_dir=tmp_path / "case",
+            out_dir=tmp_path / "out",
+            controller_name="hand",
+            emit_progress=lambda *a, **k: None,
+            emit_artifacts=lambda *a, **k: None,
+            emit_error=lambda *a, **k: None,
+        )
+        calls = []
+        manager.regenerate = lambda seed: calls.append(seed) or True
+        return manager, calls
+
+    def test_stale_image_rejected_fresh_accepted(self, tmp_path) -> None:
+        import os
+        import threading
+        import time as time_mod
+
+        manager, calls = self._manager(tmp_path)
+        shape_dir = tmp_path / "case" / "shape"
+        shape_dir.mkdir(parents=True)
+        stale = shape_dir / "masked_image.png"
+        stale.write_bytes(b"old-run-image")
+        old = time_mod.time() - 3600.0
+        os.utime(stale, (old, old))
+
+        manager._submit_wall = time_mod.time()
+        manager._submit_perf = time_mod.perf_counter()
+        waiter = threading.Thread(
+            target=manager._queue_first_generate, daemon=True
+        )
+        waiter.start()
+        time_mod.sleep(0.8)
+        assert calls == [], "stale image must not trigger a generation"
+
+        stale.write_bytes(b"fresh-image-from-this-run")
+        waiter.join(timeout=5.0)
+        assert not waiter.is_alive()
+        assert calls == [manager.seed]

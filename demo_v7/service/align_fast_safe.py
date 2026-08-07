@@ -41,7 +41,32 @@ def _patch_binned_rasterizer() -> None:
 
     from demo_v6_2.utils import align_util
 
+    stock_render_loaded_mesh = align_util._render_loaded_mesh
+
     def _binned_render_loaded_mesh(
+        mesh, camera_poses, width=640, height=480, fov=1, device="cpu"
+    ):
+        """Binned rasterization with a fail-soft fallback to the stock path."""
+        try:
+            return _binned_render_impl(
+                mesh, camera_poses, width=width, height=height, fov=fov,
+                device=device,
+            )
+        except Exception as exc:
+            # Robustness beats the speedup: any failure (OOM under foreign
+            # GPU load, pytorch3d drift, ...) reverts THIS call to the
+            # naive stock renderer — identical output, just slower.
+            print(
+                f"[align-fast-safe] binned raster failed ({exc}); "
+                "falling back to the stock naive rasterizer",
+                flush=True,
+            )
+            return stock_render_loaded_mesh(
+                mesh, camera_poses, width=width, height=height, fov=fov,
+                device=device,
+            )
+
+    def _binned_render_impl(
         mesh, camera_poses, width=640, height=480, fov=1, device="cpu"
     ):
         """align_util._render_loaded_mesh, binned rasterization only."""
@@ -104,11 +129,95 @@ def _patch_binned_rasterizer() -> None:
 
 def main(argv: list[str] | None = None) -> None:
     if os.environ.get("DEMO_V7_ALIGN_FAST", "1") != "0":
-        _patch_binned_rasterizer()
+        try:
+            _patch_binned_rasterizer()
+        except Exception as exc:
+            print(
+                f"[align-fast-safe] binned patch skipped ({exc}); "
+                "running the stock renderer",
+                flush=True,
+            )
+    # Robustness (NOT speed, so not behind DEMO_V7_ALIGN_FAST): a fatal
+    # factorize at small world scale becomes a scale-equivariant retry.
+    from demo_v7.service.arap_rescue import patch_arap_factorize_rescue
+
+    patch_arap_factorize_rescue()
 
     from demo_v6_2.shape_prior import align
 
+    if os.environ.get("DEMO_V7_ALIGN_FAST", "1") != "0":
+        _patch_extended_prewarm(align)
+
     align.main(list(sys.argv[1:] if argv is None else argv))
+
+
+def _patch_extended_prewarm(align) -> None:
+    """Extend align's pre-GO prewarm with dummy forwards (post-GO -1s+).
+
+    Stock ``_prewarm_models`` only creates the CUDA context and uploads the
+    SuperPoint+SuperGlue weights — the first rasterizer kernel launches,
+    pytorch3d's lazy GLB-loader imports, and the first SuperPoint/SuperGlue
+    forward all land in post-GO time. All dummy outputs are discarded;
+    fail-soft (a skipped prewarm just means stock post-GO cost).
+    ``align.main`` looks `_prewarm_models` up as a module global, so the
+    rebind is picked up at call time.
+    """
+    stock_prewarm = align._prewarm_models
+
+    def _prewarm_models_extended():
+        stock_prewarm()
+        try:
+            _extended_prewarm_dummy_work()
+        except Exception as exc:
+            print(
+                f"[align-fast-safe] extended prewarm skipped "
+                f"({type(exc).__name__}: {exc})",
+                flush=True,
+            )
+
+    align._prewarm_models = _prewarm_models_extended
+
+
+def _extended_prewarm_dummy_work(width: int = 848, height: int = 480) -> None:
+    import torch
+
+    if not torch.cuda.is_available():
+        return
+    device = "cuda"
+    # Warm the lazy GLB-loader imports (align_util loads them post-GO).
+    from pytorch3d.io import IO  # noqa: F401
+    from pytorch3d.io.experimental_gltf_io import MeshGlbFormat  # noqa: F401
+    from pytorch3d.renderer import TexturesVertex
+    from pytorch3d.structures import Meshes
+
+    from demo_v6_2.shape_prior import match_pairs
+    from demo_v6_2.utils import align_util
+
+    # Tiny render THROUGH align_util._render_loaded_mesh (module-global
+    # lookup, so this exercises the exact — binned-patched — GO path).
+    verts = torch.tensor(
+        [[-0.1, -0.1, 2.0], [0.1, -0.1, 2.0], [0.0, 0.1, 2.0], [0.0, 0.0, 2.1]],
+        dtype=torch.float32,
+        device=device,
+    )
+    faces = torch.tensor(
+        [[0, 1, 2], [0, 2, 3], [0, 3, 1], [1, 2, 3]],
+        dtype=torch.int64,
+        device=device,
+    )
+    textures = TexturesVertex(torch.ones(1, 4, 3, device=device))
+    mesh = Meshes(verts=[verts], faces=[faces], textures=textures)
+    poses = align_util.sample_camera_poses(3.0, 2, 1, device)
+    align_util._render_loaded_mesh(
+        mesh, poses, width=width, height=height, fov=1.566, device=device
+    )
+    # One SuperPoint+SuperGlue forward at the real frame size (cached model
+    # instance — same object the GO path uses).
+    matching = match_pairs.get_matching_model()
+    dummy = torch.zeros(1, 1, height, width, device=device)
+    with torch.no_grad():
+        matching({"image0": dummy, "image1": dummy})
+    torch.cuda.synchronize()
 
 
 if __name__ == "__main__":

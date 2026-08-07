@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSplitter,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -519,11 +520,45 @@ class ReviewScreen(QWidget):
         )
         gaussian_bar.addWidget(self._gaussian_status, 1)
         gaussian_bar.addWidget(self._gaussian_regen_btn)
+        # Draggable 3D inspection (owner ask): the aligned splats as a
+        # per-point-colored cloud in the same orbit widget the mesh uses —
+        # 拖拽=旋转 滚轮=缩放 双击=复位; combo flips 世界系/生成系.
+        self._gaussian_ply_paths: dict[int, str] = {}
+        self._gaussian_view = MeshOrbitView(
+            tr("等待 gaussian 生成…", "Waiting for gaussian generation…")
+        )
+        self._gaussian_view_pick = QComboBox()
+        self._gaussian_view_pick.addItem(tr("对齐后(世界系)", "Aligned (world)"))
+        self._gaussian_view_pick.addItem(tr("原始(生成系)", "Raw (canonical)"))
+        self._gaussian_view_pick.currentIndexChanged.connect(
+            lambda _index: self._show_picked_gaussian()
+        )
+        gaussian_view_bar = QHBoxLayout()
+        gaussian_view_bar.addWidget(self._gaussian_view_pick)
+        gaussian_view_bar.addWidget(
+            QLabel(
+                tr(
+                    "拖拽=旋转 滚轮=缩放 双击=复位",
+                    "drag=rotate wheel=zoom double-click=reset",
+                )
+            )
+        )
+        gaussian_view_bar.addStretch(1)
+        gaussian_view_page = QWidget()
+        gaussian_view_layout = QVBoxLayout(gaussian_view_page)
+        gaussian_view_layout.setContentsMargins(0, 0, 0, 0)
+        gaussian_view_layout.addLayout(gaussian_view_bar)
+        gaussian_view_layout.addWidget(self._gaussian_view, 1)
         self._gaussian_grid = _ArtifactGrid()
+        gaussian_split = QSplitter(Qt.Orientation.Vertical)
+        gaussian_split.addWidget(gaussian_view_page)
+        gaussian_split.addWidget(_wrap_scroll(self._gaussian_grid))
+        gaussian_split.setStretchFactor(0, 3)
+        gaussian_split.setStretchFactor(1, 1)
         gaussian_page = QWidget()
         gaussian_layout = QVBoxLayout(gaussian_page)
         gaussian_layout.addLayout(gaussian_bar)
-        gaussian_layout.addWidget(_wrap_scroll(self._gaussian_grid), 1)
+        gaussian_layout.addWidget(gaussian_split, 1)
         self._tabs.addTab(gaussian_page, "Gaussian")
         self._reposition_btn = QPushButton(tr("进入摆位", "Enter repositioning"), self)
         self._reposition_btn.clicked.connect(self.repositionRequested.emit)
@@ -654,10 +689,39 @@ class ReviewScreen(QWidget):
         self._prior_grid.add_images(paths)
 
     def set_gaussian_artifacts(self, paths: dict[str, str]) -> None:
-        """A generation (or re-roll) landed: refresh stills, enable 换seed."""
+        """A generation (or re-roll) landed: refresh stills + 3D view."""
         self._gaussian_grid.clear()
         self._gaussian_grid.add_images(paths)
         self._gaussian_regen_btn.setEnabled(True)
+        if "world_ply" in paths:
+            self._gaussian_ply_paths[0] = str(paths["world_ply"])
+        if "ply" in paths:
+            self._gaussian_ply_paths[1] = str(paths["ply"])
+        self._show_picked_gaussian()
+
+    def _show_picked_gaussian(self) -> None:
+        index = int(self._gaussian_view_pick.currentIndex())
+        path = self._gaussian_ply_paths.get(index) or self._gaussian_ply_paths.get(
+            1 - index
+        )
+        if path is None:
+            return
+        try:
+            import numpy as np
+
+            from demo_v7.service.gaussian_utils import load_gaussian_ply
+
+            splats = load_gaussian_ply(path)
+            keep = splats.opacities > 0.3  # drop floaters (same as align)
+            points = splats.means[keep]
+            colors = (np.clip(splats.colors[keep], 0.0, 1.0) * 255.0).astype(
+                np.uint8
+            )
+            self._gaussian_view.setColoredCloud(points, colors)
+        except Exception as exc:
+            self._gaussian_view.setPlaceholderText(
+                tr("gaussian 预览加载失败", "gaussian preview failed") + f": {exc}"
+            )
 
     def set_gaussian_progress(self, detail: str, ok: bool) -> None:
         self._gaussian_status.setText(
@@ -682,6 +746,8 @@ class ReviewScreen(QWidget):
         self._masks_grid.clear()
         self._prior_grid.clear()
         self._gaussian_grid.clear()
+        self._gaussian_ply_paths.clear()
+        self._gaussian_view.clear()
         if self._gaussian_backend == "none":
             self._apply_gaussian_disabled_notice()
         else:
