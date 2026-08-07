@@ -1,0 +1,9 @@
+{"detail": "input=fake-live downstream=disabled", "ok": true, "source": "orchestrator", "stage": "run_start", "t": 1786128310.7558227}
+{"detail": "input=fake-live", "ok": true, "source": "camera", "stage": "capture_start", "t": 1786128311.3936338}
+{"detail": "frame-0 submitted; generating shape prior", "ok": true, "source": "camera", "stage": "shape_prior", "t": 1786128327.0194757}
+{"detail": "shape prior ready; formal timeline open", "ok": true, "source": "camera", "stage": "warmup_ready", "t": 1786128572.639496}
+{"chunk_index": 0, "detail": "chunk 0", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1786128574.9073372, "track_status": "normal"}
+{"chunk_index": 1, "detail": "chunk 1", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1786128575.7428746, "track_status": "degraded"}
+{"chunk_index": 2, "detail": "chunk 2", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1786128576.6084974, "track_status": "degraded"}
+{"chunk_index": 3, "detail": "chunk 3", "ok": true, "source": "orchestrator", "stage": "chunk_committed", "t": 1786128577.4440002, "track_status": "degraded"}
+{"chunk_count": 4, "detail": "shutdown", "ok": true, "source": "orchestrator", "stage": "run_finished", "t": 1786128580.4518669}

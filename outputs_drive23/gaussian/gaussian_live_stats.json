@@ -1,0 +1,12 @@
+{
+ "bones": 3886,
+ "rest_seeded": true,
+ "failed": false,
+ "frames_stepped": 12,
+ "bone_outliers": 0,
+ "bone_stale": 0,
+ "bones_moved_cm": 0.76,
+ "splats_moved_cm": 0.14,
+ "bone2splat_p50_cm": 0.48,
+ "bone2splat_p90_cm": 2.33
+}

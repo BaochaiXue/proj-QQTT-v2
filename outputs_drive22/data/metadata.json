@@ -1,0 +1,9 @@
+{
+  "case_name": "demo_v6_1",
+  "chunk_size": 5,
+  "latest_committed_frame": 20,
+  "online_dir": "/home/xinjie/single_proj_qqtt/outputs_drive22/online_data",
+  "query_schema_hash": "83ed8eed845758146f58f281fb6bfaeae4f92b10a61c5beac7f1bf5f368968b9",
+  "query_schema_version": "data_process_sam3d_realtime_query_schema_v1",
+  "runtime_contract": "data_process_sam3d_realtime_final_data_v1"
+}

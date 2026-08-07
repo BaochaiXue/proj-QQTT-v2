@@ -1,0 +1,369 @@
+{
+  "depth_backend": "native-realsense",
+  "depth_source_internal": "realsense",
+  "input_source": "fake-live",
+  "shape_prior_align_ms": 14163.90342201339,
+  "shape_prior_cache_enabled": false,
+  "shape_prior_cache_entry_dir": null,
+  "shape_prior_cache_hit": null,
+  "shape_prior_cache_materialize_ms": 0.0,
+  "shape_prior_cache_mesh_sha256": null,
+  "shape_prior_cache_object_id": null,
+  "shape_prior_cache_publish_ms": 0.0,
+  "shape_prior_cache_root": "/home/xinjie/qqtt_shape_prior_cache",
+  "shape_prior_cache_status": "disabled",
+  "shape_prior_candidates_npz": "/home/xinjie/single_proj_qqtt/outputs_drive21/shape_prior_case/shape_prior_frame0/shape/candidates.npz",
+  "shape_prior_canonical_mesh_sha256": "b67904a626602f7a6bb35200b3c38f77ebfc89992b6b71c09d8d8f37e80535b8",
+  "shape_prior_canonical_mesh_source": "generated",
+  "shape_prior_case_dir": "/home/xinjie/single_proj_qqtt/outputs_drive21/shape_prior_case/shape_prior_frame0",
+  "shape_prior_case_write_ms": 270.38536200416274,
+  "shape_prior_controller_name": "hand",
+  "shape_prior_enabled": true,
+  "shape_prior_error": null,
+  "shape_prior_gate_open_wall_time_s": 1786127968.566349,
+  "shape_prior_generate_ms": 31453.026143019088,
+  "shape_prior_interior_point_count": 112,
+  "shape_prior_object_name": "sloth stuffed animal",
+  "shape_prior_object_prompt": "sloth stuffed animal",
+  "shape_prior_object_prompt_at_generation": "sloth stuffed animal",
+  "shape_prior_point_count": 1136,
+  "shape_prior_prewarmed_stages": [
+    "upscale",
+    "generate",
+    "align",
+    "sample"
+  ],
+  "shape_prior_ready_wall_time_s": 1786127772.8704867,
+  "shape_prior_request_total_ms": 49623.01389299682,
+  "shape_prior_result_finalize_ms": 0.6344889989122748,
+  "shape_prior_sam31_device": "cuda",
+  "shape_prior_sam31_reuse_model": true,
+  "shape_prior_sample_ms": 3555.816923995735,
+  "shape_prior_segment_image_ms": 97.00063199852593,
+  "shape_prior_source_seq": 0,
+  "shape_prior_source_time_s": 1783307202.3486116,
+  "shape_prior_status": "ready",
+  "shape_prior_structure_points_role": "raw_candidates",
+  "shape_prior_surface_point_count": 1024,
+  "shape_prior_timing": {
+    "accounted_ms": 49621.62999200518,
+    "bottleneck": {
+      "duration_ms": 31453.026143019088,
+      "share_percent": 63.384146273988186,
+      "stage": "generate"
+    },
+    "clock": "time.perf_counter wall duration",
+    "critical_path": [
+      {
+        "duration_ms": 270.38536200416274,
+        "end_offset_ms": 270.3859330213163,
+        "stage": "case_write",
+        "start_offset_ms": 0.0005710171535611153
+      },
+      {
+        "details": {
+          "execution_mode": "prewarmed",
+          "orchestration": {
+            "critical_path_ms": 54.512498987605795,
+            "execution_mode": "prewarmed",
+            "go_wall_time_s": 1786127723.518344,
+            "profile_snapshot_from_parent_start_ms": 36.655426025390625,
+            "profile_snapshot_to_parent_return_ms": 17.85707296221517,
+            "ready_before_go": true,
+            "ready_lead_ms": 15954.496145248413,
+            "startup_tail_on_critical_path_ms": 0.0
+          },
+          "ready_wall_time_s": 1786127707.5638478,
+          "schema_version": 1,
+          "snapshot_wall_time_s": 1786127723.5549994,
+          "stage": "upscale",
+          "status": "completed",
+          "timing_ms": {
+            "go_wait_ms": 15953.36136399419,
+            "inference_ms": 0.0,
+            "input_crop_ms": 17.461423005443066,
+            "model_load_ms": 0.0,
+            "module_import_ms": 124.13810199359432,
+            "output_write_ms": 19.08498798729852,
+            "process_lifetime_ms": 16118.001096998341,
+            "total_ms": 160.6845129863359
+          },
+          "worker_pid": 1861995
+        },
+        "duration_ms": 54.551337991142645,
+        "end_offset_ms": 325.40226401761174,
+        "stage": "upscale",
+        "start_offset_ms": 270.8509260264691
+      },
+      {
+        "details": {
+          "inference": {
+            "cache_hit": true,
+            "configure_ms": 0.049875001423060894,
+            "import_ms": 0.006379996193572879,
+            "model_load_ms": 0.0,
+            "processor_init_ms": 0.0,
+            "prompt_ms_by_label": {
+              "sloth stuffed animal": 64.97071700869128
+            },
+            "prompt_total_ms": 64.97071700869128,
+            "resolve_paths_ms": 0.18588098464533687,
+            "set_image_ms": 26.253374002408236,
+            "total_ms": 91.58509600092657
+          },
+          "input_read_ms": 3.2969530147965997,
+          "mask_union_ms": 0.022894004359841347,
+          "output_write_ms": 2.055096992990002,
+          "total_ms": 96.98891401058063
+        },
+        "duration_ms": 97.00063199852593,
+        "end_offset_ms": 422.81010100850835,
+        "stage": "segment_image",
+        "start_offset_ms": 325.8094690099824
+      },
+      {
+        "details": {
+          "canonical_mesh": {
+            "cache_publish_ms": 0.0,
+            "cache_status": "disabled",
+            "mesh_sha256": "b67904a626602f7a6bb35200b3c38f77ebfc89992b6b71c09d8d8f37e80535b8",
+            "source": "generated"
+          },
+          "execution_mode": "prewarmed",
+          "orchestration": {
+            "critical_path_ms": 31236.693434999324,
+            "execution_mode": "prewarmed",
+            "go_wall_time_s": 1786127723.6703172,
+            "profile_snapshot_from_parent_start_ms": 29361.639976501465,
+            "profile_snapshot_to_parent_return_ms": 1875.0534584978595,
+            "ready_before_go": true,
+            "ready_lead_ms": 7295.048475265503,
+            "startup_tail_on_critical_path_ms": 0.0
+          },
+          "ready_wall_time_s": 1786127716.3752687,
+          "schema_version": 1,
+          "snapshot_wall_time_s": 1786127753.0319571,
+          "stage": "generate",
+          "status": "completed",
+          "timing_ms": {
+            "gaussian_export_ms": 0.0,
+            "go_wait_ms": 7293.914993992075,
+            "input_decode_ms": 3.1505519873462617,
+            "mesh_export_ms": 7615.118842979427,
+            "model_load_ms": 8931.756261998089,
+            "module_import_ms": 6.396679003955796,
+            "pipeline_run_ms": 21743.19343600655,
+            "pre_go_prepare_ms": 0.13446301454678178,
+            "process_lifetime_ms": 45601.56242499943,
+            "total_ms": 38299.750234989915,
+            "visualization_export_ms": 0.0
+          },
+          "worker_pid": 1861996
+        },
+        "duration_ms": 31453.026143019088,
+        "end_offset_ms": 31875.858438026626,
+        "stage": "generate",
+        "start_offset_ms": 422.83229500753805
+      },
+      {
+        "details": {
+          "execution_mode": "prewarmed",
+          "orchestration": {
+            "critical_path_ms": 14163.828047981951,
+            "execution_mode": "prewarmed",
+            "go_wall_time_s": 1786127755.1235516,
+            "profile_snapshot_from_parent_start_ms": 14154.292821884155,
+            "profile_snapshot_to_parent_return_ms": 9.535226097796112,
+            "ready_before_go": true,
+            "ready_lead_ms": 44175.55594444275,
+            "startup_tail_on_critical_path_ms": 0.0
+          },
+          "ready_wall_time_s": 1786127710.9479957,
+          "schema_version": 1,
+          "snapshot_wall_time_s": 1786127769.2778444,
+          "stage": "align",
+          "status": "completed",
+          "timing_ms": {
+            "arap_keypoint_ms": 36.07865498634055,
+            "arap_ray_ms": 963.8566420180723,
+            "go_wait_ms": 44174.03205498704,
+            "input_load_ms": 244.32264699134976,
+            "mesh_export_ms": 3115.9689699998125,
+            "model_prewarm_ms": 783.3713690051809,
+            "module_import_ms": 22.13016099995002,
+            "observation_prepare_ms": 63.26421600533649,
+            "pnp_scale_ms": 1.0117299971170723,
+            "post_go_ms": 14154.210982000222,
+            "prerender_ms": 0.0,
+            "process_lifetime_ms": 59135.7882549928,
+            "render_candidates_ms": 4437.307475018315,
+            "superglue_match_ms": 5287.213525007246,
+            "total_ms": 14954.52539002872
+          },
+          "worker_pid": 1861997
+        },
+        "duration_ms": 14163.90342201339,
+        "end_offset_ms": 46039.911877014674,
+        "stage": "align",
+        "start_offset_ms": 31876.008455001283
+      },
+      {
+        "details": {
+          "execution_mode": "prewarmed",
+          "orchestration": {
+            "critical_path_ms": 3555.7332869793754,
+            "execution_mode": "prewarmed",
+            "go_wall_time_s": 1786127769.2875426,
+            "profile_snapshot_from_parent_start_ms": 3548.100233078003,
+            "profile_snapshot_to_parent_return_ms": 7.633053901372477,
+            "ready_before_go": true,
+            "ready_lead_ms": 61414.13736343384,
+            "startup_tail_on_critical_path_ms": 0.0
+          },
+          "ready_wall_time_s": 1786127707.8734052,
+          "schema_version": 1,
+          "snapshot_wall_time_s": 1786127772.8356428,
+          "stage": "sample",
+          "status": "completed",
+          "timing_ms": {
+            "go_wait_ms": 61413.58282699366,
+            "mesh_load_ms": 236.80914999567904,
+            "module_import_ms": 431.7256170033943,
+            "output_write_ms": 0.5341270007193089,
+            "process_lifetime_ms": 65394.41891098977,
+            "surface_sample_ms": 3.8968400040175766,
+            "total_ms": 3979.165656986879,
+            "volume_sample_ms": 3306.199922983069
+          },
+          "worker_pid": 1861998
+        },
+        "duration_ms": 3555.816923995735,
+        "end_offset_ms": 49595.8091620123,
+        "stage": "sample",
+        "start_offset_ms": 46039.992238016566
+      },
+      {
+        "details": {
+          "stages": [
+            "align",
+            "sample"
+          ]
+        },
+        "duration_ms": 26.311681984225288,
+        "end_offset_ms": 49622.21304301056,
+        "stage": "worker_reap",
+        "start_offset_ms": 49595.901361026336
+      },
+      {
+        "details": {
+          "candidates_load_ms": 0.5390049773268402
+        },
+        "duration_ms": 0.6344889989122748,
+        "end_offset_ms": 49622.859961004,
+        "stage": "result_finalize",
+        "start_offset_ms": 49622.225472005084
+      }
+    ],
+    "pre_submit": {
+      "available": true,
+      "frame0_pipeline_timing_ms": {
+        "align_ms": 0.0,
+        "cuda_event_model_ms": 0.0,
+        "depth_convert_ms": 0.11605600593611598,
+        "ffs_align_ms": 0.0,
+        "ffs_ms": 0.0,
+        "frame_copy_ms": 0.0,
+        "mask_ms": 0.0,
+        "model_ms": 0.0,
+        "pcd_ms": 99.46308299549855,
+        "post_sync_wait_ms": 0.0,
+        "postprocess_ms": 0.0,
+        "pre_sync_wait_ms": 0.0,
+        "preprocess_ms": 0.0,
+        "prompt_ms": 0.0,
+        "wait_ms": 0.0,
+        "wall_model_ms": 0.0
+      },
+      "frame0_receive_to_mask_ready_ms": 0.03749597817659378,
+      "mask_ready_to_pcd_ready_ms": 99.42558701732196,
+      "pcd_ready_to_shape_prior_submit_ms": 8.77159897936508,
+      "perception_profile": {
+        "segmentation_warmup": {
+          "frame0_available": true,
+          "initial_mask_bundle_ms": 551.4365959970746,
+          "initial_sam31": {
+            "cache_hit": true,
+            "configure_ms": 0.05518400575965643,
+            "import_ms": 0.00845297472551465,
+            "model_load_ms": 0.0,
+            "processor_init_ms": 0.0,
+            "prompt_ms_by_label": {
+              "hand": 31.324840005254373,
+              "sloth stuffed animal": 134.75956697948277
+            },
+            "prompt_total_ms": 166.08440698473714,
+            "resolve_paths_ms": 0.24282699450850487,
+            "set_image_ms": 70.24378702044487,
+            "total_ms": 236.7665659985505
+          },
+          "sam31_release_cleanup_ms": 0.0,
+          "sam31_release_deferred": false,
+          "sam31_trim_cleanup_ms": 310.1665040012449
+        }
+      },
+      "runtime_start_to_frame0_receive_ms": 15715.98110202467,
+      "runtime_start_to_shape_prior_submit_ms": 15824.215783999534
+    },
+    "ranking": [
+      {
+        "duration_ms": 31453.026143019088,
+        "share_percent": 63.384146273988186,
+        "stage": "generate"
+      },
+      {
+        "duration_ms": 14163.90342201339,
+        "share_percent": 28.543101774351697,
+        "stage": "align"
+      },
+      {
+        "duration_ms": 3555.816923995735,
+        "share_percent": 7.165683168584127,
+        "stage": "sample"
+      },
+      {
+        "duration_ms": 270.38536200416274,
+        "share_percent": 0.5448806502016297,
+        "stage": "case_write"
+      },
+      {
+        "duration_ms": 97.00063199852593,
+        "share_percent": 0.19547569824623903,
+        "stage": "segment_image"
+      },
+      {
+        "duration_ms": 54.551337991142645,
+        "share_percent": 0.10993187017840503,
+        "stage": "upscale"
+      },
+      {
+        "duration_ms": 26.311681984225288,
+        "share_percent": 0.053023308219039084,
+        "stage": "worker_reap"
+      },
+      {
+        "duration_ms": 0.6344889989122748,
+        "share_percent": 0.0012786223917986316,
+        "stage": "result_finalize"
+      }
+    ],
+    "schema_version": 1,
+    "total_ms": 49622.859961004,
+    "unattributed_ms": 1.2299689988140017
+  },
+  "shape_prior_upscale_ms": 54.551337991142645,
+  "shape_prior_warmup_cuda_visible_devices": "0",
+  "shape_prior_worker_reap_ms": 26.311681984225288,
+  "warmup_runtime_start_to_shape_prior_ready_ms": 65447.22430899856,
+  "warmup_shape_prior_ready_to_gate_open_ms": 195695.86899402202,
+  "warmup_total_ms": 261143.09330302058
+}

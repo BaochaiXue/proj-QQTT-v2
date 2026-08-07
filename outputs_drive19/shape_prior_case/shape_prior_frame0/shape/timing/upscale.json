@@ -1,0 +1,19 @@
+{
+  "execution_mode": "prewarmed",
+  "ready_wall_time_s": 1786124784.3514402,
+  "schema_version": 1,
+  "snapshot_wall_time_s": 1786124800.165156,
+  "stage": "upscale",
+  "status": "completed",
+  "timing_ms": {
+    "go_wait_ms": 15765.689042018494,
+    "inference_ms": 0.0,
+    "input_crop_ms": 18.843663012376055,
+    "model_load_ms": 0.0,
+    "module_import_ms": 119.1316909971647,
+    "output_write_ms": 19.610310991993174,
+    "process_lifetime_ms": 15938.407429988729,
+    "total_ms": 157.58566500153393
+  },
+  "worker_pid": 1521099
+}

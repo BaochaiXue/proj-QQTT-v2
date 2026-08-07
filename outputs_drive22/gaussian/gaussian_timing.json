@@ -1,0 +1,24 @@
+[
+ {
+  "seed": 42,
+  "num_splats": 43869,
+  "model_load_s": 8.26,
+  "image_wait_s": 0.6,
+  "sampling_s": 11.36,
+  "turntable_s": 0.08,
+  "park_for_chain_s": 25.27,
+  "align_and_overlay_s": 3.4,
+  "request_to_artifacts_s": 48.24
+ },
+ {
+  "seed": 123,
+  "num_splats": 86796,
+  "model_load_s": 8.26,
+  "image_wait_s": 0.6,
+  "sampling_s": 13.51,
+  "turntable_s": 0.05,
+  "park_for_chain_s": 0.0,
+  "align_and_overlay_s": 2.7,
+  "request_to_artifacts_s": 16.63
+ }
+]

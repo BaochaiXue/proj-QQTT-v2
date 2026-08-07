@@ -1,0 +1,26 @@
+{
+  "execution_mode": "prewarmed",
+  "ready_wall_time_s": 1786124787.7749577,
+  "schema_version": 1,
+  "snapshot_wall_time_s": 1786124844.410731,
+  "stage": "align",
+  "status": "completed",
+  "timing_ms": {
+    "arap_keypoint_ms": 34.15125000174157,
+    "arap_ray_ms": 924.9647389806341,
+    "go_wait_ms": 43795.46577000292,
+    "input_load_ms": 237.66864099889062,
+    "mesh_export_ms": 3120.910127006937,
+    "model_prewarm_ms": 807.8201920143329,
+    "module_import_ms": 22.387128992704675,
+    "observation_prepare_ms": 52.24630198790692,
+    "pnp_scale_ms": 0.7977559871505946,
+    "post_go_ms": 12839.052193012321,
+    "prerender_ms": 0.0,
+    "process_lifetime_ms": 57466.43007997773,
+    "render_candidates_ms": 3740.187571995193,
+    "superglue_match_ms": 4723.495886981254,
+    "total_ms": 13664.629594946746
+  },
+  "worker_pid": 1521101
+}

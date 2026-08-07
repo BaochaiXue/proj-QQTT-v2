@@ -1,0 +1,22 @@
+{
+  "execution_mode": "prewarmed",
+  "ready_wall_time_s": 1786128320.2389433,
+  "schema_version": 1,
+  "snapshot_wall_time_s": 1786128357.3410587,
+  "stage": "generate",
+  "status": "completed",
+  "timing_ms": {
+    "gaussian_export_ms": 0.0,
+    "go_wait_ms": 7199.502122006379,
+    "input_decode_ms": 3.10608500149101,
+    "mesh_export_ms": 10797.750897996593,
+    "model_load_ms": 8825.86971699493,
+    "module_import_ms": 6.418863020371646,
+    "pipeline_run_ms": 19100.280637998367,
+    "pre_go_prepare_ms": 0.13594600022770464,
+    "process_lifetime_ms": 45941.18552299915,
+    "total_ms": 38733.56214701198,
+    "visualization_export_ms": 0.0
+  },
+  "worker_pid": 1941614
+}

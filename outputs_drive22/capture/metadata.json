@@ -1,0 +1,69 @@
+{
+  "camera_to_world_c2w": [
+    [
+      -0.9997033476829529,
+      -0.02435145154595375,
+      -0.0004284174065105617,
+      0.13191387057304382
+    ],
+    [
+      0.023819034919142723,
+      -0.9812141060829163,
+      0.19144593179225922,
+      -0.023172225803136826
+    ],
+    [
+      -0.005082355812191963,
+      0.19137895107269287,
+      0.9815030694007874,
+      -0.7152422070503235
+    ],
+    [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "depth_backend": "native-realsense",
+  "depth_source": "realsense",
+  "depth_source_internal": "realsense",
+  "headless_prepared_only": true,
+  "height": 480,
+  "input_source": "fake-live",
+  "intrinsics": {
+    "cx": 433.2964782714844,
+    "cy": 241.31455993652344,
+    "fx": 426.45562744140625,
+    "fy": 426.02301025390625
+  },
+  "k_color": [
+    [
+      426.45562744140625,
+      0.0,
+      433.2964782714844
+    ],
+    [
+      0.0,
+      426.02301025390625,
+      241.31455993652344
+    ],
+    [
+      0.0,
+      0.0,
+      1.0
+    ]
+  ],
+  "lossless_input_fps": 5.0,
+  "pcd_coordinate_frame": "table_world_z0",
+  "recording_frame_count": 5658,
+  "replay_fps": 5.0,
+  "saved_pcd_source": "origin_processed_mask_dense_world",
+  "serial": "239222300740",
+  "shape_prior_case_dir": "/home/xinjie/single_proj_qqtt/outputs_drive22/shape_prior_case/shape_prior_frame0",
+  "shape_prior_error": null,
+  "shape_prior_path": "shape_prior/points.npz",
+  "shape_prior_status": "ready",
+  "width": 848,
+  "write_input_rgb_timeline": false
+}
