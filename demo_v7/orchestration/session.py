@@ -77,7 +77,7 @@ from demo_v6_2.pipeline_status import (
 from demo_v6_2.streaming.session import ChunkStreamSession
 from demo_v7.ipc import protocol
 from demo_v7.ipc.channel import ControlClient, FrameStreamClient
-from demo_v7.service import backend_options
+from demo_v7.service import backend_options, gaussian_options
 
 V7_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "default.yaml"
 CAMERA_SERVICE_SCRIPT = Path("demo_v7") / "service" / "camera_service.py"
@@ -207,6 +207,7 @@ class OrchestratorSession:
         downstream_mode: str | None = None,
         shape_prior_backend: str | None = None,
         shape_prior_upscale: bool | str | None = None,
+        gaussian_backend: str | None = None,
         extra_v62_argv: Sequence[str] = (),
         v7_config_path: str | Path = V7_CONFIG_PATH,
         on_event: Callable[[dict], None] | None = None,
@@ -240,6 +241,17 @@ class OrchestratorSession:
             if shape_prior_upscale is not None
             else session_cfg.get("shape_prior_upscale")
         )
+        # Gaussian generator (GUI selector; triposplat/none). Depends on the
+        # shape-prior chain for its input image + world alignment, so backend
+        # "none" forces it off; availability degrading (missing checkout)
+        # happens service-side — display-only must never block a start.
+        self.gaussian_backend = gaussian_options.normalize_gaussian_backend(
+            gaussian_backend
+            if gaussian_backend is not None
+            else session_cfg.get("gaussian_backend")
+        )
+        if self.shape_prior_backend == backend_options.BACKEND_NONE:
+            self.gaussian_backend = gaussian_options.GAUSSIAN_NONE
         if (
             self.shape_prior_backend == backend_options.BACKEND_NONE
             and downstream_mode == "phystwin_shen"
@@ -368,6 +380,7 @@ class OrchestratorSession:
         command.extend(
             ["--shape-prior-upscale", "on" if self.shape_prior_upscale else "off"]
         )
+        command.extend(["--gaussian-backend", self.gaussian_backend])
         self._camera_service_command = command
         try:
             self._service = subprocess.Popen(

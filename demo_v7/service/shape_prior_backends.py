@@ -35,6 +35,7 @@ from demo_v7.service.backend_options import (
 
 TRELLIS2_RUNNER = Path(__file__).resolve().parent / "trellis2_generate.py"
 SAMPLE_ASAP_SAFE_RUNNER = Path(__file__).resolve().parent / "sample_asap_safe.py"
+ALIGN_FAST_SAFE_RUNNER = Path(__file__).resolve().parent / "align_fast_safe.py"
 UPSCALE_PASSTHROUGH_RUNNER = (
     Path(__file__).resolve().parent / "upscale_passthrough.py"
 )
@@ -105,6 +106,17 @@ class Trellis2ShapePriorClient(shape_prior_warmup.ShapePriorLocalClient):
             sample[0],
             str(SAMPLE_ASAP_SAFE_RUNNER),
             *sample[3:],
+        ]
+        # Align runs via the binned-rasterizer wrapper (same CLI, same
+        # interpreter, same GO protocol): 192 candidate views drop from
+        # ~14s naive rasterization to ~4s with decision-level-identical
+        # outputs (final_mesh.glb bitwise equal; see align_fast_safe.py).
+        align = list(commands[shape_prior_warmup.PREWARM_STAGE_ALIGN])
+        assert align[1:3] == ["-m", "demo_v6_2.shape_prior.align"], align
+        commands[shape_prior_warmup.PREWARM_STAGE_ALIGN] = [
+            align[0],
+            str(ALIGN_FAST_SAFE_RUNNER),
+            *align[3:],
         ]
         return commands
 

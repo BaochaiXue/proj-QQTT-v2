@@ -45,6 +45,25 @@ def _emit(payload: dict) -> None:
     sys.stdout.flush()
 
 
+def _warm_splats():
+    """A handful of dummy splats for the post-load gsplat JIT warmup."""
+    import numpy as np
+
+    from demo_v7.service.gaussian_utils import GaussianSplats
+
+    count = 16
+    rng = np.random.default_rng(0)
+    quats = rng.normal(size=(count, 4)).astype(np.float32)
+    quats /= np.linalg.norm(quats, axis=1, keepdims=True)
+    return GaussianSplats(
+        means=rng.normal(size=(count, 3)).astype(np.float32),
+        quats=quats,
+        scales=np.full((count, 3), 0.05, dtype=np.float32),
+        opacities=np.full((count,), 0.8, dtype=np.float32),
+        colors=np.full((count, 3), 0.5, dtype=np.float32),
+    )
+
+
 def _log(message: str) -> None:
     print(f"[triposplat-worker] {message}", file=sys.stderr, flush=True)
 
@@ -130,6 +149,35 @@ def main(argv: list[str] | None = None) -> int:
         _emit({"event": "error", "message": f"pipeline load failed: {exc}"})
         return 1
     _emit({"event": "ready", "load_s": round(time.perf_counter() - load_start, 2)})
+
+    # Warm the gsplat CUDA extension NOW (tiny dummy render): a stale JIT
+    # cache costs ~140s to rebuild, and paying it here — in parallel with
+    # the shape-prior chain — keeps the first turntable render off the
+    # critical path (measured: cold rebuild after an env change pushed the
+    # first done event ~60s past REVIEW).
+    try:
+        import numpy as np
+
+        warm_start = time.perf_counter()
+        render_gaussians(
+            _warm_splats(),
+            viewmat=np.eye(4),
+            intrinsics=np.array([[100.0, 0, 16], [0, 100.0, 16], [0, 0, 1.0]]),
+            width=32,
+            height=32,
+        )
+        print(
+            f"[triposplat-worker] gsplat warmed in "
+            f"{time.perf_counter() - warm_start:.1f}s",
+            file=sys.stderr,
+            flush=True,
+        )
+    except Exception as exc:
+        print(
+            f"[triposplat-worker] gsplat warmup failed: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     for line in sys.stdin:
         line = line.strip()

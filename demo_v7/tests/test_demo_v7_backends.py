@@ -116,21 +116,27 @@ class TestTrellis2StageCommands:
             Trellis2ShapePriorClient(**kwargs),
         )
 
-    def test_only_generate_and_sample_swapped(self, tmp_path) -> None:
+    def test_only_generate_sample_align_swapped(self, tmp_path) -> None:
         base, trellis = self._make_clients(tmp_path)
         base_cmds = base._stage_commands()
         trellis_cmds = trellis._stage_commands()
         assert set(base_cmds) == set(trellis_cmds)
-        for stage in ("upscale", "align"):
-            assert trellis_cmds[stage] == base_cmds[stage]
+        assert trellis_cmds["upscale"] == base_cmds["upscale"]
         assert trellis_cmds["generate"] != base_cmds["generate"]
-        # sample keeps the identical CLI tail; only the entry becomes the
-        # zero-extent-cleanup wrapper (same interpreter, same GO protocol).
-        from demo_v7.service.shape_prior_backends import SAMPLE_ASAP_SAFE_RUNNER
+        # sample/align keep the identical CLI tail; only the entry becomes
+        # the v7 wrapper (same interpreter, same GO protocol): sample =
+        # zero-extent cleanup, align = binned candidate rasterization.
+        from demo_v7.service.shape_prior_backends import (
+            ALIGN_FAST_SAFE_RUNNER,
+            SAMPLE_ASAP_SAFE_RUNNER,
+        )
 
         assert trellis_cmds["sample"][0] == base_cmds["sample"][0]
         assert trellis_cmds["sample"][1] == str(SAMPLE_ASAP_SAFE_RUNNER)
         assert trellis_cmds["sample"][2:] == base_cmds["sample"][3:]
+        assert trellis_cmds["align"][0] == base_cmds["align"][0]
+        assert trellis_cmds["align"][1] == str(ALIGN_FAST_SAFE_RUNNER)
+        assert trellis_cmds["align"][2:] == base_cmds["align"][3:]
 
     def test_generate_argv_contract(self, tmp_path) -> None:
         from demo_v7.service.shape_prior_backends import TRELLIS2_RUNNER

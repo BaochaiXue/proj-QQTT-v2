@@ -42,6 +42,7 @@ _ACTIVE_TIMING_FIELDS = (
     "module_import_ms",
     "pre_go_prepare_ms",
     "model_load_ms",
+    "bulk_cuda_ms",
     "input_decode_ms",
     "pipeline_run_ms",
     "mesh_export_ms",
@@ -146,9 +147,107 @@ def _stub_gated_rembg():
     rembg_mod.BiRefNet = _NoRembg
 
 
+from contextlib import contextmanager
+
+
+@contextmanager
+def _init_skipped():
+    """No-op torch's RANDOM weight initializers for the enclosed scope.
+
+    Measured (2026-08-06): 57.3s of the from_pretrained wall time is the CPU
+    random init of five 1.3B DiTs — values that load_state_dict immediately
+    overwrites. Only the random fillers are patched; deterministic ones
+    (zeros_/ones_/constant_) stay live for buffers. Bit-safety is enforced
+    separately by the checkpoint-coverage assertion in
+    ``_patch_component_loader`` — a parameter the checkpoint does not cover
+    would keep its (now skipped) init, so that case raises instead.
+    """
+    import torch
+
+    names = (
+        "uniform_",
+        "normal_",
+        "trunc_normal_",
+        "kaiming_uniform_",
+        "kaiming_normal_",
+        "xavier_uniform_",
+        "xavier_normal_",
+        "orthogonal_",
+    )
+    saved = {name: getattr(torch.nn.init, name) for name in names}
+
+    def _noop(tensor, *args, **kwargs):
+        return tensor
+
+    try:
+        for name in names:
+            setattr(torch.nn.init, name, _noop)
+        yield
+    finally:
+        for name, fn in saved.items():
+            setattr(torch.nn.init, name, fn)
+
+
+def _patch_component_loader():
+    """Wrap trellis2.models.from_pretrained: skip init + assert coverage.
+
+    Scope: the pipeline base class loads ONLY the trellis2 component models
+    (DiTs/VAEs) through this function; DINOv3 and rembg are constructed
+    afterwards by the image-to-3d subclass, so transformers' own missing-key
+    init paths are never patched. Coverage assertion: every state_dict entry
+    of the constructed model must exist in the loaded checkpoint (captured
+    via safetensors load_file), except ``rope_phases`` — a buffer computed
+    in __init__ (sparse_structure_flow.py) untouched by nn.init. Anything
+    else missing means the skipped init would actually matter: raise loudly
+    rather than silently degrade.
+    """
+    if os.environ.get("DEMO_V7_T2_FAST", "1") == "0":
+        return
+    import trellis2.models as t2_models
+
+    original = t2_models.from_pretrained
+    if getattr(original, "_v7_skip_init", False):
+        return
+
+    def _from_pretrained_skip_init(path, **kwargs):
+        import safetensors.torch as st
+
+        captured = {}
+        real_load_file = st.load_file
+
+        def _capturing_load_file(file, *args, **load_kwargs):
+            state = real_load_file(file, *args, **load_kwargs)
+            captured["keys"] = set(state.keys())
+            return state
+
+        st.load_file = _capturing_load_file
+        try:
+            with _init_skipped():
+                model = original(path, **kwargs)
+        finally:
+            st.load_file = real_load_file
+        checkpoint_keys = captured.get("keys", set())
+        missing = [
+            key
+            for key in model.state_dict()
+            if key not in checkpoint_keys and "rope_phases" not in key
+        ]
+        if missing:
+            raise RuntimeError(
+                f"skip-init loaded {path} but the checkpoint does not cover "
+                f"{len(missing)} tensors (e.g. {missing[:5]}); their random "
+                "init was skipped — refusing to run with undefined weights"
+            )
+        return model
+
+    _from_pretrained_skip_init._v7_skip_init = True
+    t2_models.from_pretrained = _from_pretrained_skip_init
+
+
 def _load_pipeline(model_id):
     """from_pretrained to CPU RAM only (VRAM stays untouched until run)."""
     _stub_gated_rembg()
+    _patch_component_loader()
     from trellis2.pipelines import Trellis2ImageTo3DPipeline
 
     pipeline = Trellis2ImageTo3DPipeline.from_pretrained(model_id)
@@ -156,6 +255,43 @@ def _load_pipeline(model_id):
     # pipeline step; .cuda() only records the target device.
     pipeline.cuda()
     return pipeline
+
+
+# Bulk residency needs the full weight set (~9G fp16) plus the run's
+# activation peak with headroom for cublasLt workspaces; below this free-VRAM
+# line the staged low_vram path is the safe choice (measured: a crowded GPU
+# fails inside cublasLt heuristics, not with a clean OOM).
+_BULK_CUDA_MIN_FREE_BYTES = 14 * 1024**3
+
+
+def _bulk_cuda(pipeline, timing_ms):
+    """Move the whole pipeline to the GPU once (drop low_vram staging).
+
+    low_vram=True (checkpoint default) round-trips each model over PCIe per
+    pipeline step, serialized with compute. One bulk transfer after GO is
+    strictly the same math on the same device — only the staging disappears,
+    so the output is unchanged either way. Adaptive: on a crowded GPU
+    (foreign processes; the shape-prior GPU is contested on this box) the
+    staged path is kept — robustness over the ~5s win. Must not run pre-GO:
+    the WAITING contract keeps VRAM free for the upscale stage's peak.
+    """
+    if os.environ.get("DEMO_V7_T2_FAST", "1") == "0":
+        return
+    import torch
+
+    bulk_start_s = time.perf_counter()
+    free_bytes, _total = torch.cuda.mem_get_info()
+    if free_bytes < _BULK_CUDA_MIN_FREE_BYTES:
+        print(
+            f"[trellis2-generate] {free_bytes / 1024**3:.1f}G free VRAM < "
+            f"{_BULK_CUDA_MIN_FREE_BYTES / 1024**3:.0f}G: keeping low_vram "
+            "staging (same output, slower)",
+            flush=True,
+        )
+        return
+    pipeline.low_vram = False
+    pipeline.cuda()
+    timing_ms["bulk_cuda_ms"] = _elapsed_ms(bulk_start_s)
 
 
 def _arap_safe_face_mask(vertices, faces):
@@ -202,6 +338,61 @@ def _validated_rgba(img_path):
     return image
 
 
+def _pin_flex_gemm_autotune():
+    """Pin the texture-bake grid_sample kernel to the known 4090-best config.
+
+    flex_gemm autotunes with the exact masked-texel count in the key, which
+    is unique per object — the persistent cache never hits and EVERY run
+    re-benchmarks 12 tile configs (~1.55s inside mesh_export). The kernel's
+    output is tile-size independent (verified bit-identical across configs);
+    with a single config Triton skips benchmarking entirely. Fail-soft: if
+    flex_gemm internals moved, keep stock autotune.
+    """
+    if os.environ.get("DEMO_V7_T2_FAST", "1") == "0":
+        return
+    try:
+        import triton
+        from flex_gemm.kernels.triton.grid_sample import (
+            indice_weighed_sum_fwd as fwd_mod,
+        )
+
+        fwd_mod.indice_weighed_sum_fwd_kernel.configs = [
+            triton.Config({"BM": 16, "BK": 8}, num_warps=2)
+        ]
+    except Exception as exc:
+        print(
+            f"[trellis2-generate] flex_gemm autotune pin skipped: {exc}",
+            flush=True,
+        )
+
+
+@contextmanager
+def _fast_png_encode():
+    """PNG compress_level 1 for the glb export (trimesh hardcodes level 6).
+
+    zlib level only trades bytes for time on a LOSSLESS stream — decoded
+    pixels are bit-identical; the glb grows ~1MB and the export saves ~1.8s.
+    Scoped: PIL's default is restored right after the export.
+    """
+    if os.environ.get("DEMO_V7_T2_FAST", "1") == "0":
+        yield
+        return
+    from PIL import Image
+
+    real_save = Image.Image.save
+
+    def _save_fast_png(self, fp, format=None, **params):
+        if str(format or "").lower() == "png" and "compress_level" not in params:
+            params["compress_level"] = 1
+        return real_save(self, fp, format=format, **params)
+
+    Image.Image.save = _save_fast_png
+    try:
+        yield
+    finally:
+        Image.Image.save = real_save
+
+
 def run_trellis2_shape_prior(args, pipeline=None, *, timing_ms=None):
     """Generate + bake + export object.glb; returns the active timings."""
     timings = {} if timing_ms is None else timing_ms
@@ -213,6 +404,7 @@ def run_trellis2_shape_prior(args, pipeline=None, *, timing_ms=None):
         model_load_start_s = time.perf_counter()
         pipeline = _load_pipeline(args.model)
         timings["model_load_ms"] = _elapsed_ms(model_load_start_s)
+        _bulk_cuda(pipeline, timings)
 
     input_decode_start_s = time.perf_counter()
     output_dir = Path(args.output_dir)
@@ -227,6 +419,7 @@ def run_trellis2_shape_prior(args, pipeline=None, *, timing_ms=None):
     mesh_export_start_s = time.perf_counter()
     import o_voxel
 
+    _pin_flex_gemm_autotune()
     mesh.simplify(16777216)
     glb = o_voxel.postprocess.to_glb(
         vertices=mesh.vertices,
@@ -266,7 +459,8 @@ def run_trellis2_shape_prior(args, pipeline=None, *, timing_ms=None):
         glb.remove_unreferenced_vertices()
     # PNG textures: pytorch3d's experimental GLB reader (align) and Open3D
     # (the GUI mesh view) cannot decode EXT_texture_webp.
-    glb.export(str(output_dir / "object.glb"), extension_webp=False)
+    with _fast_png_encode():
+        glb.export(str(output_dir / "object.glb"), extension_webp=False)
     timings["mesh_export_ms"] = _elapsed_ms(mesh_export_start_s)
     return timings
 
@@ -333,6 +527,7 @@ def main(argv=None):
         if not run.wait_for_go():
             return
 
+        _bulk_cuda(pipeline, timing_ms)
         run_trellis2_shape_prior(args, pipeline=pipeline, timing_ms=timing_ms)
     else:
         run_trellis2_shape_prior(args, timing_ms=timing_ms)

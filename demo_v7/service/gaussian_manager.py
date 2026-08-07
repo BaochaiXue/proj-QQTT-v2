@@ -1,16 +1,24 @@
 """Gaussian-splats feature manager: worker lifecycle + generate/align flow.
 
-Owned by the staged runtime. Lifecycle:
+Owned by the staged runtime. Lifecycle (contention-optimized: the worker
+rides the CAMERA GPU while the mesh backend owns the shape-prior GPU, so
+model load + sampling overlap the shape-prior chain instead of serializing
+after it):
 
-- ``start()`` after the shape-prior chain is READY (the align chain's
-  best_match.pkl must exist for the world transform): spawns the persistent
-  ``triposplat_worker`` subprocess on the shape-prior GPU and queues the
-  first generation.
+- ``start()`` at shape-prior SUBMIT: spawns the persistent
+  ``triposplat_worker`` subprocess (``cuda_visible_devices=None`` inherits
+  the service env = the camera GPU) and starts a waiter thread that queues
+  the first generation as soon as the segment stage writes
+  ``shape/masked_image.png`` (the SAME image the mesh generator conditions
+  on; size-stable check guards against reading a half-written png).
+- worker "done" gates on ``notify_case_ready()`` (chain READY): alignment
+  needs best_match.pkl / final_mesh.glb, so an early generation parks until
+  the chain lands, then aligns immediately.
 - ``regenerate(seed)`` from CMD_REGEN_GAUSSIAN (REVIEW 拣选/换seed): one
   in-flight generation at a time; a re-roll replaces the artifacts.
 - ``shutdown()`` before FORMAL launches: the worker exits and frees the
-  shape-prior GPU for the PhysTwin children; the aligned world ply stays on
-  disk for the live renderer.
+  camera GPU for the formal perception stack; the aligned world ply stays
+  on disk for the live renderer.
 
 After each worker "done": the canonical->world alignment runs in the
 manager thread (CPU: registration + mesh2world replay + ARAP residual),
@@ -43,7 +51,7 @@ class GaussianManager:
         case_dir: Path,
         out_dir: Path,
         controller_name: str,
-        cuda_visible_devices: str,
+        cuda_visible_devices: str | None = None,
         emit_progress: Callable[..., None],
         emit_artifacts: Callable[[str, dict[str, str]], None],
         emit_error: Callable[[str, str], None],
@@ -54,7 +62,11 @@ class GaussianManager:
         self.case_dir = Path(case_dir)
         self.out_dir = Path(out_dir)
         self.controller_name = str(controller_name)
-        self.cuda_visible_devices = str(cuda_visible_devices)
+        # None inherits the service env = the camera GPU (the point: the
+        # mesh backend owns the shape-prior GPU during the same window).
+        self.cuda_visible_devices = (
+            str(cuda_visible_devices) if cuda_visible_devices else None
+        )
         self._emit_progress = emit_progress
         self._emit_artifacts = emit_artifacts
         self._emit_error = emit_error
@@ -63,20 +75,28 @@ class GaussianManager:
         self.steps = int(steps)
         self._proc: subprocess.Popen[str] | None = None
         self._reader: threading.Thread | None = None
+        self._first_gen: threading.Thread | None = None
         self._lock = threading.Lock()
         self._busy = False
         self._closed = False
+        self._case_ready = threading.Event()
         self.world_ply_path = self.out_dir / "gaussian_world.ply"
 
     # -- lifecycle -----------------------------------------------------------
 
     def start(self) -> None:
-        """Spawn the worker and queue the first generation (non-blocking)."""
+        """Spawn the worker and queue the first generation (non-blocking).
+
+        The first generate waits for the segment stage's masked_image.png
+        (waiter thread) — safe to call at chain SUBMIT, before any stage
+        output exists; the ~8s model load overlaps the chain either way.
+        """
         try:
             gaussian_options.ensure_triposplat_available()
             self.out_dir.mkdir(parents=True, exist_ok=True)
             env = os.environ.copy()
-            env["CUDA_VISIBLE_DEVICES"] = self.cuda_visible_devices
+            if self.cuda_visible_devices is not None:
+                env["CUDA_VISIBLE_DEVICES"] = self.cuda_visible_devices
             worker = Path(__file__).resolve().parent / "triposplat_worker.py"
             self._proc = subprocess.Popen(
                 [
@@ -98,7 +118,40 @@ class GaussianManager:
             target=self._reader_loop, name="gaussian-worker-reader", daemon=True
         )
         self._reader.start()
-        self.regenerate(self.seed)
+        self._first_gen = threading.Thread(
+            target=self._queue_first_generate,
+            name="gaussian-first-generate",
+            daemon=True,
+        )
+        self._first_gen.start()
+
+    def notify_case_ready(self) -> None:
+        """Shape-prior chain READY: alignment inputs are on disk (settled)."""
+        self._case_ready.set()
+
+    def _is_closed(self) -> bool:
+        with self._lock:
+            return self._closed
+
+    def _queue_first_generate(self) -> None:
+        """Wait for the segment output image, then queue generation #1.
+
+        Size-stable double-read guards against a half-written png (the v6.2
+        segment stage writes the file directly, no atomic rename).
+        """
+        image = self.case_dir / "shape" / "masked_image.png"
+        last_size = -1
+        while not self._is_closed():
+            if image.is_file():
+                try:
+                    size = image.stat().st_size
+                except OSError:
+                    size = -1
+                if size > 0 and size == last_size:
+                    self.regenerate(self.seed)
+                    return
+                last_size = size
+            time.sleep(0.3)
 
     def shutdown(self) -> None:
         """Ask the worker to exit (idempotent; bounded wait then kill)."""
@@ -204,6 +257,15 @@ class GaussianManager:
             self._emit_progress("gaussian", str(event.get("message")), ok=False)
         elif kind == "done":
             try:
+                if not self._case_ready.is_set():
+                    # Generation beat the shape-prior chain (the normal case
+                    # now): park until align's outputs exist, then proceed.
+                    self._emit_progress(
+                        "gaussian", "生成完成;等待 shape prior 对齐数据…"
+                    )
+                    while not self._case_ready.wait(timeout=0.5):
+                        if self._is_closed():
+                            return
                 artifacts = self._align_and_collect(event)
                 self._emit_artifacts("gaussian", artifacts)
                 self._emit_progress(

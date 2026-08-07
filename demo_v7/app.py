@@ -56,6 +56,7 @@ from PySide6.QtWidgets import (
 from demo_v7.gui import i18n
 from demo_v7.gui.i18n import tr
 from demo_v7.gui.main_window import MainWindow, shutdown_session_on_thread
+from demo_v7.gui.widgets import InfoDot
 from demo_v7.service.backend_options import (  # import-light (stdlib only)
     BACKEND_NONE,
     BACKEND_SAM3D,
@@ -64,6 +65,13 @@ from demo_v7.service.backend_options import (  # import-light (stdlib only)
     SHAPE_PRIOR_BACKENDS,
     normalize_backend,
     normalize_upscale,
+)
+from demo_v7.service.gaussian_options import (  # import-light (stdlib only)
+    DEFAULT_GAUSSIAN_BACKEND,
+    GAUSSIAN_BACKENDS,
+    GAUSSIAN_NONE,
+    GAUSSIAN_TRIPOSPLAT,
+    normalize_gaussian_backend,
 )
 
 SOURCE_REAL = "real"
@@ -75,6 +83,13 @@ _BACKEND_LABELS: tuple[tuple[str, tuple[str, str]], ...] = (
     (BACKEND_SAM3D, ("SAM3D(默认)", "SAM3D (default)")),
     (BACKEND_TRELLIS2, ("TRELLIS.2", "TRELLIS.2")),
     (BACKEND_NONE, ("无(不生成 shape prior)", "None (no shape prior)")),
+)
+# Combo order + GUI label (zh, en) pairs for the gaussian generator; one
+# real model today (TripoSplat), but the slot is a first-class run option so
+# future generators drop in without GUI surgery.
+_GAUSSIAN_LABELS: tuple[tuple[str, tuple[str, str]], ...] = (
+    (GAUSSIAN_TRIPOSPLAT, ("TripoSplat(默认)", "TripoSplat (default)")),
+    (GAUSSIAN_NONE, ("无(不生成 gaussian)", "None (no gaussians)")),
 )
 # Language combo entries: id -> native display name (never translated).
 _LANGUAGE_LABELS: tuple[tuple[str, str], ...] = (
@@ -150,6 +165,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--gaussian-backend",
+        choices=GAUSSIAN_BACKENDS,
+        default=None,
+        help=(
+            "Gaussian-splats generator; omit to pick interactively "
+            "(config default preselected)."
+        ),
+    )
+    parser.add_argument(
         "--language",
         choices=i18n.LANGUAGES,
         default=None,
@@ -219,6 +243,23 @@ def config_default_shape_prior_upscale() -> bool:
     return True
 
 
+def config_default_gaussian_backend() -> str:
+    """Dialog default for the gaussian generator (config, then triposplat)."""
+    import yaml
+
+    try:
+        loaded = yaml.safe_load(
+            (Path(__file__).parent / "config" / "default.yaml").read_text()
+        )
+        if isinstance(loaded, dict) and isinstance(loaded.get("session"), dict):
+            return normalize_gaussian_backend(
+                loaded["session"].get("gaussian_backend")
+            )
+    except Exception:
+        pass
+    return DEFAULT_GAUSSIAN_BACKEND
+
+
 def config_default_language() -> str:
     """Dialog default for the GUI language (config, then zh)."""
     import yaml
@@ -249,6 +290,7 @@ class SourceSelectDialog(QDialog):
         default_source: str = SOURCE_FAKE_LIVE,
         default_backend: str = DEFAULT_SHAPE_PRIOR_BACKEND,
         default_upscale: bool = True,
+        default_gaussian: str = DEFAULT_GAUSSIAN_BACKEND,
         default_language: str | None = None,
         parent: Any = None,
     ) -> None:
@@ -269,6 +311,70 @@ class SourceSelectDialog(QDialog):
         language_row = QHBoxLayout()
         language_row.addWidget(self._language_label)
         language_row.addWidget(self._language_combo, 1)
+        # Hover ⓘ per option (what it is / what it is used for); tooltips
+        # follow the live language switch via _retranslate.
+        self._source_info = InfoDot(
+            "真实相机:连接 RealSense 实时采集。fake-live 回放:用 data_collect "
+            "里录好的素材从头重放整条流水线 —— 相机从不暂停,只是数据源是录像,"
+            "适合无相机调试与复现实验。",
+            "Real camera: live RealSense capture. fake-live replay: re-runs "
+            "the whole pipeline from a pre-recorded data_collect case — the "
+            "camera never pauses, only the source is a recording; useful for "
+            "camera-free debugging and reproducible runs.",
+            self,
+        )
+        self._case_info = InfoDot(
+            "fake-live 模式读取的素材目录(data_collect/<case>):一次录制的"
+            "彩色/深度帧与标定数据。",
+            "The recording folder fake-live replays (data_collect/<case>): "
+            "one capture session's color/depth frames plus calibration.",
+            self,
+        )
+        self._backend_info = InfoDot(
+            "决定 warmup 阶段如何生成物体的 shape prior(先验网格):<br>"
+            "• SAM3D — v6.2 默认生成器;<br>"
+            "• TRELLIS.2 — microsoft/TRELLIS.2-4B,几何/纹理更精细;<br>"
+            "• 无 — 跳过生成:没有 mesh 和补点,ASAP/PhysTwin 下游关闭,"
+            "仅用观测点云跟踪。<br>启动后不可更改(回到开始可重选)。",
+            "How the warmup builds the object's shape prior (mesh):<br>"
+            "• SAM3D — the v6.2 default generator;<br>"
+            "• TRELLIS.2 — microsoft/TRELLIS.2-4B, finer geometry/texture;<br>"
+            "• None — skip generation: no mesh, no point filling, ASAP/"
+            "PhysTwin downstream disabled, tracking uses observed points "
+            "only.<br>Fixed once started (Back-to-start to change).",
+            self,
+        )
+        self._upscale_info = InfoDot(
+            "开启:生成前先把 frame-0 的物体裁剪用 Stable Diffusion ×4 超分,"
+            "给生成器更清晰的条件图(v6.2 原链路)。关闭:直接用原分辨率裁剪 "
+            "—— warmup 少一步超分推理,更快;生成器的输入图更小。",
+            "On: before generation the frame-0 object crop is upscaled ×4 "
+            "with Stable Diffusion for a sharper conditioning image (the "
+            "v6.2 chain). Off: the original-resolution crop is used directly "
+            "— one less inference step, faster warmup, smaller conditioning "
+            "input.",
+            self,
+        )
+        self._gaussian_info = InfoDot(
+            "是否生成物体的 3D gaussians(高斯泼溅):TripoSplat 从 frame-0 "
+            "生成并对齐到场景,正式期可在「高斯」频道实时渲染;选「无」跳过。"
+            "与 mesh 链并行运行;shape prior 为「无」时强制关闭(它依赖链路的"
+            "掩码图与世界对齐)。",
+            "Whether to build 3D gaussians (splats) of the object: TripoSplat "
+            "generates them from frame-0 and aligns them to the scene; the "
+            "formal phase can render them live in the Gaussian channel. "
+            "Runs in parallel with the mesh chain; forced off when the shape "
+            "prior is None (it needs the chain's masked image and world "
+            "alignment).",
+            self,
+        )
+        self._info_dots = (
+            self._source_info,
+            self._case_info,
+            self._backend_info,
+            self._upscale_info,
+            self._gaussian_info,
+        )
         self._real_radio = QRadioButton(self)
         self._fake_radio = QRadioButton(self)
         if default_source == SOURCE_FAKE_LIVE:
@@ -283,6 +389,7 @@ class SourceSelectDialog(QDialog):
         self._case_label = QLabel(self)
         case_row = QHBoxLayout()
         case_row.addWidget(self._case_label)
+        case_row.addWidget(self._case_info)
         case_row.addWidget(self._case_edit, 1)
         case_row.addWidget(self._browse_btn)
         # Shape-prior 生成后端 (sam3d / trellis2 / none): decided here because
@@ -297,12 +404,28 @@ class SourceSelectDialog(QDialog):
         self._backend_label = QLabel(self)
         backend_row = QHBoxLayout()
         backend_row.addWidget(self._backend_label)
+        backend_row.addWidget(self._backend_info)
         backend_row.addWidget(self._backend_combo, 1)
         # 上采样 (SD x4) toggle: off swaps the stage for the crop-only
         # passthrough — faster warmup, generation conditions on the
         # original-resolution crop. Backend "none" ignores it (no chain).
         self._upscale_check = QCheckBox(self)
         self._upscale_check.setChecked(bool(default_upscale))
+        # Gaussian 生成模型 (triposplat / none): one real model today, but a
+        # first-class run option like the shape-prior backend. Runs on the
+        # camera GPU in parallel with the mesh chain; shape prior "none"
+        # forces it off (needs the chain's masked image + world alignment).
+        self._gaussian_combo = QComboBox(self)
+        for gaussian_id, _pair in _GAUSSIAN_LABELS:
+            self._gaussian_combo.addItem("", gaussian_id)
+        gaussian_index = self._gaussian_combo.findData(default_gaussian)
+        if gaussian_index >= 0:
+            self._gaussian_combo.setCurrentIndex(gaussian_index)
+        self._gaussian_label = QLabel(self)
+        gaussian_row = QHBoxLayout()
+        gaussian_row.addWidget(self._gaussian_label)
+        gaussian_row.addWidget(self._gaussian_info)
+        gaussian_row.addWidget(self._gaussian_combo, 1)
         buttons = QDialogButtonBox(self)
         self._start_btn = buttons.addButton(
             "", QDialogButtonBox.ButtonRole.AcceptRole
@@ -316,12 +439,21 @@ class SourceSelectDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addLayout(language_row)
         self._source_label = QLabel(self)
-        layout.addWidget(self._source_label)
+        source_row = QHBoxLayout()
+        source_row.addWidget(self._source_label)
+        source_row.addWidget(self._source_info)
+        source_row.addStretch(1)
+        layout.addLayout(source_row)
         layout.addWidget(self._real_radio)
         layout.addWidget(self._fake_radio)
         layout.addLayout(case_row)
         layout.addLayout(backend_row)
-        layout.addWidget(self._upscale_check)
+        upscale_row = QHBoxLayout()
+        upscale_row.addWidget(self._upscale_check)
+        upscale_row.addWidget(self._upscale_info)
+        upscale_row.addStretch(1)
+        layout.addLayout(upscale_row)
+        layout.addLayout(gaussian_row)
         layout.addWidget(buttons)
         self._error = QLabel("", self)
         self._error.setStyleSheet("color: #f28b82;")
@@ -361,8 +493,15 @@ class SourceSelectDialog(QDialog):
                 "Upscale (SD ×4; disable for a faster warmup)",
             )
         )
+        self._gaussian_label.setText(
+            tr("Gaussian 生成:", "Gaussian generator:")
+        )
+        for i, (_gaussian_id, pair) in enumerate(_GAUSSIAN_LABELS):
+            self._gaussian_combo.setItemText(i, tr(*pair))
         self._start_btn.setText(tr("开始", "Start"))
         self._quit_btn.setText(tr("退出", "Quit"))
+        for dot in self._info_dots:
+            dot.retranslate()
 
     def _browse_case(self) -> None:
         chosen = QFileDialog.getExistingDirectory(
@@ -384,10 +523,11 @@ class SourceSelectDialog(QDialog):
             return
         self.accept()
 
-    def selection(self) -> tuple[str, Path | None, str, bool, str]:
-        """Return (source, case, backend, upscale, language) after accepted."""
+    def selection(self) -> tuple[str, Path | None, str, bool, str, str]:
+        """(source, case, backend, upscale, gaussian, language) after accepted."""
         backend = str(self._backend_combo.currentData())
         upscale = bool(self._upscale_check.isChecked())
+        gaussian = str(self._gaussian_combo.currentData())
         lang = str(self._language_combo.currentData())
         if self._fake_radio.isChecked():
             return (
@@ -395,9 +535,10 @@ class SourceSelectDialog(QDialog):
                 Path(self._case_edit.text().strip()),
                 backend,
                 upscale,
+                gaussian,
                 lang,
             )
-        return SOURCE_REAL, None, backend, upscale, lang
+        return SOURCE_REAL, None, backend, upscale, gaussian, lang
 
 
 def create_session(
@@ -406,6 +547,7 @@ def create_session(
     base_path: Path | None,
     shape_prior_backend: str | None = None,
     shape_prior_upscale: bool | str | None = None,
+    gaussian_backend: str | None = None,
 ) -> Any:
     """Build an OrchestratorSession (lazy import; see module docstring).
 
@@ -426,6 +568,8 @@ def create_session(
         kwargs["shape_prior_backend"] = shape_prior_backend
     if shape_prior_upscale is not None:
         kwargs["shape_prior_upscale"] = shape_prior_upscale
+    if gaussian_backend is not None:
+        kwargs["gaussian_backend"] = gaussian_backend
     return OrchestratorSession(**kwargs)
 
 
@@ -451,6 +595,7 @@ class AppController(QObject):
                 self._args.fake_live_case,
                 self._args.shape_prior_backend,
                 self._args.shape_prior_upscale,
+                self._args.gaussian_backend,
             )
         return self._ask_and_launch()
 
@@ -468,12 +613,15 @@ class AppController(QObject):
                 if self._args.shape_prior_upscale is not None
                 else config_default_shape_prior_upscale()
             ),
+            default_gaussian=(
+                self._args.gaussian_backend or config_default_gaussian_backend()
+            ),
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return False
-        source, case, backend, upscale, _language = dialog.selection()
+        source, case, backend, upscale, gaussian, _language = dialog.selection()
         # Language already applied globally by the dialog's live switch.
-        return self._launch(source, case, backend, upscale)
+        return self._launch(source, case, backend, upscale, gaussian)
 
     def _launch(
         self,
@@ -481,6 +629,7 @@ class AppController(QObject):
         fake_live_case: Path | None,
         shape_prior_backend: str | None = None,
         shape_prior_upscale: bool | str | None = None,
+        gaussian_backend: str | None = None,
     ) -> bool:
         try:
             self._session = create_session(
@@ -489,6 +638,7 @@ class AppController(QObject):
                 self._args.base_path,
                 shape_prior_backend,
                 shape_prior_upscale,
+                gaussian_backend,
             )
             # start() spawns the camera service and connects both sockets; it
             # blocks up to connect_timeout_s and self-cleans on failure.

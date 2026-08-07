@@ -145,3 +145,57 @@ class TestRegistrationHelpers:
             assert np.isclose(np.linalg.det(rotation), 1.0)
         unique = {tuple(np.round(r.flatten()).astype(int)) for r in rotations}
         assert len(unique) == 24
+
+
+class TestGaussianBackendSelector:
+    """GUI selector vocabulary + session-level forcing rules."""
+
+    def test_normalize_defaults_and_ids(self) -> None:
+        from demo_v7.service import gaussian_options as go
+
+        assert go.normalize_gaussian_backend(None) == go.GAUSSIAN_TRIPOSPLAT
+        assert go.normalize_gaussian_backend("") == go.GAUSSIAN_TRIPOSPLAT
+        assert go.normalize_gaussian_backend(" TripoSplat ") == "triposplat"
+        assert go.normalize_gaussian_backend("none") == go.GAUSSIAN_NONE
+        with pytest.raises(ValueError, match="unknown gaussian backend"):
+            go.normalize_gaussian_backend("splatco")
+
+    def _session(self, tmp_path, **kwargs):
+        from demo_v7.orchestration.session import OrchestratorSession
+
+        return OrchestratorSession(
+            source="fake-live",
+            fake_live_case="data_collect/fake",
+            base_path=tmp_path / "run",
+            **kwargs,
+        )
+
+    def test_session_default_is_triposplat(self, tmp_path) -> None:
+        session = self._session(tmp_path)
+        assert session.gaussian_backend == "triposplat"
+
+    def test_shape_prior_none_forces_gaussian_none(self, tmp_path) -> None:
+        session = self._session(
+            tmp_path, shape_prior_backend="none", gaussian_backend="triposplat"
+        )
+        assert session.gaussian_backend == "none"
+
+    def test_explicit_gaussian_none_sticks(self, tmp_path) -> None:
+        session = self._session(tmp_path, gaussian_backend="none")
+        assert session.gaussian_backend == "none"
+
+    def test_camera_service_parser_consumes_flag(self) -> None:
+        from demo_v7.service.camera_service import _build_v7_parser
+
+        v7_args, rest = _build_v7_parser().parse_known_args(
+            [
+                "--socket-dir",
+                "/tmp/x",
+                "--gaussian-backend",
+                "none",
+                "--input-source",
+                "fake-live",
+            ]
+        )
+        assert v7_args.gaussian_backend == "none"
+        assert "--gaussian-backend" not in rest

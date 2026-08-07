@@ -91,6 +91,15 @@ def _build_v7_parser() -> argparse.ArgumentParser:
             "(crop-only passthrough; faster warmup)."
         ),
     )
+    parser.add_argument(
+        "--gaussian-backend",
+        type=str,
+        default=None,
+        help=(
+            "Gaussian-splats generator: triposplat (default) or none "
+            "(display-only feature off)."
+        ),
+    )
     return parser
 
 
@@ -270,6 +279,39 @@ def main(argv: list[str] | None = None) -> int:
         shape_prior_backend = backend_options.BACKEND_NONE
     runtime_kwargs["shape_prior_backend"] = shape_prior_backend
     runtime_kwargs["shape_prior_use_upscale"] = shape_prior_use_upscale
+    # Gaussian generator (GUI selector). Unknown ids fail fast; a missing
+    # TripoSplat install degrades to "none" with a truthful echo — the
+    # feature is display-only and must never block a run.
+    from demo_v7.service import gaussian_options  # noqa: PLC0415
+
+    try:
+        gaussian_backend = gaussian_options.normalize_gaussian_backend(
+            v7_args.gaussian_backend
+        )
+    except ValueError as exc:
+        print(f"camera_service: error: gaussian options: {exc}", file=sys.stderr)
+        return 2
+    if (
+        gaussian_backend != gaussian_options.GAUSSIAN_NONE
+        and shape_prior_backend == backend_options.BACKEND_NONE
+    ):
+        print(
+            "[camera-service] shape-prior backend 'none': gaussian -> 'none' "
+            "(no masked image / no world alignment without the chain)",
+            flush=True,
+        )
+        gaussian_backend = gaussian_options.GAUSSIAN_NONE
+    if gaussian_backend == gaussian_options.GAUSSIAN_TRIPOSPLAT:
+        try:
+            gaussian_options.ensure_triposplat_available()
+        except FileNotFoundError as exc:
+            print(
+                f"[camera-service] TripoSplat unavailable -> gaussian 'none': "
+                f"{exc}",
+                flush=True,
+            )
+            gaussian_backend = gaussian_options.GAUSSIAN_NONE
+    runtime_kwargs["gaussian_backend"] = gaussian_backend
     from demo_v7.service.staged_runtime import StagedRuntime  # noqa: PLC0415
 
     try:

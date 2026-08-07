@@ -42,7 +42,12 @@ from demo_v7.ipc.protocol import (
 )
 from demo_v7.gui.mesh_view import MeshOrbitView
 from demo_v7.gui.i18n import tr
-from demo_v7.gui.widgets import CaptionedImage, ImageView, ProgressTimeline
+from demo_v7.gui.widgets import (
+    CaptionedImage,
+    ImageView,
+    InfoDot,
+    ProgressTimeline,
+)
 
 _ARTIFACT_GRID_COLUMNS = 3
 
@@ -61,6 +66,9 @@ WARMUP_STAGE_PLAN: list[tuple[str, tuple[str, str]]] = [
     ("sp:align", ("  ├ 对齐(align)", "  ├ Align")),
     ("sp:sample", ("  └ 补点采样(sample)", "  └ Point sampling")),
     ("shape_prior_ready", ("shape-prior 就绪", "Shape prior ready")),
+    # Rides in parallel with the chain (camera GPU); completes last —
+    # alignment parks until the chain is READY.
+    ("gaussian", ("Gaussian 生成(TripoSplat)", "Gaussian generation (TripoSplat)")),
 ]
 # Backend id -> generate-row label (dialog vocabulary; sam3d is the default).
 _GENERATE_ROW_LABELS = {
@@ -68,6 +76,9 @@ _GENERATE_ROW_LABELS = {
     "trellis2": ("  ├ 生成(TRELLIS.2)", "  ├ Generate (TRELLIS.2)"),
     "none": ("  ├ 生成(无,已跳过)", "  ├ Generate (none, skipped)"),
 }
+# The honest upscale-row label when the run disabled the SD ×4 stage (the
+# passthrough still crops + emits the same milestone, so the row stays).
+_UPSCALE_OFF_LABEL = ("  ├ 裁剪(无超分)", "  ├ Crop only (no upscale)")
 # The shape_prior milestone order used to chain sub-row spinners.
 _SP_SUB_ORDER = ("sp:upscale", "sp:generate", "sp:align", "sp:sample")
 
@@ -256,6 +267,8 @@ class WarmupScreen(QWidget):
             " font-weight: bold; padding: 12px; border-radius: 6px;"
         )
         self._backend: str | None = None
+        self._upscale: bool | None = None
+        self._gaussian_backend: str | None = None
         self._timeline = ProgressTimeline(self)
         self._timeline.setStages(
             [(key, tr(*pair)) for key, pair in WARMUP_STAGE_PLAN]
@@ -267,8 +280,22 @@ class WarmupScreen(QWidget):
         buttons.addStretch(1)
         buttons.addWidget(self._results_btn)
         buttons.addStretch(1)
+        banner_info = InfoDot(
+            "warmup 在做什么:对确认的 frame-0 依次跑 SAM3.1 分割 → 生成 "
+            "shape prior mesh → 对齐到观测点云 → 体积补点采样。每行是一个"
+            "阶段的实时进度;完成后到结果页检查。",
+            "What warmup does: on the confirmed frame-0 it runs SAM3.1 "
+            "segmentation → shape-prior mesh generation → alignment to the "
+            "observed points → volumetric point sampling. Each row is one "
+            "stage's live progress; inspect the outputs on the results "
+            "screen when done.",
+            self,
+        )
+        banner_row = QHBoxLayout()
+        banner_row.addWidget(banner, 1)
+        banner_row.addWidget(banner_info)
         layout = QVBoxLayout(self)
-        layout.addWidget(banner)
+        layout.addLayout(banner_row)
         layout.addWidget(self._timeline)
         layout.addStretch(1)
         layout.addLayout(buttons)
@@ -279,6 +306,32 @@ class WarmupScreen(QWidget):
         pair = _GENERATE_ROW_LABELS.get(self._backend)
         if pair is not None:
             self._timeline.setRowLabel("sp:generate", tr(*pair))
+
+    def set_shape_prior_upscale(self, enabled: bool) -> None:
+        """Honest upscale row label (hello-ack echo): off = crop only."""
+        self._upscale = bool(enabled)
+        if not self._upscale:
+            self._timeline.setRowLabel("sp:upscale", tr(*_UPSCALE_OFF_LABEL))
+
+    def set_gaussian_backend(self, backend: str) -> None:
+        """Settle the gaussian row when the run disabled the feature."""
+        self._gaussian_backend = str(backend)
+        if self._gaussian_backend == "none":
+            self._timeline.report(
+                "gaussian", tr("已关闭(源选择)", "off (source-select)"), ok=True
+            )
+
+    def on_gaussian_progress(self, detail: str, ok: bool) -> None:
+        """Drive the gaussian row (NOT via on_progress: the feature is
+        fail-soft, so its ✗ must never stopAll() the live chain rows)."""
+        if not ok:
+            self._timeline.report("gaussian", detail, ok=False)
+        elif detail.startswith("gaussian 就绪"):
+            self._timeline.report("gaussian", detail, ok=True)
+        else:
+            # 生成中/采样 n/N/等待对齐: keep the spinner, refresh the detail
+            # (begin() preserves the first call's start for the elapsed).
+            self._timeline.begin("gaussian", detail)
 
     def on_progress(
         self, stage: str, detail: str, ok: bool, elapsed_ms: float | None
@@ -331,6 +384,10 @@ class WarmupScreen(QWidget):
         )
         if self._backend is not None:
             self.set_shape_prior_backend(self._backend)
+        if self._upscale is not None:
+            self.set_shape_prior_upscale(self._upscale)
+        if self._gaussian_backend is not None:
+            self.set_gaussian_backend(self._gaussian_backend)
         self._timeline.begin("sam31_masks")
 
 
@@ -363,6 +420,18 @@ class ReviewScreen(QWidget):
         self._mesh_paths: dict[int, str] = {}
         mesh_bar = QHBoxLayout()
         mesh_bar.addWidget(QLabel(tr("网格:", "Mesh:")))
+        mesh_bar.addWidget(
+            InfoDot(
+                "对齐后 mesh:生成的网格经对齐阶段(位姿+尺度+非刚性变形)"
+                "贴合到 frame-0 观测,是下游补点/物理用的版本;原始生成 mesh:"
+                "生成器的标准姿态原始输出。",
+                "Aligned mesh: the generated mesh after the alignment stage "
+                "(pose + scale + non-rigid deformation) fitted to the "
+                "frame-0 observation — the version downstream sampling/"
+                "physics uses. Raw generated mesh: the generator's original "
+                "canonical-pose output.",
+            )
+        )
         mesh_bar.addWidget(self._mesh_pick)
         mesh_bar.addWidget(
             QLabel(tr("拖拽=旋转 滚轮=缩放 双击=复位", "drag=rotate wheel=zoom double-click=reset"))
@@ -389,6 +458,9 @@ class ReviewScreen(QWidget):
         # switches the 补点 view to observed-only. Survives reset(): the
         # backend is fixed for the service's lifetime (回到开始 relaunches).
         self._shape_prior_backend: str | None = None
+        # Gaussian generator for this run (hello-ack echo, same lifetime
+        # semantics); "none" turns the Gaussian tab into a static notice.
+        self._gaussian_backend: str | None = None
         self._sampling_checks: dict[str, QCheckBox] = {}
         sampling_bar = QHBoxLayout()
         for key, pair, color in _SAMPLING_SOURCES:
@@ -400,6 +472,18 @@ class ReviewScreen(QWidget):
             )
             self._sampling_checks[key] = check
             sampling_bar.addWidget(check)
+        sampling_bar.addWidget(
+            InfoDot(
+                "补点(point sampling):蓝=frame-0 观测到的物体表面点;绿=按 "
+                "mesh 表面采样的候选点;橙=mesh 体积内部的候选点。补点填充相机"
+                "看不到的部分,组成下游物理跟踪的完整点结构。",
+                "Point sampling: blue = object points observed at frame-0; "
+                "green = candidates sampled on the mesh surface; orange = "
+                "candidates inside the mesh volume. Sampling fills in what "
+                "the camera cannot see, forming the complete point structure "
+                "for downstream physics tracking.",
+            )
+        )
         sampling_bar.addWidget(
             QLabel(tr("拖拽=旋转 滚轮=缩放 双击=复位", "drag=rotate wheel=zoom double-click=reset"))
         )
@@ -421,6 +505,18 @@ class ReviewScreen(QWidget):
         self._gaussian_regen_btn.setEnabled(False)
         self._gaussian_regen_btn.clicked.connect(self.regenGaussianRequested.emit)
         gaussian_bar = QHBoxLayout()
+        gaussian_bar.addWidget(
+            InfoDot(
+                "3D gaussians(高斯泼溅):TripoSplat 从 frame-0 生成、对齐到"
+                "场景,正式期在「高斯」频道实时渲染。生成有随机性 —— 对结果"
+                "不满意可换 seed 重新生成,不影响 mesh 链。",
+                "3D gaussians (splats): generated by TripoSplat from "
+                "frame-0 and aligned into the scene; the formal phase "
+                "renders them live in the Gaussian channel. Generation is "
+                "stochastic — re-roll with a new seed if unhappy; the mesh "
+                "chain is unaffected.",
+            )
+        )
         gaussian_bar.addWidget(self._gaussian_status, 1)
         gaussian_bar.addWidget(self._gaussian_regen_btn)
         self._gaussian_grid = _ArtifactGrid()
@@ -456,6 +552,21 @@ class ReviewScreen(QWidget):
                 )
             )
             self._maybe_build_sampling_view()
+
+    def set_gaussian_backend(self, backend: str) -> None:
+        """Adapt the Gaussian tab to the run's generator (hello-ack echo)."""
+        self._gaussian_backend = str(backend)
+        if self._gaussian_backend == "none":
+            self._apply_gaussian_disabled_notice()
+
+    def _apply_gaussian_disabled_notice(self) -> None:
+        self._gaussian_status.setText(
+            tr(
+                "本次运行未生成 gaussian(已在源选择关闭)。",
+                "Gaussians are off for this run (source-select choice).",
+            )
+        )
+        self._gaussian_regen_btn.setEnabled(False)
 
     def set_mask_artifacts(self, paths: dict[str, str]) -> None:
         self._masks_grid.clear()
@@ -571,10 +682,13 @@ class ReviewScreen(QWidget):
         self._masks_grid.clear()
         self._prior_grid.clear()
         self._gaussian_grid.clear()
-        self._gaussian_status.setText(
-            tr("等待 gaussian 生成…", "Waiting for gaussian generation…")
-        )
-        self._gaussian_regen_btn.setEnabled(False)
+        if self._gaussian_backend == "none":
+            self._apply_gaussian_disabled_notice()
+        else:
+            self._gaussian_status.setText(
+                tr("等待 gaussian 生成…", "Waiting for gaussian generation…")
+            )
+            self._gaussian_regen_btn.setEnabled(False)
         self._mesh_paths.clear()
         self._mesh_view.clear()
         self._sampling_paths.clear()
@@ -650,6 +764,17 @@ class FormalScreen(QWidget):
             )
             self._channel_group.addButton(button)
             switcher.addWidget(button)
+        switcher.addWidget(
+            InfoDot(
+                "大画面显示的频道:复合=跟踪可视化叠加(物体/双手);高斯="
+                "gaussian 实时渲染;RGB=原始彩色;深度=深度伪彩。右侧停靠栏的 "
+                "RGB/深度小窗始终保留。",
+                "Which channel the big view shows: Composite = tracking "
+                "overlay (object/hands); Gaussian = live gaussian render; "
+                "RGB = raw color; Depth = colorized depth. The docked "
+                "RGB/depth thumbnails stay on regardless.",
+            )
+        )
         switcher.addStretch(1)
         self._channel_group.setExclusive(True)
         self._stats = QLabel(tr("等待统计…", "Waiting for stats…"), self)

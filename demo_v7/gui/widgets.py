@@ -55,6 +55,27 @@ def bgr_to_qimage(bgr: np.ndarray) -> QImage:
     return image.copy()
 
 
+class InfoDot(QLabel):
+    """Hover ⓘ explaining an option: what it is and what it is used for.
+
+    Stores the (zh, en) tooltip pair; ``retranslate()`` refreshes it after a
+    live language switch (the source dialog calls it), screens built after
+    the language is fixed just construct it. ``<qt>`` wrapping turns the
+    tooltip into rich text so long explanations word-wrap instead of
+    rendering as one endless line.
+    """
+
+    def __init__(self, zh: str, en: str, parent: QWidget | None = None) -> None:
+        super().__init__("ⓘ", parent)  # ⓘ
+        self._pair = (zh, en)
+        self.setStyleSheet("color: #9aa0a6; font-size: 14px; padding: 0 2px;")
+        self.setCursor(Qt.CursorShape.WhatsThisCursor)
+        self.retranslate()
+
+    def retranslate(self) -> None:
+        self.setToolTip(f"<qt>{tr(*self._pair)}</qt>")
+
+
 class ImageView(QWidget):
     """Aspect-preserving image surface fed by JPEG frames or static images.
 

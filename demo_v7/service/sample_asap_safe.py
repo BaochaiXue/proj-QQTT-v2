@@ -92,7 +92,11 @@ def clean_final_mesh(mesh_path: Path) -> None:
             "beyond zero-extent junk; refusing (inspect the align output)"
         )
     geom.update_faces(keep)
-    geom.remove_unreferenced_vertices()
+    # Deliberately KEEP now-unreferenced vertices: final_mesh.glb shares
+    # object.glb's vertex order (align's index-aligned export), and the
+    # gaussian ARAP-residual transfer depends on that contract. The orphaned
+    # rows are exact seam-duplicates, so ASAP's exact-weld folds them into
+    # referenced vertices (verified: 0 isolated post-weld, ARAP factorizes).
     tmp_path = mesh_path.with_name(mesh_path.name + ".cleaning.tmp.glb")
     try:
         geom.export(str(tmp_path))

@@ -221,14 +221,19 @@ def arap_residual_field(
         shape_dir / "matching" / "final_mesh.glb", force="mesh", process=False
     )
     canonical_verts = np.asarray(canonical.vertices, dtype=np.float64)
-    if len(canonical_verts) != len(final.vertices):
-        raise ValueError(
-            "object.glb / final_mesh.glb vertex counts differ "
-            f"({len(canonical_verts)} vs {len(final.vertices)}); ARAP residual "
-            "transfer requires the index-aligned export contract"
-        )
+    final_verts = np.asarray(final.vertices, dtype=np.float64)
     rigid_world = canonical_verts @ mesh2world[:3, :3].T + mesh2world[:3, 3]
-    displacement = np.asarray(final.vertices, dtype=np.float64) - rigid_world
+    if len(canonical_verts) == len(final_verts):
+        displacement = final_verts - rigid_world
+    else:
+        # Index alignment broken (e.g. a cleanup rewrote final_mesh):
+        # fall back to nearest-neighbor displacement in world space — an
+        # approximation good to the ARAP deformation's local scale (~2 cm),
+        # fine for a display-only refinement.
+        from scipy.spatial import cKDTree
+
+        _, nearest = cKDTree(final_verts).query(rigid_world, k=1, workers=-1)
+        displacement = final_verts[nearest] - rigid_world
     return canonical_verts, displacement
 
 

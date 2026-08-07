@@ -76,6 +76,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--gaussian-backend",
+        choices=("triposplat", "none"),
+        default=None,
+        help=(
+            "Gaussian generator under test (default: session default = "
+            "triposplat); none skips the gaussian gates."
+        ),
+    )
+    parser.add_argument(
         "--formal-after-wrap-s",
         type=float,
         default=None,
@@ -253,6 +262,7 @@ def drive(args: argparse.Namespace) -> None:
         downstream_mode="disabled",
         shape_prior_backend=args.shape_prior_backend,
         shape_prior_upscale=args.shape_prior_upscale,
+        gaussian_backend=args.gaussian_backend,
         on_event=observer.on_event,
         on_frame=observer.on_frame,
     )
@@ -298,8 +308,10 @@ def drive(args: argparse.Namespace) -> None:
         observer.log("review artifacts verified on disk "
                      f"({', '.join(sorted(observer.artifact_kinds()))})")
 
-        gaussian_on = not prior_disabled and (
-            __import__("os").environ.get("DEMO_V7_GAUSSIAN_SPLATS", "1") != "0"
+        gaussian_on = (
+            not prior_disabled
+            and args.gaussian_backend != "none"
+            and __import__("os").environ.get("DEMO_V7_GAUSSIAN_SPLATS", "1") != "0"
         )
         if gaussian_on:
             observer.log("stage 4b: waiting for gaussian generation + alignment")

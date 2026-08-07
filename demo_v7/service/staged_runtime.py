@@ -62,7 +62,12 @@ from demo_v6_2.utils.render import apply_wslg_open3d_env_defaults
 
 from demo_v7.ipc import protocol
 from demo_v7.ipc.channel import ControlServer, FrameStreamServer
-from demo_v7.service import backend_options, frame0_pipeline, shape_prior_backends
+from demo_v7.service import (
+    backend_options,
+    frame0_pipeline,
+    gaussian_options,
+    shape_prior_backends,
+)
 from demo_v7.service._acquisition import AcquisitionLoop
 from demo_v7.service._formal import (
     FormalPipeline,
@@ -123,6 +128,7 @@ class StagedRuntime:
         channel_max_hz: dict[str, float] | None = None,
         shape_prior_backend: str | None = None,
         shape_prior_use_upscale: bool | None = None,
+        gaussian_backend: str | None = None,
     ) -> None:
         """Build shared services and bind both protocol sockets.
 
@@ -142,6 +148,11 @@ class StagedRuntime:
         # upscale stage for the crop-only passthrough in _stage_commands.
         self.shape_prior_use_upscale = backend_options.normalize_upscale(
             shape_prior_use_upscale
+        )
+        # Gaussian generator (GUI selector; camera_service validates and
+        # forwards — "none" when unavailable or the shape prior is off).
+        self.gaussian_backend = gaussian_options.normalize_gaussian_backend(
+            gaussian_backend
         )
         self.mode = RunMode.from_args(args)
         self.session = session if session is not None else CameraSession()
@@ -184,8 +195,9 @@ class StagedRuntime:
         self._formal_seg_start = threading.Event()
         self._fatal_announced = False
         # Gaussian-splats feature (TripoSplat; display-only, fail-soft):
-        # manager spawns after shape-prior READY, dies before FORMAL; the
-        # live renderer is created lazily by the formal gaussian worker.
+        # manager spawns at shape-prior SUBMIT (camera GPU, parallel with
+        # the mesh chain), dies before FORMAL; the live renderer is created
+        # lazily by the formal gaussian worker.
         self._gaussian_manager: Any = None
         self._deferred: deque[Callable[[], None]] = deque()
         self._last_publish_s: dict[str, float] = {}
@@ -492,6 +504,7 @@ class StagedRuntime:
             source_kind=str(self.args.input_source),
             shape_prior_backend=self.shape_prior_backend,
             shape_prior_upscale=self.shape_prior_use_upscale,
+            gaussian_backend=self.gaussian_backend,
         )
         return ack, None
 
@@ -876,6 +889,13 @@ class StagedRuntime:
             self._emit_progress(
                 "shape_prior_submit", "frame-0 shape-prior request submitted"
             )
+            # Gaussian generation rides IN PARALLEL with the chain: the
+            # worker loads TripoSplat on the camera GPU while the mesh
+            # backend owns the shape-prior GPU, and the first generate fires
+            # as soon as the segment stage writes masked_image.png (the same
+            # image the mesh generator conditions on). Alignment parks until
+            # notify_case_ready() below. Display-only, fail-soft.
+            self._start_gaussian_manager()
             self._poll_shape_prior_until_terminal()
             self._emit_progress(
                 "shape_prior_ready",
@@ -888,10 +908,10 @@ class StagedRuntime:
             # GUI already got the shape_prior_ready EVT_PROGRESS above.
             self._warmup_done = True
             self._enter_state(protocol.STATE_REVIEW)
-            # Gaussian splats ride AFTER the chain (its align artifacts feed
-            # the world transform; the shape-prior GPU is free again).
-            # Display-only: failures disable the feature, never the run.
-            self._start_gaussian_manager()
+            # Chain READY: alignment inputs (best_match.pkl, final_mesh.glb)
+            # are settled on disk — release the parked gaussian alignment.
+            if self._gaussian_manager is not None:
+                self._gaussian_manager.notify_case_ready()
         except Exception as exc:
             # Irrecoverable: the one-shot ShapePriorWarmupManager cannot accept
             # a second frame-0 request in-process. The failed progress event
@@ -932,7 +952,16 @@ class StagedRuntime:
             print(f"[v7] frame0 object-points artifact skipped: {exc}", flush=True)
 
     def _start_gaussian_manager(self) -> None:
-        """Spawn the TripoSplat manager (fail-soft; env kill switch)."""
+        """Spawn the TripoSplat manager (fail-soft; GUI selector gates it).
+
+        GPU policy (contention): the worker inherits the service env — the
+        CAMERA GPU — so generation never competes with the mesh backend on
+        the shape-prior GPU (SAM3D peaks at ~18G there; sharing OOMed).
+        DEMO_V7_GAUSSIAN_CUDA_VISIBLE_DEVICES overrides the placement;
+        DEMO_V7_GAUSSIAN_SPLATS=0 stays as the emergency kill switch.
+        """
+        if self.gaussian_backend == gaussian_options.GAUSSIAN_NONE:
+            return
         if os.environ.get("DEMO_V7_GAUSSIAN_SPLATS", "1") == "0":
             return
         if self._gaussian_manager is not None:
@@ -947,8 +976,8 @@ class StagedRuntime:
                 case_dir=case_dir,
                 out_dir=self._review_dir() / "gaussian",
                 controller_name=str(self.args.shape_prior_controller_name),
-                cuda_visible_devices=str(
-                    self.args.shape_prior_warmup_cuda_visible_devices
+                cuda_visible_devices=os.environ.get(
+                    "DEMO_V7_GAUSSIAN_CUDA_VISIBLE_DEVICES"
                 ),
                 emit_progress=lambda stage, detail="", **kw: self._emit_progress(
                     stage, detail, **kw
@@ -962,7 +991,7 @@ class StagedRuntime:
             self._emit_error("gaussian", f"{type(exc).__name__}: {exc}")
 
     def _shutdown_gaussian_manager(self) -> None:
-        """Free the shape-prior GPU before FORMAL (idempotent)."""
+        """Free the camera GPU before FORMAL's perception stack (idempotent)."""
         manager = self._gaussian_manager
         if manager is None:
             return
@@ -1015,10 +1044,17 @@ class StagedRuntime:
                 continue
             last_render_s = now_s
             mask_packet = pair.pcd_result.processed_frame.mask_packet
+            intr = mask_packet.intrinsics  # CameraIntrinsics dataclass -> K
             frame = live.render_over(
                 mask_packet.color_bgr,
                 viewmat=viewmat,
-                intrinsics=mask_packet.intrinsics,
+                intrinsics=np.array(
+                    [
+                        [float(intr.fx), 0.0, float(intr.cx)],
+                        [0.0, float(intr.fy), float(intr.cy)],
+                        [0.0, 0.0, 1.0],
+                    ]
+                ),
             )
             if frame is not None:
                 self._publish_frame(protocol.CH_GAUSSIAN, frame)
@@ -1409,6 +1445,9 @@ class StagedRuntime:
     def _teardown(self) -> None:
         """Stop workers, release the camera, close both sockets."""
         self.stop_event.set()
+        # The gaussian worker is a child process (model in VRAM): a fatal
+        # mid-warmup exit must not orphan it. Idempotent after _launch_formal.
+        self._shutdown_gaussian_manager()
         formal = self._formal
         if formal is not None:
             try:

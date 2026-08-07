@@ -301,9 +301,11 @@ class MainWindow(QMainWindow):
             detail = str(event.get("detail", ""))
             ok = bool(event.get("ok", True))
             if stage == "gaussian":
-                # TripoSplat generation runs while the operator sits on the
-                # REVIEW screen; its status lives in the Gaussian tab.
+                # Generation rides the warmup window (camera GPU, parallel
+                # with the chain): mirror it on the warmup timeline row AND
+                # the Review Gaussian tab status (re-rolls happen there).
                 self._review.set_gaussian_progress(detail, ok)
+                self._warmup.on_gaussian_progress(detail, ok)
             else:
                 self._warmup.on_progress(stage, detail, ok, event.get("elapsed_ms"))
         elif name == protocol.EVT_ARTIFACTS:
@@ -368,6 +370,15 @@ class MainWindow(QMainWindow):
                 # warmup screen renames its generate row.
                 self._review.set_shape_prior_backend(backend)
                 self._warmup.set_shape_prior_backend(backend)
+            if no_upscale and backend != "none":
+                # Honest timeline: the row is the crop passthrough, not SD ×4.
+                self._warmup.set_shape_prior_upscale(False)
+            gaussian_backend = event.get("gaussian_backend")
+            if isinstance(gaussian_backend, str) and gaussian_backend:
+                # "none" turns the Gaussian tab into a static notice instead
+                # of waiting forever (service-resolved truthful echo).
+                self._review.set_gaussian_backend(gaussian_backend)
+                self._warmup.set_gaussian_backend(gaussian_backend)
 
     def _on_artifacts(self, event: dict) -> None:
         kind = event.get("kind")
