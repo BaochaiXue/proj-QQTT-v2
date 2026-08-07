@@ -146,3 +146,42 @@ class TestRoundTrip:
         assert not target.exists()  # next run can reuse the path
         # And the path is immediately reusable:
         FakeLiveCaseRecorder(target).close()
+
+
+class TestCaseTableCalibrateSnapshot:
+    """fake-live replays with the case's record-time c2w when present."""
+
+    def test_none_without_snapshot_pair(self, tmp_path) -> None:
+        from demo_v7.orchestration.session import case_table_calibrate_snapshot
+
+        assert case_table_calibrate_snapshot(None) is None
+        assert case_table_calibrate_snapshot(tmp_path) is None
+        # Legacy per-case calibrate.pkl (different pipeline) must not count.
+        (tmp_path / "calibrate.pkl").write_bytes(b"x")
+        assert case_table_calibrate_snapshot(tmp_path) is None
+        # pkl without its sidecar is not a usable snapshot either.
+        (tmp_path / "table_calibrate.pkl").write_bytes(b"x")
+        assert case_table_calibrate_snapshot(tmp_path) is None
+
+    def test_snapshot_pair_detected(self, tmp_path) -> None:
+        from demo_v7.orchestration.session import case_table_calibrate_snapshot
+
+        (tmp_path / "table_calibrate.pkl").write_bytes(b"x")
+        (tmp_path / "table_calibrate_metadata.json").write_text("{}")
+        found = case_table_calibrate_snapshot(tmp_path)
+        assert found == tmp_path / "table_calibrate.pkl"
+
+    def test_recorder_output_carries_usable_snapshot(self, tmp_path) -> None:
+        # The recorder snapshots the repo-root table calibration at close;
+        # the session must then pick exactly that file up for replay.
+        from demo_v7.orchestration.session import case_table_calibrate_snapshot
+
+        rng = np.random.default_rng(7)
+        recorder = FakeLiveCaseRecorder(tmp_path / "case")
+        recorder.submit(make_packet(0, rng))
+        wait_written(recorder, 1)
+        recorder.close()
+        found = case_table_calibrate_snapshot(tmp_path / "case")
+        # Repo root has the calibration on this box; both halves agree.
+        assert found is not None
+        assert found.is_file()

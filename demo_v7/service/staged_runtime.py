@@ -1061,45 +1061,52 @@ class StagedRuntime:
         last_render_s = 0.0
         stats_interval_s = 5.0
         last_stats_s = time.perf_counter()
-        while not self.stop_event.is_set():
-            if formal.lossless.processing_done.is_set() or live.failed:
-                return
-            pair = slot.get_latest_after(rendered_seq)
-            if pair is None:
-                time.sleep(0.02)
-                continue
-            rendered_seq = int(pair.seq)
-            tracker = pair.tracker_packet
-            if str(tracker.coordinate_frame) != str(TABLE_WORLD_FRAME_KIND):
-                return  # uncalibrated run: world-frame gaussians undefined
-            live.step(
-                tracker.marker_xyz_m,
-                tracker.query_indices,
-                tracker.query_is_object,
-            )
-            now_s = time.perf_counter()
-            if now_s - last_render_s < min_interval_s:
-                continue
-            last_render_s = now_s
-            mask_packet = pair.pcd_result.processed_frame.mask_packet
-            intr = mask_packet.intrinsics  # CameraIntrinsics dataclass -> K
-            frame = live.render_over(
-                mask_packet.color_bgr,
-                viewmat=viewmat,
-                intrinsics=np.array(
-                    [
-                        [float(intr.fx), 0.0, float(intr.cx)],
-                        [0.0, float(intr.fy), float(intr.cy)],
-                        [0.0, 0.0, 1.0],
-                    ]
-                ),
-                background_whiten=background_whiten,
-            )
-            if frame is not None:
-                self._publish_frame(protocol.CH_GAUSSIAN, frame)
-            if now_s - last_stats_s >= stats_interval_s:
-                last_stats_s = now_s
-                self._write_gaussian_live_stats(live)
+        try:
+            while not self.stop_event.is_set():
+                if formal.lossless.processing_done.is_set() or live.failed:
+                    return
+                pair = slot.get_latest_after(rendered_seq)
+                if pair is None:
+                    time.sleep(0.02)
+                    continue
+                rendered_seq = int(pair.seq)
+                tracker = pair.tracker_packet
+                if str(tracker.coordinate_frame) != str(TABLE_WORLD_FRAME_KIND):
+                    return  # uncalibrated run: world-frame gaussians undefined
+                live.step(
+                    tracker.marker_xyz_m,
+                    tracker.query_indices,
+                    tracker.query_is_object,
+                )
+                now_s = time.perf_counter()
+                if now_s - last_render_s < min_interval_s:
+                    continue
+                last_render_s = now_s
+                mask_packet = pair.pcd_result.processed_frame.mask_packet
+                intr = mask_packet.intrinsics  # CameraIntrinsics dataclass -> K
+                frame = live.render_over(
+                    mask_packet.color_bgr,
+                    viewmat=viewmat,
+                    intrinsics=np.array(
+                        [
+                            [float(intr.fx), 0.0, float(intr.cx)],
+                            [0.0, float(intr.fy), float(intr.cy)],
+                            [0.0, 0.0, 1.0],
+                        ]
+                    ),
+                    background_whiten=background_whiten,
+                )
+                if frame is not None:
+                    self._publish_frame(protocol.CH_GAUSSIAN, frame)
+                if now_s - last_stats_s >= stats_interval_s:
+                    last_stats_s = now_s
+                    self._write_gaussian_live_stats(live)
+        finally:
+            # A FORMAL shorter than the stats interval (2-chunk E2E runs)
+            # or a mid-run deform failure must still leave an honest final
+            # snapshot — the json carries failed/frames_stepped so a stale
+            # healthy-looking file cannot mask a dead channel.
+            self._write_gaussian_live_stats(live)
 
     def _gaussian_formal_catchup(self, live) -> None:
         """Close the capture-frame-0 -> FORMAL seq-0 gap before the loop.
@@ -1129,8 +1136,18 @@ class StagedRuntime:
                 )
                 return
             npz_path = Path(writer.prepared_phystwin_dir) / "000000.npz"
-            # first_pair_published fires BEFORE the npz write lands, so
-            # poll the file itself (atomic write -> exists == complete).
+            # This worker spawns BEFORE _formal_go releases the producer
+            # (frame-0 readiness alone is budgeted up to 120s), so any
+            # fixed deadline from spawn would silently skip the catch-up
+            # on a legitimately slow start. Wait for the first strict pair
+            # instead — it has no bounded wall budget of its own — and
+            # only then bound the npz poll: first_pair_published fires
+            # BEFORE the npz write lands, so poll the file itself (atomic
+            # write -> exists == complete).
+            first_pair = self._formal.lossless.first_pair_published
+            while not first_pair.wait(timeout=0.5):
+                if self.stop_event.is_set():
+                    return
             deadline_s = time.perf_counter() + 30.0
             while not npz_path.is_file():
                 if self.stop_event.is_set() or time.perf_counter() > deadline_s:

@@ -188,7 +188,7 @@ def register_canonical(
     rigid = o3d.pipelines.registration.TransformationEstimationPointToPoint(
         with_scaling=False
     )
-    best_transform, best_metric, best_rotation = None, np.inf, None
+    best_transform, best_metric = None, np.inf
     for rotation in rotation_candidates:
         rigid_init = np.eye(4)
         rigid_init[:3, :3] = rotation
@@ -202,12 +202,12 @@ def register_canonical(
         transform = result @ prescale
         metric = _symmetric_chamfer_of(transform)
         if metric < best_metric:
-            best_metric, best_transform, best_rotation = metric, transform, rotation
+            best_metric, best_transform = metric, transform
 
-    similarity_init = np.eye(4)
-    similarity_init[:3, :3] = best_rotation * base_scale
-    similarity_init[:3, 3] = dst_center - similarity_init[:3, :3] @ src_center
-    candidate = _run_icp(similarity_init)
+    # Scaled-ICP acceptance pass, seeded from the refined rigid pose (it
+    # is already a similarity: rigid ∘ prescale) rather than the coarse
+    # basin it descended from.
+    candidate = _run_icp(best_transform)
     icp_scale = float(np.cbrt(abs(np.linalg.det(candidate[:3, :3]))))
     if 0.9 * base_scale <= icp_scale <= 1.1 * base_scale:
         metric = _symmetric_chamfer_of(candidate)
@@ -368,13 +368,26 @@ def rigid_world_catchup(
         with_scaling=False
     )
     criteria = o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=60)
-    result = np.eye(4)
-    for threshold in (0.10 * extent, 0.03 * extent):
-        icp = o3d.pipelines.registration.registration_icp(
-            src_cloud, dst_cloud, threshold, result, rigid, criteria
-        )
-        result = np.asarray(icp.transformation)
-    after_cm = _fit_cm(src @ result[:3, :3].T + result[:3, 3])
+    # Two inits, keep the better fit. The ICP threshold (fractions of a
+    # ~0.4m object) is far below a large warmup slide, and identity-init
+    # ICP then locks a confidently-wrong partial pull (measured: a 25cm
+    # table slide "improves" the fit while leaving a 10cm+ residual). A
+    # centroid-difference init closes the translation gap first; identity
+    # stays as a candidate because the partial single-view target biases
+    # the centroid toward the camera-facing shell.
+    centroid_init = np.eye(4)
+    centroid_init[:3, 3] = dst.mean(axis=0) - src.mean(axis=0)
+    result, after_cm = None, np.inf
+    for init in (centroid_init, np.eye(4)):
+        candidate = init
+        for threshold in (0.10 * extent, 0.03 * extent):
+            icp = o3d.pipelines.registration.registration_icp(
+                src_cloud, dst_cloud, threshold, candidate, rigid, criteria
+            )
+            candidate = np.asarray(icp.transformation)
+        candidate_cm = _fit_cm(src @ candidate[:3, :3].T + candidate[:3, 3])
+        if candidate_cm < after_cm:
+            result, after_cm = candidate, candidate_cm
 
     # Object displacement, not the raw matrix translation (a rotation about
     # the world origin inflates the latter for an object sitting off-origin).

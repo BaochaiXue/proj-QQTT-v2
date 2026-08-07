@@ -468,6 +468,8 @@ def check_gaussian_follow(session, observer: DriveObserver) -> None:
         )
     stats = json.loads(stats_path.read_text())
     observer.log(f"gaussian follow stats: {stats}")
+    if stats.get("failed", False):
+        raise RuntimeError(f"gaussian live deform/render failed mid-run: {stats}")
     if not stats.get("rest_seeded", False):
         raise RuntimeError(
             "gaussian bones were not seeded from the formal seq-0 rest "

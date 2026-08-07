@@ -37,7 +37,7 @@ if _BOOTSTRAP_REPO_ROOT_STR in sys.path:
     sys.path.remove(_BOOTSTRAP_REPO_ROOT_STR)
 sys.path.insert(0, _BOOTSTRAP_REPO_ROOT_STR)
 
-from PySide6.QtCore import QObject, Qt, QTimer
+from PySide6.QtCore import QObject, QProcess, Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -474,6 +474,39 @@ class SourceSelectDialog(QDialog):
         record_row.addWidget(self._record_browse_btn)
         # Only meaningful for the real camera; fake-live already IS a case.
         self._real_radio.toggled.connect(self._update_record_enabled)
+        # 桌面标定 row (real camera only): recommend a fresh one-shot ChArUco
+        # calibration before starting; skipping keeps the repo-root
+        # table_calibrate.pkl currently on disk (replay extrinsics source).
+        self._calibrate_btn = QPushButton(self)
+        self._calibrate_btn.clicked.connect(self._run_table_calibration)
+        self._calibrate_status = QLabel(self)
+        self._calibrate_info = InfoDot(
+            "真实相机的点云要靠「相机→桌面」外参落到世界系。推荐每次开始前"
+            "把 ChArUco 标定板平放在桌面上点「立即标定」:单帧拍摄即完成,"
+            "写入 repo 根目录 table_calibrate.pkl(重投影误差 >0.2px 会拒绝)。"
+            "跳过则沿用磁盘上已有的标定 —— 相机自上次标定后没动过才安全。"
+            "录制的 case 会一并快照当时的标定,fake-live 回放优先用 case "
+            "自带的快照。",
+            "The real camera's point cloud lands in the world frame via the "
+            "camera-to-table extrinsics. Recommended: place the ChArUco "
+            "board flat on the table and click Calibrate before starting — "
+            "one captured frame writes the repo-root table_calibrate.pkl "
+            "(rejected if reprojection error exceeds 0.2px). Skipping keeps "
+            "the calibration already on disk — only safe if the camera has "
+            "not moved since. Recorded cases snapshot the active "
+            "calibration, and fake-live replay prefers the case's own "
+            "snapshot.",
+            self,
+        )
+        self._calibrate_process: QProcess | None = None
+        # (state, detail): state in {"ok","missing","running","failed"};
+        # rendered in _retranslate so live language switches re-render it.
+        self._calibrate_state: tuple[str, str] = ("missing", "")
+        calibrate_row = QHBoxLayout()
+        calibrate_row.addWidget(self._calibrate_btn)
+        calibrate_row.addWidget(self._calibrate_info)
+        calibrate_row.addWidget(self._calibrate_status, 1)
+        self._calibrate_row = calibrate_row
         buttons = QDialogButtonBox(self)
         self._start_btn = buttons.addButton(
             "", QDialogButtonBox.ButtonRole.AcceptRole
@@ -503,11 +536,13 @@ class SourceSelectDialog(QDialog):
         layout.addLayout(upscale_row)
         layout.addLayout(gaussian_row)
         layout.addLayout(record_row)
+        layout.addLayout(calibrate_row)
         layout.addWidget(buttons)
         self._error = QLabel("", self)
         self._error.setStyleSheet("color: #f28b82;")
         layout.addWidget(self._error)
         self._update_record_enabled()
+        self._refresh_calibrate_state()
         self._retranslate()
         self.resize(560, 300)
 
@@ -517,8 +552,122 @@ class SourceSelectDialog(QDialog):
             self._record_check,
             self._record_edit,
             self._record_browse_btn,
+            self._calibrate_btn,
+            self._calibrate_status,
         ):
             widget.setEnabled(real)
+
+    # ------------------------------------------------------------------
+    # 桌面标定 (one-shot ChArUco, repo-root table_calibrate.pkl)
+    # ------------------------------------------------------------------
+    def _refresh_calibrate_state(self) -> None:
+        """Read the repo-root calibration sidecar into _calibrate_state."""
+        import json  # noqa: PLC0415
+
+        sidecar = (
+            Path(_BOOTSTRAP_REPO_ROOT_STR) / "table_calibrate_metadata.json"
+        )
+        pkl = Path(_BOOTSTRAP_REPO_ROOT_STR) / "table_calibrate.pkl"
+        if not (sidecar.is_file() and pkl.is_file()):
+            self._calibrate_state = ("missing", "")
+            return
+        try:
+            meta = json.loads(sidecar.read_text(encoding="utf-8"))
+            serial = str(meta["serial_numbers"][0])
+            date = str(meta.get("created_at_utc", ""))[:10]
+            err_px = float(meta["per_camera_reprojection_error"][0])
+            detail = f"{serial} · {date} · {err_px:.3f}px"
+        except (KeyError, ValueError, IndexError, TypeError, OSError):
+            detail = "?"
+        self._calibrate_state = ("ok", detail)
+
+    def _render_calibrate_state(self) -> None:
+        state, detail = self._calibrate_state
+        if state == "ok":
+            self._calibrate_status.setStyleSheet("")
+            self._calibrate_status.setText(
+                tr("当前标定: ", "Current calibration: ") + detail
+            )
+        elif state == "running":
+            self._calibrate_status.setStyleSheet("")
+            self._calibrate_status.setText(
+                tr(
+                    "标定中… 请把 ChArUco 标定板平放在桌面上",
+                    "Calibrating… place the ChArUco board flat on the table",
+                )
+            )
+        elif state == "failed":
+            self._calibrate_status.setStyleSheet("color: #f28b82;")
+            self._calibrate_status.setText(
+                tr("标定失败: ", "Calibration failed: ") + detail
+            )
+        else:  # missing
+            self._calibrate_status.setStyleSheet("color: #f28b82;")
+            self._calibrate_status.setText(
+                tr(
+                    "未找到标定 —— 真实相机启动前必须标定",
+                    "No calibration found — required before a real-camera "
+                    "run",
+                )
+            )
+
+    def _run_table_calibration(self) -> None:
+        if self._calibrate_process is not None:
+            return  # already running
+        self._error.setText("")
+        # Calibrate the camera the runtime will actually open (config
+        # camera.camera_serials), not whichever enumerates first — several
+        # RealSense devices may be plugged in.
+        from demo_v6_2.orchestration.main_config import (  # noqa: PLC0415
+            DEFAULT_CAMERA_SERIALS,
+        )
+
+        # -u: unbuffered child stdout so MergedChannels keeps the traceback
+        # ordered after the progress prints (the failure line must be last).
+        argv = [
+            "-u",
+            str(Path(_BOOTSTRAP_REPO_ROOT_STR) / "cameras_calibrate_table.py"),
+        ]
+        if DEFAULT_CAMERA_SERIALS:
+            argv.extend(["--serial", str(DEFAULT_CAMERA_SERIALS[0])])
+        process = QProcess(self)
+        process.setWorkingDirectory(_BOOTSTRAP_REPO_ROOT_STR)
+        process.setProcessChannelMode(
+            QProcess.ProcessChannelMode.MergedChannels
+        )
+        process.finished.connect(self._on_calibration_finished)
+        self._calibrate_process = process
+        self._calibrate_btn.setEnabled(False)
+        self._start_btn.setEnabled(False)
+        self._calibrate_state = ("running", "")
+        self._render_calibrate_state()
+        process.start(sys.executable, argv)
+
+    def _on_calibration_finished(self, exit_code: int, _status: Any) -> None:
+        process = self._calibrate_process
+        self._calibrate_process = None
+        self._calibrate_btn.setEnabled(self._real_radio.isChecked())
+        self._start_btn.setEnabled(True)
+        if exit_code == 0:
+            self._refresh_calibrate_state()
+        else:
+            output = ""
+            if process is not None:
+                raw = bytes(process.readAllStandardOutput()).decode(
+                    "utf-8", "replace"
+                )
+                lines = [ln for ln in raw.strip().splitlines() if ln.strip()]
+                # The exception message is the last line of the traceback;
+                # prefer an explicit error line over trailing progress noise.
+                error_lines = [
+                    ln for ln in lines if "Error" in ln or "error" in ln
+                ]
+                picked = error_lines[-1] if error_lines else (
+                    lines[-1] if lines else f"exit {exit_code}"
+                )
+                output = picked.strip()[-200:]
+            self._calibrate_state = ("failed", output)
+        self._render_calibrate_state()
 
     def _browse_record_dir(self) -> None:
         chosen = QFileDialog.getExistingDirectory(
@@ -573,6 +722,9 @@ class SourceSelectDialog(QDialog):
         )
         self._record_browse_btn.setText(tr("浏览…", "Browse…"))
         self._record_info.retranslate()
+        self._calibrate_btn.setText(tr("立即标定(推荐)", "Calibrate (recommended)"))
+        self._calibrate_info.retranslate()
+        self._render_calibrate_state()
         self._start_btn.setText(tr("开始", "Start"))
         self._quit_btn.setText(tr("退出", "Quit"))
         for dot in self._info_dots:
@@ -596,6 +748,27 @@ class SourceSelectDialog(QDialog):
                 )
             )
             return
+        if self._real_radio.isChecked():
+            # Skipping calibration is allowed (repo-root fallback) — but the
+            # formal runtime hard-requires --table-calibrate, so catching a
+            # MISSING one here turns a service startup crash into an
+            # actionable prompt. A failed re-calibration attempt does not
+            # block: the previous on-disk calibration is still usable.
+            root = Path(_BOOTSTRAP_REPO_ROOT_STR)
+            if not (
+                (root / "table_calibrate.pkl").is_file()
+                and (root / "table_calibrate_metadata.json").is_file()
+            ):
+                self._error.setText(
+                    tr(
+                        "真实相机需要桌面标定:请把 ChArUco 标定板放上桌面,"
+                        "点击「立即标定」。",
+                        "A real-camera run needs the table calibration: "
+                        "place the ChArUco board on the table and click "
+                        "Calibrate.",
+                    )
+                )
+                return
         if self._real_radio.isChecked() and self._record_check.isChecked():
             record_text = self._record_edit.text().strip()
             if not record_text:

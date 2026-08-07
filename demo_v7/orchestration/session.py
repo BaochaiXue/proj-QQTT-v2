@@ -131,6 +131,24 @@ def resolve_socket_dir(config: dict[str, Any], base_path: Path) -> Path:
     return socket_dir
 
 
+def case_table_calibrate_snapshot(case_dir: str | Path | None) -> Path | None:
+    """The case's record-time table calibration, if it carries one.
+
+    Only the real table-calibration snapshot pair counts
+    (``table_calibrate.pkl`` + ``table_calibrate_metadata.json``, schema
+    qqtt_table_calibration_v1) — the legacy per-case ``calibrate.pkl`` is a
+    different pipeline with an undefined world frame and must never be fed
+    to ``--table-calibrate``.
+    """
+    if case_dir is None:
+        return None
+    snapshot = Path(case_dir) / "table_calibrate.pkl"
+    sidecar = snapshot.with_name("table_calibrate_metadata.json")
+    if snapshot.is_file() and sidecar.is_file():
+        return snapshot
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Link-death-aware IPC clients
 # ---------------------------------------------------------------------------
@@ -406,6 +424,21 @@ class OrchestratorSession:
         command.extend(["--gaussian-backend", self.gaussian_backend])
         if self.record_dir is not None:
             command.extend(["--record-dir", str(self.record_dir)])
+        # fake-live: a case that carries its record-time table_calibrate
+        # snapshot (v7 recorder writes one since 2026-08-07) replays with
+        # THAT c2w — recalibrating the camera later must not shift old
+        # recordings into a wrong world frame. Snapshot-less legacy cases
+        # keep the repo-root default the v6.2 builder put in the argv.
+        if str(self._args.input_source) == "fake-live":
+            snapshot = case_table_calibrate_snapshot(self._args.fake_live_case)
+            if snapshot is not None:
+                calibrate_index = command.index("--table-calibrate")
+                command[calibrate_index + 1] = str(snapshot)
+                print(
+                    "[v7-session] fake-live uses the case's own table "
+                    f"calibration snapshot: {snapshot}",
+                    flush=True,
+                )
         self._camera_service_command = command
         try:
             self._service = subprocess.Popen(

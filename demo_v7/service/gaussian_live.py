@@ -107,6 +107,8 @@ class GaussianLiveRenderer:
         self._buffer: dict[int, np.ndarray] = {}  # query id -> last position
         self._rest_positions: dict[int, np.ndarray] = {}  # seq-0 world xyz
         self.rest_seeded = False  # bones initialized from seq-0 rest pose
+        self._seed_grace_left = 25  # packets to wait for a seedable set
+        self.frames_stepped = 0
         self.last_substeps = 0
         # Cumulative follow telemetry (world meters), read by the worker.
         self.bones_moved_m = 0.0
@@ -140,17 +142,19 @@ class GaussianLiveRenderer:
             translation = torch.as_tensor(
                 np.asarray(transform[:3, 3], dtype=np.float32), device=self.device
             )
-            self._tensors["means"] = (
-                self._tensors["means"] @ rotation.T + translation
-            )
+            new_means = self._tensors["means"] @ rotation.T + translation
             rot_quat = gaussian_dynamics.mat2quat(rotation[None])
             rot_quat = rot_quat.expand(self._tensors["quats"].shape[0], 4)
-            self._tensors["quats"] = torch.nn.functional.normalize(
+            new_quats = torch.nn.functional.normalize(
                 gaussian_dynamics.quaternion_multiply(
                     rot_quat, self._tensors["quats"]
                 ),
                 dim=-1,
             )
+            # Commit both or neither: a mid-way failure must not leave
+            # moved positions with pre-transform orientations.
+            self._tensors["means"] = new_means
+            self._tensors["quats"] = new_quats
         except Exception as exc:
             # A skipped rigid catch-up degrades alignment, not availability.
             print(f"[gaussian-live] rigid catch-up skipped: {exc}", flush=True)
@@ -188,6 +192,13 @@ class GaussianLiveRenderer:
                 ).astype(np.float32)
                 self._ctrl_prev = torch.as_tensor(rest, device=self.device)
                 self.rest_seeded = True
+            elif self._seed_grace_left > 0:
+                # A marginal first packet (occlusion, depth dropouts) must
+                # not permanently forfeit rest seeding — the buffer is a
+                # growing union, so give later packets a chance to satisfy
+                # the intersection before freezing an unseeded bone set.
+                self._seed_grace_left -= 1
+                return False
             else:
                 print(
                     f"[gaussian-live] only {len(ids)} buffered queries have a "
@@ -218,6 +229,7 @@ class GaussianLiveRenderer:
             np.asarray(marker_xyz, dtype=np.float32)[keep],
             np.asarray(query_ids, dtype=np.int64)[keep],
         )
+        self.frames_stepped += 1
         if self._bone_ids is None:
             if not self._init_bones():
                 return  # not enough object markers yet
@@ -290,15 +302,25 @@ class GaussianLiveRenderer:
         with torch.no_grad():
             bones = self._ctrl_prev
             if bones.shape[0] > max_bones:
-                stride = bones.shape[0] // max_bones
+                stride = -(-bones.shape[0] // max_bones)  # ceil -> <= max_bones
                 bones = bones[::stride]
-            distances = torch.cdist(bones, self._tensors["means"]).min(dim=1).values
+            # Chunk over splats (running min) — an unchunked (B, N) cdist
+            # would transiently allocate ~1GB on the shared camera GPU.
+            means = self._tensors["means"]
+            distances = torch.full(
+                (bones.shape[0],), float("inf"), device=bones.device
+            )
+            for start in range(0, means.shape[0], _KNN_CHUNK):
+                chunk = torch.cdist(bones, means[start : start + _KNN_CHUNK])
+                distances = torch.minimum(distances, chunk.min(dim=1).values)
             quantiles = torch.quantile(
                 distances, torch.tensor([0.5, 0.9], device=distances.device)
             )
         return {
             "bones": int(self._ctrl_prev.shape[0]),
             "rest_seeded": bool(self.rest_seeded),
+            "failed": bool(self.failed),
+            "frames_stepped": int(self.frames_stepped),
             "bones_moved_cm": round(self.bones_moved_m * 100.0, 2),
             "splats_moved_cm": round(self.splats_moved_m * 100.0, 2),
             "bone2splat_p50_cm": round(float(quantiles[0]) * 100.0, 2),

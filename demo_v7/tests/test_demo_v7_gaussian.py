@@ -376,6 +376,8 @@ class TestGaussianLiveRestSeed:
         live._buffer = {}
         live._rest_positions = {}
         live.rest_seeded = False
+        live._seed_grace_left = 25
+        live.frames_stepped = 0
         live.last_substeps = 0
         live.bones_moved_m = 0.0
         live.splats_moved_m = 0.0
@@ -419,14 +421,31 @@ class TestGaussianLiveRestSeed:
             live._tensors["means"], means + torch.as_tensor(shift), atol=1e-3
         )
 
-    def test_partial_seed_falls_back(self) -> None:
+    def test_partial_seed_waits_then_falls_back(self) -> None:
         live, means = self._bare_renderer()
         rest = self._grid()
         ids = np.arange(len(rest), dtype=np.int64)
         live.seed_rest_positions({0: rest[0], 1: rest[1]})  # < _MIN_BONES
+        # Within the grace window a marginal packet must NOT freeze an
+        # unseeded bone set — later packets may complete the intersection.
+        live.step(rest, ids, np.ones(len(ids), dtype=bool))
+        assert live._bone_ids is None and not live.rest_seeded
+        live._seed_grace_left = 0
         live.step(rest, ids, np.ones(len(ids), dtype=bool))
         assert not live.rest_seeded
         assert live._bone_ids is not None and len(live._bone_ids) == len(ids)
+
+    def test_grace_window_lets_late_packets_seed(self) -> None:
+        live, means = self._bare_renderer()
+        rest = self._grid()
+        ids = np.arange(len(rest), dtype=np.int64)
+        live.seed_rest_positions({int(i): rest[i] for i in ids})
+        # First packet only carries a few object markers (occlusion).
+        live.step(rest[:4], ids[:4], np.ones(4, dtype=bool))
+        assert live._bone_ids is None
+        # A later, fuller packet completes the seedable intersection.
+        live.step(rest, ids, np.ones(len(ids), dtype=bool))
+        assert live.rest_seeded
 
     def test_apply_rigid_transform_rotates_quats(self) -> None:
         live, means = self._bare_renderer()
