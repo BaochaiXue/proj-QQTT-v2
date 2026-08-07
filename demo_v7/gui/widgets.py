@@ -16,6 +16,8 @@ Constraints these widgets enforce (see ``demo_v7/DESIGN_CONTRACTS.md``):
 
 from __future__ import annotations
 
+from demo_v7.gui.i18n import tr
+
 import time
 from pathlib import Path
 
@@ -395,7 +397,7 @@ class CaptionedImage(QWidget):
         image_label = QLabel(self)
         pixmap = QPixmap(str(path))
         if pixmap.isNull():
-            image_label.setText("(无法读取图片)")
+            image_label.setText(tr("(无法读取图片)", "(cannot read image)"))
             image_label.setStyleSheet("color: #f28b82;")
         else:
             if pixmap.width() > max_width:

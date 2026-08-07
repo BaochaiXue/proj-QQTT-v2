@@ -41,6 +41,7 @@ from demo_v7.ipc.protocol import (
     CH_RGB,
 )
 from demo_v7.gui.mesh_view import MeshOrbitView
+from demo_v7.gui.i18n import tr
 from demo_v7.gui.widgets import CaptionedImage, ImageView, ProgressTimeline
 
 _ARTIFACT_GRID_COLUMNS = 3
@@ -52,20 +53,20 @@ _ARTIFACT_GRID_COLUMNS = 3
 # sub-rows so every chain step is its own live row (owner rule 2026-08-06:
 # progress is VISUAL — spinners + elapsed — while text logs go to
 # stdout + the run's log file, never a GUI text box).
-WARMUP_STAGE_PLAN: list[tuple[str, str]] = [
-    ("sam31_masks", "SAM3.1 三 mask 分割"),
-    ("shape_prior_submit", "提交 shape-prior 任务"),
-    ("sp:upscale", "  ├ 超分(upscale)"),
-    ("sp:generate", "  ├ 生成(generate)"),
-    ("sp:align", "  ├ 对齐(align)"),
-    ("sp:sample", "  └ 补点采样(sample)"),
-    ("shape_prior_ready", "shape-prior 就绪"),
+WARMUP_STAGE_PLAN: list[tuple[str, tuple[str, str]]] = [
+    ("sam31_masks", ("SAM3.1 三 mask 分割", "SAM3.1 3-mask segmentation")),
+    ("shape_prior_submit", ("提交 shape-prior 任务", "Submit shape-prior job")),
+    ("sp:upscale", ("  ├ 超分(upscale)", "  ├ Upscale (SD ×4)")),
+    ("sp:generate", ("  ├ 生成(generate)", "  ├ Generate")),
+    ("sp:align", ("  ├ 对齐(align)", "  ├ Align")),
+    ("sp:sample", ("  └ 补点采样(sample)", "  └ Point sampling")),
+    ("shape_prior_ready", ("shape-prior 就绪", "Shape prior ready")),
 ]
 # Backend id -> generate-row label (dialog vocabulary; sam3d is the default).
 _GENERATE_ROW_LABELS = {
-    "sam3d": "  ├ 生成(SAM3D)",
-    "trellis2": "  ├ 生成(TRELLIS.2)",
-    "none": "  ├ 生成(无,已跳过)",
+    "sam3d": ("  ├ 生成(SAM3D)", "  ├ Generate (SAM3D)"),
+    "trellis2": ("  ├ 生成(TRELLIS.2)", "  ├ Generate (TRELLIS.2)"),
+    "none": ("  ├ 生成(无,已跳过)", "  ├ Generate (none, skipped)"),
 }
 # The shape_prior milestone order used to chain sub-row spinners.
 _SP_SUB_ORDER = ("sp:upscale", "sp:generate", "sp:align", "sp:sample")
@@ -77,10 +78,10 @@ def _is_image(path: str) -> bool:
 
 # 补点 sources: (set name, checkbox label, display color). The colors are
 # deliberately solid + distinct — the point of the view is source attribution.
-_SAMPLING_SOURCES: tuple[tuple[str, str, str], ...] = (
-    ("observed", "frame-0 观测点云", "#8ab4f8"),
-    ("surface", "表面补点(候选)", "#81c995"),
-    ("interior", "体内补点(候选)", "#f2a25c"),
+_SAMPLING_SOURCES: tuple[tuple[str, tuple[str, str], str], ...] = (
+    ("observed", ("frame-0 观测点云", "frame-0 observed points"), "#8ab4f8"),
+    ("surface", ("表面补点(候选)", "surface fill (candidates)"), "#81c995"),
+    ("interior", ("体内补点(候选)", "interior fill (candidates)"), "#f2a25c"),
 )
 _SAMPLING_COLORS_U8 = {
     "observed": (0x8A, 0xB4, 0xF8),
@@ -144,12 +145,18 @@ class CaptureScreen(QWidget):
         super().__init__(parent)
         self._pending = False
         self._pinned = False
-        self._view = ImageView("等待相机画面…", parent=self)
-        self._hint = QLabel("请把物体和双手摆好,然后拍摄第一张。", self)
+        self._view = ImageView(tr("等待相机画面…", "Waiting for the camera feed…"), parent=self)
+        self._hint = QLabel(
+            tr(
+                "请把物体和双手摆好,然后拍摄第一张。",
+                "Position the object and both hands, then capture frame-0.",
+            ),
+            self,
+        )
         self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._capture_btn = QPushButton("拍摄第一张", self)
-        self._confirm_btn = QPushButton("确认", self)
-        self._retake_btn = QPushButton("重拍", self)
+        self._capture_btn = QPushButton(tr("拍摄第一张", "Capture frame-0"), self)
+        self._confirm_btn = QPushButton(tr("确认", "Confirm"), self)
+        self._retake_btn = QPushButton(tr("重拍", "Retake"), self)
         self._capture_btn.clicked.connect(self.captureRequested.emit)
         self._confirm_btn.clicked.connect(self.confirmRequested.emit)
         self._retake_btn.clicked.connect(self.retakeRequested.emit)
@@ -175,9 +182,19 @@ class CaptureScreen(QWidget):
         self._confirm_btn.setVisible(pending)
         self._retake_btn.setVisible(pending)
         if pending:
-            self._hint.setText("已拍摄候选 frame-0:确认后开始 warm-up,或重拍。")
+            self._hint.setText(
+                tr(
+                    "已拍摄候选 frame-0:确认后开始 warm-up,或重拍。",
+                    "Candidate frame-0 captured: confirm to start warm-up, or retake.",
+                )
+            )
         else:
-            self._hint.setText("请把物体和双手摆好,然后拍摄第一张。")
+            self._hint.setText(
+                tr(
+                    "请把物体和双手摆好,然后拍摄第一张。",
+                    "Position the object and both hands, then capture frame-0.",
+                )
+            )
 
     def set_busy(self, busy: bool) -> None:
         """Disable buttons while a command's ack is outstanding-ish states."""
@@ -226,7 +243,13 @@ class WarmupScreen(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        banner = QLabel("frame-0 已确认:人和物体现在可以离开画面。", self)
+        banner = QLabel(
+            tr(
+                "frame-0 已确认:人和物体现在可以离开画面。",
+                "frame-0 confirmed: people and the object may leave the view.",
+            ),
+            self,
+        )
         banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
         banner.setStyleSheet(
             "background-color: #1e3a2f; color: #81c995; font-size: 18px;"
@@ -234,8 +257,10 @@ class WarmupScreen(QWidget):
         )
         self._backend: str | None = None
         self._timeline = ProgressTimeline(self)
-        self._timeline.setStages(WARMUP_STAGE_PLAN)
-        self._results_btn = QPushButton("查看结果", self)
+        self._timeline.setStages(
+            [(key, tr(*pair)) for key, pair in WARMUP_STAGE_PLAN]
+        )
+        self._results_btn = QPushButton(tr("查看结果", "View results"), self)
         self._results_btn.setEnabled(False)
         self._results_btn.clicked.connect(self.viewResultsRequested.emit)
         buttons = QHBoxLayout()
@@ -251,9 +276,9 @@ class WarmupScreen(QWidget):
     def set_shape_prior_backend(self, backend: str) -> None:
         """Rename the generate row for the run's backend (hello-ack echo)."""
         self._backend = str(backend)
-        label = _GENERATE_ROW_LABELS.get(self._backend)
-        if label is not None:
-            self._timeline.setRowLabel("sp:generate", label)
+        pair = _GENERATE_ROW_LABELS.get(self._backend)
+        if pair is not None:
+            self._timeline.setRowLabel("sp:generate", tr(*pair))
 
     def on_progress(
         self, stage: str, detail: str, ok: bool, elapsed_ms: float | None
@@ -271,7 +296,7 @@ class WarmupScreen(QWidget):
         elif stage == "shape_prior":
             if skipped:
                 for key in _SP_SUB_ORDER:
-                    self._timeline.report(key, "跳过", ok=True)
+                    self._timeline.report(key, tr("跳过", "skipped"), ok=True)
             else:
                 # Milestone details: "<sub-stage> finished" (no sample
                 # milestone — sp:sample settles on shape_prior_ready).
@@ -301,7 +326,9 @@ class WarmupScreen(QWidget):
         """Fresh timeline for a new run (after 回到开始/重拍 cycles)."""
         self._results_btn.setEnabled(False)
         self._timeline.clear()
-        self._timeline.setStages(WARMUP_STAGE_PLAN)
+        self._timeline.setStages(
+            [(key, tr(*pair)) for key, pair in WARMUP_STAGE_PLAN]
+        )
         if self._backend is not None:
             self.set_shape_prior_backend(self._backend)
         self._timeline.begin("sam31_masks")
@@ -323,16 +350,23 @@ class ReviewScreen(QWidget):
         self._tabs = QTabWidget(self)
         self._masks_grid = _ArtifactGrid()
         self._tabs.addTab(_wrap_scroll(self._masks_grid), "Masks")
-        self._mesh_view = MeshOrbitView("等待 mesh(生成/对齐完成后可拖拽查看)…")
+        self._mesh_view = MeshOrbitView(
+            tr(
+                "等待 mesh(生成/对齐完成后可拖拽查看)…",
+                "Waiting for mesh (drag to inspect once generated/aligned)…",
+            )
+        )
         self._mesh_pick = QComboBox()
-        self._mesh_pick.addItem("对齐后 mesh")
-        self._mesh_pick.addItem("原始生成 mesh")
+        self._mesh_pick.addItem(tr("对齐后 mesh", "Aligned mesh"))
+        self._mesh_pick.addItem(tr("原始生成 mesh", "Raw generated mesh"))
         self._mesh_pick.currentIndexChanged.connect(self._on_mesh_pick)
         self._mesh_paths: dict[int, str] = {}
         mesh_bar = QHBoxLayout()
-        mesh_bar.addWidget(QLabel("网格:"))
+        mesh_bar.addWidget(QLabel(tr("网格:", "Mesh:")))
         mesh_bar.addWidget(self._mesh_pick)
-        mesh_bar.addWidget(QLabel("拖拽=旋转 滚轮=缩放 双击=复位"))
+        mesh_bar.addWidget(
+            QLabel(tr("拖拽=旋转 滚轮=缩放 双击=复位", "drag=rotate wheel=zoom double-click=reset"))
+        )
         mesh_bar.addStretch(1)
         self._prior_grid = _ArtifactGrid()
         prior_page = QWidget()
@@ -343,7 +377,12 @@ class ReviewScreen(QWidget):
         self._tabs.addTab(prior_page, "Shape Prior")
         # 补点 tab: frame-0 observed object points vs shape-prior surface /
         # interior fill (candidates.npz), each source a solid color + toggle.
-        self._sampling_view = MeshOrbitView("等待补点数据(warmup 完成后可查看)…")
+        self._sampling_view = MeshOrbitView(
+            tr(
+                "等待补点数据(warmup 完成后可查看)…",
+                "Waiting for sampling data (viewable after warmup)…",
+            )
+        )
         self._sampling_paths: dict[str, str] = {}
         self._sampling_loaded = False
         # Generation backend for this service run (hello-ack echo); "none"
@@ -352,8 +391,8 @@ class ReviewScreen(QWidget):
         self._shape_prior_backend: str | None = None
         self._sampling_checks: dict[str, QCheckBox] = {}
         sampling_bar = QHBoxLayout()
-        for key, label, color in _SAMPLING_SOURCES:
-            check = QCheckBox(label)
+        for key, pair, color in _SAMPLING_SOURCES:
+            check = QCheckBox(tr(*pair))
             check.setChecked(True)
             check.setStyleSheet(f"color: {color}; font-weight: bold;")
             check.toggled.connect(
@@ -361,18 +400,24 @@ class ReviewScreen(QWidget):
             )
             self._sampling_checks[key] = check
             sampling_bar.addWidget(check)
-        sampling_bar.addWidget(QLabel("拖拽=旋转 滚轮=缩放 双击=复位"))
+        sampling_bar.addWidget(
+            QLabel(tr("拖拽=旋转 滚轮=缩放 双击=复位", "drag=rotate wheel=zoom double-click=reset"))
+        )
         sampling_bar.addStretch(1)
         sampling_page = QWidget()
         sampling_layout = QVBoxLayout(sampling_page)
         sampling_layout.addLayout(sampling_bar)
         sampling_layout.addWidget(self._sampling_view, 1)
-        self._tabs.addTab(sampling_page, "补点")
+        self._tabs.addTab(sampling_page, tr("补点", "Sampling"))
         # Gaussian tab: TripoSplat 拣选 — turntable contact sheet + world
         # overlay stills, generation status, and 换seed re-roll.
-        self._gaussian_status = QLabel("等待 gaussian 生成…", self)
+        self._gaussian_status = QLabel(
+            tr("等待 gaussian 生成…", "Waiting for gaussian generation…"), self
+        )
         self._gaussian_status.setStyleSheet("color: #9aa0a6;")
-        self._gaussian_regen_btn = QPushButton("换 seed 重新生成", self)
+        self._gaussian_regen_btn = QPushButton(
+            tr("换 seed 重新生成", "Regenerate with a new seed"), self
+        )
         self._gaussian_regen_btn.setEnabled(False)
         self._gaussian_regen_btn.clicked.connect(self.regenGaussianRequested.emit)
         gaussian_bar = QHBoxLayout()
@@ -384,7 +429,7 @@ class ReviewScreen(QWidget):
         gaussian_layout.addLayout(gaussian_bar)
         gaussian_layout.addWidget(_wrap_scroll(self._gaussian_grid), 1)
         self._tabs.addTab(gaussian_page, "Gaussian")
-        self._reposition_btn = QPushButton("进入摆位", self)
+        self._reposition_btn = QPushButton(tr("进入摆位", "Enter repositioning"), self)
         self._reposition_btn.clicked.connect(self.repositionRequested.emit)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
@@ -405,7 +450,10 @@ class ReviewScreen(QWidget):
         self._shape_prior_backend = str(backend)
         if self._shape_prior_backend == "none":
             self._mesh_view.setPlaceholderText(
-                "本次运行未生成 shape prior(backend=none)。"
+                tr(
+                    "本次运行未生成 shape prior(backend=none)。",
+                    "This run generated no shape prior (backend=none).",
+                )
             )
             self._maybe_build_sampling_view()
 
@@ -482,9 +530,9 @@ class ReviewScreen(QWidget):
                 ),
             }
             self._sampling_view.setPointSets(sets)
-            for key, label, _color in _SAMPLING_SOURCES:
+            for key, pair, _color in _SAMPLING_SOURCES:
                 count = int(np.asarray(sets[key][0]).reshape(-1, 3).shape[0])
-                self._sampling_checks[key].setText(f"{label} ({count})")
+                self._sampling_checks[key].setText(f"{tr(*pair)} ({count})")
             self._sampling_loaded = True
         except Exception:
             # Missing/partial files stay pending; a later artifact event or
@@ -501,7 +549,9 @@ class ReviewScreen(QWidget):
         self._gaussian_regen_btn.setEnabled(True)
 
     def set_gaussian_progress(self, detail: str, ok: bool) -> None:
-        self._gaussian_status.setText(detail if ok else f"失败: {detail}")
+        self._gaussian_status.setText(
+            detail if ok else tr("失败", "Failed") + f": {detail}"
+        )
         if not ok:
             # A failed roll still leaves the previous artifacts usable.
             self._gaussian_regen_btn.setEnabled(
@@ -521,17 +571,19 @@ class ReviewScreen(QWidget):
         self._masks_grid.clear()
         self._prior_grid.clear()
         self._gaussian_grid.clear()
-        self._gaussian_status.setText("等待 gaussian 生成…")
+        self._gaussian_status.setText(
+            tr("等待 gaussian 生成…", "Waiting for gaussian generation…")
+        )
         self._gaussian_regen_btn.setEnabled(False)
         self._mesh_paths.clear()
         self._mesh_view.clear()
         self._sampling_paths.clear()
         self._sampling_loaded = False
         self._sampling_view.clear()
-        for key, label, _color in _SAMPLING_SOURCES:
+        for key, pair, _color in _SAMPLING_SOURCES:
             check = self._sampling_checks[key]
             check.setChecked(True)
-            check.setText(label)
+            check.setText(tr(*pair))
 
 
 class RepositionScreen(QWidget):
@@ -542,12 +594,15 @@ class RepositionScreen(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         hint = QLabel(
-            "请把物体和双手摆回 frame-0 的位置(与半透明 mask 对齐),然后开始正式追踪。",
+            tr(
+                "请把物体和双手摆回 frame-0 的位置(与半透明 mask 对齐),然后开始正式追踪。",
+                "Move the object and hands back to the frame-0 pose (match the translucent masks), then start formal tracking.",
+            ),
             self,
         )
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._view = ImageView("等待叠加画面…", parent=self)
-        self._start_btn = QPushButton("开始正式追踪", self)
+        self._view = ImageView(tr("等待叠加画面…", "Waiting for the overlay view…"), parent=self)
+        self._start_btn = QPushButton(tr("开始正式追踪", "Start formal tracking"), self)
         self._start_btn.clicked.connect(self.startFormalRequested.emit)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
@@ -572,22 +627,22 @@ class FormalScreen(QWidget):
 
     stopRequested = Signal()
 
-    _CHANNEL_CHOICES: list[tuple[str, str]] = [
-        ("复合", CH_COMPOSITE),
-        ("高斯", CH_GAUSSIAN),
-        ("RGB", CH_RGB),
-        ("深度", CH_DEPTH),
+    _CHANNEL_CHOICES: list[tuple[tuple[str, str], str]] = [
+        (("复合", "Composite"), CH_COMPOSITE),
+        (("高斯", "Gaussian"), CH_GAUSSIAN),
+        (("RGB", "RGB"), CH_RGB),
+        (("深度", "Depth"), CH_DEPTH),
     ]
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._selected_channel = CH_COMPOSITE
-        self._view = ImageView("等待复合视图…", parent=self)
+        self._view = ImageView(tr("等待复合视图…", "Waiting for the composite view…"), parent=self)
         self._channel_group = QButtonGroup(self)
         switcher = QHBoxLayout()
         switcher.addStretch(1)
-        for label, channel in self._CHANNEL_CHOICES:
-            button = QPushButton(label, self)
+        for pair, channel in self._CHANNEL_CHOICES:
+            button = QPushButton(tr(*pair), self)
             button.setCheckable(True)
             button.setChecked(channel == self._selected_channel)
             button.clicked.connect(
@@ -597,9 +652,9 @@ class FormalScreen(QWidget):
             switcher.addWidget(button)
         switcher.addStretch(1)
         self._channel_group.setExclusive(True)
-        self._stats = QLabel("等待统计…", self)
+        self._stats = QLabel(tr("等待统计…", "Waiting for stats…"), self)
         self._stats.setStyleSheet("color: #9aa0a6; font-family: monospace;")
-        self._stop_btn = QPushButton("停止", self)
+        self._stop_btn = QPushButton(tr("停止", "Stop"), self)
         self._stop_btn.clicked.connect(self.stopRequested.emit)
         bottom = QHBoxLayout()
         bottom.addWidget(self._stats, 1)
@@ -625,10 +680,10 @@ class FormalScreen(QWidget):
         parts: list[str] = []
         seq = payload.get("seq")
         if seq is not None:
-            parts.append(f"帧 {seq}")
+            parts.append(tr("帧", "frame") + f" {seq}")
         latency = payload.get("latency_ms")
         if isinstance(latency, (int, float)):
-            parts.append(f"延迟 {latency:.0f} ms")
+            parts.append(tr("延迟", "latency") + f" {latency:.0f} ms")
         fps = payload.get("fps")
         if isinstance(fps, dict) and fps:
             fps_text = "  ".join(
@@ -638,7 +693,9 @@ class FormalScreen(QWidget):
             )
             if fps_text:
                 parts.append("fps  " + fps_text)
-        self._stats.setText("  |  ".join(parts) if parts else "等待统计…")
+        self._stats.setText(
+            "  |  ".join(parts) if parts else tr("等待统计…", "Waiting for stats…")
+        )
 
 
 class FinishedScreen(QWidget):
@@ -648,7 +705,7 @@ class FinishedScreen(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._title = QLabel("本次运行已结束。", self)
+        self._title = QLabel(tr("本次运行已结束。", "This run has finished."), self)
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._title.setStyleSheet("font-size: 20px; font-weight: bold;")
         self._run_dir = QLabel("", self)
@@ -657,7 +714,7 @@ class FinishedScreen(QWidget):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         self._run_dir.setStyleSheet("font-family: monospace; color: #9aa0a6;")
-        restart_btn = QPushButton("回到开始", self)
+        restart_btn = QPushButton(tr("回到开始", "Back to start"), self)
         restart_btn.clicked.connect(self.restartRequested.emit)
         buttons = QHBoxLayout()
         buttons.addStretch(1)
@@ -671,7 +728,11 @@ class FinishedScreen(QWidget):
         layout.addStretch(1)
 
     def set_run_dir(self, run_dir: str | None) -> None:
-        self._run_dir.setText(f"输出目录: {run_dir}" if run_dir else "输出目录未知")
+        self._run_dir.setText(
+            tr("输出目录", "Output dir") + f": {run_dir}"
+            if run_dir
+            else tr("输出目录未知", "Output dir unknown")
+        )
 
     def set_title(self, text: str) -> None:
         self._title.setText(text)

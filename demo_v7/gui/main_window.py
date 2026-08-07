@@ -48,6 +48,7 @@ from demo_v7.gui.screens import (
     ReviewScreen,
     WarmupScreen,
 )
+from demo_v7.gui.i18n import tr
 from demo_v7.gui.widgets import ImageView
 
 _HELLO_RETRY_MS = 1000
@@ -112,7 +113,7 @@ class MainWindow(QMainWindow):
         self._state = protocol.STATE_STARTING
         self._saw_any_event = False
         self._event_log_path: Path | None = None
-        self.setWindowTitle("demo_v7 — 实时物理孪生")
+        self.setWindowTitle(tr("demo_v7 — 实时物理孪生", "demo_v7 — Realtime Physical Twin"))
         self.resize(1440, 900)
 
         self._capture = CaptureScreen()
@@ -162,23 +163,23 @@ class MainWindow(QMainWindow):
         self._hello_timer.timeout.connect(self._try_hello)
         self._hello_timer.start()
         self._try_hello()
-        self.statusBar().showMessage("正在连接相机服务…")
+        self.statusBar().showMessage(tr("正在连接相机服务…", "Connecting to the camera service…"))
 
     # ------------------------------------------------------------------
     # Construction helpers
     # ------------------------------------------------------------------
     def _build_camera_dock(self) -> None:
-        dock = QDockWidget("实时相机", self)
+        dock = QDockWidget(tr("实时相机", "Live camera"), self)
         dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
         dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
         content = QWidget(dock)
         layout = QVBoxLayout(content)
         layout.setContentsMargins(4, 4, 4, 4)
         self._dock_rgb = ImageView("RGB", hint_size=(320, 180))
-        self._dock_depth = ImageView("深度", hint_size=(320, 180))
+        self._dock_depth = ImageView(tr("深度", "Depth"), hint_size=(320, 180))
         layout.addWidget(QLabel("RGB", content))
         layout.addWidget(self._dock_rgb, 1)
-        layout.addWidget(QLabel("深度", content))
+        layout.addWidget(QLabel(tr("深度", "Depth"), content))
         layout.addWidget(self._dock_depth, 1)
         content.setMaximumWidth(360)
         dock.setWidget(content)
@@ -218,7 +219,10 @@ class MainWindow(QMainWindow):
         try:
             self._session.send_command(cmd)
         except Exception as exc:  # pragma: no cover - depends on live session
-            self.statusBar().showMessage(f"命令发送失败 ({cmd.get('cmd')}): {exc}")
+            self.statusBar().showMessage(
+                tr("命令发送失败", "Command send failed")
+                + f" ({cmd.get('cmd')}): {exc}"
+            )
 
     def _try_hello(self) -> None:
         if self._saw_any_event or self._hello_tries >= _HELLO_MAX_TRIES:
@@ -305,18 +309,29 @@ class MainWindow(QMainWindow):
         elif name == protocol.EVT_ARTIFACTS:
             self._on_artifacts(event)
         elif name == protocol.EVT_ERROR:
-            message = f"错误 [{event.get('where', '?')}]: {event.get('message', '')}"
+            message = (
+                tr("错误", "Error")
+                + f" [{event.get('where', '?')}]: {event.get('message', '')}"
+            )
             self.statusBar().showMessage(message)
         elif name == protocol.EVT_REPLAY_EXHAUSTED:
             if event.get("wrapped", False):
                 # Pre-formal wrap: the stream keeps running (a camera never
                 # stops) — informational only, no modal in the operator flow.
                 self.statusBar().showMessage(
-                    "fake-live 素材已播放完毕,已从头继续播放。", 10000
+                    tr(
+                        "fake-live 素材已播放完毕,已从头继续播放。",
+                        "fake-live replay wrapped; continuing from the start.",
+                    ), 10000
                 )
             else:
                 QMessageBox.information(
-                    self, "回放结束", "fake-live 素材已播放完毕,正式追踪已停止。"
+                    self,
+                    tr("回放结束", "Replay finished"),
+                    tr(
+                        "fake-live 素材已播放完毕,正式追踪已停止。",
+                        "fake-live replay is exhausted; formal tracking stopped.",
+                    ),
                 )
         elif name == protocol.EVT_FORMAL_STATS:
             self._formal.set_stats(event)
@@ -325,7 +340,9 @@ class MainWindow(QMainWindow):
         cmd = event.get("cmd")
         if not event.get("ok", False):
             self.statusBar().showMessage(
-                f"命令被拒绝 ({cmd}): {event.get('error', '未知错误')}"
+                tr("命令被拒绝", "Command rejected")
+                + f" ({cmd}): "
+                + str(event.get("error") or tr("未知错误", "unknown error"))
             )
             return
         if cmd == protocol.CMD_HELLO:
@@ -340,9 +357,10 @@ class MainWindow(QMainWindow):
             if source_kind:
                 suffix = f" | prior:{backend}" if backend else ""
                 if suffix and no_upscale and backend != "none":
-                    suffix += "(无超分)"
+                    suffix += tr("(无超分)", "(no upscale)")
                 self.setWindowTitle(
-                    f"demo_v7 — 实时物理孪生 [{source_kind}{suffix}]"
+                    tr("demo_v7 — 实时物理孪生", "demo_v7 — Realtime Physical Twin")
+                    + f" [{source_kind}{suffix}]"
                 )
             if isinstance(backend, str) and backend:
                 # Review screen adapts its Shape Prior/补点 tabs (backend
@@ -380,19 +398,22 @@ class MainWindow(QMainWindow):
         if state == protocol.STATE_WARMUP and previous != protocol.STATE_WARMUP:
             self._warmup.reset()
         if state == protocol.STATE_FINISHED:
-            self._finished.set_title("本次运行已结束。")
+            self._finished.set_title(tr("本次运行已结束。", "This run has finished."))
             self._finished.set_run_dir(self._resolve_run_dir())
         if state == protocol.STATE_FATAL:
-            self._finished.set_title("运行失败(fatal)。")
+            self._finished.set_title(tr("运行失败(fatal)。", "Run failed (fatal)."))
             self._finished.set_run_dir(self._resolve_run_dir())
             QMessageBox.critical(
                 self,
-                "致命错误",
-                f"相机服务遇到不可恢复的错误:{detail or '详见日志'}",
+                tr("致命错误", "Fatal error"),
+                tr("相机服务遇到不可恢复的错误:", "The camera service hit an unrecoverable error: ")
+                + str(detail or tr("详见日志", "see the logs")),
             )
         self._stack.setCurrentWidget(self._state_to_screen[state])
         label = str(detail) if detail else ""
-        self.statusBar().showMessage(f"状态: {state} {label}".rstrip())
+        self.statusBar().showMessage(
+            (tr("状态", "State") + f": {state} {label}").rstrip()
+        )
 
     def _resolve_run_dir(self) -> str | None:
         if self._run_dir:

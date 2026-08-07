@@ -53,6 +53,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from demo_v7.gui import i18n
+from demo_v7.gui.i18n import tr
 from demo_v7.gui.main_window import MainWindow, shutdown_session_on_thread
 from demo_v7.service.backend_options import (  # import-light (stdlib only)
     BACKEND_NONE,
@@ -67,11 +69,17 @@ from demo_v7.service.backend_options import (  # import-light (stdlib only)
 SOURCE_REAL = "real"
 SOURCE_FAKE_LIVE = "fake-live"
 
-# Combo order + GUI labels for the shape-prior generation backend.
-_BACKEND_LABELS: tuple[tuple[str, str], ...] = (
-    (BACKEND_SAM3D, "SAM3D(默认)"),
-    (BACKEND_TRELLIS2, "TRELLIS.2"),
-    (BACKEND_NONE, "无(不生成 shape prior)"),
+# Combo order + GUI label (zh, en) pairs for the generation backend;
+# translated at dialog (re)build time, never at import (i18n contract).
+_BACKEND_LABELS: tuple[tuple[str, tuple[str, str]], ...] = (
+    (BACKEND_SAM3D, ("SAM3D(默认)", "SAM3D (default)")),
+    (BACKEND_TRELLIS2, ("TRELLIS.2", "TRELLIS.2")),
+    (BACKEND_NONE, ("无(不生成 shape prior)", "None (no shape prior)")),
+)
+# Language combo entries: id -> native display name (never translated).
+_LANGUAGE_LABELS: tuple[tuple[str, str], ...] = (
+    (i18n.LANG_ZH, "简体中文"),
+    (i18n.LANG_EN, "English"),
 )
 
 # session.shutdown() can block on a dying service / chunk-stream tail; the
@@ -141,6 +149,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "interactively (config default preselected)."
         ),
     )
+    parser.add_argument(
+        "--language",
+        choices=i18n.LANGUAGES,
+        default=None,
+        help=(
+            "GUI language (zh = 简体中文, en = English); omit to pick "
+            "interactively (config default preselected)."
+        ),
+    )
     return parser
 
 
@@ -202,8 +219,28 @@ def config_default_shape_prior_upscale() -> bool:
     return True
 
 
+def config_default_language() -> str:
+    """Dialog default for the GUI language (config, then zh)."""
+    import yaml
+
+    try:
+        loaded = yaml.safe_load(
+            (Path(__file__).parent / "config" / "default.yaml").read_text()
+        )
+        if isinstance(loaded, dict) and isinstance(loaded.get("session"), dict):
+            return i18n.normalize_language(loaded["session"].get("language"))
+    except Exception:
+        pass
+    return i18n.DEFAULT_LANGUAGE
+
+
 class SourceSelectDialog(QDialog):
-    """Modal 源选择: 真实相机 vs fake-live + case folder."""
+    """Modal 源选择: language + camera source + backend + upscale.
+
+    The language combo takes effect immediately (``i18n.set_language`` +
+    ``_retranslate`` on this dialog); the accepted choice then applies to
+    the whole GUI because ``MainWindow`` is only constructed afterwards.
+    """
 
     def __init__(
         self,
@@ -212,52 +249,74 @@ class SourceSelectDialog(QDialog):
         default_source: str = SOURCE_FAKE_LIVE,
         default_backend: str = DEFAULT_SHAPE_PRIOR_BACKEND,
         default_upscale: bool = True,
+        default_language: str | None = None,
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("demo_v7 — 源选择")
+        i18n.set_language(
+            default_language if default_language is not None else i18n.language()
+        )
         self.setModal(True)
-        self._real_radio = QRadioButton("真实相机(RealSense)", self)
-        self._fake_radio = QRadioButton("fake-live 回放", self)
+        # Language row first: switching it retranslates this dialog live.
+        self._language_combo = QComboBox(self)
+        for lang_id, native_name in _LANGUAGE_LABELS:
+            self._language_combo.addItem(native_name, lang_id)
+        lang_index = self._language_combo.findData(i18n.language())
+        if lang_index >= 0:
+            self._language_combo.setCurrentIndex(lang_index)
+        self._language_combo.currentIndexChanged.connect(self._on_language_changed)
+        self._language_label = QLabel(self)
+        language_row = QHBoxLayout()
+        language_row.addWidget(self._language_label)
+        language_row.addWidget(self._language_combo, 1)
+        self._real_radio = QRadioButton(self)
+        self._fake_radio = QRadioButton(self)
         if default_source == SOURCE_FAKE_LIVE:
             self._fake_radio.setChecked(True)
         else:
             self._real_radio.setChecked(True)
         self._case_edit = QLineEdit(self)
-        self._case_edit.setPlaceholderText("data_collect/<case> 目录")
         if default_case is not None:
             self._case_edit.setText(str(default_case))
-        browse_btn = QPushButton("浏览…", self)
-        browse_btn.clicked.connect(self._browse_case)
+        self._browse_btn = QPushButton(self)
+        self._browse_btn.clicked.connect(self._browse_case)
+        self._case_label = QLabel(self)
         case_row = QHBoxLayout()
-        case_row.addWidget(QLabel("回放素材:", self))
+        case_row.addWidget(self._case_label)
         case_row.addWidget(self._case_edit, 1)
-        case_row.addWidget(browse_btn)
+        case_row.addWidget(self._browse_btn)
         # Shape-prior 生成后端 (sam3d / trellis2 / none): decided here because
         # the service prewarms the chosen backend's worker at spawn — it
         # cannot change without a 回到开始 relaunch.
         self._backend_combo = QComboBox(self)
-        for backend_id, label in _BACKEND_LABELS:
-            self._backend_combo.addItem(label, backend_id)
+        for backend_id, _pair in _BACKEND_LABELS:
+            self._backend_combo.addItem("", backend_id)
         index = self._backend_combo.findData(default_backend)
         if index >= 0:
             self._backend_combo.setCurrentIndex(index)
+        self._backend_label = QLabel(self)
         backend_row = QHBoxLayout()
-        backend_row.addWidget(QLabel("Shape prior 生成:", self))
+        backend_row.addWidget(self._backend_label)
         backend_row.addWidget(self._backend_combo, 1)
         # 上采样 (SD x4) toggle: off swaps the stage for the crop-only
         # passthrough — faster warmup, generation conditions on the
         # original-resolution crop. Backend "none" ignores it (no chain).
-        self._upscale_check = QCheckBox("上采样(SD ×4 超分;关闭可加速 warmup)", self)
+        self._upscale_check = QCheckBox(self)
         self._upscale_check.setChecked(bool(default_upscale))
         buttons = QDialogButtonBox(self)
-        start_btn = buttons.addButton("开始", QDialogButtonBox.ButtonRole.AcceptRole)
-        buttons.addButton("退出", QDialogButtonBox.ButtonRole.RejectRole)
-        start_btn.setDefault(True)
+        self._start_btn = buttons.addButton(
+            "", QDialogButtonBox.ButtonRole.AcceptRole
+        )
+        self._quit_btn = buttons.addButton(
+            "", QDialogButtonBox.ButtonRole.RejectRole
+        )
+        self._start_btn.setDefault(True)
         buttons.accepted.connect(self._validate_and_accept)
         buttons.rejected.connect(self.reject)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("请选择相机来源:", self))
+        layout.addLayout(language_row)
+        self._source_label = QLabel(self)
+        layout.addWidget(self._source_label)
         layout.addWidget(self._real_radio)
         layout.addWidget(self._fake_radio)
         layout.addLayout(case_row)
@@ -267,32 +326,78 @@ class SourceSelectDialog(QDialog):
         self._error = QLabel("", self)
         self._error.setStyleSheet("color: #f28b82;")
         layout.addWidget(self._error)
-        self.resize(560, 250)
+        self._retranslate()
+        self.resize(560, 280)
+
+    def _on_language_changed(self) -> None:
+        i18n.set_language(str(self._language_combo.currentData()))
+        self._error.setText("")
+        self._retranslate()
+
+    def _retranslate(self) -> None:
+        """Apply the current language to every string in this dialog."""
+        self.setWindowTitle(tr("demo_v7 — 源选择", "demo_v7 — Source Select"))
+        self._language_label.setText(tr("界面语言:", "Language:"))
+        self._source_label.setText(
+            tr("请选择相机来源:", "Select the camera source:")
+        )
+        self._real_radio.setText(
+            tr("真实相机(RealSense)", "Real camera (RealSense)")
+        )
+        self._fake_radio.setText(tr("fake-live 回放", "fake-live replay"))
+        self._case_label.setText(tr("回放素材:", "Replay case:"))
+        self._case_edit.setPlaceholderText(
+            tr("data_collect/<case> 目录", "data_collect/<case> directory")
+        )
+        self._browse_btn.setText(tr("浏览…", "Browse…"))
+        self._backend_label.setText(
+            tr("Shape prior 生成:", "Shape prior generator:")
+        )
+        for i, (_backend_id, pair) in enumerate(_BACKEND_LABELS):
+            self._backend_combo.setItemText(i, tr(*pair))
+        self._upscale_check.setText(
+            tr(
+                "上采样(SD ×4 超分;关闭可加速 warmup)",
+                "Upscale (SD ×4; disable for a faster warmup)",
+            )
+        )
+        self._start_btn.setText(tr("开始", "Start"))
+        self._quit_btn.setText(tr("退出", "Quit"))
 
     def _browse_case(self) -> None:
-        chosen = QFileDialog.getExistingDirectory(self, "选择 data_collect case 目录")
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            tr("选择 data_collect case 目录", "Select a data_collect case directory"),
+        )
         if chosen:
             self._case_edit.setText(chosen)
             self._fake_radio.setChecked(True)
 
     def _validate_and_accept(self) -> None:
         if self._fake_radio.isChecked() and not self._case_edit.text().strip():
-            self._error.setText("fake-live 需要选择一个素材目录。")
+            self._error.setText(
+                tr(
+                    "fake-live 需要选择一个素材目录。",
+                    "fake-live needs a replay case directory.",
+                )
+            )
             return
         self.accept()
 
-    def selection(self) -> tuple[str, Path | None, str, bool]:
-        """Return (source, fake_live_case, backend, upscale) after accepted."""
+    def selection(self) -> tuple[str, Path | None, str, bool, str]:
+        """Return (source, case, backend, upscale, language) after accepted."""
         backend = str(self._backend_combo.currentData())
         upscale = bool(self._upscale_check.isChecked())
+        lang = str(self._language_combo.currentData())
         if self._fake_radio.isChecked():
             return (
                 SOURCE_FAKE_LIVE,
                 Path(self._case_edit.text().strip()),
                 backend,
                 upscale,
+                lang,
             )
-        return SOURCE_REAL, None, backend, upscale
+        return SOURCE_REAL, None, backend, upscale, lang
 
 
 def create_session(
@@ -334,6 +439,9 @@ class AppController(QObject):
         self._window: MainWindow | None = None
         self._session: Any = None
         self._shutdown_thread: threading.Thread | None = None
+        # One-time language init (CLI wins over config); afterwards the
+        # dialog owns the choice and 回到开始 keeps the last selection.
+        i18n.set_language(args.language or config_default_language())
 
     def start(self) -> bool:
         """First launch; returns False when the user cancelled the dialog."""
@@ -363,7 +471,8 @@ class AppController(QObject):
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return False
-        source, case, backend, upscale = dialog.selection()
+        source, case, backend, upscale, _language = dialog.selection()
+        # Language already applied globally by the dialog's live switch.
         return self._launch(source, case, backend, upscale)
 
     def _launch(
@@ -388,7 +497,12 @@ class AppController(QObject):
             from PySide6.QtWidgets import QMessageBox
 
             self._session = None
-            QMessageBox.critical(None, "启动失败", f"无法启动相机服务:{exc}")
+            QMessageBox.critical(
+                None,
+                tr("启动失败", "Startup failed"),
+                tr("无法启动相机服务:", "Could not start the camera service: ")
+                + str(exc),
+            )
             return False
         self._window = MainWindow(self._session)
         self._window.restartRequested.connect(

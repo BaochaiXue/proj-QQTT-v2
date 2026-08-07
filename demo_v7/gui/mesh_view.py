@@ -19,6 +19,8 @@ GUI process — the camera service is untouched.
 
 from __future__ import annotations
 
+from demo_v7.gui.i18n import tr
+
 import math
 from typing import Any
 
@@ -125,7 +127,7 @@ class MeshOrbitView(QWidget):
             self._schedule_render()
         except Exception as exc:
             # Best-effort viewer: never let a render backend kill the GUI.
-            self._error = f"mesh 预览不可用: {exc}"
+            self._error = tr("mesh 预览不可用", "mesh preview unavailable") + f": {exc}"
             self._pixmap = None
             self.update()
 
@@ -164,7 +166,7 @@ class MeshOrbitView(QWidget):
                 bounds_min.append(pts.min(axis=0))
                 bounds_max.append(pts.max(axis=0))
             if not self._point_names:
-                self._error = "补点数据为空"
+                self._error = tr("补点数据为空", "sampling data is empty")
                 self._pixmap = None
                 self.update()
                 return
@@ -181,7 +183,7 @@ class MeshOrbitView(QWidget):
             self._error = None
             self._schedule_render()
         except Exception as exc:
-            self._error = f"补点预览不可用: {exc}"
+            self._error = tr("补点预览不可用", "sampling preview unavailable") + f": {exc}"
             self._pixmap = None
             self.update()
 
