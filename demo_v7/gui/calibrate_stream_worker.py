@@ -112,8 +112,11 @@ def _open_camera(serial: str | None):
     wedged device to a raised error instead of an infinite constructor
     hang.
     """
+    from demo_v6_2.orchestration.main_config import (
+        DEFAULT_CAMERA_COLOR_EXPOSURE,
+        DEFAULT_CAMERA_COLOR_GAIN,
+    )
     from qqtt.env import CameraSystem
-    from qqtt.env.camera.defaults import DEFAULT_EXPOSURE, DEFAULT_GAIN
 
     last_error: Exception | None = None
     for attempt in range(2):
@@ -125,8 +128,18 @@ def _open_camera(serial: str | None):
                 num_cam=1,
                 serial_numbers=[serial] if serial else None,
                 capture_mode="color",
-                exposure=DEFAULT_EXPOSURE,
-                gain=DEFAULT_GAIN,
+                # Match the RUNTIME camera settings, not qqtt's capture
+                # defaults (owner report 2026-08-07: the preview rendered
+                # salmon-pink and blown out). Exposure/gain come from the
+                # same config the camera service is launched with (45/45
+                # vs qqtt's 70/60 — today's lab lighting overexposes at
+                # the latter, clipping the board to pink-white), and white
+                # balance is AUTO (None) exactly like the service, which
+                # never touches WB — qqtt's pinned 3800K is what caused
+                # the cast. Calibration should see the runtime's colors.
+                exposure=DEFAULT_CAMERA_COLOR_EXPOSURE,
+                gain=DEFAULT_CAMERA_COLOR_GAIN,
+                white_balance=None,
                 enable_keyboard_listener=False,
                 camera_start_timeout_s=_CAMERA_START_TIMEOUT_S,
             )
