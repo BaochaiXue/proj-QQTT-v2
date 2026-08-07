@@ -116,3 +116,33 @@ class TestRoundTrip:
         assert first["frames_written"] == 1
         recorder.submit(make_packet(2, rng))  # after close: silent no-op
         assert recorder.close() == first
+
+    def test_periodic_metadata_flush_yields_replayable_truncated_case(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        # A SIGTERM'd process never reaches close(); the periodic flush must
+        # leave a valid metadata.json so the recording survives truncated.
+        import demo_v7.service.recorder as recorder_mod
+
+        monkeypatch.setattr(recorder_mod, "_META_FLUSH_EVERY", 2)
+        rng = np.random.default_rng(6)
+        recorder = FakeLiveCaseRecorder(tmp_path / "case")
+        recorder.serial = "unit-test-cam"
+        for i in range(3):
+            recorder.submit(make_packet(i, rng))
+        wait_written(recorder, 3)
+        # No close(): simulate a killed process.
+        source = RecordedRgbdFrameSource(tmp_path / "case", depth_source="realsense")
+        assert source.frame_count == 2  # metadata knows the first flush's steps
+        got = source.read_packet(seq=0, frame_index=0)
+        assert got.color_bgr is not None
+        recorder.close()
+
+    def test_zero_frame_close_removes_scaffolding(self, tmp_path) -> None:
+        target = tmp_path / "case"
+        recorder = FakeLiveCaseRecorder(target)
+        summary = recorder.close()
+        assert summary["frames_written"] == 0
+        assert not target.exists()  # next run can reuse the path
+        # And the path is immediately reusable:
+        FakeLiveCaseRecorder(target).close()

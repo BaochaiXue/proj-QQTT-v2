@@ -301,6 +301,7 @@ class SourceSelectDialog(QDialog):
         default_upscale: bool = True,
         default_gaussian: str = DEFAULT_GAUSSIAN_BACKEND,
         default_language: str | None = None,
+        default_record_dir: Path | None = None,
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
@@ -455,9 +456,15 @@ class SourceSelectDialog(QDialog):
         from datetime import datetime  # noqa: PLC0415 (dialog-open timestamp)
 
         self._record_edit = QLineEdit(self)
-        self._record_edit.setText(
-            f"data_collect/record_{datetime.now():%Y%m%d_%H%M%S}"
-        )
+        if default_record_dir is not None:
+            # CLI --record-dir seeds the interactive dialog (checked +
+            # path); otherwise a fresh timestamped default, unchecked.
+            self._record_edit.setText(str(default_record_dir))
+            self._record_check.setChecked(True)
+        else:
+            self._record_edit.setText(
+                f"data_collect/record_{datetime.now():%Y%m%d_%H%M%S}"
+            )
         self._record_browse_btn = QPushButton(self)
         self._record_browse_btn.clicked.connect(self._browse_record_dir)
         record_row = QHBoxLayout()
@@ -596,13 +603,23 @@ class SourceSelectDialog(QDialog):
                     tr("录制需要一个保存目录。", "Recording needs a directory.")
                 )
                 return
+            # Same resolution the session applies (relative -> repo root),
+            # so this pre-check and the session's check see the same path.
             target = Path(record_text).expanduser()
-            if target.exists() and any(target.iterdir()):
+            if not target.is_absolute():
+                target = Path(_BOOTSTRAP_REPO_ROOT_STR) / target
+            try:
+                dirty = target.exists() and (
+                    not target.is_dir() or any(target.iterdir())
+                )
+            except OSError:
+                dirty = True
+            if dirty:
                 self._error.setText(
                     tr(
-                        "录制目录已存在且非空,请换一个。",
-                        "Recording directory exists and is not empty; pick "
-                        "another.",
+                        "录制目录已存在且非空(或不是目录),请换一个。",
+                        "Recording path exists and is not an empty "
+                        "directory; pick another.",
                     )
                 )
                 return
@@ -641,6 +658,7 @@ def create_session(
     shape_prior_backend: str | None = None,
     shape_prior_upscale: bool | str | None = None,
     gaussian_backend: str | None = None,
+    record_dir: Path | None = None,
 ) -> Any:
     """Build an OrchestratorSession (lazy import; see module docstring).
 
@@ -663,6 +681,8 @@ def create_session(
         kwargs["shape_prior_upscale"] = shape_prior_upscale
     if gaussian_backend is not None:
         kwargs["gaussian_backend"] = gaussian_backend
+    if record_dir is not None:
+        kwargs["record_dir"] = record_dir
     return OrchestratorSession(**kwargs)
 
 
@@ -676,6 +696,7 @@ class AppController(QObject):
         self._window: MainWindow | None = None
         self._session: Any = None
         self._shutdown_thread: threading.Thread | None = None
+        self._record_dir_seeded = False
         # One-time language init (CLI wins over config); afterwards the
         # dialog owns the choice and 回到开始 keeps the last selection.
         i18n.set_language(args.language or config_default_language())
@@ -689,6 +710,7 @@ class AppController(QObject):
                 self._args.shape_prior_backend,
                 self._args.shape_prior_upscale,
                 self._args.gaussian_backend,
+                self._args.record_dir,
             )
         return self._ask_and_launch()
 
@@ -709,12 +731,21 @@ class AppController(QObject):
             default_gaussian=(
                 self._args.gaussian_backend or config_default_gaussian_backend()
             ),
+            # CLI --record-dir seeds only the first dialog: after 回到开始 the
+            # dir is typically non-empty (run 1 recorded into it), so later
+            # dialogs fall back to a fresh timestamped default.
+            default_record_dir=(
+                self._args.record_dir if not self._record_dir_seeded else None
+            ),
         )
+        self._record_dir_seeded = True
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return False
-        source, case, backend, upscale, gaussian, _language = dialog.selection()
+        source, case, backend, upscale, gaussian, _language, record_dir = (
+            dialog.selection()
+        )
         # Language already applied globally by the dialog's live switch.
-        return self._launch(source, case, backend, upscale, gaussian)
+        return self._launch(source, case, backend, upscale, gaussian, record_dir)
 
     def _launch(
         self,
@@ -723,6 +754,7 @@ class AppController(QObject):
         shape_prior_backend: str | None = None,
         shape_prior_upscale: bool | str | None = None,
         gaussian_backend: str | None = None,
+        record_dir: Path | None = None,
     ) -> bool:
         try:
             self._session = create_session(
@@ -732,6 +764,7 @@ class AppController(QObject):
                 shape_prior_backend,
                 shape_prior_upscale,
                 gaussian_backend,
+                record_dir,
             )
             # start() spawns the camera service and connects both sockets; it
             # blocks up to connect_timeout_s and self-cleans on failure.

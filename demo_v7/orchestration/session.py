@@ -262,11 +262,18 @@ class OrchestratorSession:
             resolved_record = Path(record_dir).expanduser()
             if not resolved_record.is_absolute():
                 resolved_record = REPO_ROOT / resolved_record
-            if resolved_record.exists() and any(resolved_record.iterdir()):
-                raise ValueError(
-                    f"record dir is not empty: {resolved_record} — pick a "
-                    "fresh directory"
-                )
+            if resolved_record.exists():
+                try:
+                    dirty = not resolved_record.is_dir() or any(
+                        resolved_record.iterdir()
+                    )
+                except OSError:
+                    dirty = True
+                if dirty:
+                    raise ValueError(
+                        f"record dir is not an empty directory: "
+                        f"{resolved_record} — pick a fresh directory"
+                    )
             self.record_dir = resolved_record
         if (
             self.shape_prior_backend == backend_options.BACKEND_NONE

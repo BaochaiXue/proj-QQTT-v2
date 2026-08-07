@@ -1048,10 +1048,19 @@ class StagedRuntime:
         if table_c2w is None:
             return
         viewmat = np.linalg.inv(np.asarray(table_c2w, dtype=np.float64))
+        self._gaussian_formal_catchup(live)
+        try:
+            background_whiten = float(
+                os.environ.get("DEMO_V7_GAUSSIAN_BG_WHITEN", "0.65")
+            )
+        except ValueError:
+            background_whiten = 0.65
         slot = formal.live_viz_slot
         rendered_seq = -1
         min_interval_s = 1.0 / self._channel_max_hz[protocol.CH_GAUSSIAN]
         last_render_s = 0.0
+        stats_interval_s = 5.0
+        last_stats_s = time.perf_counter()
         while not self.stop_event.is_set():
             if formal.lossless.processing_done.is_set() or live.failed:
                 return
@@ -1084,9 +1093,99 @@ class StagedRuntime:
                         [0.0, 0.0, 1.0],
                     ]
                 ),
+                background_whiten=background_whiten,
             )
             if frame is not None:
                 self._publish_frame(protocol.CH_GAUSSIAN, frame)
+            if now_s - last_stats_s >= stats_interval_s:
+                last_stats_s = now_s
+                self._write_gaussian_live_stats(live)
+
+    def _gaussian_formal_catchup(self, live) -> None:
+        """Close the capture-frame-0 -> FORMAL seq-0 gap before the loop.
+
+        The world splats are registered to the CAPTURE frame-0 pose while
+        the tracker's bones are seeded on FORMAL seq 0 (minutes later);
+        without this the gaussian starts — and forever stays — offset by
+        whatever the object did in between. Two corrections, both from
+        prepared_phystwin/000000.npz (written with the first strict pair):
+        rigid ICP of the splats onto the seq-0 object cloud, then seq-0
+        rest positions for the bones so the first live packet becomes a
+        substepped catch-up instead of a new rest pose. Every failure path
+        degrades to the old behavior — never fatal.
+        """
+        try:
+            from demo_v7.service.gaussian_align import rigid_world_catchup
+            from demo_v7.service.gaussian_live import (
+                load_formal_frame0_rest_positions,
+            )
+
+            writer = self.session.headless_capture_writer
+            if writer is None:
+                print(
+                    "[gaussian-live] no headless capture writer; skipping "
+                    "formal seq-0 catch-up",
+                    flush=True,
+                )
+                return
+            npz_path = Path(writer.prepared_phystwin_dir) / "000000.npz"
+            # first_pair_published fires BEFORE the npz write lands, so
+            # poll the file itself (atomic write -> exists == complete).
+            deadline_s = time.perf_counter() + 30.0
+            while not npz_path.is_file():
+                if self.stop_event.is_set() or time.perf_counter() > deadline_s:
+                    print(
+                        "[gaussian-live] formal seq-0 prepared frame not "
+                        "available; skipping catch-up",
+                        flush=True,
+                    )
+                    return
+                time.sleep(0.2)
+            rest, object_cloud = load_formal_frame0_rest_positions(npz_path)
+            transform, info = rigid_world_catchup(
+                live._tensors["means"].detach().cpu().numpy(),
+                live._tensors["opacities"].detach().cpu().numpy(),
+                object_cloud,
+            )
+            if transform is not None:
+                live.apply_rigid_transform(transform)
+            print(
+                f"[gaussian-live] formal seq-0 catch-up: rest_bones={len(rest)} "
+                f"rigid={info}",
+                flush=True,
+            )
+            live.seed_rest_positions(rest)
+        except Exception as exc:
+            print(
+                f"[gaussian-live] formal seq-0 catch-up skipped "
+                f"({type(exc).__name__}: {exc})",
+                flush=True,
+            )
+
+    def _write_gaussian_live_stats(self, live) -> None:
+        """Periodic follow telemetry: one stdout line + an atomic json.
+
+        The json is the E2E driver's assertion surface (service stdout is
+        not capturable there); the stdout line is for humans tailing a run.
+        """
+        try:
+            stats = live.follow_stats()
+            if stats is None:
+                return
+            print(
+                "[gaussian-live] follow: "
+                + " ".join(f"{key}={value}" for key, value in stats.items()),
+                flush=True,
+            )
+            manager = self._gaussian_manager
+            if manager is None:
+                return
+            stats_path = manager.out_dir / "gaussian_live_stats.json"
+            tmp_path = stats_path.with_suffix(".tmp")
+            tmp_path.write_text(json.dumps(stats, indent=1))
+            os.replace(tmp_path, stats_path)
+        except Exception as exc:
+            print(f"[gaussian-live] stats skipped: {exc}", flush=True)
 
     def _poll_shape_prior_until_terminal(self) -> None:
         """Poll the manager profile until READY; raise on FAILED/stop.

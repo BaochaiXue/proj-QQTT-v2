@@ -322,9 +322,18 @@ def main(argv: list[str] | None = None) -> int:
             )
             gaussian_backend = gaussian_options.GAUSSIAN_NONE
     runtime_kwargs["gaussian_backend"] = gaussian_backend
-    runtime_kwargs["record_dir"] = (
-        Path(v7_args.record_dir) if v7_args.record_dir else None
-    )
+    record_dir = Path(v7_args.record_dir) if v7_args.record_dir else None
+    if record_dir is not None and str(args.depth_source) != "realsense":
+        # The recorder writes RGB-D steps from realsense depth; ffs/none
+        # packets carry no depth_u16, which would silently produce an
+        # empty, unreplayable case.
+        print(
+            "camera_service: error: --record-dir requires --depth-source "
+            f"realsense (got {args.depth_source})",
+            file=sys.stderr,
+        )
+        return 2
+    runtime_kwargs["record_dir"] = record_dir
     from demo_v7.service.staged_runtime import StagedRuntime  # noqa: PLC0415
 
     try:
@@ -332,10 +341,11 @@ def main(argv: list[str] | None = None) -> int:
         return StagedRuntime(
             args, socket_dir=Path(v7_args.socket_dir), **runtime_kwargs
         ).run()
-    except (RuntimeError, ValueError, FileNotFoundError) as exc:
-        # Startup errors (camera/device selection, arg validation) never reach
-        # the worker-thread fatal hook, so surface them on the live status
-        # band too (v6.2 main_data_processing mirror).
+    except (RuntimeError, ValueError, OSError) as exc:
+        # Startup errors (camera/device selection, arg validation, recorder
+        # dir refusals — FileExistsError et al. are OSError) never reach the
+        # worker-thread fatal hook, so surface them on the live status band
+        # too (v6.2 main_data_processing mirror).
         from demo_v6_2.pipeline_status import (  # noqa: PLC0415
             STAGE_FATAL,
             PipelineStatusWriter,

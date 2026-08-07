@@ -20,6 +20,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import threading
 import time
@@ -85,6 +86,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--record-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Tee the run into this data_collect-format directory (recorder "
+            "E2E: the produced dir must itself replay as a fake-live case)."
+        ),
+    )
+    parser.add_argument(
         "--formal-after-wrap-s",
         type=float,
         default=None,
@@ -122,6 +132,8 @@ class DriveObserver:
         self.failed_acks: list[dict] = []
         self.replay_exhausted = False
         self.gaussian_frames = 0
+        self.first_gaussian_payload: bytes | None = None
+        self.last_gaussian_payload: bytes | None = None
         # Wall time (monotonic) of the newest pre-formal wrap event; the
         # drive uses it to start formal at a chosen recording position.
         self.replay_wrapped_at_s: float | None = None
@@ -170,10 +182,13 @@ class DriveObserver:
         else:
             self.log(f"event: {event}")
 
-    def on_frame(self, header, _payload) -> None:
+    def on_frame(self, header, payload) -> None:
         if header.channel == protocol.CH_GAUSSIAN:
             with self._lock:
                 self.gaussian_frames += 1
+                if self.first_gaussian_payload is None:
+                    self.first_gaussian_payload = bytes(payload)
+                self.last_gaussian_payload = bytes(payload)
 
     def artifact_event_count(self, kind: str) -> int:
         with self._lock:
@@ -262,6 +277,7 @@ def drive(args: argparse.Namespace) -> None:
         downstream_mode="disabled",
         shape_prior_backend=args.shape_prior_backend,
         shape_prior_upscale=args.shape_prior_upscale,
+        record_dir=args.record_dir,
         gaussian_backend=args.gaussian_backend,
         on_event=observer.on_event,
         on_frame=observer.on_frame,
@@ -399,6 +415,7 @@ def drive(args: argparse.Namespace) -> None:
             observer.log(
                 f"gaussian live channel verified ({observer.gaussian_frames} frames)"
             )
+            check_gaussian_follow(session, observer)
         if prior_disabled:
             # No shape prior -> ChunkStreamSession never writes the
             # downstream-trigger points.npz (require_shape_prior=False).
@@ -423,6 +440,53 @@ def drive(args: argparse.Namespace) -> None:
     finally:
         observer.log("shutting down session")
         session.shutdown()
+
+
+def check_gaussian_follow(session, observer: DriveObserver) -> None:
+    """Assert the live gaussian actually FOLLOWED the tracked object.
+
+    Surface: <base_path>/gaussian/gaussian_live_stats.json, written
+    periodically by the service's gaussian worker (its stdout is not
+    capturable here). bone2splat p50 is the follow metric: bones ride the
+    real object surface, so a stuck or misaligned gaussian shows up as a
+    large median bone->nearest-splat distance. Frame dumps land next to it
+    for eyeball checks.
+    """
+    gaussian_dir = session.base_path / "gaussian"
+    for name, payload in (
+        ("live_first_frame.jpg", observer.first_gaussian_payload),
+        ("live_last_frame.jpg", observer.last_gaussian_payload),
+    ):
+        if payload:
+            (gaussian_dir / name).write_bytes(payload)
+    stats_path = gaussian_dir / "gaussian_live_stats.json"
+    if not stats_path.is_file():
+        raise RuntimeError(
+            f"gaussian follow stats missing: {stats_path} (formal ran "
+            f"{observer.gaussian_frames} frames but the worker never "
+            "reported — deform likely failed)"
+        )
+    stats = json.loads(stats_path.read_text())
+    observer.log(f"gaussian follow stats: {stats}")
+    if not stats.get("rest_seeded", False):
+        raise RuntimeError(
+            "gaussian bones were not seeded from the formal seq-0 rest "
+            f"pose: {stats}"
+        )
+    p50 = float(stats.get("bone2splat_p50_cm", 1e9))
+    if p50 > 6.0:
+        raise RuntimeError(
+            f"gaussian is not following the tracked object: bone->splat "
+            f"p50 {p50}cm (limit 6.0): {stats}"
+        )
+    bones_moved = float(stats.get("bones_moved_cm", 0.0))
+    splats_moved = float(stats.get("splats_moved_cm", 0.0))
+    if bones_moved > 2.0 and splats_moved <= 0.0:
+        raise RuntimeError(
+            f"tracked bones moved {bones_moved}cm but the splats never "
+            f"moved: {stats}"
+        )
+    observer.log("gaussian follow verified")
 
 
 def main(argv: list[str] | None = None) -> int:

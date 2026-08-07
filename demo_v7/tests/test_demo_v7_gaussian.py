@@ -246,3 +246,259 @@ class TestFirstGenerateFreshnessGate:
         waiter.join(timeout=5.0)
         assert not waiter.is_alive()
         assert calls == [manager.seed]
+
+
+class TestRegisterCanonicalArticulated:
+    """Registration must survive articulated pose asymmetry (the sloth
+    failure class: a near-flip coarse tie resolved by refining top-K
+    candidates instead of only the coarse winner)."""
+
+    def _limbed_body(self) -> np.ndarray:
+        # Torso deliberately near-symmetric under 180-deg flips; the thin
+        # limbs are the only disambiguators — exactly the geometry where
+        # the coarse 24-rotation chamfer ranks a flip within a hair of the
+        # truth.
+        rng = np.random.default_rng(11)
+        torso = rng.normal(size=(3000, 3)) * np.array([0.16, 0.12, 0.07])
+        arm_x = np.stack(
+            [
+                np.linspace(0.14, 0.40, 220),
+                rng.normal(size=220) * 0.015,
+                rng.normal(size=220) * 0.015 + 0.03,
+            ],
+            axis=1,
+        )
+        leg_y = np.stack(
+            [
+                rng.normal(size=160) * 0.015 - 0.04,
+                np.linspace(0.10, 0.30, 160),
+                rng.normal(size=160) * 0.015,
+            ],
+            axis=1,
+        )
+        return np.concatenate([torso, arm_x, leg_y]).astype(np.float64)
+
+    @pytest.mark.parametrize("angle_deg", [172.5, 180.0, 90.0])
+    def test_recovers_near_flip(self, angle_deg: float) -> None:
+        pytest.importorskip("open3d")
+        from demo_v7.service.gaussian_align import register_canonical
+
+        target = self._limbed_body()
+        angle = np.radians(angle_deg)
+        rotation = np.array(
+            [
+                [np.cos(angle), -np.sin(angle), 0.0],
+                [np.sin(angle), np.cos(angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        # Source = target seen in a rotated canonical frame (plus jitter,
+        # as a gaussian cloud never matches a surface sample exactly).
+        rng = np.random.default_rng(5)
+        source = target @ rotation.T + rng.normal(size=target.shape) * 0.004
+        opacities = np.full(len(source), 0.9, dtype=np.float32)
+
+        transform, chamfer = register_canonical(source, opacities, target)
+        assert chamfer < 0.03, f"registration chamfer too high: {chamfer}"
+        # The limbs are what near-flips get wrong: the transformed arm tip
+        # must land on the target arm tip, not across the body.
+        arm_tip = np.array([0.40, 0.0, 0.03]) @ rotation.T
+        moved_tip = arm_tip @ transform[:3, :3].T + transform[:3, 3]
+        assert np.linalg.norm(moved_tip - np.array([0.40, 0.0, 0.03])) < 0.05
+
+
+class TestRigidWorldCatchup:
+    def _cloud(self) -> np.ndarray:
+        rng = np.random.default_rng(23)
+        return (rng.normal(size=(3000, 3)) * 0.08 + np.array([0.3, 0.1, 0.05])).astype(
+            np.float64
+        )
+
+    def test_recovers_small_rigid_motion(self) -> None:
+        pytest.importorskip("open3d")
+        from demo_v7.service.gaussian_align import rigid_world_catchup
+
+        means = self._cloud()
+        angle = np.radians(8.0)
+        rotation = np.array(
+            [
+                [np.cos(angle), -np.sin(angle), 0.0],
+                [np.sin(angle), np.cos(angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        target = means @ rotation.T + np.array([0.06, -0.04, 0.0])
+        opacities = np.full(len(means), 0.9, dtype=np.float32)
+        transform, info = rigid_world_catchup(means, opacities, target)
+        assert transform is not None, f"catch-up rejected: {info}"
+        moved = means @ transform[:3, :3].T + transform[:3, 3]
+        assert float(np.abs(moved - target).mean()) < 0.01
+        assert info["after_cm"] < info["before_cm"]
+
+    def test_rejects_implausible_jump(self) -> None:
+        pytest.importorskip("open3d")
+        from demo_v7.service.gaussian_align import rigid_world_catchup
+
+        means = self._cloud()
+        target = means + np.array([1.5, 0.0, 0.0])  # a table-length away
+        opacities = np.full(len(means), 0.9, dtype=np.float32)
+        transform, info = rigid_world_catchup(means, opacities, target)
+        assert transform is None
+        assert "rejected" in info
+
+
+class TestGaussianLiveRestSeed:
+    """Bone rest positions must come from the seeded seq-0 pose so the
+    first packet becomes a catch-up deformation (the stuck-in-old-pose
+    trap), substepped for large motions."""
+
+    def _bare_renderer(self, count: int = 200):
+        from demo_v7.service.gaussian_live import GaussianLiveRenderer
+
+        live = object.__new__(GaussianLiveRenderer)
+        live.device = "cpu"
+        live.failed = False
+        live._torch = torch
+        gen = torch.Generator().manual_seed(9)
+        means = torch.rand(count, 3, generator=gen)
+        quats = torch.zeros(count, 4)
+        quats[:, 0] = 1.0
+        live._tensors = {
+            "means": means.clone(),
+            "quats": quats.clone(),
+            "scales": torch.full((count, 3), 0.01),
+            "opacities": torch.full((count,), 0.9),
+            "colors": torch.rand(count, 3, generator=gen),
+        }
+        live._bone_ids = None
+        live._relations = None
+        live._ctrl_prev = None
+        live._buffer = {}
+        live._rest_positions = {}
+        live.rest_seeded = False
+        live.last_substeps = 0
+        live.bones_moved_m = 0.0
+        live.splats_moved_m = 0.0
+        return live, means
+
+    def _grid(self) -> np.ndarray:
+        xs = np.linspace(0.0, 1.0, 3)
+        return (
+            np.stack(np.meshgrid(xs, xs, xs, indexing="ij"), axis=-1)
+            .reshape(-1, 3)
+            .astype(np.float32)
+        )
+
+    def test_seeded_first_packet_catches_up(self) -> None:
+        live, means = self._bare_renderer()
+        rest = self._grid()
+        ids = np.arange(len(rest), dtype=np.int64)
+        live.seed_rest_positions({int(i): rest[i] for i in ids})
+        shift = np.array([0.09, 0.0, 0.0], dtype=np.float32)
+        live.step(rest + shift, ids, np.ones(len(ids), dtype=bool))
+        assert live.rest_seeded
+        # ceil(0.09 / 0.02) = 5 substeps for the catch-up
+        assert live.last_substeps == 5
+        assert torch.allclose(
+            live._tensors["means"], means + torch.as_tensor(shift), atol=1e-3
+        )
+        assert live.bones_moved_m > 0.0
+        stats = live.follow_stats()
+        assert stats is not None and stats["rest_seeded"] is True
+
+    def test_unseeded_keeps_first_packet_rest(self) -> None:
+        live, means = self._bare_renderer()
+        rest = self._grid()
+        ids = np.arange(len(rest), dtype=np.int64)
+        live.step(rest, ids, np.ones(len(ids), dtype=bool))
+        assert not live.rest_seeded
+        assert torch.allclose(live._tensors["means"], means)  # no motion yet
+        shift = np.array([0.03, 0.0, 0.0], dtype=np.float32)
+        live.step(rest + shift, ids, np.ones(len(ids), dtype=bool))
+        assert torch.allclose(
+            live._tensors["means"], means + torch.as_tensor(shift), atol=1e-3
+        )
+
+    def test_partial_seed_falls_back(self) -> None:
+        live, means = self._bare_renderer()
+        rest = self._grid()
+        ids = np.arange(len(rest), dtype=np.int64)
+        live.seed_rest_positions({0: rest[0], 1: rest[1]})  # < _MIN_BONES
+        live.step(rest, ids, np.ones(len(ids), dtype=bool))
+        assert not live.rest_seeded
+        assert live._bone_ids is not None and len(live._bone_ids) == len(ids)
+
+    def test_apply_rigid_transform_rotates_quats(self) -> None:
+        live, means = self._bare_renderer()
+        angle = np.radians(90.0)
+        transform = np.eye(4)
+        transform[:3, :3] = np.array(
+            [
+                [np.cos(angle), -np.sin(angle), 0.0],
+                [np.sin(angle), np.cos(angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        transform[:3, 3] = [0.1, -0.2, 0.05]
+        live.apply_rigid_transform(transform)
+        rotation = torch.as_tensor(transform[:3, :3], dtype=torch.float32)
+        expected = means @ rotation.T + torch.as_tensor(
+            transform[:3, 3], dtype=torch.float32
+        )
+        assert torch.allclose(live._tensors["means"], expected, atol=1e-5)
+        back = gaussian_dynamics.quat2mat(live._tensors["quats"][:1])
+        assert torch.allclose(back[0], rotation, atol=1e-5)
+
+
+class TestFormalFrame0Loader:
+    def test_loads_visible_object_queries_only(self, tmp_path) -> None:
+        from demo_v7.service.gaussian_live import (
+            load_formal_frame0_rest_positions,
+        )
+
+        height, width = 6, 8
+        yy, xx = np.meshgrid(
+            np.arange(height), np.arange(width), indexing="ij"
+        )
+        pcd = np.stack(
+            [xx * 0.1, yy * 0.1, np.full_like(xx, 2.0, dtype=float)], axis=-1
+        ).astype(np.float32)[None]
+        mask_object = np.zeros((height, width), dtype=bool)
+        mask_object[2:5, 2:6] = True
+        tracks = np.array(
+            [
+                [3.0, 4.0],  # visible, on object -> bone
+                [3.2, 4.8],  # visible, rounds to (3,5) on object -> bone
+                [0.0, 0.0],  # visible but off-object -> dropped
+                [3.0, 3.0],  # invisible -> dropped
+            ],
+            dtype=np.float32,
+        )
+        visibility = np.array([True, True, True, False])
+        npz = tmp_path / "000000.npz"
+        np.savez(
+            npz,
+            seq=np.array([0]),
+            tracks_yx=tracks,
+            visibility=visibility,
+            pcd_points=pcd,
+            mask_object=mask_object,
+        )
+        rest, cloud = load_formal_frame0_rest_positions(npz)
+        assert sorted(rest) == [0, 1]
+        assert np.allclose(rest[0], [0.4, 0.3, 2.0], atol=1e-6)
+        assert np.allclose(rest[1], [0.5, 0.3, 2.0], atol=1e-6)
+        assert len(cloud) == int(mask_object.sum())
+
+
+class TestWhitenBackground:
+    def test_amounts(self) -> None:
+        from demo_v7.service.gaussian_live import whiten_background
+
+        frame = np.full((2, 2, 3), 100, dtype=np.uint8)
+        assert np.allclose(whiten_background(frame, 0.0), 100.0)
+        assert np.allclose(whiten_background(frame, 1.0), 255.0)
+        assert np.allclose(whiten_background(frame, 0.5), 177.5)
+        # Out-of-range amounts clamp instead of exploding.
+        assert np.allclose(whiten_background(frame, 2.0), 255.0)
+        assert np.allclose(whiten_background(frame, -1.0), 100.0)

@@ -38,6 +38,18 @@ from demo_v7.service.gaussian_utils import (
 _COARSE_POINTS = 4000
 _ICP_POINTS = 20000
 _OPACITY_KEEP = 0.3
+# The coarse chamfer is a weak ranker for near-symmetric objects (measured
+# on the sloth: the true rotation lost the coarse ranking to a 172.5-deg
+# flip by 0.7%, and refining only the winner locked the misregistration
+# in). Refine every candidate within this margin of the coarse winner
+# (capped) and keep the best REFINED symmetric chamfer.
+_REFINE_MARGIN = 1.3
+_REFINE_MAX_CANDIDATES = 5
+# Refined symmetric chamfer above this (mesh-canonical units, object spans
+# ~1.0) means the registration is likely wrong (good runs measure ~0.02,
+# the known-bad flip measured 0.066): flag it loudly instead of silently
+# shipping ghost limbs.
+_CHAMFER_SUSPECT = 0.045
 
 
 @dataclass
@@ -47,6 +59,7 @@ class GaussianAlignment:
     composed: np.ndarray  # 4x4 ply-canonical -> world (pre-ARAP)
     chamfer_after_m: float  # symmetric chamfer in mesh-canonical units
     arap_residual_mean_m: float
+    registration_suspect: bool = False
 
     def provenance(self) -> dict:
         return {
@@ -55,6 +68,7 @@ class GaussianAlignment:
             "composed": self.composed.tolist(),
             "chamfer_after_m": self.chamfer_after_m,
             "arap_residual_mean_m": self.arap_residual_mean_m,
+            "registration_suspect": self.registration_suspect,
         }
 
 
@@ -119,12 +133,18 @@ def register_canonical(
 
     src_coarse = _subsample(solid, _COARSE_POINTS)
     dst_coarse = _subsample(mesh_surface_points, _COARSE_POINTS)
-    best_rotation, best_cost = None, np.inf
+    ranked: list[tuple[float, np.ndarray]] = []
     for rotation in _axis_rotations():
         candidate = (src_coarse - src_center) @ rotation.T * base_scale + dst_center
-        cost = _chamfer(candidate, dst_coarse)
-        if cost < best_cost:
-            best_cost, best_rotation = cost, rotation
+        ranked.append((_chamfer(candidate, dst_coarse), rotation))
+    ranked.sort(key=lambda item: item[0])
+    # Near-symmetric objects rank near-flips within a hair of the truth at
+    # the coarse stage; only the REFINED chamfer separates them.
+    rotation_candidates = [
+        rotation
+        for cost, rotation in ranked[:_REFINE_MAX_CANDIDATES]
+        if cost <= ranked[0][0] * _REFINE_MARGIN
+    ]
 
     src_cloud = o3d.geometry.PointCloud(
         o3d.utility.Vector3dVector(_subsample(solid, _ICP_POINTS).astype(np.float64))
@@ -165,20 +185,24 @@ def register_canonical(
     prescale[:3, :3] *= base_scale
     scaled_src = o3d.geometry.PointCloud(src_cloud)
     scaled_src.scale(base_scale, center=(0.0, 0.0, 0.0))
-    rigid_init = np.eye(4)
-    rigid_init[:3, :3] = best_rotation
-    rigid_init[:3, 3] = dst_center - best_rotation @ (src_center * base_scale)
     rigid = o3d.pipelines.registration.TransformationEstimationPointToPoint(
         with_scaling=False
     )
-    result = rigid_init
-    for threshold in (0.10 * extent, 0.03 * extent):
-        icp = o3d.pipelines.registration.registration_icp(
-            scaled_src, dst_cloud, threshold, result, rigid, criteria
-        )
-        result = np.asarray(icp.transformation)
-    best_transform = result @ prescale
-    best_metric = _symmetric_chamfer_of(best_transform)
+    best_transform, best_metric, best_rotation = None, np.inf, None
+    for rotation in rotation_candidates:
+        rigid_init = np.eye(4)
+        rigid_init[:3, :3] = rotation
+        rigid_init[:3, 3] = dst_center - rotation @ (src_center * base_scale)
+        result = rigid_init
+        for threshold in (0.10 * extent, 0.03 * extent):
+            icp = o3d.pipelines.registration.registration_icp(
+                scaled_src, dst_cloud, threshold, result, rigid, criteria
+            )
+            result = np.asarray(icp.transformation)
+        transform = result @ prescale
+        metric = _symmetric_chamfer_of(transform)
+        if metric < best_metric:
+            best_metric, best_transform, best_rotation = metric, transform, rotation
 
     similarity_init = np.eye(4)
     similarity_init[:3, :3] = best_rotation * base_scale
@@ -275,11 +299,102 @@ def align_gaussian_to_world(
         np.float32
     )
 
+    suspect = chamfer_after > _CHAMFER_SUSPECT
+    if suspect:
+        print(
+            f"[gaussian-align] WARNING: canonical registration chamfer "
+            f"{chamfer_after:.4f} exceeds {_CHAMFER_SUSPECT} (canonical "
+            "units) — the world gaussian is likely misrotated; check "
+            "gaussian_world_overlay.png",
+            flush=True,
+        )
     alignment = GaussianAlignment(
         canonical_reg=canonical_reg,
         mesh2world=mesh2world,
         composed=composed,
         chamfer_after_m=chamfer_after,
         arap_residual_mean_m=float(np.linalg.norm(displacement, axis=1).mean()),
+        registration_suspect=suspect,
     )
     return world, alignment
+
+
+def rigid_world_catchup(
+    means: np.ndarray,
+    opacities: np.ndarray,
+    target_points: np.ndarray,
+    *,
+    max_translation_m: float = 0.30,
+    max_rotation_deg: float = 60.0,
+) -> tuple[np.ndarray | None, dict]:
+    """Rigid ICP snapping world splats onto the FORMAL frame-0 object cloud.
+
+    The world gaussian is registered to the CAPTURE frame-0 pose, but the
+    tracker's bones live on the object's FORMAL frame-0 pose — anything the
+    object did in between (the whole warmup, ~60s+) is invisible to the
+    tracker. This closes the rigid part of that gap. Articulated pose
+    changes across the gap are not recoverable (no correspondence exists);
+    REPOSITION bounds them in real-live runs.
+
+    Returns ``(4x4 world->world transform | None, info)``; None means the
+    correction was rejected (ICP made things worse or moved implausibly
+    far — likely a degenerate cloud) and the caller keeps the identity.
+    """
+    import open3d as o3d
+    from scipy.spatial import cKDTree
+
+    info: dict = {}
+    solid = means[opacities > _OPACITY_KEEP]
+    if len(solid) < 100:
+        solid = means
+    src = _subsample(solid.astype(np.float64), _ICP_POINTS)
+    dst = np.asarray(target_points, dtype=np.float64)
+    dst = dst[np.isfinite(dst).all(axis=1)]
+    if len(dst) < 100:
+        info["rejected"] = "target cloud too small"
+        return None, info
+    dst = _subsample(dst, _ICP_POINTS)
+    tree = cKDTree(dst)
+
+    def _fit_cm(points: np.ndarray) -> float:
+        distance, _ = tree.query(_subsample(points, _COARSE_POINTS), k=1, workers=-1)
+        return float(distance.mean() * 100.0)
+
+    before_cm = _fit_cm(src)
+    extent = float(np.linalg.norm(np.ptp(dst, axis=0)))
+    src_cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(src))
+    dst_cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(dst))
+    rigid = o3d.pipelines.registration.TransformationEstimationPointToPoint(
+        with_scaling=False
+    )
+    criteria = o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=60)
+    result = np.eye(4)
+    for threshold in (0.10 * extent, 0.03 * extent):
+        icp = o3d.pipelines.registration.registration_icp(
+            src_cloud, dst_cloud, threshold, result, rigid, criteria
+        )
+        result = np.asarray(icp.transformation)
+    after_cm = _fit_cm(src @ result[:3, :3].T + result[:3, 3])
+
+    # Object displacement, not the raw matrix translation (a rotation about
+    # the world origin inflates the latter for an object sitting off-origin).
+    centroid = src.mean(axis=0)
+    translation_m = float(
+        np.linalg.norm(result[:3, :3] @ centroid + result[:3, 3] - centroid)
+    )
+    rotation_deg = float(
+        np.degrees(np.arccos(np.clip((np.trace(result[:3, :3]) - 1.0) / 2.0, -1, 1)))
+    )
+    info.update(
+        before_cm=round(before_cm, 2),
+        after_cm=round(after_cm, 2),
+        translation_m=round(translation_m, 4),
+        rotation_deg=round(rotation_deg, 2),
+    )
+    if after_cm >= before_cm:
+        info["rejected"] = "no improvement"
+        return None, info
+    if translation_m > max_translation_m or rotation_deg > max_rotation_deg:
+        info["rejected"] = "implausibly large correction"
+        return None, info
+    return result, info

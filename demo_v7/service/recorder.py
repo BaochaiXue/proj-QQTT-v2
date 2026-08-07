@@ -19,11 +19,16 @@ takes them from ``--table-calibrate`` like any live run); the repo-root
 export scripts, mirroring ``record_data.py``.
 
 Threading: ``submit()`` is called on the acquisition/publish path and must
-NEVER block — it does a ``put_nowait`` into a bounded queue and counts drops
-(the reader paces by per-frame timestamps, so a dropped frame is just a
-small time gap, same as the original recorder's dropped-frame gaps). One
-daemon worker thread does all disk IO. FramePacket arrays are owned by the
-packet (the acquisition loop copies per frame), so no defensive copies here.
+NEVER block — it stamps the capture-side timestamp, does a ``put_nowait``
+into a bounded queue and counts drops (the reader paces by per-frame
+timestamps, so a dropped frame is just a small time gap, same as the
+original recorder's dropped-frame gaps). Timestamps come from the producer,
+not the disk worker, so a backlog drain cannot compress replay pacing. One
+daemon worker thread does all disk IO and rewrites ``metadata.json`` every
+``_META_FLUSH_EVERY`` frames, so a killed process degrades to a truncated
+but replayable case instead of losing the recording. FramePacket arrays are
+owned by the packet (the acquisition loop copies per frame), so no
+defensive copies here.
 """
 
 from __future__ import annotations
@@ -45,6 +50,7 @@ from demo_v6_2.mdp.packets import FramePacket
 # comfortably under the 33 ms frame budget, so drops mean real disk trouble.
 _QUEUE_MAX_FRAMES = 128
 _CLOSE_DRAIN_TIMEOUT_S = 30.0
+_META_FLUSH_EVERY = 100
 _SCHEMA_VERSION = "qqtt_recording_v2"
 
 
@@ -53,21 +59,26 @@ class FakeLiveCaseRecorder:
 
     def __init__(self, case_dir: Path) -> None:
         self.case_dir = Path(case_dir)
-        if self.case_dir.exists() and any(self.case_dir.iterdir()):
-            raise FileExistsError(
-                f"record dir is not empty: {self.case_dir} — refusing to mix "
-                "recordings"
-            )
+        if self.case_dir.exists():
+            if not self.case_dir.is_dir():
+                raise FileExistsError(
+                    f"record dir is an existing file: {self.case_dir}"
+                )
+            if any(self.case_dir.iterdir()):
+                raise FileExistsError(
+                    f"record dir is not empty: {self.case_dir} — refusing "
+                    "to mix recordings"
+                )
         (self.case_dir / "color" / "0").mkdir(parents=True, exist_ok=True)
         (self.case_dir / "depth" / "0").mkdir(parents=True, exist_ok=True)
-        self._queue: queue.Queue[FramePacket | None] = queue.Queue(
+        self._queue: queue.Queue[tuple[FramePacket, float] | None] = queue.Queue(
             maxsize=_QUEUE_MAX_FRAMES
         )
         self._timestamps: dict[str, float] = {}
         self._step = 0
         self.dropped = 0
         self.written = 0
-        self._error: BaseException | None = None
+        self._error_repr: str | None = None
         self._closed = False
         self._meta_lock = threading.Lock()
         self._first_packet: FramePacket | None = None
@@ -83,14 +94,14 @@ class FakeLiveCaseRecorder:
     # ------------------------------------------------------------------
     def submit(self, packet: FramePacket) -> None:
         """Enqueue one packet for recording; drops (and counts) on backlog."""
-        if self._closed or self._error is not None:
+        if self._closed or self._error_repr is not None:
             return
         if packet.color_bgr is None or packet.depth_u16 is None:
             # Color-only preview stubs (warmup gate pump) are not recordable
             # RGB-D steps; the reader requires depth for every step.
             return
         try:
-            self._queue.put_nowait(packet)
+            self._queue.put_nowait((packet, time.time()))
         except queue.Full:
             self.dropped += 1
 
@@ -103,17 +114,21 @@ class FakeLiveCaseRecorder:
             if item is None:
                 return
             try:
-                self._write_frame(item)
+                self._write_frame(*item)
             except BaseException as exc:  # noqa: BLE001 — latch, keep demo alive
-                if self._error is None:
-                    self._error = exc
+                if self._error_repr is None:
+                    self._error_repr = repr(exc)
                     print(
                         f"[recorder] write failed, recording stops: {exc!r}",
                         flush=True,
                     )
+            finally:
+                # Drop the packet reference so a latched error doesn't pin
+                # the arrays for the recorder's lifetime.
+                item = None
 
-    def _write_frame(self, packet: FramePacket) -> None:
-        if self._error is not None:
+    def _write_frame(self, packet: FramePacket, captured_at_s: float) -> None:
+        if self._error_repr is not None:
             return
         if self._first_packet is None:
             with self._meta_lock:
@@ -148,9 +163,14 @@ class FakeLiveCaseRecorder:
                 str(self.case_dir / "ir_right" / "0" / f"{step}.png"),
                 packet.ir_right_u8,
             )
-        self._timestamps[step] = time.time()
+        self._timestamps[step] = captured_at_s
         self._step += 1
         self.written += 1
+        # Crash consistency: keep metadata.json fresh enough that a killed
+        # process (SIGTERM skips finally blocks) leaves a truncated but
+        # replayable case rather than losing the whole recording.
+        if self.written % _META_FLUSH_EVERY == 0:
+            self._write_metadata()
 
     # ------------------------------------------------------------------
     # Finalization
@@ -168,21 +188,36 @@ class FakeLiveCaseRecorder:
         if self.written > 0 and self._first_packet is not None:
             self._write_metadata()
             self._copy_repo_calibration()
+        else:
+            self._remove_empty_scaffolding()
         print(
             f"[recorder] closed: {self.written} frames -> {self.case_dir} "
             f"(dropped {self.dropped}"
-            + (f", error {self._error!r}" if self._error else "")
+            + (f", error {self._error_repr}" if self._error_repr else "")
             + ")",
             flush=True,
         )
         return self._summary()
+
+    def _remove_empty_scaffolding(self) -> None:
+        """A 0-frame run must not poison the target dir for the next run."""
+        for sub in ("color/0", "color", "depth/0", "depth",
+                    "ir_left/0", "ir_left", "ir_right/0", "ir_right"):
+            try:
+                (self.case_dir / sub).rmdir()  # rmdir refuses non-empty dirs
+            except OSError:
+                pass
+        try:
+            self.case_dir.rmdir()
+        except OSError:
+            pass
 
     def _summary(self) -> dict:
         return {
             "case_dir": str(self.case_dir),
             "frames_written": int(self.written),
             "frames_dropped": int(self.dropped),
-            "error": repr(self._error) if self._error else None,
+            "error": self._error_repr,
         }
 
     def _measured_fps(self) -> float:
@@ -231,18 +266,30 @@ class FakeLiveCaseRecorder:
                 ]
             if packet.ir_baseline_m is not None:
                 metadata["ir_baseline_m"] = [float(packet.ir_baseline_m)]
-        with open(self.case_dir / "metadata.json", "w") as handle:
+        # Atomic replace: the periodic mid-run flush must never leave a
+        # half-written metadata.json for the reader to choke on.
+        tmp_path = self.case_dir / ".metadata.json.tmp"
+        with open(tmp_path, "w") as handle:
             json.dump(metadata, handle, indent=1)
+        tmp_path.replace(self.case_dir / "metadata.json")
 
     def _copy_repo_calibration(self) -> None:
         """Mirror record_data.py: carry the repo calibration for exporters.
 
         The fake-live reader ignores these (extrinsics come from
         ``--table-calibrate`` at replay time); copying keeps the case usable
-        by the offline export scripts. Best-effort only.
+        by the offline export scripts. table_calibrate.pkl is also
+        snapshotted: it is the c2w the runtime actually applied while this
+        case was recorded, so a later replay can be checked against it if
+        the camera gets recalibrated in between. Best-effort only.
         """
         repo_root = Path(__file__).resolve().parents[2]
-        for name in ("calibrate.pkl", "calibrate_metadata.json"):
+        for name in (
+            "calibrate.pkl",
+            "calibrate_metadata.json",
+            "table_calibrate.pkl",
+            "table_calibrate_metadata.json",
+        ):
             src = repo_root / name
             if src.is_file():
                 try:
