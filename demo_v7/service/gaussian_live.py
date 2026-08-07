@@ -4,7 +4,15 @@ Consumed by the staged runtime's gaussian worker thread: per displayed
 frame, the tracked OBJECT markers (world coords, identity-stable via
 query_indices) act as control points ("bones"); the aligned world-frame
 splats ride their motion via the vendored sparse motion interpolation
-(gaussian_dynamics), and gsplat rasterizes the result over the live RGB.
+(gaussian_dynamics), and gsplat rasterizes the result on an opaque white
+canvas for ``CH_GAUSSIAN``.
+
+The gaussian channel is intentionally an isolated render, not an RGB
+composite: the GUI already exposes separate RGB and tracking-composite
+channels, while a white canvas makes pose, silhouette, holes, floaters, and
+alignment errors directly visible.  ``render_over`` keeps its historical
+name so the staged-runtime call site stays compatible; ``frame_bgr`` is used
+only to obtain the output resolution.
 
 Identity handling (the mis-association trap from the design review):
 marker rows are a per-frame, variable-width subset — positions are
@@ -33,7 +41,6 @@ from demo_v7.service.gaussian_utils import (
 _BONE_RELATION_K = 8
 _SKIN_K = 16
 _MIN_BONES = 12
-_OVERLAY_ALPHA = 0.85
 
 
 class GaussianLiveRenderer:
@@ -137,26 +144,28 @@ class GaussianLiveRenderer:
         viewmat: np.ndarray,
         intrinsics: np.ndarray,
     ) -> np.ndarray | None:
-        """Render the current splats over the live frame (None on failure)."""
+        """Render splats on an opaque white canvas (None on failure).
+
+        ``frame_bgr`` deliberately contributes no pixels; it supplies only
+        the HxW resolution expected by the GUI channel.  gsplat already
+        composites the splats against the requested background, so applying
+        alpha again here would darken/fuzz the boundary (the former live-RGB
+        implementation did exactly that).
+        """
         if self.failed:
             return None
         try:
             height, width = frame_bgr.shape[:2]
-            rgb, alpha = render_gaussians(
+            rgb, _alpha = render_gaussians(
                 self._tensors,
                 viewmat=viewmat,
                 intrinsics=intrinsics,
                 width=int(width),
                 height=int(height),
-                background=(0.0, 0.0, 0.0),
+                background=(1.0, 1.0, 1.0),
                 device=self.device,
             )
-            blend = (alpha[..., None] * _OVERLAY_ALPHA).astype(np.float32)
-            composed = (
-                frame_bgr.astype(np.float32) * (1.0 - blend)
-                + rgb[..., ::-1].astype(np.float32) * blend
-            )
-            return composed.astype(np.uint8)
+            return np.ascontiguousarray(rgb[..., ::-1])
         except Exception as exc:
             self.failed = True
             print(f"[gaussian-live] render failed: {exc}", flush=True)
