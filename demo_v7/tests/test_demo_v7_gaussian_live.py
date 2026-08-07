@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from demo_v7.service import gaussian_live
+pytest.importorskip("torch")
+
+from demo_v7.service import gaussian_live  # noqa: E402
 
 
 def test_gaussian_channel_uses_opaque_white_background(monkeypatch) -> None:
@@ -39,7 +42,7 @@ def test_gaussian_channel_uses_opaque_white_background(monkeypatch) -> None:
     monkeypatch.setattr(gaussian_live, "render_gaussians", fake_render_gaussians)
 
     # Bypass __init__: this test exercises only the display-channel contract,
-    # so it must not require CUDA, a PLY file, torch, or gsplat.
+    # so it must not require CUDA, a PLY file, or gsplat.
     renderer = object.__new__(gaussian_live.GaussianLiveRenderer)
     renderer.failed = False
     renderer.device = "cpu"
