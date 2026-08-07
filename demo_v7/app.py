@@ -182,6 +182,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "interactively (config default preselected)."
         ),
     )
+    parser.add_argument(
+        "--record-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Record the run (real camera) into this directory as a "
+            "data_collect-format fake-live case; must not exist or be empty."
+        ),
+    )
     return parser
 
 
