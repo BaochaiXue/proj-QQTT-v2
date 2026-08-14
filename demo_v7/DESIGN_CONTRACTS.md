@@ -145,11 +145,9 @@ README's 界面流程. `app.py`: parse args (--source, --fake-live-case,
 - widgets.ImageView: setFrame(jpeg_bytes) decodes (cv2) -> QImage ->
   QPixmap, keeps aspect; latest-wins (pending frame replaced, repaint
   coalesced with a 30Hz QTimer).
-- widgets.VideoLoop: loops an mp4 via cv2.VideoCapture on a QTimer
-  (no QtMultimedia/gstreamer dependency).
 - widgets.ProgressTimeline: ordered stage rows with status glyphs + ms.
-- Review screen: tabs Masks / Shape Prior; images from EVT_ARTIFACTS
-  paths; VideoLoop for turntable mp4 when present.
+- Review screen: tabs Masks / Shape Prior / Gaussian; images from
+  EVT_ARTIFACTS paths (turntable contact-sheet stills, no video widget).
 - Formal screen: big ImageView on CH_COMPOSITE with [复合|RGB|深度]
   switcher (switch = which channel feeds the big view; dock keeps living),
   stats row from EVT_FORMAL_STATS, stop button; Finished screen offers
@@ -184,3 +182,27 @@ wait PREVIEW -> capture -> confirm -> wait REVIEW (assert masks + shape
 prior artifacts exist) -> begin_reposition -> start_formal -> wait 2 chunks
 committed (poll online_data/chunks) -> stop -> assert clean FINISHED +
 points.npz. Prints PASS/FAIL; exit code accordingly.
+
+## gaussian backends (post-contract addition, 2026-08-14)
+
+`gaussian_backend` run option (source-select combo / CLI / config):
+- `triposplat` (default): independent generative model in a persistent
+  worker subprocess; canonical splats are registered onto the world
+  (chamfer chain) then upgraded by the observation-metric self-align
+  (demo 7 default alignment).
+- `mesh_surface` (trial; only offered when the mesh backend is trellis2):
+  NO second generative model. Splats are deterministically sampled on the
+  aligned world mesh (`shape/matching/final_mesh.glb`) with face_id +
+  barycentric anchors (`gaussian_anchors.npz`, self-verifying topology
+  hash) — splat centers sit ON the mesh by construction, so registration,
+  ICP, ARAP residual transfer, floater pruning and self-align are all
+  structurally absent. Live: bones deform the MESH VERTICES (same
+  rest-anchored LBS + bone hygiene), splats replay from their triangles —
+  they can never drift off the mesh. The mesh is the single geometry
+  truth; splat world accuracy therefore equals mesh alignment accuracy by
+  design.
+- `none`: feature off.
+
+Cross-option rule (enforced in orchestration/session.py, mirrored as a
+fail-soft degrade in camera_service.py, gated in the GUI combo):
+`mesh_surface` requires `shape_prior_backend == trellis2`.

@@ -1,10 +1,11 @@
-# demo_v7 — demo_v6_2 的 GUI 软件化
+# demo_v7 — 实时物理孪生 GUI 软件
 
-demo_v7 把 demo_v6_2 的命令行 demo 变成一个图形界面软件。**数据处理与 6.2
-逐级一致**:分割/追踪/shape-prior/chunk/下游全部 import 复用 `demo_v6_2`
-的代码,一行不改;PhysTwin_shen 只调用(`demo_v6_2.phystwin_shen_launch`
-原样),不属于本侧工作。demo_v7 新增的只有三层:GUI、控制协议、以及一个
-"按钮驱动"的相机服务状态机。
+demo_v7 是自包含的图形界面 demo(2026-08-14 起与 demo_v6_2 **解耦**:
+不再 import demo_v6_2;其运行时闭包 vendored 于 `demo_v7/runtime/`,
+数据处理语义与 6.2 逐级一致)。分割/追踪/shape-prior/chunk/下游全部走
+`demo_v7.runtime`;PhysTwin_shen 只调用(`runtime.phystwin_shen_launch`
++ `service/phystwin_compat.py` 契约兼容),不属于本侧工作。在 runtime 之上
+的层:GUI、控制协议、按钮驱动的相机服务状态机、高斯子系统。
 
 ## 技术选型(定案)
 
@@ -17,7 +18,7 @@ demo_v7 把 demo_v6_2 的命令行 demo 变成一个图形界面软件。**数�
 - **进程拓扑与 6.2 同构**:GUI+orchestrator 一个父进程(chunk 流会话、
   points.npz 触发 PhysTwin 均按 6.2 复用);相机服务是子进程
   (`CUDA_VISIBLE_DEVICES` 按 6.2 的 gpu.main_data_processing 配置),
-  import 复用 `demo_v6_2.mdp` 的模型与阶段函数。
+  import 复用 `demo_v7.runtime.mdp` 的模型与阶段函数。
 - **仅支持 Linux/Ubuntu(X11)**;fake-live 与 real camera 同一套界面与
   按钮,唯一差别是素材来源与"播放完毕"弹窗。
 
@@ -99,21 +100,42 @@ demo_v7/
 ├── ipc/
 │   ├── protocol.py           # 协议唯一事实源(状态/命令/事件/帧通道)
 │   └── channel.py            # UDS JSON-lines 控制通道 + 二进制帧通道
+├── runtime/                  # vendored 流水线运行时(自 demo_v6_2 解耦拷贝:
+│                             #   mdp/ 感知与采集、shape_prior/ 生成链、
+│                             #   streaming/ chunk 会话、models/ SuperGlue、
+│                             #   orchestration/ 配置、config/default.yaml 等;
+│                             #   demo_v7 不再 import demo_v6_2)
 ├── service/
-│   ├── camera_service.py     # 相机服务子进程入口(CUDA ns 同 6.2)
-│   ├── staged_runtime.py     # 按钮驱动状态机(复用 6.2 stage/模型)
-│   └── frame0_pipeline.py    # frame-0 派生管线(SAM3.1 → PCD → shape prior)
+│   ├── camera_service.py     # 相机服务子进程入口
+│   ├── staged_runtime.py     # 按钮驱动状态机(复用 runtime/ 的 stage/模型)
+│   ├── frame0_pipeline.py    # frame-0 派生管线(SAM3.1 → PCD → shape prior)
+│   ├── gaussian_*.py         # 高斯子系统:manager(生成/对齐编排)、
+│   │                         #   align(chamfer 链)、selfalign(两阶段自对齐,
+│   │                         #   默认)、live(休息位锚定 LBS + 骨骼卫生 +
+│   │                         #   mesh 锚定渲染器)、dynamics(变形核)、
+│   │                         #   utils(gsplat/ply)
+│   ├── triposplat_worker.py  # TripoSplat 常驻生成 worker(相机 GPU)
+│   ├── mesh_surface_gaussian.py / mesh_surface_manager.py
+│   │                         # mesh_surface 高斯后端(试验):从对齐后的
+│   │                         #   TRELLIS.2 final_mesh 表面确定性派生 splats,
+│   │                         #   face_id+重心坐标硬绑定,无第二生成模型、
+│   │                         #   无配准/自对齐;GUI 选 TRELLIS.2 时可选
+│   ├── align_fast_safe.py / sample_asap_safe.py / arap_rescue.py
+│   │                         # 阶段包装:binned 渲染、网格清理、ARAP 奇异救援
+│   ├── phystwin_compat.py    # Phystwin_shen CLI 契约兼容(窗口参数入 yaml)
+│   └── recorder.py           # 录制为 fake-live 素材
 ├── gui/
 │   ├── main_window.py        # 屏幕栈 + 常驻相机 dock + 事件路由
-│   ├── screens.py            # 六个屏幕
-│   └── widgets.py            # numpy→QImage 视图、视频循环、进度时间线
+│   ├── screens.py            # 六个屏幕(REVIEW 含 Gaussian tab)
+│   ├── widgets.py            # numpy→QImage 视图、进度时间线
+│   └── calibrate_dialog.py   # 可视化桌面标定(独立相机子进程)
 ├── orchestration/session.py  # 父进程:spawn 服务、chunk 会话、PhysTwin 触发
-├── config/default.yaml       # 仅 v7 自有键;流水线配置全部读 6.2 的
+├── config/default.yaml       # 仅 v7 自有键;流水线配置读 runtime/config 的
 └── tests/                    # 协议/状态机/无头 GUI 冒烟 + 脚本化端到端
 ```
 
 - 控制与帧协议详见 `ipc/protocol.py`(两侧共同 import,别处不得定义)。
-- 正式阶段的中央视图直接复用 `demo_v6_2.mdp.live_viewer.render_pair_frame`
+- 正式阶段的中央视图直接复用 `demo_v7.runtime.mdp.live_viewer.render_pair_frame`
   (纯函数),保证和 6.2 的实时可视化逐像素同源。
 - 输出目录布局、artifact 名称、pipeline_status.jsonl 全部沿用 6.2。
 
