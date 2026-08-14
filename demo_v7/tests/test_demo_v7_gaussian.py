@@ -627,6 +627,49 @@ class TestBoneHygiene:
             atol=2e-3,
         )
 
+    def test_stale_bones_follow_rotation_not_average(self) -> None:
+        """The drag fix: an occluded patch must ride the visible bones'
+        ROTATION. A translation-average heal puts stale bones at the mean
+        neighbor displacement (wrong under rotation); rigid-aware healing
+        recovers their rotated positions almost exactly.
+
+        Geometry is at PRODUCTION scale (12cm object, 3cm bone spacing —
+        sloth-like): at demo scale the 5cm rigidity threshold keeps fresh
+        bones trusted; a metre-scale grid would flag everyone and disable
+        healing entirely (fail-soft)."""
+        helper = TestGaussianLiveRestSeed()
+        live, means = helper._bare_renderer()
+        xs = np.linspace(0.0, 0.12, 5, dtype=np.float32)
+        rest = (
+            np.stack(np.meshgrid(xs, xs, xs, indexing="ij"), axis=-1)
+            .reshape(-1, 3)
+        )
+        ids = np.arange(len(rest), dtype=np.int64)
+        live.seed_rest_positions({int(i): rest[i] for i in ids})
+        live.step(rest, ids, np.ones(len(ids), dtype=bool))  # init at rest
+        angle = np.radians(25.0)
+        rotation = np.array(
+            [
+                [np.cos(angle), -np.sin(angle), 0.0],
+                [np.sin(angle), np.cos(angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        center = rest.mean(axis=0)
+        rotated = (rest - center) @ rotation.T + center
+        seen = ids[ids % 2 == 0]
+        # 14 packets (> stale threshold) where only even bones update, at
+        # the ROTATED pose.
+        for _ in range(14):
+            live.step(rotated[seen], seen, np.ones(len(seen), dtype=bool))
+        applied = live._ctrl_prev.cpu().numpy()
+        stale_ids = ids[ids % 2 == 1]
+        error = np.linalg.norm(applied[stale_ids] - rotated[stale_ids], axis=1)
+        # A global rigid motion is EXACT under the per-bone Kabsch blend;
+        # the old mean-consensus heal leaves ~1cm errors at this scale.
+        assert float(error.max()) < 0.005, error.max()
+
 
 class TestFloaterPruning:
     def test_disconnected_island_pruned_even_near_mesh(self) -> None:

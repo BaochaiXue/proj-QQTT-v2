@@ -111,6 +111,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     # Generous defaults: first-run model preloads and the SAM3D shape-prior
     # chain can each take minutes on a cold machine.
+    parser.add_argument(
+        "--target-chunks",
+        type=int,
+        default=TARGET_CHUNKS,
+        help="Committed chunks to wait for in FORMAL (longer = more manipulation frames captured).",
+    )
     parser.add_argument("--preview-timeout-s", type=float, default=900.0)
     parser.add_argument("--frame0-timeout-s", type=float, default=120.0)
     parser.add_argument("--review-timeout-s", type=float, default=3600.0)
@@ -386,12 +392,13 @@ def drive(args: argparse.Namespace) -> None:
         )
         observer.check_acks()
 
-        observer.log(f"stage 7/8: waiting for {TARGET_CHUNKS} committed chunks "
+        target_chunks = int(args.target_chunks)
+        observer.log(f"stage 7/8: waiting for {target_chunks} committed chunks "
                      f"under {session.online_chunks_dir}")
         wait_for_chunks(
             session,
             observer,
-            target=TARGET_CHUNKS,
+            target=target_chunks,
             timeout_s=args.chunks_timeout_s,
         )
 
@@ -403,7 +410,7 @@ def drive(args: argparse.Namespace) -> None:
         )
         observer.check_acks()
         manifests = session.wait_chunk_stream(timeout_s=args.finish_timeout_s)
-        if len(manifests) < TARGET_CHUNKS:
+        if len(manifests) < target_chunks:
             raise RuntimeError(
                 f"chunk stream drained with only {len(manifests)} manifests"
             )

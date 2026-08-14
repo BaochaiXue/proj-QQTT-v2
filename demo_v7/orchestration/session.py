@@ -904,6 +904,14 @@ class OrchestratorSession:
                 trigger = "shape_prior_points_ready"
             else:
                 trigger = "warmup_disabled_immediate"
+            # Phystwin_shen dropped the per-stage window CLI flags on
+            # 2026-07-10; without this rewrite the launcher's command dies
+            # in argparse (rc 2) and the downstream never starts.
+            from demo_v7.service.phystwin_compat import (
+                patch_phystwin_stage_window_compat,
+            )
+
+            patch_phystwin_stage_window_compat()
             launch = launch_phystwin_shen(
                 self._config.phystwin_shen_settings,
                 python_prefix=python_command_prefix(

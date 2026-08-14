@@ -207,7 +207,11 @@ def _extended_prewarm_dummy_work(width: int = 848, height: int = 480) -> None:
     )
     textures = TexturesVertex(torch.ones(1, 4, 3, device=device))
     mesh = Meshes(verts=[verts], faces=[faces], textures=textures)
-    poses = align_util.sample_camera_poses(3.0, 2, 1, device)
+    # num_samples=3 is the MINIMUM that yields poses: sample_camera_poses
+    # slices the poles off the elevation linspace, so num_samples=2 returns
+    # an empty pose list (the original call passed 2 and this whole prewarm
+    # silently skipped on an IndexError since birth — seen in every log).
+    poses = align_util.sample_camera_poses(3.0, 3, 1, device)
     align_util._render_loaded_mesh(
         mesh, poses, width=width, height=height, fov=1.566, device=device
     )

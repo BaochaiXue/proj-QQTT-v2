@@ -1,2 +1,0 @@
-{"stage": "half", "loss": 0.08210035944809915, "evals": 202, "rot_deg": 0.259, "translation_mm": [-0.63, -2.38, 1.27], "scale": 0.99505, "metrics": {"mask_iou": 0.9017, "depth_median_mm": 6.09, "depth_p90_mm": 31.57, "rgb_l1": 0.0433}}
-{"stage": "full", "loss": 0.0681551384812021, "evals": 364, "rot_deg": 0.356, "translation_mm": [0.09, -2.08, 0.05], "scale": 1.00379, "metrics": {"mask_iou": 0.9229, "depth_median_mm": 5.73, "depth_p90_mm": 32.27, "rgb_l1": 0.05}}

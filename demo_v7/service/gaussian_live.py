@@ -69,6 +69,16 @@ _BONE_STALE_STEPS = 10
 # neighbors instead; need at least this many valid neighbors, else the
 # global valid-median displacement (fully-occluded patch fallback):
 _BONE_MIN_VALID_NEIGHBORS = 3
+# Rigid-aware healing (the drag fix, A/B'd on a 132-frame manipulation
+# capture): a grabbed patch is OCCLUDED exactly while it ROTATES, and a
+# translation-average of valid neighbors collapses rotation — the healed
+# patch lags and its splats smear ("拖拽"). Extrapolating each invalid
+# bone through the valid bones' local RIGID motion field (the same LBS the
+# splats use) preserves rotation: worst-frame IoU 0.745 -> 0.770, peak
+# spill -6%. Falls back to the mean consensus below this valid count.
+_HEAL_RIGID_MIN_VALID = 24
+_HEAL_RELATION_K = 8
+_HEAL_SKIN_K = 8
 
 
 def load_formal_frame0_rest_positions(
@@ -329,6 +339,15 @@ class GaussianLiveRenderer:
         valid = ~invalid
         if not bool(valid.any()):
             return ctrl_target  # nothing trustworthy to lean on
+        if int(valid.sum()) >= _HEAL_RIGID_MIN_VALID:
+            try:
+                return self._heal_rigid(ctrl_target, disp, invalid, valid)
+            except Exception as exc:
+                print(
+                    f"[gaussian-live] rigid healing fell back to consensus "
+                    f"({type(exc).__name__}: {exc})",
+                    flush=True,
+                )
         valid_nbr = valid[self._relations]  # (B, K)
         valid_count = valid_nbr.sum(dim=1)
         consensus = (nbr_disp * valid_nbr[..., None]).sum(dim=1) / (
@@ -343,6 +362,31 @@ class GaussianLiveRenderer:
         healed = torch.where(
             invalid[:, None], self._ctrl_rest + consensus, ctrl_target
         )
+        return healed
+
+    def _heal_rigid(self, ctrl_target, disp, invalid, valid):
+        """Extrapolate invalid bones through the valid bones' rigid field."""
+        rest_valid = self._ctrl_rest[valid]
+        disp_valid = disp[valid]
+        relations = gaussian_dynamics.get_topk_indices(
+            rest_valid, K=min(_HEAL_RELATION_K, rest_valid.shape[0] - 1)
+        )
+        rest_invalid = self._ctrl_rest[invalid]
+        weights, indices = gaussian_dynamics.knn_weights_sparse(
+            rest_valid, rest_invalid, K=_HEAL_SKIN_K
+        )
+        healed_pos, _quats = gaussian_dynamics.interpolate_motions_sparse(
+            rest_valid,
+            disp_valid,
+            relations,
+            rest_invalid,
+            None,
+            weights,
+            indices,
+            device=self.device,
+        )
+        healed = ctrl_target.clone()
+        healed[invalid] = healed_pos
         return healed
 
     def _pose_to(self, ctrl_target) -> None:
