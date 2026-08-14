@@ -80,8 +80,7 @@ wandb/
 /result/
 /exp_results/
 /test_output/
-/outputs/
-/outputs_v6_1/
+/outputs*/
 /visualization/
 /_tmp_teleop_frames/
 
@@ -154,7 +153,8 @@ non_rigid_matching/
 # Keep test fixtures versioned even when they use ignored extensions.
 !tests/fixtures/
 !tests/fixtures/**
-docs/generated
+docs/generated/*
+!docs/generated/*.md
 
 # Repo-local demo runtime vendor code is versioned. Keep only the central
 # heavyweight checkpoint payloads ignored; source trees, configs, and
@@ -164,3 +164,7 @@ docs/generated
 !/vendor/demo_runtime/**
 /vendor/demo_runtime/checkpoints/
 vendor/demo_runtime/checkpoints.zip
+
+# demo_v7 launcher icon is a required asset despite the *.png rule.
+!/demo_v7/launcher/demo_v7.png
+/logs/
