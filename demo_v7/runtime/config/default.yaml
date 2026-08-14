@@ -1,0 +1,307 @@
+# Filesystem paths and external checkpoint locations.
+paths:
+  # Options: relative or absolute directory path; Demo v6.1 writes and clears
+  # generated online chunks, capture files, and static final_data under it.
+  data_process_base_path: "outputs"
+  # Options: relative or absolute pickle file path; required when table
+  # calibration is used by capture/alignment helpers.
+  table_calibrate_path: "table_calibrate.pkl"
+  # Options: relative or absolute .pt checkpoint path; used only when
+  # sam31_checkpoint_env is unset in the process environment.
+  sam31_checkpoint_path: "vendor/demo_runtime/checkpoints/sam31/sam3.1_multiplex.pt"
+  # Options: non-empty environment variable name; its value may override
+  # sam31_checkpoint_path.
+  sam31_checkpoint_env: "QQTT_SAM31_CHECKPOINT"
+
+# Source stream and replay pacing.
+input:
+  # Options: fake-live | live.
+  # fake-live replays prepared data as a live stream; live reads RealSense.
+  input_source: "fake-live"
+  # Options: data_collect case directory path; null only for live input or
+  # when the CLI supplies --fake-live-case.
+  fake_live_case: "data_collect/sloth_new_20260705_230611"
+  # Options: positive finite float FPS; controls output metadata and chunk
+  # window math.
+  replay_fps: 5.0
+  # Options: positive finite float FPS; baseline used to decide whether the
+  # effective fake-live camera pacing should pass --lossless-input-fps.
+  camera_source_replay_fps: 5.0
+
+# Chunk publication cadence and run length.
+chunking:
+  # Options: positive finite float seconds; chunk_frame_count defaults to
+  # round(replay_fps * chunk_seconds).
+  chunk_seconds: 1.0
+  # Options: positive finite float seconds; sleep between frames.jsonl polls.
+  chunk_poll_interval_s: 0.001
+  # Options: null or positive integer; null streams until input ends/stops.
+  max_chunks: null
+  # Options: positive float meters. Origin data_process_sample.py
+  # --volume_sample_size parity: one object query per occupied voxel on the
+  # first batch (identity frozen at chunk 0); also drives the shape-prior
+  # sample stage voxel. 0.005 preserves origin parity.
+  volume_sample_size_m: 0.05
+
+# Camera capture, depth, masks, and local model runtime.
+camera:
+  # Options: one integer from camera_fps_choices; RealSense live input FPS.
+  # replay_fps still controls the output cadence.
+  camera_fps: 30
+  # Options: list of RealSense serial strings. The schema is a list so future
+  # multi-camera runtimes can extend it, but the current single-camera runtime
+  # requires exactly one entry and fails fast otherwise. The default is the
+  # table-calibration camera (table_calibrate.pkl was made with it); the
+  # sorted-first auto-pick it replaces could select a device without the
+  # requested RGB profile (e.g. a D405) when several cameras are connected.
+  camera_serials: ["239222300740"]
+  # Options: non-negative finite float; manual RealSense RGB exposure.
+  camera_color_exposure: 45.0
+  # Options: non-negative finite float; manual RealSense RGB gain.
+  camera_color_gain: 45.0
+  # Options: non-empty string safe for file names; prefixes generated cases.
+  case_prefix: "demo_v6_1"
+  # Options: native-realsense | ir-ffs.
+  # native-realsense uses RealSense depth; ir-ffs uses stereo FFS depth.
+  depth_backend: "native-realsense"
+  # Options: finite float logit threshold; lower values grow EdgeTAM masks.
+  edgetam_mask_logit_threshold: 0
+  # Options: positive finite float seconds; maximum strict lossless input-FPS
+  # backlog window before the camera subprocess treats the run as stalled.
+  lossless_max_backlog_seconds: 3.0
+  # Options: torch device string, usually cuda, cuda:N, or cpu.
+  perception_device: "cuda"
+  # Options: torch device string, usually cuda, cuda:N, or cpu.
+  tracker_device: "cuda"
+  # Options: bfloat16 | float16 | float32.
+  inference_dtype: "bfloat16"
+
+# GPU namespaces: the main data-processing process uses physical GPU 1;
+# dedicated shape-prior stages, visualizer, and Phystwin_shen use GPU 0.
+gpu:
+  # Options: non-empty CUDA_VISIBLE_DEVICES string, e.g. "0", "1", or "0,1".
+  # Main warmup and realtime data_process stages use this namespace.
+  main_data_processing_cuda_visible_devices: "1"
+  # Options: non-empty CUDA_VISIBLE_DEVICES string, e.g. "0", "1", or "0,1".
+  # Shape-prior SAM3D stages use this namespace.
+  shape_prior_warmup_cuda_visible_devices: "0"
+  # Options: non-empty CUDA_VISIBLE_DEVICES string, e.g. "0", "1", or "0,1".
+  # Visualizer process uses this namespace.
+  visualizer_cuda_visible_devices: "0"
+  # Options: non-empty CUDA_VISIBLE_DEVICES string, e.g. "0", "1", or "0,1".
+  # Phystwin_shen supervisor and all stage/train/viewer children use it.
+  phystwin_shen_cuda_visible_devices: "0"
+
+# SAM3D shape-prior warmup.
+shape_prior:
+  # Options: positive integer milliseconds; deadline for local shape-prior
+  # stage profile/status updates.
+  shape_prior_timeout_ms: 180000
+  # Options: positive finite float seconds; max wait for surface/interior
+  # prior points before chunk materialization fails.
+  shape_prior_chunk_wait_timeout_s: 300.0
+  # Options: non-empty semantic label string, e.g. hand or towel.
+  shape_prior_controller_name: "hand"
+  # Cache identity for the canonical object.glb mesh: a specific physical
+  # instance plus asset version (e.g. "sloth_plush_01_v1"). Options: YAML null
+  # disables the cache (shape prior still runs a full on-the-fly generation
+  # every run); or a single safe directory-name string to enable persistent
+  # reuse. NOT a SAM3.1 prompt and never a cache key derived from the prompt.
+  object: "sloth"
+  # SAM3.1 semantic label for the object in view (frame-0 object mask, EdgeTAM
+  # object identity, case label, upscale category, and the shape-prior second
+  # segmentation). Options: non-empty string, e.g. "sloth" or "stuffed animal".
+  object_prompt: "sloth stuffed animal"
+  # Persistent storage root for cached canonical meshes. Options: absolute or
+  # relative directory path that must NOT live under the run output directory
+  # (so output cleanup never deletes cache entries).
+  cache_root: "/home/xinjie/qqtt_shape_prior_cache"
+  # Options: null or relative/absolute SAM3D checkout directory path; null
+  # lets SAM3D resolution use environment/default candidates.
+  shape_prior_sam3d_root: null
+  # Options: null or relative/absolute SAM3D pipeline config path; null uses
+  # the SAM3D default config resolution.
+  shape_prior_config: null
+
+# In-process realtime data-process viewer (camera subprocess, pure observer).
+live_viewer:
+  # Options: true | false. Shows the latest fully processed frame (processed
+  # masks, object/controller PCD, TAPNext++ tracks, shape-prior state, and
+  # latency/FPS diagnostics) the moment it exists — no chunk wait. Coexists
+  # with every downstream.mode, drops only DISPLAY frames when behind, uses
+  # numpy+OpenCV on the CPU (no CUDA context, no disk IO), and never blocks
+  # or mutates the formal pipeline.
+  enabled: true
+
+# Downstream consumer of the online stream. Exactly one runs per session.
+downstream:
+  # Options: disabled | demo_visualizer | phystwin_shen.
+  # demo_visualizer opens the point-cloud viewer; phystwin_shen launches the
+  # full Stage 1 / optional Stage 2 / train / combined-viewer online pipeline.
+  mode: "phystwin_shen"
+
+# Phystwin_shen full online pipeline (downstream.mode: phystwin_shen).
+# This local section is the authoritative runtime configuration. The Demo
+# passes it to scripts/run_online_full_pipeline.py instead of relying on the
+# values stored in the external pipeline YAML.
+phystwin_shen:
+  # Options: relative or absolute Phystwin_shen checkout directory.
+  repo_path: "/home/xinjie/Phystwin_shen"
+  # Options: non-empty conda environment name; used by the full pipeline and
+  # all of its child processes.
+  conda_env: "demo_2_max"
+  # Options: path relative to repo_path or an absolute YAML path.
+  pipeline_config: "configs/online_full_pipeline.yaml"
+  # Options: disabled | offline | online.
+  wandb_mode: "disabled"
+  # Options: path relative to repo_path or an absolute physics config path.
+  phys_config: "configs/real.yaml"
+
+  # Shared defaults inherited by CMA Stage 1, CMA Stage 2, and training.
+  # batch_size / segment_len / segment_stride may instead be defined in each
+  # enabled stage, where they override any corresponding common value.
+  common:
+    device: "cuda:0"
+    recent_window_count: 4
+    poll_sec: 1.0
+    no_sample_recent: true
+    max_online_chunks: null
+    seed: 42
+
+  # Zero-order CMA over topology and physical parameters.
+  stage1:
+    enabled: true
+    batch_size: 2
+    segment_len: 10
+    segment_stride: 10
+    script: "optimize_online_cma.py"
+    experiments_dir: "experiments_online_cma"
+    # Limit Stage 1 to the first N committed chunks; null means no limit.
+    max_online_chunks: null
+    max_iter: 2
+    # CMA candidates per generation; null uses CMA-ES automatic sizing.
+    cma_popsize: 4
+    # Options: legacy | boba.
+    zero_order_backend: "boba"
+    # Options: gather | template_state_batched_atomic.
+    sim_force_mode: "gather"
+    cma_timing: false
+    realtime_vis: true
+    realtime_vis_dir: null
+    realtime_vis_every: 1
+    no_realtime_iteration_history: false
+
+  # Optional fixed-topology zero-order refinement.
+  stage2:
+    enabled: false
+    script: "optimize_online_cma_fixed_topology.py"
+    experiments_dir: "experiments_online_cma_fixed_topology"
+    # Limit Stage 2 to the first N committed chunks; null means no limit.
+    max_online_chunks: 10
+    max_iter: 10
+    # CMA candidates per generation; null uses CMA-ES automatic sizing.
+    cma_popsize: 4
+    # Options: legacy | boba.
+    zero_order_backend: "boba"
+    # Options: gather | template_state_batched_atomic.
+    sim_force_mode: "gather"
+    cma_timing: false
+    realtime_vis: true
+    realtime_vis_dir: null
+    realtime_vis_every: 1
+    no_realtime_iteration_history: false
+    stage1_params: null
+
+  # First-order differentiable online training.
+  train:
+    enabled: true
+    batch_size: 5
+    segment_len: 30
+    segment_stride: 30
+    script: "train_online_warp.py"
+    experiments_dir: "experiments_online_train"
+    iterations: 100
+    train_frame: null
+    checkpoint_interval: 10
+    # true exits after the terminal iteration that observes manifest finished;
+    # false ignores finished and runs exactly `iterations` total steps.
+    stop_when_finished: true
+    realtime_vis: true
+    realtime_vis_every: 1
+    no_realtime_iteration_history: false
+    realtime_vis_dir: null
+    zero_order_source: "stage1"
+    optimal_params_path: null
+
+  # One combined HTML viewer for Stage 1, optional Stage 2, and train output.
+  cma_viewer:
+    enabled: true
+    script: "scripts/html_realtime_viewer.py"
+    source: "all"
+    host: "127.0.0.1"
+    port: 8765
+    cam_idx: 0
+    point_mode: "surface"
+    point_stride: 5
+    npz_cache_size: 96
+    quiet: true
+    keep_running: false
+    base_path: null
+    case_name: null
+    realtime_dir: null
+    rgb_dir: null
+
+  # The dedicated train viewer stays disabled; cma_viewer.source=all includes
+  # the train output in the single combined viewer.
+  train_viewer:
+    enabled: false
+    script: "scripts/html_realtime_viewer.py"
+    host: "127.0.0.1"
+    port: 8766
+    cam_idx: 0
+    point_mode: "surface"
+    point_stride: 5
+    npz_cache_size: 96
+    quiet: true
+    keep_running: true
+    base_path: null
+    case_name: null
+    realtime_dir: null
+    rgb_dir: null
+
+# Demo v6.1 point-cloud visualizer (downstream.mode: demo_visualizer).
+visualizer:
+  # Options: web | window. web serves the chunk viewer as a local web page
+  # (phystwin_shen-style now/past chunk rows rendered with the demo's own
+  # rainbow/controller overlay); window opens the legacy OpenCV/Open3D
+  # viewer selected by visualizer_layout.
+  visualizer_frontend: "web"
+  # Options: bind host string for the web viewer HTTP server.
+  visualizer_web_host: "127.0.0.1"
+  # Options: TCP port 1-65535 for the web viewer. phystwin_shen's viewers
+  # default to 8765/8766, so the demo viewer stays off those.
+  visualizer_web_port: 8767
+  # Options: conda environment name string; empty string runs plain python.
+  visualizer_conda_env: "demo_2_max"
+  # Options: non-negative integer camera index displayed by the visualizer.
+  visualizer_cam_idx: 0
+  # Options: positive finite float seconds between visualizer refresh polls.
+  visualizer_poll_sec: 0.1
+  # Options: positive finite float FPS for final_data playback.
+  visualizer_playback_fps: 5.2
+  # Options: positive integer subsampling stride for object points.
+  visualizer_object_stride: 1
+  # Options: positive integer pixel radius for object points.
+  visualizer_object_radius: 3
+  # Options: positive integer pixel radius for controller points.
+  visualizer_controller_radius: 6
+  # Options: rainbow | green | object-colors.
+  visualizer_object_color_mode: "rainbow"
+  # Options: string enum value used for side-by-side input/output display.
+  visualizer_layout_side_by_side: "side-by-side"
+  # Options: list containing the exact allowed visualizer layout strings.
+  visualizer_layouts: ["side-by-side", "output-only"]
+  # Options: one value from visualizer_layouts.
+  visualizer_layout: "side-by-side"
+  # Options: rgb-overlay | sam3d-final-data.
+  visualizer_render_mode: "sam3d-final-data"

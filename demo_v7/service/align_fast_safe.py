@@ -39,7 +39,7 @@ def _patch_binned_rasterizer() -> None:
     import numpy as np
     import torch
 
-    from demo_v6_2.utils import align_util
+    from demo_v7.runtime.utils import align_util
 
     stock_render_loaded_mesh = align_util._render_loaded_mesh
 
@@ -143,7 +143,7 @@ def main(argv: list[str] | None = None) -> None:
 
     patch_arap_factorize_rescue()
 
-    from demo_v6_2.shape_prior import align
+    from demo_v7.runtime.shape_prior import align
 
     if os.environ.get("DEMO_V7_ALIGN_FAST", "1") != "0":
         _patch_extended_prewarm(align)
@@ -190,8 +190,8 @@ def _extended_prewarm_dummy_work(width: int = 848, height: int = 480) -> None:
     from pytorch3d.renderer import TexturesVertex
     from pytorch3d.structures import Meshes
 
-    from demo_v6_2.shape_prior import match_pairs
-    from demo_v6_2.utils import align_util
+    from demo_v7.runtime.shape_prior import match_pairs
+    from demo_v7.runtime.utils import align_util
 
     # Tiny render THROUGH align_util._render_loaded_mesh (module-global
     # lookup, so this exercises the exact — binned-patched — GO path).

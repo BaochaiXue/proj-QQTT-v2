@@ -43,7 +43,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from demo_v6_2.mdp.packets import FramePacket
+from demo_v7.runtime.mdp.packets import FramePacket
 
 # ~1.7 MB per RGB-D frame reference; 128 bounds worst-case retention while a
 # slow disk catches up. PNG+npy writes measure ~10-15 ms/frame on this box —

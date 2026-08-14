@@ -52,6 +52,6 @@ preview:
   # Options: mapping of frame channel -> positive finite float Hz that
   # overrides demo_v7/ipc/protocol.py CHANNEL_MAX_HZ on the service encode
   # side. An empty mapping keeps the protocol defaults. Known channels:
-  # rgb, depth, overlay, composite. Read via
+  # rgb, depth, overlay, composite, gaussian. Read via
   # demo_v7.orchestration.session.resolve_preview_channel_max_hz.
   channel_max_hz: {}

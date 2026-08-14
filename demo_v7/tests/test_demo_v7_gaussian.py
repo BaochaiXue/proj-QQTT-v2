@@ -349,8 +349,8 @@ class TestRigidWorldCatchup:
 
 class TestGaussianLiveRestSeed:
     """Bone rest positions must come from the seeded seq-0 pose so the
-    first packet becomes a catch-up deformation (the stuck-in-old-pose
-    trap), substepped for large motions."""
+    first packet becomes a one-shot catch-up deformation (the
+    stuck-in-old-pose trap)."""
 
     def _bare_renderer(self, count: int = 200):
         from demo_v7.service.gaussian_live import GaussianLiveRenderer
@@ -766,10 +766,9 @@ class TestSelfAlignHelpers:
         (work / "self_align_result.json").write_text(
             json_mod.dumps({"error": "boom"})
         )
-        # Monkey-free: call the parse path by faking the subprocess via a
-        # tiny script that exits immediately (result json already present).
+        # Hand-patch subprocess.run so the child never spawns (the result
+        # json is already on disk for the parse path under test).
         import subprocess as sp
-        import sys as sys_mod
 
         real_run = sp.run
         try:
@@ -785,20 +784,11 @@ class TestAsapIslandCleanup:
     def test_patched_loader_drops_tiny_components(self, tmp_path, monkeypatch) -> None:
         o3d = pytest.importorskip("open3d")
         from demo_v7.service import arap_rescue
-        from demo_v6_2.streaming import asap
+        from demo_v7.runtime.streaming import asap
 
-        # Body: a box (12 tris). Island: one far-away triangle.
-        body = o3d.geometry.TriangleMesh.create_box()
+        # Body: a sphere big enough that the one-triangle island stays
+        # under the 1% component-fraction gate.
         island_v = np.array([[5.0, 5, 5], [5.1, 5, 5], [5, 5.1, 5]])
-        verts = np.concatenate([np.asarray(body.vertices), island_v])
-        tris = np.concatenate(
-            [np.asarray(body.triangles), [[8, 9, 10]]]
-        ).astype(np.int32)
-        combined = o3d.geometry.TriangleMesh(
-            o3d.utility.Vector3dVector(verts), o3d.utility.Vector3iVector(tris)
-        )
-        # island = 1/13 of faces ≈ 7.7% > default 1% threshold... use a
-        # bigger body so the island is under the fraction gate.
         body2 = o3d.geometry.TriangleMesh.create_sphere(resolution=10)
         base = np.asarray(body2.vertices).shape[0]
         verts = np.concatenate([np.asarray(body2.vertices), island_v])

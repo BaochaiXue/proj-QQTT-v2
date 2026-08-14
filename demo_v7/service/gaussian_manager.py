@@ -129,7 +129,6 @@ class GaussianManager:
             target=self._reader_loop, name="gaussian-worker-reader", daemon=True
         )
         self._reader.start()
-        self._timing["spawn_perf"] = time.perf_counter()
         self._emit_progress("gaussian", "启动 TripoSplat worker(相机 GPU)…")
 
     def notify_submitted(self) -> None:
@@ -504,13 +503,9 @@ class GaussianManager:
 
     def _align_and_collect(self, done_event: dict[str, Any]) -> dict[str, str]:
         """World-align the fresh canonical ply + render the overlay still."""
-        import cv2
-        import numpy as np
-
         from demo_v7.service.gaussian_align import align_gaussian_to_world
         from demo_v7.service.gaussian_utils import (
             load_gaussian_ply,
-            render_gaussians,
             save_gaussian_ply,
         )
 

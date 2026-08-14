@@ -2,7 +2,7 @@
 
     (spawned by the prewarm pool when the operator disables 上采样)
 
-CLI/lifecycle mirror of ``demo_v6_2.shape_prior.upscale`` (same flags, same
+CLI/lifecycle mirror of ``demo_v7.runtime.shape_prior.upscale`` (same flags, same
 ``StageProfileRun`` WAITING/GO/COMPLETED handshake, same profile-JSON field
 set) so the untouched v6.2 warmup client can drive it interchangeably. The
 output contract is the same file at the same path — ``high_resolution.png``
@@ -29,7 +29,7 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 from PIL import Image  # noqa: E402
 
-# Field-uniform with demo_v6_2.shape_prior.upscale for timeline consumers.
+# Field-uniform with demo_v7.runtime.shape_prior.upscale for timeline consumers.
 _ACTIVE_TIMING_FIELDS = (
     "module_import_ms",
     "model_load_ms",
@@ -96,12 +96,12 @@ def _elapsed_ms(start_s: float) -> float:
 def _import_stage_profile_run():
     """Import the v6.2 timing contract (repo root via parent PYTHONPATH)."""
     try:
-        from demo_v6_2.shape_prior.timing import StageProfileRun
+        from demo_v7.runtime.shape_prior.timing import StageProfileRun
     except ModuleNotFoundError:
         repo_root = str(Path(__file__).resolve().parents[2])
         if repo_root not in sys.path:
             sys.path.append(repo_root)
-        from demo_v6_2.shape_prior.timing import StageProfileRun
+        from demo_v7.runtime.shape_prior.timing import StageProfileRun
     return StageProfileRun
 
 

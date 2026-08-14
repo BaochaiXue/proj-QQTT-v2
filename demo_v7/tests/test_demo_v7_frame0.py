@@ -1,7 +1,7 @@
 """Synthetic-array tests for demo_v7/service/frame0_pipeline.py.
 
 No GPU, no SAM3.1 checkpoint: the sam31 call boundary
-(``demo_v6_2.perception.sam31_image_segmentation.run_image_segmentation``,
+(``demo_v7.runtime.perception.sam31_image_segmentation.run_image_segmentation``,
 lazily imported inside the v6.2 bundle function) is monkeypatched, so the
 real v6.2 union/split/gate code still runs on synthetic masks. Geometry
 tests use a dense-enough synthetic frame that the real radius-outlier
@@ -19,11 +19,11 @@ import pytest
 
 from qqtt.env.camera.table_calibration import TABLE_WORLD_FRAME_KIND
 
-from demo_v6_2.mdp.cli import RunMode
-from demo_v6_2.mdp.packets import PcdBuildResult
-from demo_v6_2.perception import sam31_image_segmentation
-from demo_v6_2.shape_prior.case import ShapePriorFrame0Request
-from demo_v6_2.utils.camera import CameraIntrinsics
+from demo_v7.runtime.mdp.cli import RunMode
+from demo_v7.runtime.mdp.packets import PcdBuildResult
+from demo_v7.runtime.perception import sam31_image_segmentation
+from demo_v7.runtime.shape_prior.case import ShapePriorFrame0Request
+from demo_v7.runtime.utils.camera import CameraIntrinsics
 
 from demo_v7.ipc.protocol import ARTIFACT_KIND_FRAME0, ARTIFACT_KIND_MASKS
 from demo_v7.service import frame0_pipeline

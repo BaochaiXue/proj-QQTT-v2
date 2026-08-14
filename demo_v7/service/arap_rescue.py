@@ -81,7 +81,7 @@ def patch_asap_island_cleanup() -> None:
     their own; removing them AFTER the stock cleanup (module-global
     rebind, align_fast_safe precedent) makes factorization deterministic.
     """
-    from demo_v6_2.streaming import asap
+    from demo_v7.runtime.streaming import asap
 
     if getattr(asap._load_clean_mesh, "_v7_island_cleanup", False):
         return

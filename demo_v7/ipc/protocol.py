@@ -37,18 +37,6 @@ STATE_FORMAL = "formal"  # full v6.2 lossless pipeline running
 STATE_FINISHED = "finished"  # formal ended (stop / replay exhausted)
 STATE_FATAL = "fatal"  # unrecoverable error; see event: error
 
-SERVICE_STATES = (
-    STATE_STARTING,
-    STATE_PREVIEW,
-    STATE_FRAME0_PENDING,
-    STATE_WARMUP,
-    STATE_REVIEW,
-    STATE_REPOSITION,
-    STATE_FORMAL,
-    STATE_FINISHED,
-    STATE_FATAL,
-)
-
 # ---------------------------------------------------------------------------
 # Commands (GUI -> service). {"cmd": <name>, ...fields}
 # Service replies {"event": "ack", "cmd": <name>, "ok": bool, "error": str?}
@@ -64,19 +52,6 @@ CMD_START_FORMAL = "start_formal"  # REPOSITION -> FORMAL
 CMD_STOP_FORMAL = "stop_formal"  # FORMAL -> FINISHED
 CMD_SHUTDOWN = "shutdown"  # any -> exit(0)
 CMD_REGEN_GAUSSIAN = "regen_gaussian"  # REVIEW: {"seed"?} re-roll the splats
-
-COMMANDS = (
-    CMD_HELLO,
-    CMD_CAPTURE_FRAME0,
-    CMD_RETAKE_FRAME0,
-    CMD_CONFIRM_FRAME0,
-    CMD_ENTER_REVIEW,
-    CMD_BEGIN_REPOSITION,
-    CMD_START_FORMAL,
-    CMD_STOP_FORMAL,
-    CMD_SHUTDOWN,
-    CMD_REGEN_GAUSSIAN,
-)
 
 # ---------------------------------------------------------------------------
 # Events (service -> GUI). {"event": <name>, ...fields}
@@ -98,13 +73,6 @@ ARTIFACT_KIND_MASKS = "masks"  # object/hand_a/hand_b pngs + overlay png
 ARTIFACT_KIND_SHAPE_PRIOR = "shape_prior"  # turntable mp4, mesh glb, renders
 ARTIFACT_KIND_ALIGNMENT = "alignment"  # aligned overlay png(s)
 ARTIFACT_KIND_GAUSSIAN = "gaussian"  # triposplat turntable/overlay/ply paths
-ARTIFACT_KINDS = (
-    ARTIFACT_KIND_FRAME0,
-    ARTIFACT_KIND_MASKS,
-    ARTIFACT_KIND_SHAPE_PRIOR,
-    ARTIFACT_KIND_ALIGNMENT,
-    ARTIFACT_KIND_GAUSSIAN,
-)
 
 # ---------------------------------------------------------------------------
 # Frame channels (frames.sock header field: channel)

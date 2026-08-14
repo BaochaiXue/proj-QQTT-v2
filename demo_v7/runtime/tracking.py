@@ -1,0 +1,786 @@
+"""Demo v6.2 realtime tracking state machine (see design_spec.md).
+
+Semantics implemented here, in spec order:
+
+- Frame-0 (warmup frame) query labels are frozen for the whole session.
+- Every per-frame failure is one state, ``temporary_invalid``: tracker
+  visible but mask / PCD-depth / motion-consistency gate failed, or tracker
+  invisible / lost. It never deletes a query and never changes anchor
+  identity.
+- Chunk 0 selects controller anchors with origin strictness (valid at every
+  window frame, origin motion consistency with once-fail removal), then
+  farthest-point-samples the final handles. The anchor set, ``query_ids``,
+  ``query_semantic_labels``, and ``controller_sample_query_ids`` never
+  change afterwards.
+- A one-time table stores each controller point's nearest
+  ``NEIGHBOR_TABLE_SIZE`` controller points by first-frame 3D positions.
+- In later chunks a temporarily-invalid anchor frame is filled by local
+  rigid registration from currently-valid same-hand neighbors (first frame
+  -> current frame), applied to the anchor's first-frame position. Donor
+  selection is a ladder (design_spec.md 特殊情况): nearest 15 valid table
+  neighbors, else 10, else 5; with fewer than 5 the donors become the
+  nearest 5-15 currently-valid same-hand controller anchors; only when that
+  also fails does ``TrackingRecoveryError`` raise.
+- No confidence values anywhere.
+
+Motion consistency is a verbatim port of
+data_process_origin/data_process_track.py::filter_motion (0.01 m radius,
+5 neighbors including self, 0.005 m similarity, 50% agreement).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Mapping
+
+import numpy as np
+
+from demo_v7.runtime.orchestration.main_config import DEFAULT_VOLUME_SAMPLE_SIZE_M
+
+MOTION_NEIGHBOR_DIST_M = 0.01
+MOTION_MIN_NEIGHBORS = 5
+MOTION_SIMILARITY_M = 0.005
+CONTROLLER_FINAL_COUNT = 30
+NEIGHBOR_TABLE_SIZE = 100
+RECOVERY_NEIGHBOR_COUNT = 15
+
+TRACK_STATUS_NORMAL = "normal"
+TRACK_STATUS_DEGRADED = "degraded"
+
+
+class ControllerSelectionError(RuntimeError):
+    """Chunk-0 controller selection found fewer survivors than required."""
+
+
+class TrackingRecoveryError(RuntimeError):
+    """A temporarily-invalid anchor had too few valid recovery neighbors."""
+
+
+def motion_consistency(
+    points: np.ndarray,
+    visibilities: np.ndarray,
+    *,
+    neighbor_dist: float = MOTION_NEIGHBOR_DIST_M,
+    min_neighbors: int = MOTION_MIN_NEIGHBORS,
+    motion_similarity_m: float = MOTION_SIMILARITY_M,
+    once_false_mask: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Origin neighbor-motion consistency filter.
+
+    Verbatim port of data_process_origin/data_process_track.py::filter_motion:
+    forward motion per frame, radius search (self included in the count),
+    50% agreement within ``motion_similarity_m``. With ``once_false_mask``
+    a single failure anywhere permanently removes the candidate (origin's
+    controller semantics, used for chunk-0 selection only).
+
+    ``points`` is ``(T, N, 3)`` world-frame meters, ``visibilities`` is
+    ``(T, N)`` bool. Returns ``(motions_valid, global_mask)`` where row t of
+    ``motions_valid`` judges the forward motion t -> t+1 (the last row is
+    always False) and ``global_mask`` is the ``(N,)`` once-fail survivor set.
+    """
+    pts = np.asarray(points, dtype=np.float32)
+    vis = np.asarray(visibilities, dtype=bool)
+    if pts.ndim != 3 or pts.shape[-1] != 3:
+        raise ValueError("points must have shape T,N,3")
+    if vis.shape != pts.shape[:2]:
+        raise ValueError("visibilities must have shape T,N")
+    motions_valid = np.zeros_like(vis, dtype=bool)
+    if pts.shape[0] > 1:
+        motions_valid[:-1] = vis[:-1] & vis[1:]
+    if once_false_mask and vis.size:
+        global_mask = np.prod(vis, axis=0).astype(bool)
+    else:
+        global_mask = np.ones((pts.shape[1],), dtype=bool)
+    if pts.shape[1] == 0:
+        return motions_valid, global_mask
+    motions = np.zeros_like(pts, dtype=np.float32)
+    motions[:-1] = pts[1:] - pts[:-1]
+    from scipy.spatial import cKDTree  # noqa: PLC0415
+
+    for frame_idx in range(max(0, pts.shape[0] - 1)):
+        if once_false_mask:
+            motions_valid[frame_idx] &= global_mask
+        if not np.any(motions_valid[frame_idx]):
+            continue
+        tree = cKDTree(pts[frame_idx])
+        all_neighbors = tree.query_ball_point(
+            pts[frame_idx],
+            r=float(neighbor_dist),
+            workers=-1,
+            return_sorted=False,
+        )
+        for query_idx in range(pts.shape[1]):
+            if once_false_mask and not global_mask[query_idx]:
+                motions_valid[frame_idx, query_idx] = False
+                continue
+            if not motions_valid[frame_idx, query_idx]:
+                continue
+            neighbors = np.asarray(all_neighbors[query_idx], dtype=np.int64)
+            neighbors = neighbors[motions_valid[frame_idx, neighbors]]
+            if len(neighbors) < int(min_neighbors):
+                motions_valid[frame_idx, query_idx] = False
+                if once_false_mask:
+                    global_mask[query_idx] = False
+                continue
+            motion_diff = np.linalg.norm(
+                motions[frame_idx, query_idx] - motions[frame_idx, neighbors], axis=1
+            )
+            agreeing = int(np.count_nonzero(motion_diff < float(motion_similarity_m)))
+            if agreeing < 0.5 * float(len(neighbors)):
+                motions_valid[frame_idx, query_idx] = False
+                if once_false_mask:
+                    global_mask[query_idx] = False
+        if once_false_mask:
+            motions_valid[frame_idx] &= global_mask
+    return motions_valid, global_mask.astype(bool, copy=False)
+
+
+def _motion_failed_mask(visibilities: np.ndarray, motions_valid: np.ndarray) -> np.ndarray:
+    """Frames where motion was testable and the consistency check failed.
+
+    A frame whose forward motion is untestable (last window frame, or the
+    query invisible at t+1) carries no motion evidence and must not become
+    ``temporary_invalid`` for it.
+    """
+    vis = np.asarray(visibilities, dtype=bool)
+    tested = np.zeros_like(vis, dtype=bool)
+    if vis.shape[0] > 1:
+        tested[:-1] = vis[:-1] & vis[1:]
+    return tested & ~np.asarray(motions_valid, dtype=bool)
+
+
+def _farthest_point_sample_indices(points_xyz: np.ndarray, count: int) -> np.ndarray:
+    """Deterministic farthest point sampling (origin controller FPS parity)."""
+    pts = np.asarray(points_xyz, dtype=np.float32).reshape(-1, 3)
+    target = int(count)
+    if target < 0:
+        raise ValueError("count must be >= 0")
+    if target == 0:
+        return np.empty((0,), dtype=np.int64)
+    if len(pts) < target:
+        raise ControllerSelectionError(
+            f"controller FPS requires at least {target} candidates; got {len(pts)}"
+        )
+    selected = [0]
+    min_dist2 = np.sum((pts - pts[0]) ** 2, axis=1)
+    for _ in range(1, target):
+        idx = int(np.argmax(min_dist2))
+        selected.append(idx)
+        dist2 = np.sum((pts - pts[idx]) ** 2, axis=1)
+        min_dist2 = np.minimum(min_dist2, dist2)
+    return np.asarray(selected, dtype=np.int64)
+
+
+@dataclass(frozen=True)
+class OriginUnifiedSample:
+    """Origin-parity unified structure sample (one shared 5mm occupancy).
+
+    ``object_source_indices`` index the INPUT object column axis, in origin's
+    claim order (``np.unique`` value order, not capture order).
+    """
+
+    object_source_indices: np.ndarray
+    surface_points: np.ndarray
+    interior_points: np.ndarray
+    min_bound: np.ndarray
+
+
+def _claim_unoccupied_voxel_indices(
+    points: np.ndarray,
+    *,
+    min_bound: np.ndarray,
+    voxel_size: float,
+    occupied: set[tuple[int, int, int]],
+) -> np.ndarray:
+    """Indices of points landing in a not-yet-occupied voxel (mutates set)."""
+    kept: list[int] = []
+    for idx, point in enumerate(points):
+        key = tuple(
+            np.floor((point - min_bound) / voxel_size).astype(np.int64).tolist()
+        )
+        if key in occupied:
+            continue
+        occupied.add(key)
+        kept.append(int(idx))
+    return np.asarray(kept, dtype=np.int64)
+
+
+def sample_origin_unified_structure(
+    object_points: np.ndarray,
+    raw_surface_points: np.ndarray | None,
+    raw_interior_points: np.ndarray | None,
+    *,
+    volume_sample_size: float,
+) -> OriginUnifiedSample:
+    """Origin ``process_unique_points`` parity over the FINAL tracked object.
+
+    Mirrors data_process_origin/data_process_sample.py:47-119 exactly, with
+    the tracked object trajectories in place of the offline track data:
+    exact ``np.unique`` on frame 0 (value order kept — no re-sort to capture
+    order), the above-table ``z > 0 -> 0`` clamp on the published-trajectory
+    copy, ``min_bound`` over RAW surface/interior candidates plus the clamped
+    frame 0, and ONE shared occupied set claimed object -> surface ->
+    interior. float64 end to end (origin ran on numpy-default float64).
+    Motion gating stays upstream on the unclamped tracks, matching origin's
+    track-stage-then-sample-stage split.
+    """
+    voxel = float(volume_sample_size)
+    if voxel <= 0.0:
+        raise ValueError("volume_sample_size must be positive")
+    pts = np.asarray(object_points, dtype=np.float64)
+    if pts.ndim != 3 or pts.shape[2] != 3:
+        raise ValueError(f"object_points must have shape (T, N, 3); got {pts.shape}")
+    surface = (
+        np.empty((0, 3), dtype=np.float64)
+        if raw_surface_points is None
+        else np.asarray(raw_surface_points, dtype=np.float64).reshape(-1, 3)
+    )
+    interior = (
+        np.empty((0, 3), dtype=np.float64)
+        if raw_interior_points is None
+        else np.asarray(raw_interior_points, dtype=np.float64).reshape(-1, 3)
+    )
+    if pts.shape[1]:
+        unique_idx = np.unique(pts[0], axis=0, return_index=True)[1]
+    else:
+        unique_idx = np.empty((0,), dtype=np.int64)
+    clamped = pts[:, unique_idx, :].copy()
+    clamped[clamped[..., 2] > 0, 2] = 0
+    bound_inputs = [
+        arr
+        for arr in (surface, interior, clamped[0] if clamped.shape[1] else None)
+        if arr is not None and arr.shape[0]
+    ]
+    if not bound_inputs:
+        return OriginUnifiedSample(
+            object_source_indices=np.empty((0,), dtype=np.int64),
+            surface_points=surface,
+            interior_points=interior,
+            min_bound=np.zeros((3,), dtype=np.float64),
+        )
+    min_bound = np.min(np.concatenate(bound_inputs, axis=0), axis=0)
+    occupied: set[tuple[int, int, int]] = set()
+    object_claims = _claim_unoccupied_voxel_indices(
+        clamped[0] if clamped.shape[1] else np.empty((0, 3), dtype=np.float64),
+        min_bound=min_bound,
+        voxel_size=voxel,
+        occupied=occupied,
+    )
+    surface_claims = _claim_unoccupied_voxel_indices(
+        surface, min_bound=min_bound, voxel_size=voxel, occupied=occupied
+    )
+    interior_claims = _claim_unoccupied_voxel_indices(
+        interior, min_bound=min_bound, voxel_size=voxel, occupied=occupied
+    )
+    return OriginUnifiedSample(
+        object_source_indices=np.asarray(unique_idx, dtype=np.int64)[object_claims],
+        surface_points=np.ascontiguousarray(surface[surface_claims]),
+        interior_points=np.ascontiguousarray(interior[interior_claims]),
+        min_bound=np.ascontiguousarray(min_bound, dtype=np.float64),
+    )
+
+
+def _rigid_transform(src: np.ndarray, dst: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Least-squares rigid transform (Kabsch) mapping ``src`` onto ``dst``."""
+    src_pts = np.asarray(src, dtype=np.float64).reshape(-1, 3)
+    dst_pts = np.asarray(dst, dtype=np.float64).reshape(-1, 3)
+    if src_pts.shape != dst_pts.shape or src_pts.shape[0] < 3:
+        raise ValueError("rigid transform needs matching point sets of size >= 3")
+    src_center = src_pts.mean(axis=0)
+    dst_center = dst_pts.mean(axis=0)
+    covariance = (src_pts - src_center).T @ (dst_pts - dst_center)
+    u, _s, vt = np.linalg.svd(covariance)
+    rotation = vt.T @ u.T
+    if np.linalg.det(rotation) < 0.0:
+        vt = vt.copy()
+        vt[-1, :] *= -1.0
+        rotation = vt.T @ u.T
+    translation = dst_center - rotation @ src_center
+    return rotation, translation
+
+
+class TrackingRuntime:
+    """Session-lived tracking state machine (design_spec.md).
+
+    Chunk 0 freezes identity (object columns, controller anchors, neighbor
+    table); later windows only decide per-frame value sources. There is no
+    confidence, no dead-reckoning, and no anchor replacement.
+    """
+
+    def __init__(
+        self,
+        *,
+        controller_count: int = CONTROLLER_FINAL_COUNT,
+        neighbor_table_size: int = NEIGHBOR_TABLE_SIZE,
+        recovery_neighbor_count: int = RECOVERY_NEIGHBOR_COUNT,
+        volume_sample_size: float = DEFAULT_VOLUME_SAMPLE_SIZE_M,
+    ) -> None:
+        """Initialize TrackingRuntime."""
+        if int(controller_count) <= 0:
+            raise ValueError("controller_count must be positive")
+        if int(neighbor_table_size) <= 0:
+            raise ValueError("neighbor_table_size must be positive")
+        if int(recovery_neighbor_count) < 3:
+            raise ValueError(
+                "recovery_neighbor_count must be >= 3 (rigid-fit minimum)"
+            )
+        if int(recovery_neighbor_count) > int(neighbor_table_size):
+            raise ValueError("recovery_neighbor_count cannot exceed neighbor_table_size")
+        if float(volume_sample_size) <= 0.0:
+            raise ValueError("volume_sample_size must be positive")
+        self.controller_count = int(controller_count)
+        self.neighbor_table_size = int(neighbor_table_size)
+        self.recovery_neighbor_count = int(recovery_neighbor_count)
+        self.volume_sample_size = float(volume_sample_size)
+        self._anchor_indices: np.ndarray | None = None
+        self._anchor_first_points: np.ndarray | None = None
+        self._controller_first_points: np.ndarray | None = None
+        self._controller_hand_labels: np.ndarray | None = None
+        self._neighbor_table: dict[int, np.ndarray] = {}
+        self._chunk0_controller_mask: np.ndarray | None = None
+        self._object_column_indices: np.ndarray | None = None
+        # Frozen with the object columns by the chunk-0 unified sampling.
+        self._surface_points: np.ndarray | None = None
+        self._interior_points: np.ndarray | None = None
+        self._structure_min_bound: np.ndarray | None = None
+        self._query_ids: np.ndarray | None = None
+        self._query_semantic_labels: np.ndarray | None = None
+
+    def frozen_structure_points(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return the chunk-0-frozen final (surface, interior) points."""
+        if self._surface_points is None or self._interior_points is None:
+            raise RuntimeError("structure points are frozen at chunk 0")
+        return self._surface_points, self._interior_points
+
+    def _freeze_identity(
+        self,
+        window: Mapping[str, np.ndarray],
+        controller_global_mask: np.ndarray,
+        *,
+        surface_points: np.ndarray | None,
+        interior_points: np.ndarray | None,
+    ) -> None:
+        """Return the freeze identity."""
+        ctrl_points = np.asarray(window["controller_points"], dtype=np.float32)
+        ctrl_vis = np.asarray(window["controller_visibilities"], dtype=bool)
+        candidates = np.flatnonzero(np.asarray(controller_global_mask, dtype=bool))
+        if candidates.shape[0] < self.controller_count:
+            raise ControllerSelectionError(
+                "chunk-0 controller selection requires "
+                f"{self.controller_count} whole-window-valid, motion-consistent "
+                f"candidates; got {candidates.shape[0]} of {ctrl_points.shape[1]}"
+            )
+        fps_local = _farthest_point_sample_indices(
+            ctrl_points[0, candidates], self.controller_count
+        )
+        self._anchor_indices = np.ascontiguousarray(candidates[fps_local], dtype=np.int64)
+        self._anchor_first_points = np.ascontiguousarray(
+            ctrl_points[0, self._anchor_indices], dtype=np.float64
+        )
+        self._chunk0_controller_mask = np.ascontiguousarray(
+            controller_global_mask, dtype=bool
+        )
+
+        # design_spec.md: the one-time table stores, for every controller
+        # point, its nearest NEIGHBOR_TABLE_SIZE controller points by
+        # first-frame 3D positions — never crossing hands. A hand with fewer
+        # points than the table size fills with that whole hand. Built once,
+        # never updated.
+        first_valid = np.flatnonzero(ctrl_vis[0])
+        self._controller_first_points = np.ascontiguousarray(
+            ctrl_points[0], dtype=np.float64
+        )
+        hand_labels = np.asarray(window["controller_hand_labels"], dtype=np.int8).reshape(-1)
+        self._controller_hand_labels = np.ascontiguousarray(hand_labels, dtype=np.int8)
+        self._neighbor_table = {}
+        from scipy.spatial import cKDTree  # noqa: PLC0415
+
+        for hand in np.unique(hand_labels[first_valid]):
+            pool = first_valid[hand_labels[first_valid] == hand]
+            if pool.shape[0] < 2:
+                continue
+            pool_points = ctrl_points[0, pool]
+            tree = cKDTree(pool_points)
+            k = min(self.neighbor_table_size + 1, pool.shape[0])
+            _dists, local_neighbors = tree.query(pool_points, k=k, workers=-1)
+            local_neighbors = np.atleast_2d(local_neighbors)
+            for row, candidate_idx in enumerate(pool):
+                neighbor_local = [
+                    int(n) for n in np.asarray(local_neighbors[row]).reshape(-1) if int(n) != row
+                ]
+                self._neighbor_table[int(candidate_idx)] = np.asarray(
+                    [int(pool[n]) for n in neighbor_local[: self.neighbor_table_size]],
+                    dtype=np.int64,
+                )
+
+        obj_points = np.asarray(window["object_points"], dtype=np.float32)
+        obj_vis = np.asarray(window["object_visibilities"], dtype=bool)
+        if obj_points.shape[1]:
+            # Zero-filled rows are the "no measurement" placeholder, so a
+            # frame-0 point must be finite and nonzero to seed an object column.
+            first_finite = np.isfinite(obj_points[0]).all(axis=1)
+            first_nonzero = np.linalg.norm(obj_points[0], axis=1) > 1e-9
+            valid_first = np.flatnonzero(obj_vis[0] & first_finite & first_nonzero)
+        else:
+            valid_first = np.empty((0,), dtype=np.int64)
+        # Origin-parity unified sampling: the final tracked object claims the
+        # shared 5mm occupancy first, then the RAW surface/interior candidates
+        # — object columns AND the final structure points freeze together.
+        unified = sample_origin_unified_structure(
+            obj_points[:, valid_first, :],
+            surface_points,
+            interior_points,
+            volume_sample_size=self.volume_sample_size,
+        )
+        self._object_column_indices = np.ascontiguousarray(
+            valid_first[unified.object_source_indices], dtype=np.int64
+        )
+        self._surface_points = unified.surface_points
+        self._interior_points = unified.interior_points
+        self._structure_min_bound = unified.min_bound
+        self._query_ids = np.ascontiguousarray(window["query_ids"], dtype=np.int64)
+        self._query_semantic_labels = np.ascontiguousarray(
+            window["query_semantic_labels"], dtype=np.int8
+        )
+
+    def _check_frozen_identity(self, window: Mapping[str, np.ndarray]) -> None:
+        """Check frozen identity."""
+        if self._query_ids is None or self._query_semantic_labels is None:
+            raise RuntimeError("tracking runtime identity is not frozen yet")
+        if not np.array_equal(self._query_ids, np.asarray(window["query_ids"], dtype=np.int64)):
+            raise ValueError("Demo v6.2 session query_ids changed across chunks")
+        if not np.array_equal(
+            self._query_semantic_labels,
+            np.asarray(window["query_semantic_labels"], dtype=np.int8),
+        ):
+            raise ValueError("Demo v6.2 session query_semantic_labels changed across chunks")
+
+    def _recovery_tiers(self) -> list[int]:
+        """design_spec.md 特殊情况 donor-count ladder: 15 -> 10 -> 5 by default.
+
+        Tiers scale with ``recovery_neighbor_count`` (n, 2n/3, n/3) and are
+        clamped to the rigid-fit minimum of 3 points.
+        """
+        n = int(self.recovery_neighbor_count)
+        tiers: list[int] = []
+        for count in (n, round(2 * n / 3), round(n / 3)):
+            tier = max(3, int(count))
+            if tier not in tiers:
+                tiers.append(tier)
+        return tiers
+
+    def _fallback_anchor_donors(
+        self, anchor_column: int, usable_frame: np.ndarray
+    ) -> np.ndarray | None:
+        """design_spec.md 特殊情况 last resort: nearest currently-valid
+        same-hand controller anchors (the more the better, never crossing
+        hands), or None when even those are fewer than the lowest tier."""
+        assert self._anchor_indices is not None
+        assert self._anchor_first_points is not None
+        assert self._controller_first_points is not None
+        assert self._controller_hand_labels is not None
+        anchors = self._anchor_indices
+        hand = self._controller_hand_labels[int(anchors[anchor_column])]
+        donor_indices = np.asarray(
+            [
+                int(candidate_idx)
+                for column, candidate_idx in enumerate(anchors.tolist())
+                if column != int(anchor_column)
+                and usable_frame[int(candidate_idx)]
+                and self._controller_hand_labels[int(candidate_idx)] == hand
+            ],
+            dtype=np.int64,
+        )
+        if donor_indices.shape[0] < self._recovery_tiers()[-1]:
+            return None
+        distances = np.linalg.norm(
+            self._controller_first_points[donor_indices]
+            - self._anchor_first_points[int(anchor_column)],
+            axis=1,
+        )
+        order = np.argsort(distances, kind="stable")
+        take = min(int(self.recovery_neighbor_count), donor_indices.shape[0])
+        return donor_indices[order[:take]]
+
+    def _recover_anchor(
+        self,
+        anchor_column: int,
+        frame_idx: int,
+        usable_frame: np.ndarray,
+        ctrl_points_frame: np.ndarray,
+    ) -> np.ndarray:
+        """Return the recover anchor."""
+        assert self._anchor_indices is not None
+        assert self._anchor_first_points is not None
+        assert self._controller_first_points is not None
+        anchor_idx = int(self._anchor_indices[anchor_column])
+        neighbors = self._neighbor_table.get(anchor_idx)
+        valid_neighbors: list[int] = []
+        if neighbors is not None:
+            for neighbor_idx in neighbors:
+                if usable_frame[int(neighbor_idx)]:
+                    valid_neighbors.append(int(neighbor_idx))
+                    if len(valid_neighbors) >= self.recovery_neighbor_count:
+                        break
+        tier = next(
+            (t for t in self._recovery_tiers() if len(valid_neighbors) >= t), None
+        )
+        if tier is not None:
+            donors = np.asarray(valid_neighbors[:tier], dtype=np.int64)
+        else:
+            donors = self._fallback_anchor_donors(anchor_column, usable_frame)
+        if donors is None:
+            min_count = self._recovery_tiers()[-1]
+            raise TrackingRecoveryError(
+                f"controller anchor recovery found neither {min_count} "
+                f"valid neighbors among the nearest {self.neighbor_table_size} "
+                f"nor {min_count} valid same-hand fallback anchors; anchor "
+                f"column {anchor_column} (query index {anchor_idx}) had "
+                f"{len(valid_neighbors)} valid neighbors at window frame {frame_idx}"
+            )
+        rotation, translation = _rigid_transform(
+            self._controller_first_points[donors],
+            ctrl_points_frame[donors],
+        )
+        recovered = rotation @ self._anchor_first_points[anchor_column] + translation
+        return recovered.astype(np.float32)
+
+    def process_window(
+        self,
+        window: Mapping[str, np.ndarray],
+        *,
+        surface_points: np.ndarray | None = None,
+        interior_points: np.ndarray | None = None,
+        lookahead_frames: int = 0,
+    ) -> dict[str, np.ndarray]:
+        """Run the per-window state machine and return track_process arrays.
+
+        ``window`` may carry ``lookahead_frames`` extra rows at the tail (the
+        next window's first row(s), the "borrow" frames). Motion consistency
+        — including the chunk-0 once-fail selection filter — is computed over
+        the extended window so every published row, the tail included, gets a
+        real forward-motion verdict. Published outputs are sliced back to the
+        window rows; borrow data never reaches published arrays. With
+        ``lookahead_frames=0`` (capture end / offline tail) the last row
+        publishes origin's end-of-sequence semantics
+        (``motions_valid = False``).
+        """
+        result = {key: np.asarray(value).copy() for key, value in window.items()}
+        # Point arrays are (T_ext, N, 3) world-frame meters; visibility masks
+        # are (T_ext, N) bool on the same extended-window-frame x query axes.
+        obj_points = np.asarray(result["object_points"], dtype=np.float32)
+        obj_vis = np.asarray(result["object_visibilities"], dtype=bool)
+        ctrl_points = np.asarray(result["controller_points"], dtype=np.float32)
+        ctrl_vis = np.asarray(result["controller_visibilities"], dtype=bool)
+        extended_count = int(ctrl_points.shape[0])
+        lookahead = int(lookahead_frames)
+        if lookahead < 0 or lookahead >= max(1, extended_count):
+            raise ValueError(
+                "lookahead_frames must be >= 0 and smaller than the extended "
+                f"window; got {lookahead} of {extended_count} frames"
+            )
+        frame_count = extended_count - lookahead
+
+        # Phase 1 — motion gates over the extended window. Chunk 0 runs the
+        # origin whole-window gates and freezes session identity; later
+        # windows verify the frozen query schema. The borrow row makes the
+        # tail-row motion (window last -> next window first) a real test in
+        # the publishing chunk, which is origin's own indexing for boundary
+        # jumps.
+        if self._anchor_indices is None:
+            object_motions_valid, _ = motion_consistency(
+                obj_points, obj_vis, once_false_mask=False
+            )
+            ctrl_motions_valid, ctrl_global = motion_consistency(
+                ctrl_points, ctrl_vis, once_false_mask=True
+            )
+            self._freeze_identity(
+                result,
+                ctrl_global,
+                surface_points=surface_points,
+                interior_points=interior_points,
+            )
+        else:
+            self._check_frozen_identity(result)
+            if int(ctrl_points.shape[1]) != int(self._controller_first_points.shape[0]):
+                raise ValueError(
+                    "controller candidate count changed across chunks; session "
+                    "query schema is frozen"
+                )
+            object_motions_valid, _ = motion_consistency(
+                obj_points, obj_vis, once_false_mask=False
+            )
+            ctrl_motions_valid, _ = motion_consistency(
+                ctrl_points, ctrl_vis, once_false_mask=False
+            )
+
+        assert self._anchor_indices is not None
+        assert self._object_column_indices is not None
+        assert self._chunk0_controller_mask is not None
+
+        # Phase 2 — mark temporary_invalid frames.
+        # design_spec.md temporary_invalid: no direct observation this frame.
+        # The motion term only applies where forward motion was testable; the
+        # published tail row is testable exactly when a borrow row is present.
+        ctrl_motion_failed = _motion_failed_mask(ctrl_vis, ctrl_motions_valid)
+        ctrl_usable = ctrl_vis & ~ctrl_motion_failed
+
+        anchors = self._anchor_indices
+        anchor_count = int(anchors.shape[0])
+        out_points = np.ascontiguousarray(
+            ctrl_points[:frame_count, anchors, :], dtype=np.float32
+        )
+        # Published visibility means "this value is a direct measurement":
+        # motion-gate failures are temporary_invalid, so their frames get a
+        # rigid proxy value and must not read as visible.
+        out_vis = np.ascontiguousarray(ctrl_usable[:frame_count, anchors], dtype=bool)
+        out_colors = np.ascontiguousarray(
+            np.asarray(result["controller_colors"], dtype=np.float32)[
+                :frame_count, anchors, :
+            ]
+        )
+        # Phase 3 — recovery loop over the published rows only (borrow rows
+        # are re-processed as the next window's first frames). Each
+        # temporarily-invalid anchor frame is filled with a rigid proxy from
+        # currently-valid donors (first-frame -> current-frame registration
+        # applied to the anchor's first-frame position); when even the
+        # fallback donor ladder is too thin, _recover_anchor raises
+        # TrackingRecoveryError and the window aborts.
+        proxied = np.zeros((frame_count, anchor_count), dtype=bool)
+        for frame_idx in range(frame_count):
+            invalid_columns = np.flatnonzero(~ctrl_usable[frame_idx, anchors])
+            for column in invalid_columns:
+                out_points[frame_idx, column] = self._recover_anchor(
+                    int(column),
+                    frame_idx,
+                    ctrl_usable[frame_idx],
+                    ctrl_points[frame_idx],
+                )
+                proxied[frame_idx, column] = True
+
+        # With a borrow row the published tail carries a real forward-motion
+        # verdict; without one (capture end) it stays False — origin's
+        # end-of-sequence semantics.
+        published_object_motions_valid = np.ascontiguousarray(
+            object_motions_valid[:frame_count], dtype=bool
+        )
+        published_controller_candidate_motions_valid = np.ascontiguousarray(
+            ctrl_motions_valid[:frame_count], dtype=bool
+        )
+        published_controller_motions_valid = np.ascontiguousarray(
+            published_controller_candidate_motions_valid[:, anchors], dtype=bool
+        )
+
+        # Phase 4 — publish: frozen-identity metadata plus this window's
+        # values, re-indexed onto the anchor / object-column axes.
+        controller_query_indices = np.asarray(
+            result["controller_query_indices"], dtype=np.int64
+        ).reshape(-1)
+        anchor_query_indices = controller_query_indices[anchors]
+        # Candidate-axis diagnostics keep the pre-selection arrays inspectable.
+        result["controller_candidate_motions_valid"] = np.ascontiguousarray(
+            published_controller_candidate_motions_valid, dtype=bool
+        )
+        result["controller_candidate_mask"] = np.ascontiguousarray(
+            self._chunk0_controller_mask, dtype=bool
+        )
+        result["controller_candidate_query_ids"] = np.ascontiguousarray(
+            controller_query_indices, dtype=np.int64
+        )
+        anchor_status = np.asarray(
+            [
+                "proxied" if bool(np.any(proxied[:, column])) else "direct"
+                for column in range(anchor_count)
+            ],
+            dtype="<U8",
+        )
+        neighbor_table_ids = np.full(
+            (anchor_count, self.neighbor_table_size), -1, dtype=np.int64
+        )
+        for column in range(anchor_count):
+            neighbors = self._neighbor_table.get(int(anchors[column]))
+            if neighbors is None or neighbors.size == 0:
+                continue
+            ids = controller_query_indices[neighbors]
+            neighbor_table_ids[column, : ids.shape[0]] = ids
+
+        cols = self._object_column_indices
+        object_query_indices = np.asarray(
+            result["object_query_indices"], dtype=np.int64
+        ).reshape(-1)
+        object_sample_query_ids = object_query_indices[cols]
+        object_status = np.asarray(
+            [
+                "direct" if bool(np.any(obj_vis[:frame_count, int(col)])) else "missing"
+                for col in cols
+            ],
+            dtype="<U8",
+        )
+
+        # Origin data_process_sample.py:63 above-table clamp on the PUBLISHED
+        # trajectories (motion gating above already ran on the raw tracks).
+        published_object_points = np.ascontiguousarray(
+            obj_points[:frame_count, cols, :]
+        )
+        published_object_points[published_object_points[..., 2] > 0, 2] = 0
+        result["object_points"] = published_object_points
+        result["object_colors"] = np.ascontiguousarray(
+            np.asarray(result["object_colors"], dtype=np.float32)[:frame_count, cols, :]
+        )
+        result["object_visibilities"] = np.ascontiguousarray(obj_vis[:frame_count, cols])
+        result["object_motions_valid"] = np.ascontiguousarray(
+            published_object_motions_valid[:, cols]
+        )
+        result["object_volume_sample_indices"] = np.ascontiguousarray(cols, dtype=np.int64)
+        result["object_sample_indices"] = np.ascontiguousarray(cols, dtype=np.int64)
+        result["object_sample_query_ids"] = np.ascontiguousarray(
+            object_sample_query_ids, dtype=np.int64
+        )
+        result["object_selected_query_ids"] = np.ascontiguousarray(
+            object_sample_query_ids, dtype=np.int64
+        )
+        result["object_track_query_indices"] = np.ascontiguousarray(
+            object_sample_query_ids, dtype=np.int64
+        )
+        result["object_track_active_query_indices"] = np.ascontiguousarray(
+            object_sample_query_ids, dtype=np.int64
+        )
+        result["object_track_status"] = object_status
+
+        result["controller_points"] = out_points
+        result["controller_colors"] = out_colors
+        result["controller_visibilities"] = out_vis
+        result["controller_motions_valid"] = published_controller_motions_valid
+        result["controller_proxied"] = proxied
+        result["controller_mask"] = np.ascontiguousarray(
+            self._chunk0_controller_mask, dtype=bool
+        )
+        result["controller_final_indices"] = np.ascontiguousarray(anchors, dtype=np.int64)
+        result["controller_sample_query_ids"] = np.ascontiguousarray(
+            anchor_query_indices, dtype=np.int64
+        )
+        result["controller_track_query_indices"] = np.ascontiguousarray(
+            anchor_query_indices, dtype=np.int64
+        )
+        result["controller_track_active_query_indices"] = np.ascontiguousarray(
+            anchor_query_indices, dtype=np.int64
+        )
+        result["controller_track_status"] = anchor_status
+        result["controller_neighbor_query_ids"] = neighbor_table_ids
+        result["track_process_status"] = np.asarray(
+            TRACK_STATUS_DEGRADED if bool(np.any(proxied)) else TRACK_STATUS_NORMAL
+        )
+        # Candidate-axis raw diagnostics pass through from the window copy;
+        # slice off the borrow rows so no published array carries them.
+        for raw_key in (
+            "controller_raw_points",
+            "controller_raw_visible",
+            "controller_processed_mask_valid",
+            "controller_depth_valid",
+            "controller_measurement_valid",
+        ):
+            if raw_key in result:
+                result[raw_key] = np.ascontiguousarray(
+                    np.asarray(result[raw_key])[:frame_count]
+                )
+        return result

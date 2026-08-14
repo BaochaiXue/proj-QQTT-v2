@@ -37,28 +37,28 @@ from typing import Any, Callable
 import cv2
 import numpy as np
 
-from demo_v6_2.shape_prior import warmup as shape_prior_warmup
-from demo_v6_2.mdp import warmup as mdp_warmup
-from demo_v6_2.mdp.cli import RunMode
-from demo_v6_2.mdp.constants import DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES
-from demo_v6_2.mdp.live_viewer import (
+from demo_v7.runtime.shape_prior import warmup as shape_prior_warmup
+from demo_v7.runtime.mdp import warmup as mdp_warmup
+from demo_v7.runtime.mdp.cli import RunMode
+from demo_v7.runtime.mdp.constants import DEFAULT_LOCAL_FFS_DEPTH_CACHE_FRAMES
+from demo_v7.runtime.mdp.live_viewer import (
     HAND_A_TINT_BGR,
     HAND_B_TINT_BGR,
     OBJECT_TINT_BGR,
     render_pair_frame,
 )
-from demo_v6_2.mdp.packets import FramePacket
-from demo_v6_2.mdp.plumbing import FatalErrorLatch
-from demo_v6_2.mdp.preload import PerceptionPreloader
-from demo_v6_2.mdp.session import CameraSession
-from demo_v6_2.phystwin_strict_product import finalize_headless_capture
-from demo_v6_2.pipeline_status import (
+from demo_v7.runtime.mdp.packets import FramePacket
+from demo_v7.runtime.mdp.plumbing import FatalErrorLatch
+from demo_v7.runtime.mdp.preload import PerceptionPreloader
+from demo_v7.runtime.mdp.session import CameraSession
+from demo_v7.runtime.phystwin_strict_product import finalize_headless_capture
+from demo_v7.runtime.pipeline_status import (
     STAGE_CAPTURE_START,
     STAGE_SHAPE_PRIOR,
     PipelineStatusWriter,
 )
-from demo_v6_2.utils.concurrency import elapsed_ms as _elapsed_ms
-from demo_v6_2.utils.render import apply_wslg_open3d_env_defaults
+from demo_v7.runtime.utils.concurrency import elapsed_ms as _elapsed_ms
+from demo_v7.runtime.utils.render import apply_wslg_open3d_env_defaults
 
 from demo_v7.ipc import protocol
 from demo_v7.ipc.channel import ControlServer, FrameStreamServer
@@ -1037,7 +1037,7 @@ class StagedRuntime:
         if formal is None or manager is None or not manager.has_world_ply():
             return
         try:
-            from demo_v6_2.mdp.constants import TABLE_WORLD_FRAME_KIND
+            from demo_v7.runtime.mdp.constants import TABLE_WORLD_FRAME_KIND
             from demo_v7.service.gaussian_live import GaussianLiveRenderer
 
             live = GaussianLiveRenderer(str(manager.world_ply_path))
@@ -1118,7 +1118,7 @@ class StagedRuntime:
         prepared_phystwin/000000.npz (written with the first strict pair):
         rigid ICP of the splats onto the seq-0 object cloud, then seq-0
         rest positions for the bones so the first live packet becomes a
-        substepped catch-up instead of a new rest pose. Every failure path
+        one-shot catch-up pose instead of a new rest pose. Every failure path
         degrades to the old behavior — never fatal.
         """
         try:
@@ -1496,7 +1496,7 @@ class StagedRuntime:
         if self.args.depth_source == "ffs":
             # Lazy: the FFS/TensorRT/numba import chain must not tax the
             # default native-realsense startup path (v6.2 runtime mirror).
-            from demo_v6_2.utils.ffs_align import (  # noqa: PLC0415
+            from demo_v7.runtime.utils.ffs_align import (  # noqa: PLC0415
                 FfsDepthEngine,
                 warm_up_numba_ffs_align,
             )

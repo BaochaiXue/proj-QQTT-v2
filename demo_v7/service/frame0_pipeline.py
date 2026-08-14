@@ -5,7 +5,7 @@ SAM3.1 initial-mask bundle (the exact v6.2 frame-0 seeding source) ->
 canonical processed frame / class PCDs (the exact FormalProductStage math)
 -> shape-prior frame-0 request (the exact ShapePriorPublisher construction),
 plus the on-disk review artifacts the GUI shows. No numeric step is
-re-implemented here; every one is imported from demo_v6_2.
+re-implemented here; every one is imported from demo_v7.runtime.
 """
 
 from __future__ import annotations
@@ -20,30 +20,30 @@ import numpy as np
 
 from qqtt.env.camera.table_calibration import TABLE_WORLD_FRAME_KIND
 
-from demo_v6_2.mdp import warmup as v62_warmup
-from demo_v6_2.mdp.cli import RunMode, depth_backend_label
-from demo_v6_2.mdp.packets import (
+from demo_v7.runtime.mdp import warmup as v62_warmup
+from demo_v7.runtime.mdp.cli import RunMode, depth_backend_label
+from demo_v7.runtime.mdp.packets import (
     MaskedPcdPacket,
     MaskPacket,
     PcdBuildResult,
     PipelineTiming,
     ProcessedFramePacket,
 )
-from demo_v6_2.phystwin_strict_product import (
+from demo_v7.runtime.phystwin_strict_product import (
     PHYSTWIN_DEPTH_MAX_M,
     PHYSTWIN_DEPTH_MIN_M,
     apply_depth_validity_to_mask_frame,
     apply_radius_outlier_to_mask_frame,
     dense_world_pcd_grid,
 )
-from demo_v6_2.shape_prior import case as shape_prior_case
-from demo_v6_2.utils.concurrency import elapsed_ms as _elapsed_ms
+from demo_v7.runtime.shape_prior import case as shape_prior_case
+from demo_v7.runtime.utils.concurrency import elapsed_ms as _elapsed_ms
 
 from demo_v7.ipc.protocol import ARTIFACT_KIND_FRAME0, ARTIFACT_KIND_MASKS
 
 if TYPE_CHECKING:
-    from demo_v6_2.mdp.session import CameraSession
-    from demo_v6_2.shape_prior.warmup import ShapePriorWarmupManager
+    from demo_v7.runtime.mdp.session import CameraSession
+    from demo_v7.runtime.shape_prior.warmup import ShapePriorWarmupManager
 
 # The v7 frame-0 pipeline processes exactly one frozen frame; its packets all
 # carry the sequence number the formal run will later restart from.

@@ -240,7 +240,7 @@ def register_canonical(
 
 def recompute_mesh2world(case_dir: Path, controller_name: str) -> np.ndarray:
     """Replay align.py's PnP + scale from persisted case files (v6.2 code)."""
-    from demo_v6_2.visualization.visualize_shape_prior_matches import (
+    from demo_v7.runtime.visualization.visualize_shape_prior_matches import (
         load_case,
         replay_match_stages,
     )

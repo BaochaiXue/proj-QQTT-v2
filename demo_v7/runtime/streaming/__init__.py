@@ -1,0 +1,1 @@
+"""Realtime chunk streaming: the stream session, capture metadata, window build/materialize, warmup trim, chunk data output/payloads, JSONL tails, the online frame archive, ASAP augmentation, and window observation lifting."""

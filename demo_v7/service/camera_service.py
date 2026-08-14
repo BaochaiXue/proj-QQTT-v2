@@ -3,9 +3,10 @@
 
 Mirrors the demo_v6_2/main_data_processing.py bootstrap (persistent
 TORCHINDUCTOR_CACHE_DIR, repo sys.path pin, import-time stamp) and reuses
-``demo_v6_2.mdp.cli.build_parser()`` via ``parse_known_args`` for the v6.2
-flag subset; only ``--socket-dir``, ``--self-check``,
-``--channel-max-hz-json`` and ``--shape-prior-backend`` are v7 flags. The
+``demo_v7.runtime.mdp.cli.build_parser()`` via ``parse_known_args`` for the v6.2
+flag subset; the v7-only flags are the ones ``_build_v7_parser`` defines
+(--socket-dir/--self-check/--channel-max-hz-json/--shape-prior-backend/
+--shape-prior-upscale/--gaussian-backend/--record-dir). The
 v6.2 GUI windows are force-disabled — demo_v7's GUI owns every window and the
 service streams frames over the frames socket instead.
 """
@@ -40,7 +41,7 @@ if REPO_ROOT_STR in sys.path:
 sys.path.insert(0, REPO_ROOT_STR)
 
 
-from demo_v6_2.mdp.cli import (  # noqa: E402
+from demo_v7.runtime.mdp.cli import (  # noqa: E402
     build_parser as build_v62_parser,
     validate_and_normalize_args,
 )
@@ -151,7 +152,7 @@ def _self_check() -> int:
     """
     import tempfile
 
-    from demo_v6_2.mdp.session import CameraSession
+    from demo_v7.runtime.mdp.session import CameraSession
     from demo_v7.ipc import protocol
     from demo_v7.service.staged_runtime import StagedRuntime
 
@@ -346,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         # dir refusals — FileExistsError et al. are OSError) never reach the
         # worker-thread fatal hook, so surface them on the live status band
         # too (v6.2 main_data_processing mirror).
-        from demo_v6_2.pipeline_status import (  # noqa: PLC0415
+        from demo_v7.runtime.pipeline_status import (  # noqa: PLC0415
             STAGE_FATAL,
             PipelineStatusWriter,
         )

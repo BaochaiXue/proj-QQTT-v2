@@ -13,8 +13,8 @@ import time
 import numpy as np
 import pytest
 
-from demo_v6_2.mdp.capture_source import RecordedRgbdFrameSource
-from demo_v6_2.mdp.packets import CameraIntrinsics, FramePacket, PipelineTiming
+from demo_v7.runtime.mdp.capture_source import RecordedRgbdFrameSource
+from demo_v7.runtime.mdp.packets import CameraIntrinsics, FramePacket, PipelineTiming
 
 from demo_v7.service.recorder import FakeLiveCaseRecorder
 

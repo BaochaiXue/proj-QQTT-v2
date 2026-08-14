@@ -422,7 +422,7 @@ def drive(args: argparse.Namespace) -> None:
             observer.log(
                 f"gaussian live channel verified ({observer.gaussian_frames} frames)"
             )
-            check_gaussian_follow(session, observer)
+            check_gaussian_follow(session, observer, args.gaussian_backend)
         if prior_disabled:
             # No shape prior -> ChunkStreamSession never writes the
             # downstream-trigger points.npz (require_shape_prior=False).
@@ -449,7 +449,9 @@ def drive(args: argparse.Namespace) -> None:
         session.shutdown()
 
 
-def check_gaussian_follow(session, observer: DriveObserver) -> None:
+def check_gaussian_follow(
+    session, observer: DriveObserver, gaussian_backend: str | None
+) -> None:
     """Assert the live gaussian actually FOLLOWED the tracked object.
 
     Surface: <base_path>/gaussian/gaussian_live_stats.json, written

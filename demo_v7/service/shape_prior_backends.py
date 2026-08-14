@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from demo_v6_2.shape_prior import warmup as shape_prior_warmup
+from demo_v7.runtime.shape_prior import warmup as shape_prior_warmup
 
 from demo_v7.service.backend_options import (
     BACKEND_SAM3D,
@@ -54,7 +54,7 @@ class _NoUpscaleStageMixin:
     def _stage_commands(self) -> dict[str, list[str]]:
         commands = dict(super()._stage_commands())  # type: ignore[misc]
         upscale = list(commands[shape_prior_warmup.PREWARM_STAGE_UPSCALE])
-        assert upscale[1:3] == ["-m", "demo_v6_2.shape_prior.upscale"], upscale
+        assert upscale[1:3] == ["-m", "demo_v7.runtime.shape_prior.upscale"], upscale
         commands[shape_prior_warmup.PREWARM_STAGE_UPSCALE] = [
             upscale[0],
             str(UPSCALE_PASSTHROUGH_RUNNER),
@@ -101,7 +101,7 @@ class Trellis2ShapePriorClient(shape_prior_warmup.ShapePriorLocalClient):
         # on the TRELLIS.2 topology those make the downstream ASAP
         # deformation's solver fail to factorize (see sample_asap_safe.py).
         sample = list(commands[shape_prior_warmup.PREWARM_STAGE_SAMPLE])
-        assert sample[1:3] == ["-m", "demo_v6_2.shape_prior.sample"], sample
+        assert sample[1:3] == ["-m", "demo_v7.runtime.shape_prior.sample"], sample
         commands[shape_prior_warmup.PREWARM_STAGE_SAMPLE] = [
             sample[0],
             str(SAMPLE_ASAP_SAFE_RUNNER),
@@ -112,7 +112,7 @@ class Trellis2ShapePriorClient(shape_prior_warmup.ShapePriorLocalClient):
         # ~14s naive rasterization to ~4s with decision-level-identical
         # outputs (final_mesh.glb bitwise equal; see align_fast_safe.py).
         align = list(commands[shape_prior_warmup.PREWARM_STAGE_ALIGN])
-        assert align[1:3] == ["-m", "demo_v6_2.shape_prior.align"], align
+        assert align[1:3] == ["-m", "demo_v7.runtime.shape_prior.align"], align
         commands[shape_prior_warmup.PREWARM_STAGE_ALIGN] = [
             align[0],
             str(ALIGN_FAST_SAFE_RUNNER),

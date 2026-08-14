@@ -126,7 +126,7 @@ QStatusBar { color: #9aa0a6; }
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="demo_v7 GUI (PySide6) for demo_v6_2.")
+    parser = argparse.ArgumentParser(description="demo_v7 GUI (PySide6) for demo_v7.runtime.")
     parser.add_argument(
         "--source",
         choices=(SOURCE_REAL, SOURCE_FAKE_LIVE),
@@ -202,7 +202,7 @@ def config_default_source_and_case() -> tuple[str, Path | None]:
     """
     import yaml
 
-    from demo_v6_2.orchestration.main_config import (
+    from demo_v7.runtime.orchestration.main_config import (
         DEFAULT_FAKE_LIVE_CASE,
         DEFAULT_INPUT_SOURCE,
     )
@@ -603,7 +603,7 @@ class SourceSelectDialog(QDialog):
         # Calibrate the camera the runtime will actually open (config
         # camera.camera_serials), not whichever enumerates first — several
         # RealSense devices may be plugged in.
-        from demo_v6_2.orchestration.main_config import (  # noqa: PLC0415
+        from demo_v7.runtime.orchestration.main_config import (  # noqa: PLC0415
             DEFAULT_CAMERA_SERIALS,
         )
         from demo_v7.gui.calibrate_dialog import (  # noqa: PLC0415

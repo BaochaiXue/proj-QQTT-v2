@@ -1,6 +1,6 @@
 """TRELLIS.2 generate-stage CLI: shape/masked_image.png -> shape/object.glb.
 
-Drop-in replacement for ``demo_v6_2.shape_prior.generate`` (same CLI surface,
+Drop-in replacement for ``demo_v7.runtime.shape_prior.generate`` (same CLI surface,
 same StageProfileRun WAITING/GO/COMPLETED lifecycle, same output contract) so
 the untouched v6.2 align/sample stages run unchanged afterwards. It is meant
 to run under the ``trellis2`` conda env python — the parent-side argv is built
@@ -449,12 +449,12 @@ def _import_stage_profile_run():
     fallback covers direct CLI invocations of this script.
     """
     try:
-        from demo_v6_2.shape_prior.timing import StageProfileRun
+        from demo_v7.runtime.shape_prior.timing import StageProfileRun
     except ModuleNotFoundError:
         repo_root = str(Path(__file__).resolve().parents[2])
         if repo_root not in sys.path:
             sys.path.append(repo_root)
-        from demo_v6_2.shape_prior.timing import StageProfileRun
+        from demo_v7.runtime.shape_prior.timing import StageProfileRun
     return StageProfileRun
 
 

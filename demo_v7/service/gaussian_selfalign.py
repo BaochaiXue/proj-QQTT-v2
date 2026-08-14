@@ -27,7 +27,6 @@ fail-soft. ``DEMO_V7_GAUSSIAN_SELF_ALIGN=0`` disables phase 2 entirely.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path

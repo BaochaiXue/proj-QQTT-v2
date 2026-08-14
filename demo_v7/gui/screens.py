@@ -69,7 +69,7 @@ WARMUP_STAGE_PLAN: list[tuple[str, tuple[str, str]]] = [
     ("shape_prior_ready", ("shape-prior 就绪", "Shape prior ready")),
     # Rides in parallel with the chain (camera GPU); completes last —
     # alignment parks until the chain is READY.
-    ("gaussian", ("Gaussian 生成(TripoSplat)", "Gaussian generation (TripoSplat)")),
+    ("gaussian", ("Gaussian 生成", "Gaussian generation")),
 ]
 # Backend id -> generate-row label (dialog vocabulary; sam3d is the default).
 _GENERATE_ROW_LABELS = {
@@ -207,11 +207,6 @@ class CaptureScreen(QWidget):
                     "Position the object and both hands, then capture frame-0.",
                 )
             )
-
-    def set_busy(self, busy: bool) -> None:
-        """Disable buttons while a command's ack is outstanding-ish states."""
-        for btn in (self._capture_btn, self._confirm_btn, self._retake_btn):
-            btn.setEnabled(not busy)
 
     def show_candidate(self, paths: dict[str, str]) -> None:
         """Pin the frozen frame-0 candidate from ARTIFACT_KIND_FRAME0 paths.
@@ -858,9 +853,6 @@ class FormalScreen(QWidget):
     def _select_channel(self, channel: str) -> None:
         self._selected_channel = channel
         self._view.clear()
-
-    def selected_channel(self) -> str:
-        return self._selected_channel
 
     def on_frame(self, channel: str, jpeg_bytes: bytes) -> None:
         if channel == self._selected_channel:

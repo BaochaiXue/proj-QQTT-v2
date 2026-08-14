@@ -112,7 +112,7 @@ def _open_camera(serial: str | None):
     wedged device to a raised error instead of an infinite constructor
     hang.
     """
-    from demo_v6_2.orchestration.main_config import (
+    from demo_v7.runtime.orchestration.main_config import (
         DEFAULT_CAMERA_COLOR_EXPOSURE,
         DEFAULT_CAMERA_COLOR_GAIN,
     )

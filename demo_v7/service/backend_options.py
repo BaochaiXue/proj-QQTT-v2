@@ -67,7 +67,7 @@ def _hf_hub_cache_dir() -> Path:
 
 
 def normalize_backend(value: str | None) -> str:
-    """Return a validated backend id (None -> the sam3d default)."""
+    """Return a validated backend id (None -> the configured default, currently trellis2)."""
     backend = str(value).strip().lower() if value is not None else ""
     if not backend:
         return DEFAULT_SHAPE_PRIOR_BACKEND

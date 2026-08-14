@@ -8,9 +8,6 @@ Constraints these widgets enforce (see ``demo_v7/DESIGN_CONTRACTS.md``):
 - ``ImageView`` is latest-wins: a burst of ``setFrame`` calls keeps only the
   newest JPEG and repaints at most ~30 Hz (one coalescing timer per view),
   mirroring the demo_v6_2 live-viewer discipline of never queueing frames.
-- ``VideoLoop`` plays mp4 files with ``cv2.VideoCapture`` on a ``QTimer`` so
-  the GUI has no QtMultimedia/gstreamer dependency; it pauses automatically
-  while hidden (e.g. an inactive Review tab).
 - No per-pixel Python loops: decode/convert stays in cv2/Qt C++ code.
 """
 
@@ -131,9 +128,6 @@ class ImageView(QWidget):
     def clear(self) -> None:
         self.setImage(None)
 
-    def hasImage(self) -> bool:
-        return self._pixmap is not None or self._pending_jpeg is not None
-
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
         return self._hint_size
 
@@ -167,77 +161,6 @@ class ImageView(QWidget):
         painter.drawPixmap(target, self._pixmap)
         painter.end()
 
-
-class VideoLoop(QWidget):
-    """Loops an mp4 via ``cv2.VideoCapture`` on a ``QTimer``.
-
-    Playback runs only while the widget is visible (show/hide events start and
-    stop the timer), so a turntable video in a background tab costs nothing.
-    """
-
-    def __init__(
-        self,
-        placeholder: str = "",
-        *,
-        hint_size: tuple[int, int] = (640, 360),
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self._view = ImageView(placeholder, hint_size=hint_size, parent=self)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self._view)
-        self._capture: cv2.VideoCapture | None = None
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._advance)
-
-    def setVideoPath(self, path: str | Path) -> bool:
-        """Open (or replace) the looping video; returns False when unopenable."""
-        self.stop()
-        capture = cv2.VideoCapture(str(path))
-        if not capture.isOpened():
-            capture.release()
-            return False
-        fps = capture.get(cv2.CAP_PROP_FPS)
-        if not fps or fps <= 1.0 or fps > 120.0:
-            fps = 30.0
-        self._capture = capture
-        self._timer.setInterval(max(1, int(round(1000.0 / fps))))
-        if self.isVisible():
-            self._timer.start()
-        return True
-
-    def stop(self) -> None:
-        self._timer.stop()
-        if self._capture is not None:
-            self._capture.release()
-            self._capture = None
-
-    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
-        super().showEvent(event)
-        if self._capture is not None and not self._timer.isActive():
-            self._timer.start()
-
-    def hideEvent(self, event) -> None:  # noqa: N802 - Qt override
-        super().hideEvent(event)
-        self._timer.stop()
-
-    def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
-        self.stop()
-        super().closeEvent(event)
-
-    def _advance(self) -> None:
-        if self._capture is None:
-            return
-        ok, frame = self._capture.read()
-        if not ok:
-            # Loop: rewind and retry once; a twice-unreadable file stops.
-            self._capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            ok, frame = self._capture.read()
-            if not ok:
-                self.stop()
-                return
-        self._view.setImage(bgr_to_qimage(frame))
 
 
 def _format_elapsed_ms(elapsed_ms: float) -> str:

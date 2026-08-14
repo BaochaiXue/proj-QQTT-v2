@@ -80,7 +80,7 @@ def rewrite_window_flags(command: list[str]) -> list[str]:
 
 def patch_phystwin_stage_window_compat() -> None:
     """Rebind the v6.2 command builder with the window-flag rewrite."""
-    from demo_v6_2 import phystwin_shen_launch as launch_module
+    from demo_v7.runtime import phystwin_shen_launch as launch_module
 
     if getattr(
         launch_module.build_full_pipeline_command, "_v7_window_compat", False

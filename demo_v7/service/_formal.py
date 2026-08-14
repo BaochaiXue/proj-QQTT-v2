@@ -19,31 +19,31 @@ from typing import Any
 
 import numpy as np
 
-from demo_v6_2.shape_prior import warmup as shape_prior_warmup
-from demo_v6_2.mdp import warmup as mdp_warmup
-from demo_v6_2.mdp.cli import RunMode
-from demo_v6_2.mdp.constants import (
+from demo_v7.runtime.shape_prior import warmup as shape_prior_warmup
+from demo_v7.runtime.mdp import warmup as mdp_warmup
+from demo_v7.runtime.mdp.cli import RunMode
+from demo_v7.runtime.mdp.constants import (
     HEADLESS_CAPTURE_SAVED_PCD_SOURCE,
     pcd_coordinate_frame,
 )
-from demo_v6_2.mdp.formal_products import FormalProductStage
-from demo_v6_2.mdp.gui_loop import _NullGuiLoop
-from demo_v6_2.mdp.headless_writer import HeadlessCaptureWriter
-from demo_v6_2.mdp.packets import FramePacket, MaskPacket
-from demo_v6_2.mdp.plumbing import (
+from demo_v7.runtime.mdp.formal_products import FormalProductStage
+from demo_v7.runtime.mdp.gui_loop import _NullGuiLoop
+from demo_v7.runtime.mdp.headless_writer import HeadlessCaptureWriter
+from demo_v7.runtime.mdp.packets import FramePacket, MaskPacket
+from demo_v7.runtime.mdp.plumbing import (
     FatalErrorLatch,
     FormalTimelineGate,
     LosslessPipeline,
     StageStatsBoard,
 )
-from demo_v6_2.mdp.preload import PerceptionPreloader
-from demo_v6_2.mdp.segmentation import SegmentationStage, SegmentationWarmupState
-from demo_v6_2.mdp.session import CameraSession
-from demo_v6_2.mdp.shape_prior_flow import ShapePriorPublisher
-from demo_v6_2.mdp.tracker import TrackerStage
-from demo_v6_2.mdp.warmup_preview import WarmupRgbPreview
-from demo_v6_2.pipeline_status import PipelineStatusWriter
-from demo_v6_2.utils.concurrency import LatestSlot
+from demo_v7.runtime.mdp.preload import PerceptionPreloader
+from demo_v7.runtime.mdp.segmentation import SegmentationStage, SegmentationWarmupState
+from demo_v7.runtime.mdp.session import CameraSession
+from demo_v7.runtime.mdp.shape_prior_flow import ShapePriorPublisher
+from demo_v7.runtime.mdp.tracker import TrackerStage
+from demo_v7.runtime.mdp.warmup_preview import WarmupRgbPreview
+from demo_v7.runtime.pipeline_status import PipelineStatusWriter
+from demo_v7.runtime.utils.concurrency import LatestSlot
 
 
 class CaptureHold:

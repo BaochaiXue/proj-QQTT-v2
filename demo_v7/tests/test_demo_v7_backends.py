@@ -99,7 +99,7 @@ class TestZeroExtentFaceMask:
 
 class TestTrellis2StageCommands:
     def _make_clients(self, tmp_path):
-        from demo_v6_2.shape_prior import warmup as shape_prior_warmup
+        from demo_v7.runtime.shape_prior import warmup as shape_prior_warmup
         from demo_v7.service.shape_prior_backends import Trellis2ShapePriorClient
 
         kwargs = dict(
@@ -161,7 +161,7 @@ class TestTrellis2StageCommands:
         )
 
     def test_create_client_dispatch(self, tmp_path) -> None:
-        from demo_v6_2.shape_prior import warmup as shape_prior_warmup
+        from demo_v7.runtime.shape_prior import warmup as shape_prior_warmup
         from demo_v7.service.shape_prior_backends import (
             Trellis2ShapePriorClient,
             create_shape_prior_client,
@@ -279,7 +279,7 @@ class TestUpscaleToggle:
             backend_options.normalize_upscale("maybe")
 
     def test_no_upscale_swaps_only_upscale_stage(self, tmp_path) -> None:
-        from demo_v6_2.shape_prior import warmup as shape_prior_warmup
+        from demo_v7.runtime.shape_prior import warmup as shape_prior_warmup
         from demo_v7.service.shape_prior_backends import (
             UPSCALE_PASSTHROUGH_RUNNER,
             NoUpscaleShapePriorClient,
@@ -315,7 +315,7 @@ class TestUpscaleToggle:
         assert no_up_cmds["upscale"][2:] == trellis_cmds["upscale"][3:]
 
     def test_create_client_dispatch_upscale(self, tmp_path) -> None:
-        from demo_v6_2.shape_prior import warmup as shape_prior_warmup
+        from demo_v7.runtime.shape_prior import warmup as shape_prior_warmup
         from demo_v7.service.shape_prior_backends import (
             NoUpscaleShapePriorClient,
             NoUpscaleTrellis2ShapePriorClient,

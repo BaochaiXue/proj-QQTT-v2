@@ -44,29 +44,29 @@ sys.path.insert(0, _REPO_ROOT_STR)
 
 import yaml
 
-from demo_v6_2.main_cli import build_parser
-from demo_v6_2.main_options import load_optional_points, python_command_prefix
-from demo_v6_2.main_subprocess import (
+from demo_v7.runtime.main_cli import build_parser
+from demo_v7.runtime.main_options import load_optional_points, python_command_prefix
+from demo_v7.runtime.main_subprocess import (
     build_main_data_processing_command,
     default_capture_dir,
     stop_process,
 )
-from demo_v6_2.orchestration.main_config import (
+from demo_v7.runtime.orchestration.main_config import (
     DEFAULT_SAM31_CHECKPOINT_PATH,
     REPO_ROOT,
     SAM31_CHECKPOINT_ENV,
 )
-from demo_v6_2.orchestration.main_layout import (
+from demo_v7.runtime.orchestration.main_layout import (
     prepare_realtime_output_for_new_run,
     resolve_shape_prior_points_npz,
 )
-from demo_v6_2.orchestration.run_config import OrchestratorRunConfig
-from demo_v6_2.phystwin_shen_launch import (
+from demo_v7.runtime.orchestration.run_config import OrchestratorRunConfig
+from demo_v7.runtime.phystwin_shen_launch import (
     PhystwinShenLaunch,
     PhystwinShenLaunchError,
     launch_phystwin_shen,
 )
-from demo_v6_2.pipeline_status import (
+from demo_v7.runtime.pipeline_status import (
     STAGE_CHUNK_COMMITTED,
     STAGE_DOWNSTREAM_START,
     STAGE_FATAL,
@@ -74,7 +74,7 @@ from demo_v6_2.pipeline_status import (
     STAGE_RUN_START,
     PipelineStatusWriter,
 )
-from demo_v6_2.streaming.session import ChunkStreamSession
+from demo_v7.runtime.streaming.session import ChunkStreamSession
 from demo_v7.ipc import protocol
 from demo_v7.ipc.channel import ControlClient, FrameStreamClient
 from demo_v7.service import backend_options, gaussian_options
@@ -465,14 +465,14 @@ class OrchestratorSession:
     def _camera_service_env(self) -> dict[str, str]:
         """Mirror demo_v6_2/main.py:154-175 env resolution for the service."""
         env = os.environ.copy()
-        from demo_v6_2.perception.sam31_image_segmentation import (  # noqa: PLC0415
+        from demo_v7.runtime.perception.sam31_image_segmentation import (  # noqa: PLC0415
             QQTT_SAM31_CHECKPOINT_ENV,
         )
 
         assert SAM31_CHECKPOINT_ENV == QQTT_SAM31_CHECKPOINT_ENV, (
             "sam31 checkpoint env var name diverged: config/default.yaml "
             "paths.sam31_checkpoint_env vs "
-            "demo_v6_2/perception/sam31_image_segmentation.py "
+            "demo_v7/runtime/perception/sam31_image_segmentation.py "
             "QQTT_SAM31_CHECKPOINT_ENV"
         )
         if not env.get(SAM31_CHECKPOINT_ENV):
@@ -839,7 +839,7 @@ class OrchestratorSession:
                 self._state_cond.notify_all()
 
     def _note_chunk_written(self, manifest: dict[str, Any]) -> None:
-        """demo_v6_2/main.py on_chunk_written minus the window visualizer."""
+        """demo_v7/runtime/main.py on_chunk_written minus the window visualizer."""
         with self._state_cond:
             self._chunk_manifests.append(dict(manifest))
             self._state_cond.notify_all()
@@ -877,7 +877,7 @@ class OrchestratorSession:
     # -- downstream (phystwin_shen) trigger ---------------------------------
 
     def _ensure_phystwin_shen_running(self) -> None:
-        """demo_v6_2/main.py ``_ensure_phystwin_shen_running`` semantics.
+        """demo_v7/runtime/main.py ``_ensure_phystwin_shen_running`` semantics.
 
         Launch once when points.npz (the chunk-0 unified sampling product)
         exists, then enforce live health on every poll. No-op when the

@@ -33,9 +33,12 @@ _PINNED_CUDA_HOME = "/usr/local/cuda"
 def _import_gsplat_rasterization():
     """Import gsplat with its CUDA backend loaded under the pinned env.
 
-    The JIT build fires at the first ``gsplat.cuda._backend`` import (NOT at
-    ``import gsplat`` — the backend is lazy), so that import must happen
-    inside the pinned scope or the env pin is a no-op.
+    INERT FALLBACK in the current install: gsplat ships a prebuilt csrc in
+    the demo_2_max env (the real fix for the 137s JIT-rebuild landmine), so
+    no JIT ever fires and the pins below do nothing. They remain solely for
+    a csrc-less gsplat reinstall, where the JIT build fires at the first
+    ``gsplat.cuda._backend`` import (NOT at ``import gsplat`` — the backend
+    is lazy), so that import must happen inside the pinned scope.
     """
     if "gsplat.cuda._backend" in sys.modules:
         from gsplat import rasterization

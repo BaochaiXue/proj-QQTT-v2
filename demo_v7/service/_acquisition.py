@@ -1,7 +1,7 @@
 """Frame acquisition for the demo_v7 camera service (private helper).
 
 One loop owns the frame source from PREVIEW through FORMAL. The per-frame
-read/align/copy calls are the same ones ``demo_v6_2.mdp.capture.CaptureStage``
+read/align/copy calls are the same ones ``demo_v7.runtime.mdp.capture.CaptureStage``
 drives (RealSense ``wait_for_frames``/``align.process`` or the v6.2
 ``RecordedRgbdFrameSource`` replayer with its tick pacing and
 ``source_index_for_recording_elapsed_s`` frame selection); wrap-around and
@@ -28,16 +28,16 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
-from demo_v6_2.mdp.capture_source import LiveLatestFrameSampler
-from demo_v6_2.mdp.cli import RunMode
-from demo_v6_2.mdp.packets import FramePacket, PipelineTiming
-from demo_v6_2.mdp.plumbing import FatalErrorLatch
-from demo_v6_2.utils.concurrency import elapsed_ms as _elapsed_ms
+from demo_v7.runtime.mdp.capture_source import LiveLatestFrameSampler
+from demo_v7.runtime.mdp.cli import RunMode
+from demo_v7.runtime.mdp.packets import FramePacket, PipelineTiming
+from demo_v7.runtime.mdp.plumbing import FatalErrorLatch
+from demo_v7.runtime.utils.concurrency import elapsed_ms as _elapsed_ms
 
 from demo_v7.ipc import protocol
 
 if TYPE_CHECKING:
-    from demo_v6_2.mdp.session import CameraSession
+    from demo_v7.runtime.mdp.session import CameraSession
     from demo_v7.service._formal import FormalPipeline
 
 
