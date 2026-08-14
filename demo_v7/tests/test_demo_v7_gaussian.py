@@ -839,3 +839,379 @@ class TestSelfAlignDefaultPolicy:
         assert not sa.should_swap(clear_loss, incumbent)
         win = {"iou": 0.92, "c2g_p90_cm": 3.3}
         assert sa.should_swap(win, incumbent)
+
+
+def _synthetic_glb(tmp_path, name: str = "synth.glb"):
+    """A small closed textured-free mesh (icosphere) exported as GLB."""
+    import trimesh
+
+    mesh = trimesh.creation.icosphere(subdivisions=2, radius=0.1)
+    mesh.visual.vertex_colors = np.tile(
+        np.array([180, 120, 60, 255], dtype=np.uint8), (len(mesh.vertices), 1)
+    )
+    path = tmp_path / name
+    mesh.export(str(path))
+    return path
+
+
+class TestMeshSurfaceGaussianizer:
+    """mesh_surface backend core: splat centers ON the mesh, deterministic,
+    anchors self-verifying."""
+
+    def test_centers_on_surface_and_bary_valid(self, tmp_path) -> None:
+        from demo_v7.service.mesh_surface_gaussian import (
+            gaussianize_mesh,
+            replay_splat_means,
+        )
+
+        splats, anchors = gaussianize_mesh(
+            _synthetic_glb(tmp_path), target_splats=2000, seed=1
+        )
+        assert len(splats) >= 2000  # >=1 per face can overshoot slightly
+        bary = anchors.barycentric
+        assert (bary >= -1e-6).all()
+        assert np.allclose(bary.sum(axis=1), 1.0, atol=1e-5)
+        replayed = replay_splat_means(
+            anchors.rest_vertices.astype(np.float64),
+            anchors.faces.astype(np.int64),
+            anchors.face_index,
+            anchors.barycentric.astype(np.float64),
+        )
+        err = np.linalg.norm(replayed - splats.means, axis=1)
+        assert float(err.max()) < 1e-6  # centers ARE the barycentric replay
+
+    def test_every_face_sampled_and_deterministic(self, tmp_path) -> None:
+        from demo_v7.service.mesh_surface_gaussian import gaussianize_mesh
+
+        path = _synthetic_glb(tmp_path)
+        splats_a, anchors_a = gaussianize_mesh(path, target_splats=1000, seed=5)
+        assert len(np.unique(anchors_a.face_index)) == len(anchors_a.faces)
+        splats_b, anchors_b = gaussianize_mesh(path, target_splats=1000, seed=5)
+        assert np.array_equal(splats_a.means, splats_b.means)
+        assert np.array_equal(anchors_a.barycentric, anchors_b.barycentric)
+        splats_c, _ = gaussianize_mesh(path, target_splats=1000, seed=6)
+        assert not np.array_equal(splats_a.means, splats_c.means)
+
+    def test_anchors_roundtrip_and_hash_guard(self, tmp_path) -> None:
+        from demo_v7.service.mesh_surface_gaussian import (
+            gaussianize_mesh,
+            load_anchors,
+            save_anchors,
+        )
+
+        _splats, anchors = gaussianize_mesh(
+            _synthetic_glb(tmp_path), target_splats=500, seed=2
+        )
+        path = tmp_path / "anchors.npz"
+        save_anchors(path, anchors)
+        loaded = load_anchors(path)
+        assert loaded.topology_sha256 == anchors.topology_sha256
+        assert np.array_equal(loaded.face_index, anchors.face_index)
+        # Tampered rest topology must fail loudly (never silently drift).
+        data = dict(np.load(path))
+        data["rest_vertices"] = data["rest_vertices"] + 0.01
+        np.savez_compressed(path, **data)
+        with pytest.raises(ValueError, match="hash mismatch"):
+            load_anchors(path)
+
+    def test_zero_area_faces_never_sampled(self) -> None:
+        from demo_v7.service.mesh_surface_gaussian import _allocate_samples
+
+        areas = np.array([1.0e-4, 0.0, 2.0e-4, 1.0e-20])
+        counts = _allocate_samples(areas, 300)
+        assert counts[1] == 0 and counts[3] == 0
+        assert counts[0] >= 1 and counts[2] >= 1
+        assert counts.sum() >= 300
+
+    def test_face_frames_orthonormal_right_handed(self) -> None:
+        from demo_v7.service.mesh_surface_gaussian import face_frames
+
+        vertices = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0],  # degenerate duplicate corner
+            ]
+        )
+        faces = np.array([[0, 1, 2], [0, 3, 1]])  # second face is a sliver
+        frames = face_frames(vertices, faces)
+        good = frames[0]
+        assert np.allclose(good.T @ good, np.eye(3), atol=1e-9)
+        assert np.isclose(np.linalg.det(good), 1.0)
+        assert np.allclose(good[:, 2], [0, 0, 1])  # normal of the xy triangle
+        assert np.allclose(frames[1], np.eye(3))  # degenerate -> identity
+
+    def test_rigid_replay_consistency(self, tmp_path) -> None:
+        """Rotating the vertices rotates the replayed splats identically."""
+        from demo_v7.service.mesh_surface_gaussian import (
+            face_frames,
+            gaussianize_mesh,
+            replay_splat_means,
+        )
+
+        splats, anchors = gaussianize_mesh(
+            _synthetic_glb(tmp_path), target_splats=800, seed=3
+        )
+        angle = np.radians(40.0)
+        rotation = np.array(
+            [
+                [np.cos(angle), 0.0, np.sin(angle)],
+                [0.0, 1.0, 0.0],
+                [-np.sin(angle), 0.0, np.cos(angle)],
+            ]
+        )
+        translation = np.array([0.02, -0.05, 0.01])
+        verts = anchors.rest_vertices.astype(np.float64)
+        faces = anchors.faces.astype(np.int64)
+        moved = verts @ rotation.T + translation
+        replayed = replay_splat_means(
+            moved, faces, anchors.face_index, anchors.barycentric.astype(np.float64)
+        )
+        expected = (
+            replay_splat_means(
+                verts, faces, anchors.face_index, anchors.barycentric.astype(np.float64)
+            )
+            @ rotation.T
+            + translation
+        )
+        assert np.allclose(replayed, expected, atol=1e-9)
+        # Frames rotate as R @ frame (orientation rides the mesh).
+        frames_rest = face_frames(verts, faces)
+        frames_moved = face_frames(moved, faces)
+        assert np.allclose(frames_moved, rotation @ frames_rest, atol=1e-9)
+
+
+class TestMeshAnchoredRenderer:
+    """Live mesh-anchored deformation: bones deform the vertices, splats
+    stay ON the deformed mesh (CPU, bare construction like the parent's
+    tests)."""
+
+    def _bare(self, tmp_path):
+        from demo_v7.service.gaussian_live import MeshAnchoredGaussianRenderer
+        from demo_v7.service.mesh_surface_gaussian import gaussianize_mesh
+
+        splats, anchors = gaussianize_mesh(
+            _synthetic_glb(tmp_path), target_splats=600, seed=4
+        )
+        live = object.__new__(MeshAnchoredGaussianRenderer)
+        live.device = "cpu"
+        live.failed = False
+        live._torch = torch
+        live._tensors = {
+            "means": torch.as_tensor(splats.means),
+            "quats": torch.as_tensor(splats.quats),
+            "scales": torch.as_tensor(splats.scales),
+            "opacities": torch.as_tensor(splats.opacities),
+            "colors": torch.as_tensor(splats.colors),
+        }
+        live._bone_ids = None
+        live._relations = None
+        live._ctrl_rest = None
+        live._ctrl_prev = None
+        live._rest_means = None
+        live._rest_quats = None
+        live._skin_weights = None
+        live._skin_indices = None
+        live._buffer = {}
+        live._rest_positions = {}
+        live.rest_seeded = False
+        live._seed_grace_left = 25
+        live._last_seen_step = None
+        live.frames_stepped = 0
+        live.bones_moved_m = 0.0
+        live.splats_moved_m = 0.0
+        live.bone_outliers = 0
+        live.bone_stale = 0
+        live._verts = torch.as_tensor(anchors.rest_vertices)
+        live._faces = torch.as_tensor(anchors.faces.astype(np.int64))
+        live._anchor_face = torch.as_tensor(anchors.face_index.astype(np.int64))
+        live._anchor_bary = torch.as_tensor(anchors.barycentric)
+        live._face_quats_prev = None
+        means, quats = live._replay(live._verts)
+        live._tensors["means"] = means
+        live._tensors["quats"] = quats
+        return live, anchors
+
+    def test_rigid_transform_moves_verts_and_splats_together(
+        self, tmp_path
+    ) -> None:
+        live, _anchors = self._bare(tmp_path)
+        before_means = live._tensors["means"].clone()
+        angle = np.radians(35.0)
+        transform = np.eye(4)
+        transform[:3, :3] = np.array(
+            [
+                [np.cos(angle), -np.sin(angle), 0.0],
+                [np.sin(angle), np.cos(angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        transform[:3, 3] = [0.05, -0.02, 0.03]
+        live.apply_rigid_transform(transform)
+        rotation = torch.as_tensor(transform[:3, :3], dtype=torch.float32)
+        offset = torch.as_tensor(transform[:3, 3], dtype=torch.float32)
+        assert torch.allclose(
+            live._tensors["means"], before_means @ rotation.T + offset, atol=1e-5
+        )
+        # Splats still ON the transformed mesh (binding invariant).
+        replayed, _ = live._replay(live._verts)
+        assert torch.allclose(live._tensors["means"], replayed, atol=1e-6)
+
+    def test_bones_rigid_motion_carries_mesh_and_splats(self, tmp_path) -> None:
+        live, _anchors = self._bare(tmp_path)
+        verts = live._verts.numpy()
+        rng = np.random.default_rng(11)
+        bone_rows = rng.choice(len(verts), size=60, replace=False)
+        rest_bones = verts[bone_rows].astype(np.float32)
+        ids = np.arange(len(rest_bones), dtype=np.int64)
+        live.seed_rest_positions({int(i): rest_bones[i] for i in ids})
+        live.step(rest_bones, ids, np.ones(len(ids), dtype=bool))
+        assert live.rest_seeded
+        angle = np.radians(30.0)
+        rotation = np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, np.cos(angle), -np.sin(angle)],
+                [0.0, np.sin(angle), np.cos(angle)],
+            ]
+        )
+        translation = np.array([0.03, 0.01, -0.02])
+        moved = (rest_bones @ rotation.T + translation).astype(np.float32)
+        before = live._tensors["means"].numpy().copy()
+        live.step(moved, ids, np.ones(len(ids), dtype=bool))
+        got = live._tensors["means"].numpy()
+        expected = before @ rotation.T + translation
+        err = np.linalg.norm(got - expected, axis=1)
+        assert float(np.quantile(err, 0.99)) < 2e-3  # rigid follow, mm-exact
+        # The binding invariant survives deformation.
+        replayed, _ = live._replay(live._verts)
+        assert torch.allclose(
+            live._tensors["means"], replayed, atol=1e-6
+        )
+
+    def test_degenerate_face_keeps_last_orientation(self, tmp_path) -> None:
+        live, _anchors = self._bare(tmp_path)
+        quats_before = live._tensors["quats"].clone()
+        collapsed = live._verts.clone()
+        face0 = live._faces[0]
+        collapsed[face0[1]] = collapsed[face0[0]]  # kill face 0's first edge
+        collapsed[face0[2]] = collapsed[face0[0]]
+        _means, quats = live._replay(collapsed)
+        assert torch.isfinite(quats).all()
+        affected = (live._anchor_face == 0).numpy()
+        assert np.allclose(
+            quats.numpy()[affected], quats_before.numpy()[affected], atol=1e-6
+        )
+
+
+class TestMeshSurfaceSelector:
+    """mesh_surface vocabulary + the trellis2-only rule at every layer."""
+
+    def test_normalize_accepts_mesh_surface(self) -> None:
+        from demo_v7.service import gaussian_options as go
+
+        assert go.normalize_gaussian_backend("mesh_surface") == "mesh_surface"
+        assert go.GAUSSIAN_MESH_SURFACE in go.GAUSSIAN_BACKENDS
+
+    def test_allowed_rule(self) -> None:
+        from demo_v7.service import gaussian_options as go
+
+        assert go.mesh_surface_allowed("trellis2")
+        assert not go.mesh_surface_allowed("sam3d")
+        assert not go.mesh_surface_allowed("none")
+        assert not go.mesh_surface_allowed(None)
+
+    def test_session_rejects_mesh_surface_without_trellis2(self, tmp_path) -> None:
+        from demo_v7.orchestration.session import OrchestratorSession
+
+        with pytest.raises(ValueError, match="mesh_surface"):
+            OrchestratorSession(
+                source="fake-live",
+                fake_live_case="data_collect/fake",
+                base_path=tmp_path / "run",
+                shape_prior_backend="sam3d",
+                gaussian_backend="mesh_surface",
+            )
+
+    def test_session_accepts_mesh_surface_with_trellis2(self, tmp_path) -> None:
+        from demo_v7.orchestration.session import OrchestratorSession
+
+        session = OrchestratorSession(
+            source="fake-live",
+            fake_live_case="data_collect/fake",
+            base_path=tmp_path / "run",
+            shape_prior_backend="trellis2",
+            gaussian_backend="mesh_surface",
+        )
+        assert session.gaussian_backend == "mesh_surface"
+
+    def test_camera_service_parser_accepts_mesh_surface(self) -> None:
+        from demo_v7.service.camera_service import _build_v7_parser
+
+        v7_args, _rest = _build_v7_parser().parse_known_args(
+            [
+                "--socket-dir",
+                "/tmp/x",
+                "--gaussian-backend",
+                "mesh_surface",
+                "--input-source",
+                "fake-live",
+            ]
+        )
+        assert v7_args.gaussian_backend == "mesh_surface"
+
+    def test_gui_labels_cover_all_backends(self) -> None:
+        from demo_v7 import app as app_module
+        from demo_v7.service import gaussian_options as go
+
+        label_ids = [backend for backend, _pair in app_module._GAUSSIAN_LABELS]
+        assert tuple(label_ids) == go.GAUSSIAN_BACKENDS
+
+
+class TestMeshSurfaceManagerLifecycle:
+    """Fail-soft lifecycle bits that need no GPU and no mesh."""
+
+    def _manager(self, tmp_path):
+        from demo_v7.service.mesh_surface_manager import (
+            MeshSurfaceGaussianManager,
+        )
+
+        events = {"progress": [], "errors": []}
+        manager = MeshSurfaceGaussianManager(
+            case_dir=tmp_path / "case",
+            out_dir=tmp_path / "gaussian",
+            emit_progress=lambda stage, detail="", **kw: events["progress"].append(
+                (stage, detail)
+            ),
+            emit_artifacts=lambda kind, paths: events.setdefault(
+                "artifacts", []
+            ).append((kind, paths)),
+            emit_error=lambda stage, message: events["errors"].append(
+                (stage, message)
+            ),
+        )
+        return manager, events
+
+    def test_regen_before_ready_refused(self, tmp_path) -> None:
+        manager, _events = self._manager(tmp_path)
+        manager.start()
+        assert manager.regenerate(7) is False  # chain not READY yet
+
+    def test_missing_mesh_is_display_only_error(self, tmp_path) -> None:
+        manager, events = self._manager(tmp_path)
+        manager.start()
+        manager.notify_case_ready()
+        manager._first_gen.join(timeout=10.0)
+        assert events["errors"] and "final_mesh" in events["errors"][0][1]
+        assert not manager.has_world_ply()
+
+    def test_shutdown_blocks_generation(self, tmp_path) -> None:
+        manager, events = self._manager(tmp_path)
+        manager.start()
+        manager.shutdown()
+        manager.notify_case_ready()
+        if manager._first_gen is not None:
+            manager._first_gen.join(timeout=10.0)
+        assert not events["errors"]
+        assert not manager.has_world_ply()

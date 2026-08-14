@@ -535,36 +535,44 @@ class GaussianManager:
         }
 
     def _render_world_overlay(self, world) -> Path:
-        """Render the frame-0 overlay still for a world-frame splat set."""
-        import cv2
-        import numpy as np
+        return render_world_overlay(self.case_dir, self.out_dir, world)
 
-        from demo_v7.service.gaussian_utils import render_gaussians
 
-        with open(self.case_dir / "calibrate.pkl", "rb") as handle:
-            c2w = np.asarray(pickle.load(handle)[0], dtype=np.float64)
-        intrinsics = np.asarray(
-            json.loads((self.case_dir / "metadata.json").read_text())["intrinsics"]
-        )[0]
-        frame_bgr = cv2.imread(str(self.case_dir / "color" / "0" / "0.png"))
-        height, width = frame_bgr.shape[:2]
-        rgb, alpha = render_gaussians(
-            world,
-            viewmat=np.linalg.inv(c2w),
-            intrinsics=intrinsics,
-            width=width,
-            height=height,
-            background=(0.0, 0.0, 0.0),
-        )
-        blend = alpha[..., None] * 0.65
-        # rgb is alpha-premultiplied (black-background gsplat composite):
-        # over-composite without re-multiplying alpha (dark-halo trap).
-        overlay = np.clip(
-            frame_bgr.astype(np.float32) * (1 - blend)
-            + rgb[..., ::-1].astype(np.float32) * 0.65,
-            0.0,
-            255.0,
-        ).astype(np.uint8)
-        overlay_path = self.out_dir / "gaussian_world_overlay.png"
-        cv2.imwrite(str(overlay_path), overlay)
-        return overlay_path
+def render_world_overlay(case_dir: Path, out_dir: Path, world) -> Path:
+    """Render the frame-0 overlay still for a world-frame splat set.
+
+    Shared by both gaussian backends (TripoSplat alignment/self-align and
+    the mesh_surface manager) — same camera, same compositing.
+    """
+    import cv2
+    import numpy as np
+
+    from demo_v7.service.gaussian_utils import render_gaussians
+
+    with open(case_dir / "calibrate.pkl", "rb") as handle:
+        c2w = np.asarray(pickle.load(handle)[0], dtype=np.float64)
+    intrinsics = np.asarray(
+        json.loads((case_dir / "metadata.json").read_text())["intrinsics"]
+    )[0]
+    frame_bgr = cv2.imread(str(case_dir / "color" / "0" / "0.png"))
+    height, width = frame_bgr.shape[:2]
+    rgb, alpha = render_gaussians(
+        world,
+        viewmat=np.linalg.inv(c2w),
+        intrinsics=intrinsics,
+        width=width,
+        height=height,
+        background=(0.0, 0.0, 0.0),
+    )
+    blend = alpha[..., None] * 0.65
+    # rgb is alpha-premultiplied (black-background gsplat composite):
+    # over-composite without re-multiplying alpha (dark-halo trap).
+    overlay = np.clip(
+        frame_bgr.astype(np.float32) * (1 - blend)
+        + rgb[..., ::-1].astype(np.float32) * 0.65,
+        0.0,
+        255.0,
+    ).astype(np.uint8)
+    overlay_path = out_dir / "gaussian_world_overlay.png"
+    cv2.imwrite(str(overlay_path), overlay)
+    return overlay_path

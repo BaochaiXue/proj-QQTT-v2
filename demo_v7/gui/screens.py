@@ -82,6 +82,15 @@ _GENERATE_ROW_LABELS = {
 _UPSCALE_OFF_LABEL = ("  ├ 裁剪(无超分)", "  ├ Crop only (no upscale)")
 # The shape_prior milestone order used to chain sub-row spinners.
 _SP_SUB_ORDER = ("sp:upscale", "sp:generate", "sp:align", "sp:sample")
+# mesh_surface gaussian sub-rows, appended under the gaussian row when the
+# hello-ack announces that backend (TripoSplat keeps its single row — its
+# phases already narrate through the aggregate detail text). Driven by the
+# manager's stable progress-detail prefixes, same pattern as sp:*.
+_GS_MESH_SURFACE_SUBROWS: list[tuple[str, tuple[str, str]]] = [
+    ("gs:wait_mesh", ("  ├ 等待对齐 mesh(align)", "  ├ Wait for aligned mesh")),
+    ("gs:derive", ("  ├ 表面高斯化(锚点派生)", "  ├ Surface gaussianization")),
+    ("gs:overlay", ("  └ 世界系叠加图", "  └ World overlay still")),
+]
 
 
 def _is_image(path: str) -> bool:
@@ -265,6 +274,7 @@ class WarmupScreen(QWidget):
         self._backend: str | None = None
         self._upscale: bool | None = None
         self._gaussian_backend: str | None = None
+        self._gs_sub_running: str | None = None  # active gs:* sub-row
         self._timeline = ProgressTimeline(self)
         self._timeline.setStages(
             [(key, tr(*pair)) for key, pair in WARMUP_STAGE_PLAN]
@@ -316,10 +326,16 @@ class WarmupScreen(QWidget):
             self._timeline.report(
                 "gaussian", tr("已关闭(源选择)", "off (source-select)"), ok=True
             )
+        elif self._gaussian_backend == "mesh_surface":
+            self._timeline.setStages(
+                [(key, tr(*pair)) for key, pair in _GS_MESH_SURFACE_SUBROWS]
+            )
 
     def on_gaussian_progress(self, detail: str, ok: bool) -> None:
         """Drive the gaussian row (NOT via on_progress: the feature is
         fail-soft, so its ✗ must never stopAll() the live chain rows)."""
+        if self._gaussian_backend == "mesh_surface":
+            self._drive_mesh_surface_subrows(detail, ok)
         if not ok:
             self._timeline.report("gaussian", detail, ok=False)
         elif detail.startswith("gaussian 就绪"):
@@ -328,6 +344,36 @@ class WarmupScreen(QWidget):
             # 生成中/采样 n/N/等待对齐: keep the spinner, refresh the detail
             # (begin() preserves the first call's start for the elapsed).
             self._timeline.begin("gaussian", detail)
+
+    def _drive_mesh_surface_subrows(self, detail: str, ok: bool) -> None:
+        """Fan the mesh_surface manager's phases onto the gs:* sub-rows.
+
+        Phase prefixes are the manager's stable vocabulary (等待/派生/叠加/
+        就绪); the wait row's elapsed honestly shows how long the derivation
+        sat on the shape-prior chain, and derive/overlay show their own
+        (sub-second) costs instead of one opaque final flash.
+        """
+        if not ok:
+            if self._gs_sub_running is not None:
+                self._timeline.report(self._gs_sub_running, ok=False)
+                self._gs_sub_running = None
+            return
+        if detail.startswith("mesh_surface 后端"):
+            self._timeline.begin("gs:wait_mesh")
+            self._gs_sub_running = "gs:wait_mesh"
+        elif detail.startswith("从对齐 mesh 派生"):
+            self._timeline.report(
+                "gs:wait_mesh", tr("final_mesh 就绪", "final_mesh ready"), ok=True
+            )
+            self._timeline.begin("gs:derive")
+            self._gs_sub_running = "gs:derive"
+        elif detail.startswith("渲染世界系叠加图"):
+            self._timeline.report("gs:derive", ok=True)
+            self._timeline.begin("gs:overlay")
+            self._gs_sub_running = "gs:overlay"
+        elif detail.startswith("gaussian 就绪"):
+            self._timeline.report("gs:overlay", ok=True)
+            self._gs_sub_running = None
 
     def on_progress(
         self, stage: str, detail: str, ok: bool, elapsed_ms: float | None
@@ -374,6 +420,7 @@ class WarmupScreen(QWidget):
     def reset(self) -> None:
         """Fresh timeline for a new run (after 回到开始/重拍 cycles)."""
         self._results_btn.setEnabled(False)
+        self._gs_sub_running = None
         self._timeline.clear()
         self._timeline.setStages(
             [(key, tr(*pair)) for key, pair in WARMUP_STAGE_PLAN]
@@ -489,8 +536,10 @@ class ReviewScreen(QWidget):
         sampling_layout.addLayout(sampling_bar)
         sampling_layout.addWidget(self._sampling_view, 1)
         self._tabs.addTab(sampling_page, tr("补点", "Sampling"))
-        # Gaussian tab: TripoSplat 拣选 — turntable contact sheet + world
-        # overlay stills, generation status, and 换seed re-roll.
+        # Gaussian tab: 拣选 — stills + generation status + 换seed re-roll
+        # (TripoSplat generation, or mesh_surface derivation from the
+        # aligned mesh — the manager behind the artifacts differs, the tab
+        # doesn't).
         self._gaussian_status = QLabel(
             tr("等待 gaussian 生成…", "Waiting for gaussian generation…"), self
         )
@@ -503,14 +552,15 @@ class ReviewScreen(QWidget):
         gaussian_bar = QHBoxLayout()
         gaussian_bar.addWidget(
             InfoDot(
-                "3D gaussians(高斯泼溅):TripoSplat 从 frame-0 生成、对齐到"
-                "场景,正式期在「高斯」频道实时渲染。生成有随机性 —— 对结果"
-                "不满意可换 seed 重新生成,不影响 mesh 链。",
-                "3D gaussians (splats): generated by TripoSplat from "
-                "frame-0 and aligned into the scene; the formal phase "
-                "renders them live in the Gaussian channel. Generation is "
-                "stochastic — re-roll with a new seed if unhappy; the mesh "
-                "chain is unaffected.",
+                "3D gaussians(高斯泼溅):TripoSplat 从 frame-0 生成并对齐,"
+                "或(mesh_surface 后端)直接从对齐后的 TRELLIS.2 mesh 表面"
+                "确定性派生;正式期在「高斯」频道实时渲染。换 seed 重新生成"
+                "不影响 mesh 链。",
+                "3D gaussians (splats): generated by TripoSplat from frame-0 "
+                "and aligned, or (mesh_surface backend) deterministically "
+                "derived from the aligned TRELLIS.2 mesh surface; the formal "
+                "phase renders them live in the Gaussian channel. Re-rolling "
+                "with a new seed never affects the mesh chain.",
             )
         )
         gaussian_bar.addWidget(self._gaussian_status, 1)

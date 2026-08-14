@@ -312,6 +312,19 @@ def main(argv: list[str] | None = None) -> int:
             flush=True,
         )
         gaussian_backend = gaussian_options.GAUSSIAN_NONE
+    if (
+        gaussian_backend == gaussian_options.GAUSSIAN_MESH_SURFACE
+        and not gaussian_options.mesh_surface_allowed(shape_prior_backend)
+    ):
+        # mesh_surface derives splats from the trellis2 align chain's
+        # final_mesh.glb — without that chain there is nothing to derive
+        # from. Truthful degrade, never a blocked run (display-only).
+        print(
+            f"[camera-service] gaussian 'mesh_surface' needs the trellis2 "
+            f"mesh backend (got {shape_prior_backend!r}) -> gaussian 'none'",
+            flush=True,
+        )
+        gaussian_backend = gaussian_options.GAUSSIAN_NONE
     if gaussian_backend == gaussian_options.GAUSSIAN_TRIPOSPLAT:
         try:
             gaussian_options.ensure_triposplat_available()

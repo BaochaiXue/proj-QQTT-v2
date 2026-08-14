@@ -996,24 +996,38 @@ class StagedRuntime:
         if self._gaussian_manager is not None:
             return
         try:
-            from demo_v7.service.gaussian_manager import GaussianManager
-
             case_dir = self._shape_prior_case_dir()
             if case_dir is None:
                 return
-            manager = GaussianManager(
-                case_dir=case_dir,
-                out_dir=self._review_dir() / "gaussian",
-                controller_name=str(self.args.shape_prior_controller_name),
-                cuda_visible_devices=os.environ.get(
-                    "DEMO_V7_GAUSSIAN_CUDA_VISIBLE_DEVICES"
-                ),
-                emit_progress=lambda stage, detail="", **kw: self._emit_progress(
-                    stage, detail, **kw
-                ),
-                emit_artifacts=self._emit_artifacts,
-                emit_error=self._emit_error,
+            emit_progress = lambda stage, detail="", **kw: self._emit_progress(  # noqa: E731
+                stage, detail, **kw
             )
+            if self.gaussian_backend == gaussian_options.GAUSSIAN_MESH_SURFACE:
+                from demo_v7.service.mesh_surface_manager import (
+                    MeshSurfaceGaussianManager,
+                )
+
+                manager = MeshSurfaceGaussianManager(
+                    case_dir=case_dir,
+                    out_dir=self._review_dir() / "gaussian",
+                    emit_progress=emit_progress,
+                    emit_artifacts=self._emit_artifacts,
+                    emit_error=self._emit_error,
+                )
+            else:
+                from demo_v7.service.gaussian_manager import GaussianManager
+
+                manager = GaussianManager(
+                    case_dir=case_dir,
+                    out_dir=self._review_dir() / "gaussian",
+                    controller_name=str(self.args.shape_prior_controller_name),
+                    cuda_visible_devices=os.environ.get(
+                        "DEMO_V7_GAUSSIAN_CUDA_VISIBLE_DEVICES"
+                    ),
+                    emit_progress=emit_progress,
+                    emit_artifacts=self._emit_artifacts,
+                    emit_error=self._emit_error,
+                )
             manager.start()
             self._gaussian_manager = manager
         except Exception as exc:
@@ -1038,9 +1052,20 @@ class StagedRuntime:
             return
         try:
             from demo_v7.runtime.mdp.constants import TABLE_WORLD_FRAME_KIND
-            from demo_v7.service.gaussian_live import GaussianLiveRenderer
+            from demo_v7.service.gaussian_live import (
+                GaussianLiveRenderer,
+                MeshAnchoredGaussianRenderer,
+            )
 
-            live = GaussianLiveRenderer(str(manager.world_ply_path))
+            anchors_path = getattr(manager, "anchors_path", None)
+            if anchors_path is not None:
+                # mesh_surface backend: splats ride the mesh vertices via
+                # their barycentric anchors (hard binding stays in motion).
+                live = MeshAnchoredGaussianRenderer(
+                    str(manager.world_ply_path), str(anchors_path)
+                )
+            else:
+                live = GaussianLiveRenderer(str(manager.world_ply_path))
         except Exception as exc:
             print(f"[gaussian-live] init failed: {exc}", flush=True)
             return

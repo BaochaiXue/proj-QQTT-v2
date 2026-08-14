@@ -43,6 +43,14 @@ session:
   # original-resolution mask-bbox crop). Used when neither the CLI nor the
   # source-select dialog picked one.
   shape_prior_upscale: true
+  # Options: triposplat | mesh_surface | none. Gaussian-splats source:
+  # triposplat is the independent generative model (camera GPU, then
+  # registration/self-align onto the world); mesh_surface derives splats
+  # deterministically from the aligned TRELLIS.2 final_mesh.glb (face_id +
+  # barycentric hard binding — requires shape_prior_backend trellis2);
+  # none disables the gaussian feature. shape-prior none forces gaussian
+  # none. Used when neither the CLI nor the source-select dialog picked one.
+  gaussian_backend: "triposplat"
   # Options: zh | en. GUI language (简体中文 / English) preselected in the
   # source-select dialog; the dialog's own combo switches it live and the
   # accepted choice applies to the whole GUI for the run.

@@ -69,8 +69,10 @@ from demo_v7.service.backend_options import (  # import-light (stdlib only)
 from demo_v7.service.gaussian_options import (  # import-light (stdlib only)
     DEFAULT_GAUSSIAN_BACKEND,
     GAUSSIAN_BACKENDS,
+    GAUSSIAN_MESH_SURFACE,
     GAUSSIAN_NONE,
     GAUSSIAN_TRIPOSPLAT,
+    mesh_surface_allowed,
     normalize_gaussian_backend,
 )
 
@@ -84,11 +86,19 @@ _BACKEND_LABELS: tuple[tuple[str, tuple[str, str]], ...] = (
     (BACKEND_SAM3D, ("SAM3D", "SAM3D")),
     (BACKEND_NONE, ("无(不生成 shape prior)", "None (no shape prior)")),
 )
-# Combo order + GUI label (zh, en) pairs for the gaussian generator; one
-# real model today (TripoSplat), but the slot is a first-class run option so
-# future generators drop in without GUI surgery.
+# Combo order + GUI label (zh, en) pairs for the gaussian generator.
+# mesh_surface derives splats from the aligned TRELLIS.2 mesh (hard
+# face/barycentric binding, no second generative model) — the dialog only
+# enables it while the mesh backend is trellis2.
 _GAUSSIAN_LABELS: tuple[tuple[str, tuple[str, str]], ...] = (
     (GAUSSIAN_TRIPOSPLAT, ("TripoSplat(默认)", "TripoSplat (default)")),
+    (
+        GAUSSIAN_MESH_SURFACE,
+        (
+            "Mesh 表面派生(TRELLIS.2,试验)",
+            "Mesh-surface derived (TRELLIS.2, trial)",
+        ),
+    ),
     (GAUSSIAN_NONE, ("无(不生成 gaussian)", "None (no gaussians)")),
 )
 # Language combo entries: id -> native display name (never translated).
@@ -368,16 +378,23 @@ class SourceSelectDialog(QDialog):
             self,
         )
         self._gaussian_info = InfoDot(
-            "是否生成物体的 3D gaussians(高斯泼溅):TripoSplat 从 frame-0 "
-            "生成并对齐到场景,正式期可在「高斯」频道实时渲染;选「无」跳过。"
-            "与 mesh 链并行运行;shape prior 为「无」时强制关闭(它依赖链路的"
-            "掩码图与世界对齐)。",
-            "Whether to build 3D gaussians (splats) of the object: TripoSplat "
-            "generates them from frame-0 and aligns them to the scene; the "
-            "formal phase can render them live in the Gaussian channel. "
-            "Runs in parallel with the mesh chain; forced off when the shape "
-            "prior is None (it needs the chain's masked image and world "
-            "alignment).",
+            "物体 3D gaussians(高斯泼溅)的来源:<br>"
+            "• TripoSplat — 独立生成模型,从 frame-0 生成后配准到场景"
+            "(默认);<br>"
+            "• Mesh 表面派生 — 不再用第二个生成模型:直接在对齐后的 "
+            "TRELLIS.2 mesh 表面确定性采样 splats(face_id+重心坐标硬绑定,"
+            "永不脱离 mesh;仅 TRELLIS.2 后端可选,试验中);<br>"
+            "• 无 — 跳过。正式期在「高斯」频道实时渲染;shape prior 为「无」"
+            "时强制关闭。",
+            "Where the object's 3D gaussians (splats) come from:<br>"
+            "• TripoSplat — an independent generative model, generated from "
+            "frame-0 then registered to the scene (default);<br>"
+            "• Mesh-surface derived — no second generative model: splats are "
+            "deterministically sampled on the aligned TRELLIS.2 mesh surface "
+            "(face_id + barycentric hard binding, they can never drift off "
+            "the mesh; TRELLIS.2 backend only, experimental);<br>"
+            "• None — skip. Rendered live in the Gaussian channel during the "
+            "formal phase; forced off when the shape prior is None.",
             self,
         )
         self._info_dots = (
@@ -433,6 +450,11 @@ class SourceSelectDialog(QDialog):
         gaussian_index = self._gaussian_combo.findData(default_gaussian)
         if gaussian_index >= 0:
             self._gaussian_combo.setCurrentIndex(gaussian_index)
+        # mesh_surface is only offered while the mesh backend is trellis2
+        # (it derives splats from that chain's aligned final_mesh.glb).
+        self._backend_combo.currentIndexChanged.connect(
+            self._update_gaussian_enabled
+        )
         self._gaussian_label = QLabel(self)
         gaussian_row = QHBoxLayout()
         gaussian_row.addWidget(self._gaussian_label)
@@ -541,9 +563,24 @@ class SourceSelectDialog(QDialog):
         self._error.setStyleSheet("color: #f28b82;")
         layout.addWidget(self._error)
         self._update_record_enabled()
+        self._update_gaussian_enabled()
         self._refresh_calibrate_state()
         self._retranslate()
         self.resize(560, 300)
+
+    def _update_gaussian_enabled(self) -> None:
+        """Gate the mesh_surface combo item on the current mesh backend."""
+        allowed = mesh_surface_allowed(str(self._backend_combo.currentData()))
+        index = self._gaussian_combo.findData(GAUSSIAN_MESH_SURFACE)
+        if index < 0:
+            return
+        item = self._gaussian_combo.model().item(index)
+        if item is not None:
+            item.setEnabled(allowed)
+        if not allowed and self._gaussian_combo.currentIndex() == index:
+            fallback = self._gaussian_combo.findData(DEFAULT_GAUSSIAN_BACKEND)
+            if fallback >= 0:
+                self._gaussian_combo.setCurrentIndex(fallback)
 
     def _update_record_enabled(self) -> None:
         real = self._real_radio.isChecked()
@@ -695,6 +732,21 @@ class SourceSelectDialog(QDialog):
             self._fake_radio.setChecked(True)
 
     def _validate_and_accept(self) -> None:
+        if str(
+            self._gaussian_combo.currentData()
+        ) == GAUSSIAN_MESH_SURFACE and not mesh_surface_allowed(
+            str(self._backend_combo.currentData())
+        ):
+            # Defense in depth: the combo gating already prevents this, but
+            # the gate is UI state, not the authority (the session enforces
+            # the same rule with a ValueError).
+            self._error.setText(
+                tr(
+                    "「Mesh 表面派生」需要 TRELLIS.2 shape prior。",
+                    "Mesh-surface gaussians need the TRELLIS.2 shape prior.",
+                )
+            )
+            return
         if self._fake_radio.isChecked() and not self._case_edit.text().strip():
             self._error.setText(
                 tr(

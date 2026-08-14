@@ -78,11 +78,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--gaussian-backend",
-        choices=("triposplat", "none"),
+        choices=("triposplat", "mesh_surface", "none"),
         default=None,
         help=(
             "Gaussian generator under test (default: session default = "
-            "triposplat); none skips the gaussian gates."
+            "triposplat); mesh_surface derives splats from the aligned "
+            "trellis2 mesh; none skips the gaussian gates."
         ),
     )
     parser.add_argument(
@@ -498,7 +499,42 @@ def check_gaussian_follow(
             f"moved: {stats}"
         )
     observer.log("gaussian follow verified")
-    check_self_align_attempt(gaussian_dir, observer)
+    if gaussian_backend == "mesh_surface":
+        if not stats.get("mesh_anchored", False):
+            raise RuntimeError(
+                f"mesh_surface run but the live renderer was not "
+                f"mesh-anchored: {stats}"
+            )
+        check_mesh_surface_binding(gaussian_dir, observer)
+    else:
+        check_self_align_attempt(gaussian_dir, observer)
+
+
+def check_mesh_surface_binding(gaussian_dir, observer: DriveObserver) -> None:
+    """mesh_surface: provenance must record the hard binding (no self-align
+    by design — there is no second geometry to reconcile)."""
+    provenance_path = gaussian_dir / "gaussian_provenance.json"
+    if not provenance_path.is_file():
+        raise RuntimeError(f"gaussian provenance missing: {provenance_path}")
+    provenance = json.loads(provenance_path.read_text())
+    if provenance.get("alignment", {}).get("method") != "mesh_surface":
+        raise RuntimeError(
+            f"provenance method is not mesh_surface: {provenance.get('alignment')}"
+        )
+    replay_err = float(provenance.get("center_to_mesh_replay_max_m", 1e9))
+    if replay_err > 1e-4:
+        raise RuntimeError(
+            f"splat centers drifted off the mesh at derivation time: "
+            f"{replay_err} m"
+        )
+    anchors_path = gaussian_dir / "gaussian_anchors.npz"
+    if not anchors_path.is_file():
+        raise RuntimeError(f"gaussian anchors missing: {anchors_path}")
+    observer.log(
+        f"mesh-surface binding verified (replay err {replay_err:.2e} m, "
+        f"{provenance.get('num_splats')} splats from "
+        f"{provenance.get('topology_sha256', '')[:12]})"
+    )
 
 
 def check_self_align_attempt(gaussian_dir, observer: DriveObserver) -> None:

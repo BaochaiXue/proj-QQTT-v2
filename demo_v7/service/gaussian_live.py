@@ -258,11 +258,15 @@ class GaussianLiveRenderer:
         )
         self._skin_weights, self._skin_indices = gaussian_dynamics.knn_weights_sparse(
             self._ctrl_rest,
-            self._rest_means,
+            self._skin_targets(),
             K=_SKIN_K,
             chunk_size=_KNN_CHUNK,
         )
         return True
+
+    def _skin_targets(self):
+        """Rest points the bones bind to (subclass hook: mesh vertices)."""
+        return self._rest_means
 
     def _step(
         self,
@@ -508,3 +512,149 @@ class GaussianLiveRenderer:
             self.failed = True
             print(f"[gaussian-live] render failed: {exc}", flush=True)
             return None
+
+
+class MeshAnchoredGaussianRenderer(GaussianLiveRenderer):
+    """mesh_surface backend: splats ride the mesh, the mesh rides the bones.
+
+    The splats were DERIVED from the aligned world mesh (face_id +
+    barycentric anchors, see mesh_surface_gaussian). Instead of skinning
+    each splat to the bones directly, the bones deform the MESH VERTICES
+    (same rest-anchored LBS + hygiene as the parent), and every splat is
+    replayed from its triangle: center = barycentric combination, splat
+    orientation = the deformed face's tangent frame. Splats therefore stay
+    ON the deformed mesh surface by construction — the mesh remains the
+    single geometry truth in motion, and a rogue bone can at worst deform
+    the mesh, never tear splats off it.
+
+    (v1 note: the deformed vertices come from the SAME bone LBS the
+    triposplat path uses, not from ASAP — ASAP's per-frame vertices live in
+    the orchestrator process on a re-cleaned topology, one chunk (~1.2s)
+    behind live; reusing them is a recorded follow-up, not a v1 blocker.)
+    """
+
+    def __init__(
+        self, world_ply_path: str, anchors_path: str, *, device: str = "cuda"
+    ) -> None:
+        super().__init__(world_ply_path, device=device)
+        from demo_v7.service.mesh_surface_gaussian import load_anchors
+
+        torch = self._torch
+        anchors = load_anchors(anchors_path)
+        if len(anchors) != self._tensors["means"].shape[0]:
+            raise ValueError(
+                f"anchors ({len(anchors)}) and world ply "
+                f"({self._tensors['means'].shape[0]}) disagree on splat "
+                "count — mixed artifacts from different generations"
+            )
+        self._verts = torch.as_tensor(anchors.rest_vertices, device=device)
+        self._faces = torch.as_tensor(
+            anchors.faces.astype(np.int64), device=device
+        )
+        self._anchor_face = torch.as_tensor(
+            anchors.face_index.astype(np.int64), device=device
+        )
+        self._anchor_bary = torch.as_tensor(anchors.barycentric, device=device)
+        self._face_quats_prev = None  # degenerate-face carryover, set below
+        means, quats = self._replay(self._verts)
+        drift = float((means - self._tensors["means"]).norm(dim=1).max())
+        if drift > 1e-3:
+            raise ValueError(
+                f"anchor replay disagrees with the world ply by {drift:.4f} m "
+                "— anchors were built against a different mesh/ply pair"
+            )
+        # Canonicalize both representations to the replay (float32-exact
+        # binding from here on).
+        self._tensors["means"] = means
+        self._tensors["quats"] = quats
+
+    def _skin_targets(self):
+        """Bones bind to the mesh vertices, not to the splats."""
+        return self._verts
+
+    def _replay(self, verts):
+        """(means, quats) for all splats from a (possibly deformed) verts."""
+        torch = self._torch
+        corners = verts[self._faces[self._anchor_face]]  # (N,3,3)
+        means = (self._anchor_bary.unsqueeze(-1) * corners).sum(dim=1)
+        tri = verts[self._faces]  # (F,3,3)
+        edge1 = tri[:, 1] - tri[:, 0]
+        normal = torch.cross(edge1, tri[:, 2] - tri[:, 0], dim=1)
+        edge1_len = edge1.norm(dim=1)
+        normal_len = normal.norm(dim=1)
+        ok = (edge1_len > 1e-9) & (normal_len > 1e-9)
+        t1 = edge1 / edge1_len.clamp(min=1e-9)[:, None]
+        n_hat = normal / normal_len.clamp(min=1e-9)[:, None]
+        frames = torch.stack([t1, torch.cross(n_hat, t1, dim=1), n_hat], dim=2)
+        face_quats = gaussian_dynamics.mat2quat(frames)
+        if self._face_quats_prev is not None:
+            # A transiently-degenerate face keeps its last orientation for
+            # the frame instead of emitting NaNs into the rasterizer.
+            face_quats = torch.where(
+                ok[:, None], face_quats, self._face_quats_prev
+            )
+        self._face_quats_prev = face_quats
+        quats = torch.nn.functional.normalize(
+            face_quats[self._anchor_face], dim=-1
+        )
+        return means, quats
+
+    def apply_rigid_transform(self, transform: np.ndarray) -> None:
+        """Rigidly move the MESH; splats follow through their anchors."""
+        torch = self._torch
+        try:
+            rotation = torch.as_tensor(
+                np.asarray(transform[:3, :3], dtype=np.float32), device=self.device
+            )
+            translation = torch.as_tensor(
+                np.asarray(transform[:3, 3], dtype=np.float32), device=self.device
+            )
+            new_verts = self._verts @ rotation.T + translation
+            means, quats = self._replay(new_verts)
+            # Commit all three or none — a mid-way failure must not leave
+            # splats detached from the vertices they are anchored to.
+            self._verts = new_verts
+            self._tensors["means"] = means
+            self._tensors["quats"] = quats
+        except Exception as exc:
+            print(f"[gaussian-live] rigid catch-up skipped: {exc}", flush=True)
+
+    def _pose_to(self, ctrl_target) -> None:
+        """Deform the mesh vertices from REST, then replay the anchors."""
+        step = ctrl_target - self._ctrl_prev
+        if float(step.norm(dim=1).max()) < 1e-6:
+            return
+        self.bones_moved_m += float(step.norm(dim=1).mean())
+        centroid_before = self._tensors["means"].mean(dim=0)
+        total = ctrl_target - self._ctrl_rest
+        new_verts, _ = gaussian_dynamics.interpolate_motions_sparse(
+            self._ctrl_rest,
+            total,
+            self._relations,
+            self._verts_rest,
+            None,
+            self._skin_weights,
+            self._skin_indices,
+            device=self.device,
+        )
+        means, quats = self._replay(new_verts)
+        self._verts = new_verts
+        self._tensors["means"] = means
+        self._tensors["quats"] = quats
+        self._ctrl_prev = ctrl_target
+        self.splats_moved_m += float(
+            (self._tensors["means"].mean(dim=0) - centroid_before).norm()
+        )
+
+    def _init_bones(self) -> bool:
+        """Freeze the rest state; also freeze the rest VERTICES snapshot."""
+        ready = super()._init_bones()
+        if ready:
+            self._verts_rest = self._verts.clone()
+        return ready
+
+    def follow_stats(self, *, max_bones: int = 512) -> dict | None:
+        stats = super().follow_stats(max_bones=max_bones)
+        if stats is not None:
+            stats["mesh_anchored"] = True
+        return stats

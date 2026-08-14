@@ -271,6 +271,21 @@ class OrchestratorSession:
         )
         if self.shape_prior_backend == backend_options.BACKEND_NONE:
             self.gaussian_backend = gaussian_options.GAUSSIAN_NONE
+        if (
+            self.gaussian_backend == gaussian_options.GAUSSIAN_MESH_SURFACE
+            and not gaussian_options.mesh_surface_allowed(
+                self.shape_prior_backend
+            )
+        ):
+            # mesh_surface derives splats from the trellis2 chain's aligned
+            # final_mesh.glb; with any other mesh backend there is nothing to
+            # derive from. GUI-side fail-fast (the dialog gates the combo,
+            # this catches CLI/config paths); the service mirrors it as a
+            # fail-soft degrade.
+            raise ValueError(
+                f"gaussian backend 'mesh_surface' 需要 shape-prior backend "
+                f"'trellis2'(当前 {self.shape_prior_backend!r})"
+            )
         # 录制 option: tee the whole run into a data_collect-format fake-live
         # case. GUI-side fail-fast on a dirty target so the operator sees the
         # error before the service spawns; relative paths resolve against the

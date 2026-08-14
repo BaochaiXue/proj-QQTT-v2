@@ -15,12 +15,30 @@ DEFAULT_NUM_GAUSSIANS = 131072
 DEFAULT_GAUSSIAN_STEPS = 20
 
 # Gaussian generator vocabulary (GUI selector on the source-select dialog).
-# One real model today, but the choice is a first-class run option like the
-# shape-prior backend — "none" turns the display-only feature off entirely.
+# - triposplat: independent generative model (its own free geometry, then
+#   registration/self-align onto the world).
+# - mesh_surface: no second model — splats are DERIVED from the aligned
+#   TRELLIS.2 world mesh (face_id + barycentric hard binding; owner trial
+#   2026-08-14). Only meaningful when the mesh backend is trellis2.
+# - none: turns the display-only feature off entirely.
 GAUSSIAN_TRIPOSPLAT = "triposplat"
+GAUSSIAN_MESH_SURFACE = "mesh_surface"
 GAUSSIAN_NONE = "none"
-GAUSSIAN_BACKENDS: tuple[str, ...] = (GAUSSIAN_TRIPOSPLAT, GAUSSIAN_NONE)
+GAUSSIAN_BACKENDS: tuple[str, ...] = (
+    GAUSSIAN_TRIPOSPLAT,
+    GAUSSIAN_MESH_SURFACE,
+    GAUSSIAN_NONE,
+)
 DEFAULT_GAUSSIAN_BACKEND = GAUSSIAN_TRIPOSPLAT
+# Mesh backends whose align chain produces the world-frame final_mesh.glb
+# that mesh_surface derives its splats from (owner instruction: offer the
+# option when TRELLIS.2 is the mesh backend).
+MESH_SURFACE_REQUIRED_SHAPE_BACKENDS: tuple[str, ...] = ("trellis2",)
+
+
+def mesh_surface_allowed(shape_prior_backend: str | None) -> bool:
+    """True when ``mesh_surface`` is usable with this mesh backend."""
+    return str(shape_prior_backend) in MESH_SURFACE_REQUIRED_SHAPE_BACKENDS
 
 
 def normalize_gaussian_backend(value: str | None) -> str:
