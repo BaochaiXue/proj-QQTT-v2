@@ -7,7 +7,34 @@
 # variables that may be unset and would abort activation under nounset.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CONDA_SH="/home/xinjie/miniforge3/etc/profile.d/conda.sh"
+# Resolve conda.sh instead of pinning one machine's install: honour an
+# explicit DEMO_V7_CONDA_SH, then the active install ($CONDA_EXE / conda on
+# PATH), then the usual prefixes. The original hardcoded miniforge3 path
+# stays first in the fallback list so this box behaves identically.
+_conda_sh_candidates=(
+    "${DEMO_V7_CONDA_SH}"
+    "${HOME}/miniforge3/etc/profile.d/conda.sh"
+    "${HOME}/miniconda3/etc/profile.d/conda.sh"
+    "${HOME}/anaconda3/etc/profile.d/conda.sh"
+    "/opt/conda/etc/profile.d/conda.sh"
+)
+if [ -n "${CONDA_EXE}" ]; then
+    _conda_sh_candidates=(
+        "${DEMO_V7_CONDA_SH}"
+        "$(dirname "$(dirname "${CONDA_EXE}")")/etc/profile.d/conda.sh"
+        "${_conda_sh_candidates[@]:1}"
+    )
+fi
+CONDA_SH=""
+for _candidate in "${_conda_sh_candidates[@]}"; do
+    if [ -n "${_candidate}" ] && [ -f "${_candidate}" ]; then
+        CONDA_SH="${_candidate}"
+        break
+    fi
+done
+if [ -z "${CONDA_SH}" ] && command -v conda >/dev/null 2>&1; then
+    CONDA_SH="$(conda info --base 2>/dev/null)/etc/profile.d/conda.sh"
+fi
 ENV_NAME="demo_2_max"
 LOG_DIR="${HOME}/.local/state/demo_v7/logs"
 mkdir -p "${LOG_DIR}"
