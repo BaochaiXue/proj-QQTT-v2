@@ -57,3 +57,5 @@ class TestModuleConstantsArePairs:
             assert isinstance(pair, tuple) and len(pair) == 2
         for _key, pair, _color in screens._SAMPLING_SOURCES:
             assert isinstance(pair, tuple) and len(pair) == 2
+        for _key, pair in screens._GS_MESH_SURFACE_SUBROWS:
+            assert isinstance(pair, tuple) and len(pair) == 2

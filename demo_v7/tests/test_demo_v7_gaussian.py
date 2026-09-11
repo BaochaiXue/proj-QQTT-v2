@@ -1215,3 +1215,57 @@ class TestMeshSurfaceManagerLifecycle:
             manager._first_gen.join(timeout=10.0)
         assert not events["errors"]
         assert not manager.has_world_ply()
+
+
+class TestMeshSurfaceWarmupSubrows:
+    """The mesh_surface gaussian phases fan onto gs:* timeline sub-rows
+    (pure state machine, driven by the manager's stable detail prefixes)."""
+
+    def _machine(self):
+        pytest.importorskip("PySide6")
+        from demo_v7.gui.screens import drive_mesh_surface_subrows
+
+        calls: list[tuple[str, str]] = []
+
+        class _StubTimeline:
+            def begin(self, stage, detail=""):
+                calls.append(("begin", stage))
+
+            def report(self, stage, detail="", *, ok=True, elapsed_ms=None):
+                calls.append(("report_ok" if ok else "report_fail", stage))
+
+        return drive_mesh_surface_subrows, _StubTimeline(), calls
+
+    def test_phase_sequence_drives_subrows(self) -> None:
+        drive, timeline, calls = self._machine()
+        running = None
+        for detail in (
+            "mesh_surface 后端:等待 shape prior 对齐 mesh…",
+            "从对齐 mesh 派生表面高斯(seed=42, 目标 45000 splats)…",
+            "渲染世界系叠加图…",
+            "gaussian 就绪(mesh_surface, seed=42, 46192 splats, 0.3s)",
+        ):
+            running = drive(timeline, running, detail, True)
+        assert calls == [
+            ("begin", "gs:wait_mesh"),
+            ("report_ok", "gs:wait_mesh"),
+            ("begin", "gs:derive"),
+            ("report_ok", "gs:derive"),
+            ("begin", "gs:overlay"),
+            ("report_ok", "gs:overlay"),
+        ]
+        assert running is None
+
+    def test_failure_settles_running_subrow(self) -> None:
+        drive, timeline, calls = self._machine()
+        running = drive(timeline, None, "mesh_surface 后端:等待…", True)
+        running = drive(timeline, running, "从对齐 mesh 派生表面高斯(seed=42)…", True)
+        running = drive(timeline, running, "mesh_surface 派生失败: boom", False)
+        assert ("report_fail", "gs:derive") in calls
+        assert running is None
+
+    def test_unknown_detail_keeps_running_row(self) -> None:
+        drive, timeline, calls = self._machine()
+        running = drive(timeline, None, "mesh_surface 后端:等待…", True)
+        running = drive(timeline, running, "某个未来新增的进度行", True)
+        assert running == "gs:wait_mesh"

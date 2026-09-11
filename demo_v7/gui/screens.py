@@ -97,6 +97,40 @@ def _is_image(path: str) -> bool:
     return Path(path).suffix.lower() in (".png", ".jpg", ".jpeg")
 
 
+def drive_mesh_surface_subrows(
+    timeline, running: str | None, detail: str, ok: bool
+) -> str | None:
+    """Fan the mesh_surface manager's phases onto the gs:* sub-rows.
+
+    Phase prefixes are the manager's stable vocabulary (等待/派生/叠加/就绪);
+    the wait row's elapsed honestly shows how long the derivation sat on the
+    shape-prior chain, and derive/overlay show their own (sub-second) costs
+    instead of one opaque final flash. Pure state machine (module-level so
+    it is testable without Qt): takes and returns the running sub-row key.
+    """
+    if not ok:
+        if running is not None:
+            timeline.report(running, ok=False)
+        return None
+    if detail.startswith("mesh_surface 后端"):
+        timeline.begin("gs:wait_mesh")
+        return "gs:wait_mesh"
+    if detail.startswith("从对齐 mesh 派生"):
+        timeline.report(
+            "gs:wait_mesh", tr("final_mesh 就绪", "final_mesh ready"), ok=True
+        )
+        timeline.begin("gs:derive")
+        return "gs:derive"
+    if detail.startswith("渲染世界系叠加图"):
+        timeline.report("gs:derive", ok=True)
+        timeline.begin("gs:overlay")
+        return "gs:overlay"
+    if detail.startswith("gaussian 就绪"):
+        timeline.report("gs:overlay", ok=True)
+        return None
+    return running
+
+
 # 补点 sources: (set name, checkbox label, display color). The colors are
 # deliberately solid + distinct — the point of the view is source attribution.
 _SAMPLING_SOURCES: tuple[tuple[str, tuple[str, str], str], ...] = (
@@ -346,34 +380,9 @@ class WarmupScreen(QWidget):
             self._timeline.begin("gaussian", detail)
 
     def _drive_mesh_surface_subrows(self, detail: str, ok: bool) -> None:
-        """Fan the mesh_surface manager's phases onto the gs:* sub-rows.
-
-        Phase prefixes are the manager's stable vocabulary (等待/派生/叠加/
-        就绪); the wait row's elapsed honestly shows how long the derivation
-        sat on the shape-prior chain, and derive/overlay show their own
-        (sub-second) costs instead of one opaque final flash.
-        """
-        if not ok:
-            if self._gs_sub_running is not None:
-                self._timeline.report(self._gs_sub_running, ok=False)
-                self._gs_sub_running = None
-            return
-        if detail.startswith("mesh_surface 后端"):
-            self._timeline.begin("gs:wait_mesh")
-            self._gs_sub_running = "gs:wait_mesh"
-        elif detail.startswith("从对齐 mesh 派生"):
-            self._timeline.report(
-                "gs:wait_mesh", tr("final_mesh 就绪", "final_mesh ready"), ok=True
-            )
-            self._timeline.begin("gs:derive")
-            self._gs_sub_running = "gs:derive"
-        elif detail.startswith("渲染世界系叠加图"):
-            self._timeline.report("gs:derive", ok=True)
-            self._timeline.begin("gs:overlay")
-            self._gs_sub_running = "gs:overlay"
-        elif detail.startswith("gaussian 就绪"):
-            self._timeline.report("gs:overlay", ok=True)
-            self._gs_sub_running = None
+        self._gs_sub_running = drive_mesh_surface_subrows(
+            self._timeline, self._gs_sub_running, detail, ok
+        )
 
     def on_progress(
         self, stage: str, detail: str, ok: bool, elapsed_ms: float | None
