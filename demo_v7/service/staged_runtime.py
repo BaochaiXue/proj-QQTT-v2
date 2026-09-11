@@ -1453,7 +1453,12 @@ class StagedRuntime:
         # the formal frame 0 immediately — otherwise every frame captured
         # while the EdgeTAM session seeds would be dropped and chunk 0 would
         # span a discontinuous slice of recording time.
-        deadline_s = time.perf_counter() + 120.0
+        self._commit_formal_after_readiness(
+            deadline_s=time.perf_counter() + 120.0
+        )
+
+    def _commit_formal_after_readiness(self, *, deadline_s: float) -> None:
+        """Wait for the seg frame-0 barrier, then commit the FORMAL start."""
         while not self.stop_event.is_set() and self.fatal.snapshot() is None:
             if self.preload.wait_frame0_consumers_ready(0.2):
                 break
@@ -1463,6 +1468,19 @@ class StagedRuntime:
                     RuntimeError("formal seg did not become frame-0 ready"),
                 )
                 return
+        # The loop above also exits through its CONDITION (a worker recorded
+        # fatal — which sets stop_event — or teardown set stop_event), not
+        # just through the break. Falling through from there would release
+        # the capture producer and announce FORMAL to a GUI that is about to
+        # be told FATAL on the next main-loop tick: the operator sees the
+        # formal screen, the parent starts the chunk thread, and only then
+        # does the run die. Re-check before committing to FORMAL.
+        # NOTE _formal_stop is deliberately NOT a cancel condition: the
+        # producer must still be released so it can observe the stop, drain,
+        # and reach FINISHED (returning here would strand an un-drainable
+        # formal and turn a plain stop into a drain-deadline fatal).
+        if self.stop_event.is_set() or self.fatal.snapshot() is not None:
+            return
         self._formal_go.set()
         self._announce_state(protocol.STATE_FORMAL)
 

@@ -211,12 +211,23 @@ class ControlClient:
         self._thread.start()
 
     def send_command(self, cmd: dict) -> None:
+        """Send one command; raises ConnectionError if it did not go out.
+
+        Swallowing the OSError here made a dropped//reconnecting link look
+        exactly like a delivered command: the session swaps ``_control`` on
+        reconnect, so a button pressed inside that window wrote to the dead
+        socket and the operator just saw a button that "did nothing". The
+        callers that legitimately do not care (best-effort shutdown, hello
+        retries) already catch; the GUI surfaces it on the status bar.
+        """
         data = _encode_json_line(cmd)
         with self._send_lock:
             try:
                 self._sock.sendall(data)
-            except OSError:
-                pass
+            except OSError as exc:
+                raise ConnectionError(
+                    f"control command {cmd.get('cmd')!r} was not sent: {exc}"
+                ) from exc
 
     def close(self) -> None:
         self._closed.set()

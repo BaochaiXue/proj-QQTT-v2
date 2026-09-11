@@ -180,18 +180,38 @@ class FakeLiveCaseRecorder:
         if self._closed:
             return self._summary()
         self._closed = True
+        stop_queued = True
         try:
             self._queue.put(None, timeout=_CLOSE_DRAIN_TIMEOUT_S)
         except queue.Full:
-            pass  # worker is stuck/dead; join below is bounded either way
+            stop_queued = False  # worker stuck/dead; join below is bounded
         self._worker.join(timeout=_CLOSE_DRAIN_TIMEOUT_S)
+        if self._worker.is_alive():
+            # Honest summary (the join is bounded, so reaching here does NOT
+            # mean the case is complete): the writer thread is still running,
+            # so it can append frames after the metadata written just below,
+            # and being a daemon it gets cut mid-frame at process exit. A
+            # caller that only looked at the absence of an error would have
+            # treated this truncated case as a good recording.
+            detail = (
+                "stop signal was never queued (queue full); "
+                if not stop_queued
+                else ""
+            )
+            if self._error_repr is None:
+                self._error_repr = (
+                    f"recorder writer still running after "
+                    f"{_CLOSE_DRAIN_TIMEOUT_S:.0f}s: {detail}"
+                    "case may be truncated"
+                )
         if self.written > 0 and self._first_packet is not None:
             self._write_metadata()
             self._copy_repo_calibration()
         else:
             self._remove_empty_scaffolding()
+        outcome = "closed" if self._error_repr is None else "closed INCOMPLETE"
         print(
-            f"[recorder] closed: {self.written} frames -> {self.case_dir} "
+            f"[recorder] {outcome}: {self.written} frames -> {self.case_dir} "
             f"(dropped {self.dropped}"
             + (f", error {self._error_repr}" if self._error_repr else "")
             + ")",

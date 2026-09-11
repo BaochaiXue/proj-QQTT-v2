@@ -876,6 +876,7 @@ class AppController(QObject):
         self._window: MainWindow | None = None
         self._session: Any = None
         self._shutdown_thread: threading.Thread | None = None
+        self._dying_session: Any = None
         self._record_dir_seeded = False
         # One-time language init (CLI wins over config); afterwards the
         # dialog owns the choice and 回到开始 keeps the last selection.
@@ -998,6 +999,10 @@ class AppController(QObject):
             self._window = None
         session = self._session
         self._session = None
+        if session is not None:
+            # Kept so a bounded wait that expires can still kill this run's
+            # child process groups before the next run reuses the output dir.
+            self._dying_session = session
         if session is not None and thread is None:
             thread = shutdown_session_on_thread(session)
         if thread is not None:
@@ -1009,18 +1014,28 @@ class AppController(QObject):
     ) -> None:
         """Invoke ``on_done`` once ``thread`` finishes, polling on a QTimer.
 
-        Bounded: after _SHUTDOWN_WAIT_S the continuation runs anyway
-        (force-continue; the daemon thread keeps draining in the background).
+        Bounded, but NOT a bare force-continue: ``on_done`` here starts the
+        next run, and a new session deletes the shared output dirs
+        (capture/, shape_prior_case/, shape_prior/, data/, online_data/)
+        that a still-draining old run is writing. So when the graceful
+        shutdown outlasts _SHUTDOWN_WAIT_S the old run's child process
+        groups are KILLED first (which also unblocks its shutdown thread),
+        and only after a second bounded window does the continuation run.
         """
         if thread is None or not thread.is_alive():
             on_done()
             return
-        deadline = time.monotonic() + _SHUTDOWN_WAIT_S
+        state = {"deadline": time.monotonic() + _SHUTDOWN_WAIT_S, "forced": False}
         timer = QTimer(self)
         timer.setInterval(_SHUTDOWN_POLL_MS)
 
         def _poll() -> None:
-            if thread.is_alive() and time.monotonic() < deadline:
+            if thread.is_alive() and time.monotonic() < state["deadline"]:
+                return
+            if thread.is_alive() and not state["forced"]:
+                state["forced"] = True
+                state["deadline"] = time.monotonic() + _SHUTDOWN_WAIT_S
+                self._force_kill_dying_session("graceful shutdown timed out")
                 return
             timer.stop()
             timer.deleteLater()
@@ -1029,11 +1044,41 @@ class AppController(QObject):
         timer.timeout.connect(_poll)
         timer.start()
 
+    def _force_kill_dying_session(self, why: str) -> None:
+        """Last-resort kill of the previous run's children (never fatal)."""
+        session = self._dying_session
+        # getattr: the GUI also runs against stub sessions (headless smoke),
+        # which carry only the MainWindow protocol.
+        force_terminate = getattr(session, "force_terminate", None)
+        if session is None or force_terminate is None:
+            return
+        try:
+            killed = force_terminate()
+        except Exception as exc:  # noqa: BLE001 - cleanup must not raise
+            print(f"[demo_v7] force-terminate failed ({why}): {exc}", flush=True)
+            return
+        if killed:
+            print(
+                f"[demo_v7] {why}: force-terminated " + ", ".join(killed),
+                flush=True,
+            )
+
     def teardown(self) -> None:
-        """Final teardown (no event loop left): bounded-join the shutdown."""
+        """Final teardown (no event loop left): bounded-join the shutdown.
+
+        ``main`` calls ``os._exit`` right after this (Open3D destructor
+        workaround), which drops the daemon shutdown thread wherever it
+        happens to be. ``_stop_phystwin()`` is the LAST step of
+        ``session.shutdown()``, so a slow drain would leave PhysTwin running
+        on the GPU forever — kill the child groups before exiting.
+        """
         thread = self._begin_teardown()
         if thread is not None:
             thread.join(_SHUTDOWN_WAIT_S)
+            if thread.is_alive():
+                self._force_kill_dying_session("exiting before drain finished")
+                thread.join(_SHUTDOWN_WAIT_S)
+        self._force_kill_dying_session("final teardown")
 
 
 def main(argv: list[str] | None = None) -> int:

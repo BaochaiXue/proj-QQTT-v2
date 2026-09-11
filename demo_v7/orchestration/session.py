@@ -652,8 +652,13 @@ class OrchestratorSession:
                         pass
                 if isinstance(client, ControlClient):
                     # Re-hello: the ack carries the current state, so the
-                    # session (and GUI) re-syncs after the gap.
-                    client.send_command({"cmd": protocol.CMD_HELLO})
+                    # session (and GUI) re-syncs after the gap. Best-effort:
+                    # a link that died again between connect and send must
+                    # not kill this reconnect thread.
+                    try:
+                        client.send_command({"cmd": protocol.CMD_HELLO})
+                    except Exception:
+                        pass
                 return
         finally:
             with self._lock:
@@ -961,6 +966,44 @@ class OrchestratorSession:
 
     # -- shutdown -----------------------------------------------------------
 
+    def force_terminate(self) -> list[str]:
+        """Kill this run's child process GROUPS now; idempotent, any thread.
+
+        ``shutdown()`` is the graceful path and may legitimately run for
+        minutes (service drain up to 130s in FORMAL + chunk join up to
+        600s). Callers that cannot wait that long — the GUI's bounded
+        restart/exit joins — must still not leave children behind:
+
+        - a surviving camera service keeps writing into the run output dir
+          that the NEXT session is about to delete (capture/, online_data/,
+          ... are removed by ``prepare_realtime_output_for_new_run``);
+        - PhysTwin is spawned into its own session/process group, so it
+          survives the parent entirely and keeps its GPU.
+
+        Both are killed here (SIGTERM->SIGKILL over the whole group, the
+        same ``stop_process`` shutdown uses), which also unblocks whatever
+        ``shutdown()`` was waiting on so it can finish quickly.
+        """
+        killed: list[str] = []
+        service = self._service
+        if service is not None and service.poll() is None:
+            stop_process(service)
+            killed.append("camera service")
+        with self._phystwin_lock:
+            self._phystwin_stopped = True
+            launch = self._phystwin_launch
+            self._phystwin_launch = None
+        if launch is not None:
+            try:
+                stop_process(
+                    launch.pipeline_process,
+                    process_group_id=launch.process_group_id,
+                )
+            finally:
+                launch.finish_pipeline_output_relay()
+            killed.append("phystwin_shen")
+        return killed
+
     def shutdown(self, *, chunk_join_timeout_s: float = 600.0) -> None:
         """Tear the whole run down; idempotent and callable from any thread.
 
@@ -980,6 +1023,7 @@ class OrchestratorSession:
             except Exception:
                 pass
         service = self._service
+        service_drain_timed_out = False
         if service is not None:
             # The service's CMD_SHUTDOWN contract drains + finalizes an
             # in-flight FORMAL run before exiting (StagedRuntime bounds that
@@ -991,12 +1035,16 @@ class OrchestratorSession:
             try:
                 service.wait(timeout=drain_s)
             except subprocess.TimeoutExpired:
-                pass
+                # It did NOT honour CMD_SHUTDOWN in time: the SIGTERM below
+                # may well truncate an in-flight finalize, so this run is
+                # not a clean finish (recorded for the status emit).
+                service_drain_timed_out = True
             stop_process(service)
         self._capture_finished_event.set()
         thread = self._chunk_thread
         if thread is not None:
             thread.join(timeout=float(chunk_join_timeout_s))
+        chunk_thread_stuck = thread is not None and thread.is_alive()
         for client in (self._control, self._frames):
             if client is not None:
                 try:
@@ -1007,10 +1055,35 @@ class OrchestratorSession:
         self._frames = None
         self._stop_phystwin()
         if self._status is not None:
-            failed = self._chunk_error is not None
+            # Honest terminal status: a run is "finished" only when the
+            # chunk stream actually drained AND the service came down
+            # cleanly. Previously only ``_chunk_error`` counted, so a chunk
+            # thread wedged past its join timeout, a service that had to be
+            # SIGTERM'd mid-finalize, or a service that already reported
+            # FATAL all still wrote STAGE_RUN_FINISHED ok=true.
+            reasons: list[str] = []
+            if self._chunk_error is not None:
+                reasons.append(f"chunk stream error: {self._chunk_error}")
+            if chunk_thread_stuck:
+                reasons.append(
+                    "chunk stream did not drain within "
+                    f"{float(chunk_join_timeout_s):.0f}s (still running)"
+                )
+            if service_drain_timed_out:
+                reasons.append(
+                    "camera service did not exit on shutdown; terminated"
+                )
+            service_code = service.poll() if service is not None else None
+            if service_code is not None and int(service_code) > 0:
+                reasons.append(f"camera service exit code {int(service_code)}")
+            if self._service_state == protocol.STATE_FATAL:
+                reasons.append(
+                    f"camera service reported fatal: {self._last_error_event}"
+                )
+            failed = bool(reasons)
             self._status.emit(
                 STAGE_FATAL if failed else STAGE_RUN_FINISHED,
-                str(self._chunk_error) if failed else "shutdown",
+                "; ".join(reasons) if failed else "shutdown",
                 ok=not failed,
                 chunk_count=len(self.chunk_manifests),
             )
