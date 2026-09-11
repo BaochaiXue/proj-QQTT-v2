@@ -74,8 +74,19 @@ print(f'frozen BONE subset: {len(bone_ids)} (renderer skins only these)')
 # production skinning: K=16 inverse-distance, rest bones -> rest mesh vertices
 mesh = trimesh.load(RUN / 'gaussian' / 'gaussian_world.ply', force='mesh', process=False) \
     if False else None
-anch = np.load(RUN / 'gaussian' / 'gaussian_anchors.npz')
-verts = np.asarray(anch['rest_vertices'], np.float64)
+# Rest mesh: the mesh_surface anchors when the run has them, else the run's
+# own aligned mesh (the bone->mesh skinning under study is backend-agnostic).
+anchors_npz = RUN / 'gaussian' / 'gaussian_anchors.npz'
+if anchors_npz.is_file():
+    verts = np.asarray(np.load(anchors_npz)['rest_vertices'], np.float64)
+    print(f'rest mesh: gaussian anchors ({anchors_npz.name})')
+else:
+    mesh_path = (RUN / 'shape_prior_case' / 'shape_prior_frame0' / 'shape'
+                 / 'matching' / 'final_mesh.glb')
+    mv = np.asarray(trimesh.load(mesh_path, force='mesh',
+                                 process=False).vertices, np.float64)
+    verts = np.unique(np.round(mv, 6), axis=0)   # weld the UV-split duplicates
+    print(f'rest mesh: {mesh_path.name} ({len(mv)} -> {len(verts)} welded verts)')
 K = 16
 d = np.linalg.norm(verts[:, None, :] - rest[None, :, :], axis=2)
 idx = np.argpartition(d, K, axis=1)[:, :K]
@@ -119,8 +130,19 @@ for i, p in enumerate(frames):
             a2 = x0_[both] - (x2[both] @ R2.T + t2)
             # true 2nd difference of the rigid-free residual
             acc = float(np.median(np.linalg.norm(a2 - 2 * a1, axis=1)))
+    # Rigid speed of the whole object this frame (mm/s at the 5 Hz lossless
+    # cadence), used to separate the tracker noise floor (object at rest)
+    # from genuine articulation (object being manipulated).
+    speed_mm_s = np.nan
+    if len(hist) >= 2:
+        (vp, xp), (vc, xc) = hist[-2], hist[-1]
+        both2 = vp & vc
+        if both2.sum() > 50:
+            speed_mm_s = float(np.median(
+                np.linalg.norm(xc[both2] - xp[both2], axis=1))) * 1000.0 * 5.0
     rows.append(dict(
         frame=i, bones_vis=int(vis_b.sum()), held_short=int(held_short.sum()),
+        speed_mm_s=None if np.isnan(speed_mm_s) else speed_mm_s,
         mass_p50=float(np.median(mass)), mass_p95=float(np.quantile(mass, .95)),
         mass_max=float(mass.max()),
         verts_over_10pct=int((mass > 0.10).sum()),
@@ -143,3 +165,14 @@ print(f'mesh verts with >10% held influence: p50={q("verts_over_10pct",50):.0f} 
 print(f'TRUE local accel |x_t-2x_t-1+x_t-2| (rigid removed): '
       f'p50={q("acc_mm",50):.2f}mm p90={q("acc_mm",90):.2f}mm '
       f'max={q("acc_mm",100):.2f}mm')
+moving = [r for r in warm if (r['speed_mm_s'] or 0) > 20.0]
+still = [r for r in warm if (r['speed_mm_s'] or 0) <= 5.0]
+print(f'\nobject rigid speed: p50={np.median([r["speed_mm_s"] or 0 for r in warm]):.1f}mm/s '
+      f'p90={np.percentile([r["speed_mm_s"] or 0 for r in warm],90):.1f}mm/s')
+for name, grp in (('STILL  (<=5mm/s)', still), ('MOVING (>20mm/s)', moving)):
+    if not grp:
+        continue
+    print(f'  {name}  n={len(grp):3d}  '
+          f'accel p50={np.median([r["acc_mm"] for r in grp]):.2f}mm  '
+          f'held bones p50={np.median([r["held_short"] for r in grp]):.0f}  '
+          f'verts>10% held p50={np.median([r["verts_over_10pct"] for r in grp]):.0f}')
