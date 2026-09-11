@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 
+from pathlib import Path
 import numpy as np
 import pytest
 
@@ -182,6 +183,11 @@ class TestCaseTableCalibrateSnapshot:
         wait_written(recorder, 1)
         recorder.close()
         found = case_table_calibrate_snapshot(tmp_path / "case")
-        # Repo root has the calibration on this box; both halves agree.
+        # Precondition, declared rather than assumed: the recorder copies the
+        # REPO-ROOT calibration pair, so this half of the contract is only
+        # checkable on a box that has one (a clean CI runner does not).
+        repo_root = Path(__file__).resolve().parents[2]
+        if not (repo_root / "table_calibrate.pkl").is_file():
+            pytest.skip("no repo-root table_calibrate.pkl to snapshot")
         assert found is not None
         assert found.is_file()

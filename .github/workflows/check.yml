@@ -41,6 +41,6 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           python -m pip install numpy scipy pytest opencv-python-headless \
-            trimesh plyfile pyyaml PySide6
+            trimesh plyfile pyyaml Pillow PySide6
       - name: demo_v7 unit tests
         run: python -m pytest demo_v7/tests -q --ignore=demo_v7/tests/drive_fake_live.py

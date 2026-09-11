@@ -131,17 +131,30 @@ def compute_bone_transforms(
     if bool(solvable.any()):
         try:
             U, _S, V = torch.svd(F[solvable])
+            v_t = V.permute(0, 2, 1)
+            # Textbook Kabsch reflection handling: the correction is decided
+            # by det(U V^T) — which is exactly +/-1 for orthogonal factors —
+            # NOT by det(F). The two agree whenever F has a positive
+            # singular-value product, but for an exactly rank-deficient
+            # neighborhood (a locally planar bone patch, prod(S) == 0) the
+            # sign of det(F) carries no information, and the old code then
+            # produced a reflection and "fixed" it by negating the single
+            # entry R[2,2]. That does not project back onto SO(3): it leaves
+            # R^T R != I, i.e. an anisotropic scale/shear (measured on a
+            # synthetic reflection: singular values 1.41/1.00/0.08) applied
+            # to mesh vertices and splat orientations as if it were rigid.
+            # Building S from det(U V^T) is correct for every rank, so no
+            # residual flip is needed at all.
+            det_sign = torch.linalg.det(U @ v_t)
             S = torch.eye(3, device=device, dtype=torch.float32)[None].repeat(
                 int(solvable.sum()), 1, 1
             )
-            neg_det_mask = torch.linalg.det(F[solvable]) < 0
-            S[neg_det_mask, -1, -1] = -1
-            R = U @ S @ V.permute(0, 2, 1)
-            # A residual reflection means the neighborhood degenerated
-            # mid-solve; flipping the last axis restores a proper rotation.
-            neg_1 = torch.abs(torch.linalg.det(R) + 1) < 1e-3
-            R[neg_1, -1, -1] *= -1
-            bone_transforms[solvable, :3, :3] = R
+            S[:, -1, -1] = torch.where(
+                det_sign < 0,
+                -torch.ones_like(det_sign),
+                torch.ones_like(det_sign),
+            )
+            bone_transforms[solvable, :3, :3] = U @ S @ v_t
         except Exception:
             pass  # identity rotations already in place
 

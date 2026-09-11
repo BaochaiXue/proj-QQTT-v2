@@ -112,6 +112,7 @@ class MainWindow(QMainWindow):
         self._shutdown_thread: threading.Thread | None = None
         self._state = protocol.STATE_STARTING
         self._saw_any_event = False
+        self._hello_synced = False
         self._event_log_path: Path | None = None
         self.setWindowTitle(tr("demo_v7 — 实时物理孪生", "demo_v7 — Realtime Physical Twin"))
         self.resize(1440, 900)
@@ -225,7 +226,11 @@ class MainWindow(QMainWindow):
             )
 
     def _try_hello(self) -> None:
-        if self._saw_any_event or self._hello_tries >= _HELLO_MAX_TRIES:
+        # Only a successful HELLO ack means the GUI actually learned the
+        # run's backends/upscale/state. Stopping on ANY event (a progress
+        # line that raced ahead of the ack) could leave the window
+        # permanently unsynced.
+        if self._hello_synced or self._hello_tries >= _HELLO_MAX_TRIES:
             self._hello_timer.stop()
             return
         self._hello_tries += 1
@@ -293,6 +298,8 @@ class MainWindow(QMainWindow):
         self._log_event(event)
         name = event.get("event")
         if name == protocol.EVT_ACK:
+            if event.get("cmd") == protocol.CMD_HELLO and event.get("ok"):
+                self._hello_synced = True
             self._on_ack(event)
         elif name == protocol.EVT_STATE:
             self._apply_state(str(event.get("state", "")), event.get("detail"))

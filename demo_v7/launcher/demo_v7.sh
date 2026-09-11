@@ -82,7 +82,10 @@ EOF
         exit $?
     fi
 
-    exec "${PYBIN}" demo_v7/app.py "$@"
+    # NOT exec: it would replace this shell, making the exit-code
+    # check and fail_dialog below unreachable — a windowless crash
+    # (e.g. a CUDA driver mismatch) would then look like a clean exit.
+    "${PYBIN}" demo_v7/app.py "$@"
 } >>"${LOG_FILE}" 2>&1
 STATUS=$?
 if [ "${STATUS}" -ne 0 ]; then

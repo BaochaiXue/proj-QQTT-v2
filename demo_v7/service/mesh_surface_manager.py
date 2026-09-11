@@ -33,6 +33,10 @@ from typing import Callable
 from demo_v7.service import gaussian_options
 
 
+class _Cancelled(Exception):
+    """Raised inside the derivation when shutdown() asked it to stop."""
+
+
 class MeshSurfaceGaussianManager:
     """One run's mesh-surface gaussian derivation (no subprocess)."""
 
@@ -65,6 +69,7 @@ class MeshSurfaceGaussianManager:
         self._closed = False
         self._case_ready = threading.Event()
         self._first_gen: threading.Thread | None = None
+        self._workers: list[threading.Thread] = []
         self.world_ply_path = self.out_dir / "gaussian_world.ply"
         self.anchors_path = self.out_dir / "gaussian_anchors.npz"
         self.mesh_path = self.case_dir / "shape" / "matching" / "final_mesh.glb"
@@ -96,11 +101,34 @@ class MeshSurfaceGaussianManager:
                 name="gaussian-mesh-surface",
                 daemon=True,
             )
+            self._workers.append(self._first_gen)
         self._first_gen.start()
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, timeout_s: float = 30.0) -> None:
+        """Cancel + JOIN the derivation (idempotent).
+
+        The caller's contract is "the camera GPU is free after this" — the
+        staged runtime calls it right before FORMAL builds its perception
+        stack. Setting a flag was not enough: a derivation already past the
+        entry check kept running, rendering the overlay on CUDA and writing
+        artifacts into a run that had moved on. Cancel, then wait for the
+        worker to actually stop.
+        """
         with self._lock:
             self._closed = True
+            workers = list(self._workers)
+        deadline = time.perf_counter() + float(timeout_s)
+        for worker in workers:
+            if worker is threading.current_thread():
+                continue
+            worker.join(timeout=max(0.0, deadline - time.perf_counter()))
+        alive = [w.name for w in workers if w.is_alive()]
+        if alive:
+            print(
+                f"[gaussian] mesh_surface workers still running after "
+                f"{timeout_s:.0f}s: {alive}",
+                flush=True,
+            )
 
     # -- commands ------------------------------------------------------------
 
@@ -111,12 +139,21 @@ class MeshSurfaceGaussianManager:
                 return False
         if seed is None:
             seed = (self.seed + int(time.time())) % 1_000_000 or 1
-        threading.Thread(
+        worker = threading.Thread(
             target=lambda: self._generate(int(seed)),
             name="gaussian-mesh-surface-regen",
             daemon=True,
-        ).start()
+        )
+        with self._lock:
+            if self._closed:
+                return False
+            self._workers.append(worker)
+        worker.start()
         return True
+
+    def _is_closed(self) -> bool:
+        with self._lock:
+            return self._closed
 
     @property
     def busy(self) -> bool:
@@ -146,6 +183,8 @@ class MeshSurfaceGaussianManager:
                 f"目标 {self.target_splats} splats)…",
             )
             artifacts, num_splats = self._derive_and_collect()
+            if self._is_closed():
+                return
             self._emit_artifacts("gaussian", artifacts)
             self._emit_progress(
                 "gaussian",
@@ -153,6 +192,8 @@ class MeshSurfaceGaussianManager:
                 f"{num_splats} splats, "
                 f"{time.perf_counter() - started_s:.1f}s)",
             )
+        except _Cancelled:
+            print("[gaussian] mesh_surface derivation cancelled", flush=True)
         except Exception as exc:
             self._emit_error("gaussian", f"{type(exc).__name__}: {exc}")
             self._emit_progress(
@@ -191,6 +232,10 @@ class MeshSurfaceGaussianManager:
             raise ValueError(
                 f"anchor replay error {center_err_m:.6f} m — binding broken"
             )
+        if self._is_closed():
+            # Cancelled mid-derivation: stop before touching the GPU or
+            # publishing artifacts into a run that has moved on.
+            raise _Cancelled()
         save_anchors(self.anchors_path, anchors)
         save_gaussian_ply(self.world_ply_path, splats)
 

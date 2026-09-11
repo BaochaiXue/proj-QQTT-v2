@@ -354,6 +354,9 @@ class OrchestratorSession:
         self._state_cond = threading.Condition()
         self._service_state: str | None = None
         self._last_error_event: dict[str, Any] | None = None
+        # Sticky: once a run has failed terminally it can never be reported
+        # as a clean finish, whatever the later cleanup does.
+        self._terminal_failure: str | None = None
         self._chunk_manifests: list[dict[str, Any]] = []
         self._lock = threading.Lock()
         self._phystwin_lock = threading.Lock()
@@ -465,6 +468,11 @@ class OrchestratorSession:
             self._connect_clients()
             self.send_command({"cmd": protocol.CMD_HELLO})
         except BaseException as error:
+            # Latch BEFORE shutdown: shutdown() emits the run's terminal
+            # status, and without this a startup failure with no service and
+            # no chunk error would append STAGE_RUN_FINISHED ok=true right
+            # after the fatal — the same run reported both ways.
+            self._terminal_failure = f"startup failed: {error}"
             self._status.emit(STAGE_FATAL, str(error), ok=False)
             self.shutdown()
             raise
@@ -1062,6 +1070,8 @@ class OrchestratorSession:
             # SIGTERM'd mid-finalize, or a service that already reported
             # FATAL all still wrote STAGE_RUN_FINISHED ok=true.
             reasons: list[str] = []
+            if self._terminal_failure is not None:
+                reasons.append(str(self._terminal_failure))
             if self._chunk_error is not None:
                 reasons.append(f"chunk stream error: {self._chunk_error}")
             if chunk_thread_stuck:
@@ -1074,7 +1084,9 @@ class OrchestratorSession:
                     "camera service did not exit on shutdown; terminated"
                 )
             service_code = service.poll() if service is not None else None
-            if service_code is not None and int(service_code) > 0:
+            # NOT `> 0`: a signal-killed child reports a NEGATIVE code
+            # (-15 SIGTERM, -9 SIGKILL/OOM). Only 0 is a clean exit.
+            if service_code is not None and int(service_code) != 0:
                 reasons.append(f"camera service exit code {int(service_code)}")
             if self._service_state == protocol.STATE_FATAL:
                 reasons.append(

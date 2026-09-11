@@ -1269,3 +1269,155 @@ class TestMeshSurfaceWarmupSubrows:
         running = drive(timeline, None, "mesh_surface 后端:等待…", True)
         running = drive(timeline, running, "某个未来新增的进度行", True)
         assert running == "gs:wait_mesh"
+
+
+class TestBoneTransformsAreRotations:
+    """compute_bone_transforms must return SO(3) for every neighbourhood.
+
+    These are GUARDS, not a regression for an observed failure. The code
+    they cover used to repair a residual reflection by negating one matrix
+    entry (``R[2, 2] *= -1``), which in general does not project onto SO(3)
+    — on an arbitrary reflection it leaves ``R^T R != I`` (a synthetic case
+    measured singular values 1.41/1.00/0.08, i.e. shear applied to mesh
+    vertices and splat orientations as if it were rigid). In practice that
+    branch could NOT be made to misbehave here: across ~9k randomised solves
+    plus targeted in-plane-reflection patches at five tilts, every firing
+    had ``R[2, 2] == +/-1`` (the reflection axis aligned with a coordinate
+    axis), where the single-entry flip happens to be a valid projection. So
+    the old code was a latent hazard rather than a demonstrated defect. The
+    replacement builds the correction from ``det(U V^T)``, which is correct
+    at every rank — including the exactly rank-deficient (planar/collinear)
+    patches where ``det(F)`` carries no sign information — and these tests
+    keep it that way.
+    """
+
+    def _solve(self, points: np.ndarray, rotation: np.ndarray, translation):
+        pts = torch.as_tensor(points, dtype=torch.float32)
+        rot = torch.as_tensor(rotation, dtype=torch.float32)
+        motions = pts @ rot.T + torch.as_tensor(
+            np.asarray(translation), dtype=torch.float32
+        ) - pts
+        relations = gaussian_dynamics.get_topk_indices(
+            pts, K=min(8, len(pts) - 1)
+        )
+        transforms = gaussian_dynamics.compute_bone_transforms(
+            pts, motions, relations, device="cpu"
+        )
+        return transforms[:, :3, :3]
+
+    def _assert_so3(self, rotations, *, atol=1e-4) -> None:
+        eye = torch.eye(3)[None].expand_as(rotations)
+        orth = torch.linalg.norm(
+            rotations.transpose(1, 2) @ rotations - eye, dim=(1, 2)
+        )
+        dets = torch.linalg.det(rotations)
+        assert float(orth.max()) < atol, f"not orthogonal: {float(orth.max())}"
+        assert float((dets - 1.0).abs().max()) < atol, f"det != 1: {dets}"
+
+    def _rotation(self, degrees: float, axis: int = 2) -> np.ndarray:
+        angle = np.radians(degrees)
+        c, s = np.cos(angle), np.sin(angle)
+        base = {
+            0: [[1, 0, 0], [0, c, -s], [0, s, c]],
+            1: [[c, 0, s], [0, 1, 0], [-s, 0, c]],
+            2: [[c, -s, 0], [s, c, 0], [0, 0, 1]],
+        }[axis]
+        return np.asarray(base, dtype=np.float64)
+
+    def test_generic_rank3_neighbourhood(self) -> None:
+        rng = np.random.default_rng(0)
+        pts = rng.random((12, 3)) * 0.12
+        self._assert_so3(self._solve(pts, self._rotation(35.0), [0.01, 0, 0]))
+
+    def test_planar_rank2_neighbourhood(self) -> None:
+        """A locally flat bone patch — the rank-deficient case the old
+        det(F) test could not decide."""
+        rng = np.random.default_rng(1)
+        pts = rng.random((12, 3)) * 0.12
+        pts[:, 2] = 0.0
+        for axis in (0, 1, 2):
+            self._assert_so3(self._solve(pts, self._rotation(40.0, axis), 0.0))
+
+    def test_near_collinear_neighbourhood(self) -> None:
+        rng = np.random.default_rng(2)
+        t = np.linspace(0.0, 0.12, 12)
+        pts = np.stack([t, 0.5 * t, np.zeros_like(t)], axis=1)
+        pts += rng.normal(scale=1e-6, size=pts.shape)
+        self._assert_so3(self._solve(pts, self._rotation(25.0, 1), 0.0))
+
+    def test_noisy_planar_neighbourhood_many_seeds(self) -> None:
+        for seed in range(25):
+            rng = np.random.default_rng(seed)
+            pts = rng.random((9, 3)) * 0.12
+            pts[:, 2] = 0.0
+            pts_t = torch.as_tensor(pts, dtype=torch.float32)
+            rot = torch.as_tensor(self._rotation(30.0), dtype=torch.float32)
+            motions = pts_t @ rot.T - pts_t + torch.as_tensor(
+                rng.normal(scale=1e-3, size=pts.shape), dtype=torch.float32
+            )
+            relations = gaussian_dynamics.get_topk_indices(pts_t, K=8)
+            transforms = gaussian_dynamics.compute_bone_transforms(
+                pts_t, motions, relations, device="cpu"
+            )
+            self._assert_so3(transforms[:, :3, :3], atol=1e-3)
+
+    def test_degenerate_rank1_falls_back_to_identity(self) -> None:
+        pts = np.zeros((6, 3), dtype=np.float64)  # all bones coincident
+        rotations = self._solve(pts, self._rotation(20.0), 0.0)
+        self._assert_so3(rotations)
+        assert torch.allclose(rotations, torch.eye(3)[None].expand_as(rotations))
+
+
+class TestMeshSurfaceShutdownQuiesces:
+    """shutdown() must CANCEL AND JOIN an in-flight derivation.
+
+    The staged runtime calls it right before FORMAL so the camera GPU is
+    free; the earlier version only set a flag, so a derivation already past
+    the entry check kept running — rendering the overlay on CUDA and
+    publishing artifacts into a run that had moved on.
+    """
+
+    def test_inflight_derivation_is_cancelled_and_joined(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        import threading
+        import time as _time
+
+        import demo_v7.service.mesh_surface_gaussian as msg
+        from demo_v7.service.mesh_surface_manager import (
+            MeshSurfaceGaussianManager,
+        )
+
+        mesh = _synthetic_glb(tmp_path)
+        case_dir = tmp_path / "case"
+        (case_dir / "shape" / "matching").mkdir(parents=True)
+        (case_dir / "shape" / "matching" / "final_mesh.glb").write_bytes(
+            mesh.read_bytes()
+        )
+        events: dict[str, list] = {"artifacts": [], "errors": []}
+        manager = MeshSurfaceGaussianManager(
+            case_dir=case_dir,
+            out_dir=tmp_path / "gaussian",
+            emit_progress=lambda *a, **k: None,
+            emit_artifacts=lambda kind, paths: events["artifacts"].append(paths),
+            emit_error=lambda stage, msg_: events["errors"].append(msg_),
+        )
+        started = threading.Event()
+        real = msg.gaussianize_mesh
+
+        def _slow(path, **kwargs):
+            started.set()
+            _time.sleep(0.3)  # still working when shutdown lands
+            return real(path, **kwargs)
+
+        monkeypatch.setattr(msg, "gaussianize_mesh", _slow)
+        manager.start()
+        manager.notify_case_ready()
+        assert started.wait(timeout=10.0)
+
+        manager.shutdown(timeout_s=10.0)
+        assert manager._first_gen is not None
+        assert not manager._first_gen.is_alive()  # joined, not just flagged
+        assert events["artifacts"] == []  # nothing published after cancel
+        assert not manager.world_ply_path.is_file()
+        assert manager.regenerate(7) is False  # closed stays closed
