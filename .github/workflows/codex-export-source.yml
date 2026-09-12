@@ -10,8 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Pack source
-        run: tar --exclude=.git -czf /tmp/proj-QQTT-v2-source.tar.gz .
+      - name: Pack focused source
+        run: |
+          tar -czf /tmp/proj-QQTT-v2-source.tar.gz \
+            .github/workflows/check.yml \
+            demo_v7/service \
+            demo_v7/tests \
+            docs/exec-plans/active \
+            pyproject.toml
       - uses: actions/upload-artifact@v4
         with:
           name: proj-QQTT-v2-source
