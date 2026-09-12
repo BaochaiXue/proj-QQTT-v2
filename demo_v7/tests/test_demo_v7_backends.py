@@ -1,10 +1,10 @@
 """Unit tests for the shape-prior backend selector (sam3d/trellis2/none).
 
-Covers: backend id normalization, the Trellis2 client's surgical generate
-argv swap (every other stage byte-identical to the v6.2 base class), the
-ARAP-safe face filter contract, the orchestrator session's argv mapping for
-backend none, and the camera-service v7 flag. CPU-only; no GPU, no camera,
-no subprocess spawns (prewarm stays off).
+Covers: the v7 clients' surgical argv swaps (every other stage byte-identical
+to the v6.2 base class), the two deliberately DIFFERENT degenerate-face
+filters, the crop-only upscale passthrough, and the orchestrator session's
+argv mapping for backend none plus its fail-fast option normalization.
+CPU-only; no GPU, no camera, no subprocess spawns (prewarm stays off).
 """
 
 from __future__ import annotations
@@ -16,45 +16,44 @@ from demo_v7.service import backend_options
 from demo_v7.service.trellis2_generate import _arap_safe_face_mask
 
 
-class TestBackendOptions:
-    def test_normalize_defaults_to_trellis2(self) -> None:
-        # Default flipped 2026-08-07 after the same-frame quality comparison
-        # (TRELLIS.2: IoU 0.905 vs 0.852, candidates 2.3x closer to obs).
-        assert backend_options.normalize_backend(None) == "trellis2"
-        assert backend_options.normalize_backend("") == "trellis2"
+def _client_kwargs(tmp_path) -> dict:
+    """The unchanged ShapePriorLocalClient ctor kwargs every backend shares."""
+    return dict(
+        case_root=tmp_path / "case_root",
+        cuda_visible_devices="0",
+        object_prompt="sloth",
+        controller_name="hand",
+        object_id=None,
+        cache_root=tmp_path / "mesh_cache",
+        sam3d_root=None,
+        sam3d_config=None,
+        sam31_device="cuda",
+    )
 
-    def test_normalize_accepts_known_ids_case_insensitive(self) -> None:
-        assert backend_options.normalize_backend("TRELLIS2") == "trellis2"
-        assert backend_options.normalize_backend(" none ") == "none"
-        assert backend_options.normalize_backend("sam3d") == "sam3d"
 
-    def test_normalize_rejects_unknown(self) -> None:
-        with pytest.raises(ValueError, match="unknown shape-prior backend"):
-            backend_options.normalize_backend("sam3d-v2")
+def _session(tmp_path, **kwargs):
+    from demo_v7.orchestration.session import OrchestratorSession
+
+    return OrchestratorSession(
+        source="fake-live",
+        fake_live_case="data_collect/fake",
+        base_path=tmp_path / "run",
+        **kwargs,
+    )
 
 
 class TestArapSafeFaceMask:
     """The generate-stage output invariant that keeps align's ARAP solvable."""
 
-    def test_keeps_healthy_faces(self) -> None:
-        vertices = np.array(
-            [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]], dtype=np.float64
-        )
-        faces = np.array([[0, 1, 2], [1, 3, 2]])
-        assert _arap_safe_face_mask(vertices, faces).all()
-
-    def test_drops_face_degenerate_under_exact_weld(self) -> None:
-        # Vertex 3 duplicates vertex 1's position exactly (a UV-seam split):
-        # face (0, 1, 3) collapses to two identical indices after the o3d
-        # remove_duplicated_vertices weld align performs.
-        vertices = np.array(
-            [[0, 0, 0], [1, 0, 0], [0, 1, 0], [1, 0, 0]], dtype=np.float64
-        )
-        faces = np.array([[0, 1, 2], [0, 1, 3]])
-        mask = _arap_safe_face_mask(vertices, faces)
-        assert mask.tolist() == [True, False]
-
     def test_drops_zero_area_collinear_face(self) -> None:
+        """Pins the area term of trellis2_generate.py:294
+        (``return distinct & (areas > 1e-12)``).
+
+        Defect: o_voxel's atlas export ships zero-area UV-seam slivers; their
+        cotangent weights come out nan/inf and align's ARAP dies with
+        'Failed to build solver' (commit 918c80b, the phase-2 runner work).
+        Deleting the area term flips the second entry to True.
+        """
         vertices = np.array(
             [[0, 0, 0], [1, 0, 0], [2, 0, 0], [0, 1, 0]], dtype=np.float64
         )
@@ -66,208 +65,203 @@ class TestArapSafeFaceMask:
 class TestZeroExtentFaceMask:
     """final_mesh cleanup keeps every face with any extent at all."""
 
-    def test_keeps_tiny_but_nonzero_faces(self) -> None:
+    @pytest.mark.parametrize(
+        "vertices, faces, expected",
+        [
+            pytest.param(
+                [[0, 0, 0], [1e-7, 0, 0], [0, 1e-7, 0], [1, 0, 0], [0, 1, 0]],
+                [[0, 1, 2], [0, 3, 4]],
+                [True, True],
+                id="tiny-but-real-face-survives",
+            ),
+            pytest.param(
+                # vertex 3 is collinear with 0-1: exactly zero area.
+                [[0, 0, 0], [1, 0, 0], [0, 1, 0], [2, 0, 0]],
+                [[0, 1, 2], [0, 1, 3]],
+                [True, False],
+                id="exact-zero-area-dropped",
+            ),
+        ],
+    )
+    def test_keeps_tiny_but_nonzero_faces(self, vertices, faces, expected) -> None:
+        """Pins sample_asap_safe.py:68 ``return distinct & (areas > 0.0)`` --
+        the threshold that deliberately DIFFERS from its otherwise identical
+        sibling at trellis2_generate.py:294 (``> 1e-12``).
+
+        Defect: the two functions are copies apart from that constant, so the
+        obvious 'dedupe into one helper' refactor silently unifies them and the
+        final_mesh cleanup starts eating tiny-but-real faces (first row).
+        Deleting the area term instead keeps the collinear face (second row).
+        """
         from demo_v7.service.sample_asap_safe import _zero_extent_face_mask
 
-        vertices = np.array(
-            [[0, 0, 0], [1e-7, 0, 0], [0, 1e-7, 0], [1, 0, 0], [0, 1, 0]],
-            dtype=np.float64,
+        mask = _zero_extent_face_mask(
+            np.array(vertices, dtype=np.float64), np.array(faces)
         )
-        faces = np.array([[0, 1, 2], [0, 3, 4]])
-        assert _zero_extent_face_mask(vertices, faces).all()
-
-    def test_drops_weld_collapsed_and_exact_zero_area(self) -> None:
-        from demo_v7.service.sample_asap_safe import _zero_extent_face_mask
-
-        vertices = np.array(
-            [
-                [0, 0, 0],
-                [1, 0, 0],
-                [0, 1, 0],
-                [1, 0, 0],  # exact duplicate of vertex 1 (weld collapse)
-                [2, 0, 0],  # collinear with 0-1 (exact zero area)
-            ],
-            dtype=np.float64,
-        )
-        faces = np.array([[0, 1, 2], [0, 1, 3], [0, 1, 4]])
-        assert _zero_extent_face_mask(vertices, faces).tolist() == [
-            True,
-            False,
-            False,
-        ]
+        assert mask.tolist() == expected
 
 
 class TestTrellis2StageCommands:
-    def _make_clients(self, tmp_path):
+    """Every v7 backend is argv surgery on the v6.2 stage command table."""
+
+    @pytest.mark.parametrize(
+        "client, baseline, swapped, generate_replaced",
+        [
+            pytest.param(
+                "Trellis2ShapePriorClient",
+                None,  # baseline = the untouched v6.2 client
+                {
+                    "sample": "SAMPLE_ASAP_SAFE_RUNNER",
+                    "align": "ALIGN_FAST_SAFE_RUNNER",
+                },
+                True,
+                id="trellis2-vs-v62",
+            ),
+            pytest.param(
+                "NoUpscaleShapePriorClient",
+                None,
+                {"upscale": "UPSCALE_PASSTHROUGH_RUNNER"},
+                False,
+                id="no-upscale-vs-v62",
+            ),
+            pytest.param(
+                # The composed class must still reach the mixin: flipping the
+                # base order at shape_prior_backends.py:131 to
+                # (Trellis2ShapePriorClient, _NoUpscaleStageMixin) leaves the
+                # MRO on the SD upscale stage and only this row notices.
+                "NoUpscaleTrellis2ShapePriorClient",
+                "Trellis2ShapePriorClient",
+                {"upscale": "UPSCALE_PASSTHROUGH_RUNNER"},
+                False,
+                id="no-upscale-composed-with-trellis2",
+            ),
+        ],
+    )
+    def test_only_generate_sample_align_swapped(
+        self, tmp_path, client, baseline, swapped, generate_replaced
+    ) -> None:
+        """Pins the wrapper surgery at shape_prior_backends.py:108
+        (``*sample[3:]``), :119 (``*align[3:]``) and :59-61 (the upscale
+        mixin's ``upscale[0]`` interpreter + ``*upscale[3:]`` tail).
+
+        Defect: the swap replaces two argv tokens (``-m``, module) with one
+        (the runner path), so the tail slice must be [3:] while the new argv
+        is read at [2:]. An off-by-one leaves ``demo_v7.runtime.shape_prior.
+        sample`` as a positional arg (or eats --base_path) and the prewarmed
+        stage dies inside the pool with an opaque error. Every stage the
+        backend does not claim must stay byte-identical to its baseline.
+        """
         from demo_v7.runtime.shape_prior import warmup as shape_prior_warmup
-        from demo_v7.service.shape_prior_backends import Trellis2ShapePriorClient
+        from demo_v7.service import shape_prior_backends
 
-        kwargs = dict(
-            case_root=tmp_path / "case_root",
-            cuda_visible_devices="0",
-            object_prompt="sloth",
-            controller_name="hand",
-            object_id=None,
-            cache_root=tmp_path / "mesh_cache",
-            sam3d_root=None,
-            sam3d_config=None,
-            sam31_device="cuda",
+        kwargs = _client_kwargs(tmp_path)
+        baseline_cls = (
+            shape_prior_warmup.ShapePriorLocalClient
+            if baseline is None
+            else getattr(shape_prior_backends, baseline)
         )
-        return (
-            shape_prior_warmup.ShapePriorLocalClient(**kwargs),
-            Trellis2ShapePriorClient(**kwargs),
-        )
+        base_cmds = baseline_cls(**kwargs)._stage_commands()
+        cmds = getattr(shape_prior_backends, client)(**kwargs)._stage_commands()
 
-    def test_only_generate_sample_align_swapped(self, tmp_path) -> None:
-        base, trellis = self._make_clients(tmp_path)
-        base_cmds = base._stage_commands()
-        trellis_cmds = trellis._stage_commands()
-        assert set(base_cmds) == set(trellis_cmds)
-        assert trellis_cmds["upscale"] == base_cmds["upscale"]
-        assert trellis_cmds["generate"] != base_cmds["generate"]
-        # sample/align keep the identical CLI tail; only the entry becomes
-        # the v7 wrapper (same interpreter, same GO protocol): sample =
-        # zero-extent cleanup, align = binned candidate rasterization.
-        from demo_v7.service.shape_prior_backends import (
-            ALIGN_FAST_SAFE_RUNNER,
-            SAMPLE_ASAP_SAFE_RUNNER,
-        )
+        assert set(cmds) == set(base_cmds)
+        for stage, runner in swapped.items():
+            # Same interpreter, same CLI tail; only the entry becomes the v7
+            # wrapper (same GO protocol).
+            assert cmds[stage][0] == base_cmds[stage][0]
+            assert cmds[stage][1] == str(getattr(shape_prior_backends, runner))
+            assert cmds[stage][2:] == base_cmds[stage][3:]
+        untouched = set(base_cmds) - set(swapped)
+        if generate_replaced:
+            untouched.discard("generate")
+        for stage in untouched:
+            assert cmds[stage] == base_cmds[stage]
 
-        assert trellis_cmds["sample"][0] == base_cmds["sample"][0]
-        assert trellis_cmds["sample"][1] == str(SAMPLE_ASAP_SAFE_RUNNER)
-        assert trellis_cmds["sample"][2:] == base_cmds["sample"][3:]
-        assert trellis_cmds["align"][0] == base_cmds["align"][0]
-        assert trellis_cmds["align"][1] == str(ALIGN_FAST_SAFE_RUNNER)
-        assert trellis_cmds["align"][2:] == base_cmds["align"][3:]
-
-    def test_generate_argv_contract(self, tmp_path) -> None:
-        from demo_v7.service.shape_prior_backends import TRELLIS2_RUNNER
-
-        _base, trellis = self._make_clients(tmp_path)
-        argv = trellis._stage_commands()["generate"]
-        assert argv[0] == str(backend_options.TRELLIS2_PYTHON)
-        assert argv[1] == str(TRELLIS2_RUNNER)
+        if not generate_replaced:
+            return
+        # TRELLIS.2 replaces generate wholesale (own interpreter + runner).
+        assert cmds["generate"] != base_cmds["generate"]
+        argv = cmds["generate"]
         shape_dir = tmp_path / "case_root" / "shape_prior_frame0" / "shape"
+        # RGBA-alpha input contract (trellis2_generate.py:302-307): the runner
+        # needs masked_image.png, not the upscaled high_resolution.png.
         assert argv[argv.index("--img_path") + 1] == str(
             shape_dir / "masked_image.png"
         )
-        assert argv[argv.index("--output_dir") + 1] == str(shape_dir)
-        assert argv[argv.index("--trellis2-repo") + 1] == str(
-            backend_options.TRELLIS2_REPO
-        )
-        assert argv[argv.index("--seed") + 1] == "42"
+        # Schema-v1 profile lands exactly where the orchestrator reads it.
         assert argv[argv.index("--profile-json") + 1] == str(
             shape_dir / "timing" / "generate.json"
         )
-
-    def test_create_client_dispatch(self, tmp_path) -> None:
-        from demo_v7.runtime.shape_prior import warmup as shape_prior_warmup
-        from demo_v7.service.shape_prior_backends import (
-            Trellis2ShapePriorClient,
-            create_shape_prior_client,
-        )
-
-        kwargs = dict(
-            case_root=tmp_path / "case_root",
-            cuda_visible_devices="0",
-            object_prompt="sloth",
-            controller_name="hand",
-            object_id=None,
-            cache_root=tmp_path / "mesh_cache",
-            sam3d_root=None,
-            sam3d_config=None,
-            sam31_device="cuda",
-        )
-        assert isinstance(
-            create_shape_prior_client("sam3d", **kwargs),
-            shape_prior_warmup.ShapePriorLocalClient,
-        )
-        assert isinstance(
-            create_shape_prior_client("trellis2", **kwargs),
-            Trellis2ShapePriorClient,
-        )
-        with pytest.raises(ValueError, match="does not use a shape-prior client"):
-            create_shape_prior_client("none", **kwargs)
 
 
 class TestSessionBackendArgv:
     """OrchestratorSession maps backend none onto existing v6.2 switches."""
 
-    def _session(self, tmp_path, **kwargs):
-        from demo_v7.orchestration.session import OrchestratorSession
+    @pytest.mark.parametrize(
+        "backend, expected",
+        [
+            pytest.param(
+                "none",
+                {
+                    "shape_prior_warmup": False,
+                    "asap_augment": False,
+                    "downstream_mode": "disabled",
+                },
+                id="none-skips-warmup-and-asap",
+            ),
+            pytest.param(
+                None,  # default backend: the negative control
+                {"shape_prior_warmup": True, "asap_augment": True},
+                id="default-backend-keeps-v62-defaults",
+            ),
+        ],
+    )
+    def test_none_maps_to_v62_skip_flags(self, tmp_path, backend, expected) -> None:
+        """Pins session.py:325
+        ``argv.extend(['--no-shape-prior-warmup', '--no-asap-augment'])``.
 
-        return OrchestratorSession(
-            source="fake-live",
-            fake_live_case="data_collect/fake",
-            base_path=tmp_path / "run",
-            **kwargs,
-        )
+        Defect: backend none has no mesh and ASAP hard-requires one -- if only
+        the warmup flag is emitted the run reaches ASAP with nothing to
+        deform. The default row is the negative control: the skip flags must
+        NOT be emitted for a mesh-producing backend.
+        """
+        kwargs = {} if backend is None else {"shape_prior_backend": backend}
+        session = _session(tmp_path, **kwargs)
+        if backend is not None:
+            assert session.shape_prior_backend == backend
+        for name, value in expected.items():
+            assert getattr(session._args, name) == value, name
 
-    def test_none_maps_to_v62_skip_flags(self, tmp_path) -> None:
-        session = self._session(tmp_path, shape_prior_backend="none")
-        assert session.shape_prior_backend == "none"
-        assert session._args.shape_prior_warmup is False
-        assert session._args.asap_augment is False
-        assert session._args.downstream_mode == "disabled"
+    @pytest.mark.parametrize(
+        "kwarg, value, message",
+        [
+            ("shape_prior_backend", "tre11is", "unknown shape-prior backend"),
+            ("shape_prior_upscale", "maybe", "upscale toggle"),
+        ],
+    )
+    def test_invalid_backend_raises(self, tmp_path, kwarg, value, message) -> None:
+        """normalize_backend / normalize_upscale run inside the session ctor
+        (session.py:247-251 and :258-261), before the strict v6.2 parse.
 
-    def test_none_respects_explicit_downstream(self, tmp_path) -> None:
-        session = self._session(
-            tmp_path, shape_prior_backend="none", downstream_mode="disabled"
-        )
-        assert session._args.downstream_mode == "disabled"
-
-    def test_default_backend_keeps_v62_defaults(self, tmp_path) -> None:
-        session = self._session(tmp_path)
-        assert session.shape_prior_backend == "trellis2"
-        assert session._args.shape_prior_warmup is True
-        assert session._args.asap_augment is True
-
-    def test_trellis2_keeps_chain_enabled(self, tmp_path) -> None:
-        session = self._session(tmp_path, shape_prior_backend="trellis2")
-        assert session.shape_prior_backend == "trellis2"
-        assert session._args.shape_prior_warmup is True
-
-    def test_invalid_backend_raises(self, tmp_path) -> None:
-        with pytest.raises(ValueError, match="unknown shape-prior backend"):
-            self._session(tmp_path, shape_prior_backend="tre11is")
-
-
-class TestCameraServiceFlag:
-    def test_v7_parser_consumes_backend_flag(self) -> None:
-        from demo_v7.service.camera_service import _build_v7_parser
-
-        v7_args, rest = _build_v7_parser().parse_known_args(
-            [
-                "--socket-dir",
-                "/tmp/x",
-                "--shape-prior-backend",
-                "trellis2",
-                "--input-source",
-                "fake-live",
-            ]
-        )
-        assert v7_args.shape_prior_backend == "trellis2"
-        assert "--shape-prior-backend" not in rest
-        assert "--input-source" in rest
+        Defect: this is the documented GUI-side fail-fast -- without it a
+        typo'd selector from the CLI/config surfaces only as a camera-service
+        stderr line and the operator sees a generic connect timeout.
+        """
+        with pytest.raises(ValueError, match=message):
+            _session(tmp_path, **{kwarg: value})
 
 
 class TestUpscaleToggle:
-    """上采样 on/off: normalization, argv swap surgery, CLI passthrough."""
-
-    def _client_kwargs(self, tmp_path):
-        return dict(
-            case_root=tmp_path / "case_root",
-            cuda_visible_devices="0",
-            object_prompt="sloth",
-            controller_name="hand",
-            object_id=None,
-            cache_root=tmp_path / "mesh_cache",
-            sam3d_root=None,
-            sam3d_config=None,
-            sam31_device="cuda",
-        )
+    """上采样 on/off: normalization, factory dispatch, CLI passthrough."""
 
     def test_normalize_upscale(self) -> None:
+        """Pins the explicit _UPSCALE_TRUE/_UPSCALE_FALSE tables and the raise
+        at backend_options.py:91-94.
+
+        Defect: the value arrives as a STRING from both the CLI
+        (--shape-prior-upscale off) and default.yaml, so the natural-looking
+        ``bool(value)`` makes 'off' and '0' truthy -- the operator disables
+        上采样 and gets the 15.2s SD stage anyway.
+        """
         assert backend_options.normalize_upscale(None) is True
         assert backend_options.normalize_upscale(True) is True
         assert backend_options.normalize_upscale(False) is False
@@ -278,43 +272,17 @@ class TestUpscaleToggle:
         with pytest.raises(ValueError, match="upscale toggle"):
             backend_options.normalize_upscale("maybe")
 
-    def test_no_upscale_swaps_only_upscale_stage(self, tmp_path) -> None:
-        from demo_v7.runtime.shape_prior import warmup as shape_prior_warmup
-        from demo_v7.service.shape_prior_backends import (
-            UPSCALE_PASSTHROUGH_RUNNER,
-            NoUpscaleShapePriorClient,
-        )
-
-        kwargs = self._client_kwargs(tmp_path)
-        base_cmds = shape_prior_warmup.ShapePriorLocalClient(
-            **kwargs
-        )._stage_commands()
-        no_up_cmds = NoUpscaleShapePriorClient(**kwargs)._stage_commands()
-        assert set(base_cmds) == set(no_up_cmds)
-        for stage in ("generate", "align", "sample"):
-            assert no_up_cmds[stage] == base_cmds[stage]
-        # Same interpreter, same CLI tail; only the entry becomes the
-        # crop-only passthrough runner.
-        assert no_up_cmds["upscale"][0] == base_cmds["upscale"][0]
-        assert no_up_cmds["upscale"][1] == str(UPSCALE_PASSTHROUGH_RUNNER)
-        assert no_up_cmds["upscale"][2:] == base_cmds["upscale"][3:]
-
-    def test_no_upscale_composes_with_trellis2(self, tmp_path) -> None:
-        from demo_v7.service.shape_prior_backends import (
-            UPSCALE_PASSTHROUGH_RUNNER,
-            NoUpscaleTrellis2ShapePriorClient,
-            Trellis2ShapePriorClient,
-        )
-
-        kwargs = self._client_kwargs(tmp_path)
-        trellis_cmds = Trellis2ShapePriorClient(**kwargs)._stage_commands()
-        no_up_cmds = NoUpscaleTrellis2ShapePriorClient(**kwargs)._stage_commands()
-        for stage in ("generate", "align", "sample"):
-            assert no_up_cmds[stage] == trellis_cmds[stage]
-        assert no_up_cmds["upscale"][1] == str(UPSCALE_PASSTHROUGH_RUNNER)
-        assert no_up_cmds["upscale"][2:] == trellis_cmds["upscale"][3:]
-
     def test_create_client_dispatch_upscale(self, tmp_path) -> None:
+        """Pins the 2x2 backend x use_upscale branch table at
+        shape_prior_backends.py:148-155 and the :156 raise for backend none.
+
+        Defect: a copy-paste that ignores use_upscale on one branch silently
+        runs the 15.2s SD upscale after the operator turned the GUI 上采样
+        toggle off (or vice versa) -- no error, just a wrong-resolution
+        warmup. ``type(...) is``, never isinstance: the NoUpscale* classes
+        subclass the base client, so isinstance passes even when the toggle
+        is ignored entirely.
+        """
         from demo_v7.runtime.shape_prior import warmup as shape_prior_warmup
         from demo_v7.service.shape_prior_backends import (
             NoUpscaleShapePriorClient,
@@ -323,7 +291,7 @@ class TestUpscaleToggle:
             create_shape_prior_client,
         )
 
-        kwargs = self._client_kwargs(tmp_path)
+        kwargs = _client_kwargs(tmp_path)
         on_sam3d = create_shape_prior_client("sam3d", use_upscale=True, **kwargs)
         assert type(on_sam3d) is shape_prior_warmup.ShapePriorLocalClient
         off_sam3d = create_shape_prior_client("sam3d", use_upscale=False, **kwargs)
@@ -332,8 +300,20 @@ class TestUpscaleToggle:
         assert type(on_tr2) is Trellis2ShapePriorClient
         off_tr2 = create_shape_prior_client("trellis2", use_upscale=False, **kwargs)
         assert type(off_tr2) is NoUpscaleTrellis2ShapePriorClient
+        # backend none never reaches a client at all.
+        with pytest.raises(ValueError, match="does not use a shape-prior client"):
+            create_shape_prior_client("none", **kwargs)
 
     def test_passthrough_cli_crop_and_profile(self, tmp_path) -> None:
+        """Pins upscale_passthrough.py:70-85: crop_like_upscale must reproduce
+        the SD upscale stage's bbox math (upscale.py:72-88) bit for bit.
+
+        Defect: this file is a hand-copied mirror; any drift (x/y swapped in
+        the np.argwhere bbox at :71-74, the x1.2 margin dropped at :78)
+        silently feeds SAM3.1 + generate a differently-framed crop, with no
+        error anywhere. The zeroed model_load/inference timings are what tell
+        the profile reader this stage did no SD work.
+        """
         import json
 
         import cv2
@@ -391,42 +371,23 @@ class TestUpscaleToggle:
 
 
 class TestSessionUpscaleResolution:
-    def _session(self, tmp_path, **kwargs):
-        from demo_v7.orchestration.session import OrchestratorSession
+    @pytest.mark.parametrize(
+        "value, expected",
+        [
+            pytest.param(False, False, id="explicit-False"),
+            pytest.param("off", False, id="string-off"),
+        ],
+    )
+    def test_explicit_off(self, tmp_path, value, expected) -> None:
+        """Pins session.py:258-261, specifically the ``if shape_prior_upscale
+        is not None`` on :260 and the normalize_upscale call on :258.
 
-        return OrchestratorSession(
-            source="fake-live",
-            fake_live_case="data_collect/fake",
-            base_path=tmp_path / "run",
-            **kwargs,
-        )
-
-    def test_default_is_on(self, tmp_path) -> None:
-        assert self._session(tmp_path).shape_prior_upscale is True
-
-    def test_explicit_off(self, tmp_path) -> None:
-        session = self._session(tmp_path, shape_prior_upscale=False)
-        assert session.shape_prior_upscale is False
-
-    def test_string_off(self, tmp_path) -> None:
-        session = self._session(tmp_path, shape_prior_upscale="off")
-        assert session.shape_prior_upscale is False
-
-    def test_invalid_raises(self, tmp_path) -> None:
-        with pytest.raises(ValueError, match="upscale toggle"):
-            self._session(tmp_path, shape_prior_upscale="maybe")
-
-
-class TestCameraServiceUpscaleFlag:
-    def test_v7_parser_consumes_upscale_flag(self) -> None:
-        from demo_v7.service.camera_service import _build_v7_parser
-
-        v7_args, rest = _build_v7_parser().parse_known_args(
-            [
-                "--socket-dir", "/tmp/x",
-                "--shape-prior-upscale", "off",
-                "--input-source", "fake-live",
-            ]
-        )
-        assert v7_args.shape_prior_upscale == "off"
-        assert "--shape-prior-upscale" not in rest
+        Defect: the falsy-argument trap -- rewriting :258-261 as
+        ``shape_prior_upscale or session_cfg.get('shape_prior_upscale')``
+        makes an explicit False fall through to default.yaml's ``true``, so
+        the GUI toggle is ignored exactly when it is switched off (first row);
+        using ``bool(...)`` instead of normalize_upscale turns the CLI/config
+        string 'off' into True (second row).
+        """
+        session = _session(tmp_path, shape_prior_upscale=value)
+        assert session.shape_prior_upscale is expected

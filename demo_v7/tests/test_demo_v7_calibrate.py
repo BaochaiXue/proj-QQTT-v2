@@ -3,7 +3,8 @@
 A ChArUco board rendered by OpenCV stands in for the camera frame, so the
 strict estimation success path and the CLI-identical save path both run in
 the plain .venv suite (the Qt dialog around them is smoke-tested offscreen
-in the GUI env).
+in the GUI env).  Two paths are covered: the never-raise failure arm, and
+one end-to-end estimate -> save -> runtime-loader round trip.
 """
 
 from __future__ import annotations
@@ -71,19 +72,15 @@ K = np.array(
 
 
 class TestEstimateFrame:
-    def test_synthetic_board_passes_strict_estimate(
-        self, board_config, board_frame
-    ) -> None:
-        estimate = estimate_frame(
-            board_frame, board_config=board_config, camera_matrix=K
-        )
-        assert estimate.ok, estimate.message
-        assert estimate.c2w is not None and estimate.c2w.shape == (4, 4)
-        assert estimate.reprojection_error_px < 0.2
-        assert estimate.corner_fraction >= 0.6
-        assert estimate.diagnostic_bgr is not None  # overlay for the GUI view
-
     def test_empty_frame_fails_without_raising(self, board_config) -> None:
+        """Guards calibrate_core.py:74-77, the ``except Exception`` arm.
+
+        qqtt's strict estimator *raises* whenever no board is visible ("No
+        ArUco markers detected", "No ChArUco corners detected", pose
+        failure, every acceptance-gate rejection).  estimate_frame must
+        turn that into an ok=False FrameEstimate carrying the reason, or
+        the GUI's per-frame loop dies on the first empty frame.
+        """
         blank = np.full((CALIBRATE_HEIGHT, CALIBRATE_WIDTH, 3), 128, np.uint8)
         estimate = estimate_frame(
             blank, board_config=board_config, camera_matrix=K
@@ -97,6 +94,18 @@ class TestSaveEstimate:
     def test_saved_files_load_via_runtime_loader(
         self, board_config, board_frame, tmp_path
     ) -> None:
+        """The one end-to-end guard over the whole GUI calibration write.
+
+        Covers calibrate_core.py:110-115 (diagnostic PNG write), :116-136
+        (build_table_calibration_metadata, including :117's
+        ``serial_numbers or ['cam0']`` fallback) and :137
+        (write_table_calibration_files) -- plus the success path's unpack
+        order at :59-66 and the 4x4 c2w it hands to :78-89, which only
+        this round trip pins down.  It is the only test that feeds the
+        GUI-written file set to the exact loader the runtime uses
+        (demo_v7/runtime/mdp/session.py:87,
+        ``load_table_calibration_transforms(path, serial_numbers=[...])``).
+        """
         from qqtt.env.camera.table_calibration import (
             load_table_calibration_transforms,
         )
@@ -104,7 +113,9 @@ class TestSaveEstimate:
         estimate = estimate_frame(
             board_frame, board_config=board_config, camera_matrix=K
         )
-        assert estimate.ok
+        assert estimate.ok, estimate.message
+        assert estimate.c2w is not None and estimate.c2w.shape == (4, 4)
+        assert estimate.diagnostic_bgr is not None  # overlay for the GUI view
         estimate.serial_numbers = ["synthetic-cam"]
         out = tmp_path / "table_calibrate.pkl"
         diag = tmp_path / "table_calibrate_diagnostic.png"

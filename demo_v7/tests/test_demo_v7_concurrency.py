@@ -42,8 +42,18 @@ class Client(ControlClient):
             raise ConnectionError("peer died before HELLO")
 
 
-@pytest.mark.parametrize("link", ["control", "frames"])
-def test_death_during_dial_is_not_lost(monkeypatch, link):
+def test_death_during_dial_is_not_lost(monkeypatch):
+    """A reader death that lands mid-dial must not be swallowed.
+
+    Guards the reconnect-generation handshake: session.py:598 (the
+    _link_generation bump in _schedule_reconnect), :662 (install only while
+    `generation == self._link_generation[which]`) and :671 (releasing
+    _reconnecting INSIDE the install lock).  _schedule_reconnect used to
+    early-return on `which in self._reconnecting` while the worker released
+    ownership only after installing, so a death announced during the dial was
+    dropped and the link never came back.  The dial is link-agnostic; the only
+    control-specific branch is the HELLO send, covered by the next test.
+    """
     session = link_session()
     dialed = threading.Event()
     release = threading.Event()
@@ -60,11 +70,11 @@ def test_death_during_dial_is_not_lost(monkeypatch, link):
         redialed.set()
         return clients[1]
 
-    monkeypatch.setattr(session, f"_dial_{link}", dial)
+    monkeypatch.setattr(session, "_dial_control", dial)
     try:
-        session._schedule_reconnect(link)
+        session._schedule_reconnect("control")
         assert dialed.wait(2)
-        session._schedule_reconnect(link)  # watched reader dies during dial
+        session._schedule_reconnect("control")  # watched reader dies during dial
         release.set()
         assert redialed.wait(1), "the second reader-death notification was lost"
         assert clients[0].closed.wait(1)
@@ -74,6 +84,13 @@ def test_death_during_dial_is_not_lost(monkeypatch, link):
 
 
 def test_failed_hello_closes_client_and_redials(monkeypatch):
+    """HELLO is sent BEFORE install; a failure closes the client and redials.
+
+    Guards session.py:650-656.  The re-hello used to run after install wrapped
+    in `except Exception: pass`, so a peer that died between connect and send
+    left a corpse in self._control with the reconnect flag cleared and no
+    further on_dead possible.
+    """
     session = link_session()
     clients = [Client(hello_fails=True), Client()]
     redialed = threading.Event()
@@ -108,6 +125,14 @@ def artifact_runtime():
 
 
 def test_simultaneous_artifact_merges_keep_both_fields():
+    """The read-copy-write of _artifacts_sent must hold _artifacts_lock.
+
+    Guards staged_runtime.py:374.  Several workers really do call
+    _emit_artifacts concurrently (mesh_surface_manager.py:205,
+    gaussian_manager.py:341/473, staged_runtime.py:872/1342/1350), so an
+    unlocked merge clobbered the other thread's field and the Review tab
+    stayed one artifact short.
+    """
     runtime = artifact_runtime()
     copying = threading.Event()
     release = threading.Event()
@@ -161,12 +186,6 @@ def mesh_surface_manager(tmp_path):
     return manager
 
 
-def test_reservation_admits_exactly_one_regen(tmp_path):
-    manager = mesh_surface_manager(tmp_path)
-    assert manager.try_reserve() is True
-    assert manager.try_reserve() is False, "two regens both claimed the slot"
-
-
 def regen_runtime(manager):
     from demo_v7.service.staged_runtime import StagedRuntime
 
@@ -177,30 +196,35 @@ def regen_runtime(manager):
     return runtime
 
 
-def test_second_regen_in_one_tick_is_acked_false(tmp_path):
-    """Both commands land before the main loop runs either deferred submit."""
+@pytest.mark.parametrize("refusal", ["second-in-tick", "closed"])
+def test_second_regen_in_one_tick_is_acked_false(tmp_path, refusal):
+    """A regen the manager will not run must be acked ok=False, with no work.
+
+    Guards staged_runtime.py:744 (`if not manager.try_reserve():`) against both
+    terms of mesh_surface_manager.py:143-145 — `self._busy = True` claimed
+    inside the lock, and the `self._closed` check.
+
+    'second-in-tick': the control thread acks before the main loop runs the
+    deferred submit, so two regens in one tick both saw `manager.busy == False`,
+    both got ok=true, and the loser's later regenerate()->False was discarded —
+    the GUI spun forever on a regen that never ran.  The first ack also pins the
+    reservation as one-shot: only one caller may claim the slot.
+    'closed': a shut-down manager reports `busy == False` too, so only the
+    `_closed` term can turn this one away.
+    """
     from demo_v7.service.staged_runtime import StagedRuntime
 
     manager = mesh_surface_manager(tmp_path)
     runtime = regen_runtime(manager)
     command = {"cmd": protocol.CMD_REGEN_GAUSSIAN, "seed": 7}
-    first_ack, first_work = StagedRuntime._cmd_regen_gaussian(runtime, command)
-    second_ack, second_work = StagedRuntime._cmd_regen_gaussian(runtime, command)
-    assert first_ack["ok"] is True and first_work is not None
-    assert second_ack["ok"] is False, "the losing regen was acked as accepted"
-    assert second_work is None
-
-
-def test_closed_manager_is_acked_false(tmp_path):
-    from demo_v7.service.staged_runtime import StagedRuntime
-
-    manager = mesh_surface_manager(tmp_path)
-    manager.shutdown(timeout_s=0.1)
-    runtime = regen_runtime(manager)
-    ack, work = StagedRuntime._cmd_regen_gaussian(
-        runtime, {"cmd": protocol.CMD_REGEN_GAUSSIAN}
-    )
-    assert ack["ok"] is False and work is None
+    if refusal == "second-in-tick":
+        first_ack, first_work = StagedRuntime._cmd_regen_gaussian(runtime, command)
+        assert first_ack["ok"] is True and first_work is not None
+    else:
+        manager.shutdown(timeout_s=0.1)
+    ack, work = StagedRuntime._cmd_regen_gaussian(runtime, command)
+    assert ack["ok"] is False, "the losing regen was acked as accepted"
+    assert work is None
 
 
 # --- a terminal link failure must stop production -------------------------
@@ -219,24 +243,33 @@ def quiesce_session(monkeypatch, *, service_state):
     return session, sent, stopped
 
 
-def test_frames_link_failure_stops_formal_and_downstream(monkeypatch):
+@pytest.mark.parametrize(
+    "link, expected_sent",
+    [
+        ("frames", [{"cmd": protocol.CMD_STOP_FORMAL}]),
+        ("control", []),
+    ],
+)
+def test_frames_link_failure_stops_formal_and_downstream(
+    monkeypatch, link, expected_sent
+):
+    """A dead link must quiesce the run, not merely report itself.
+
+    Guards the quiesce block of _note_link_error, session.py:712-719:
+    _capture_finished_event.set(), the conditional CMD_STOP_FORMAL, and
+    _stop_phystwin().  Reporting the failure was not enough — the chunk stream
+    waited out its shape-prior timeout for rows that could never arrive and
+    PhysTwin held the GPU until the operator quit.  The 'control' row pins the
+    `which != "control"` guard at session.py:713: when the control link itself
+    is what died there is nothing to ask, and nothing may be handed to it.
+    """
     session, sent, stopped = quiesce_session(
         monkeypatch, service_state=protocol.STATE_FORMAL
     )
-    session._note_link_error("frames", "socket gone")
+    session._note_link_error(link, "socket gone")
     assert session._capture_finished_event.is_set(), "chunk stream left waiting"
     assert stopped.is_set(), "PhysTwin kept running for a failed run"
-    assert sent == [{"cmd": protocol.CMD_STOP_FORMAL}]
-
-
-def test_control_link_failure_does_not_try_to_send(monkeypatch):
-    session, sent, stopped = quiesce_session(
-        monkeypatch, service_state=protocol.STATE_FORMAL
-    )
-    session._note_link_error("control", "socket gone")
-    assert session._capture_finished_event.is_set()
-    assert stopped.is_set()
-    assert sent == [], "asked a dead control link to carry a command"
+    assert sent == expected_sent, "asked a dead control link to carry a command"
 
 
 # --- FINISHED must imply the producers/writers actually stopped -----------
@@ -279,31 +312,39 @@ def finalize_runtime(worker_names, *, stuck):
     return runtime, release
 
 
-def test_stuck_critical_worker_blocks_a_clean_finish(monkeypatch):
+@pytest.mark.parametrize(
+    "stuck_worker, expect_fatal",
+    [
+        ("demo-v7-pair-output", True),
+        ("demo-v7-gaussian", False),
+    ],
+)
+def test_stuck_critical_worker_blocks_a_clean_finish(
+    monkeypatch, stuck_worker, expect_fatal
+):
+    """FINISHED must not outrun the producers and writers.
+
+    Guards staged_runtime.py:1687-1695 — the `critical = [n for n in
+    still_running if n not in _OBSERVER_WORKERS]` filter and the
+    `self.fatal.record(...)` that follows it.  The old finalize joined each
+    thread for 1.0s and then simply carried on, so the run reported FINISHED
+    while a producer/writer was still running.  The second row pins the
+    _OBSERVER_WORKERS exclusion (staged_runtime.py:90): a display-only worker
+    that overstays is noisy, not fatal, and must not fail a good run.
+    """
     import demo_v7.service.staged_runtime as sr
 
     monkeypatch.setattr(sr, "_FINALIZE_DRAIN_S", 0.05)
     runtime, release = finalize_runtime(
-        ["demo-v7-pair-output", "demo-v7-gaussian"], stuck={"demo-v7-pair-output"}
+        ["demo-v7-pair-output", "demo-v7-gaussian"], stuck={stuck_worker}
     )
     try:
         sr.StagedRuntime._finalize_formal(runtime)
         snapshot = runtime.fatal.snapshot()
-        assert snapshot is not None, "FINISHED while a writer was still running"
-        assert "demo-v7-pair-output" in snapshot.message
-    finally:
-        release.set()
-
-
-def test_stuck_observer_worker_does_not_fail_the_run(monkeypatch):
-    import demo_v7.service.staged_runtime as sr
-
-    monkeypatch.setattr(sr, "_FINALIZE_DRAIN_S", 0.05)
-    runtime, release = finalize_runtime(
-        ["demo-v7-pair-output", "demo-v7-gaussian"], stuck={"demo-v7-gaussian"}
-    )
-    try:
-        sr.StagedRuntime._finalize_formal(runtime)
-        assert runtime.fatal.snapshot() is None, "display-only worker failed the run"
+        if expect_fatal:
+            assert snapshot is not None, "FINISHED while a writer was still running"
+            assert stuck_worker in snapshot.message
+        else:
+            assert snapshot is None, "display-only worker failed the run"
     finally:
         release.set()

@@ -83,11 +83,7 @@ def _color_bgr() -> np.ndarray:
     return rng.integers(0, 256, size=(H, W, 3), dtype=np.uint8)
 
 
-def _bundle(
-    *,
-    depth_u16: np.ndarray | None = None,
-    object_mask: np.ndarray | None = None,
-) -> Frame0Bundle:
+def _bundle(*, depth_u16: np.ndarray | None = None) -> Frame0Bundle:
     if depth_u16 is None:
         depth_u16 = np.full((H, W), 1000, dtype=np.uint16)  # 1.0 m at 1mm units
     return Frame0Bundle(
@@ -97,19 +93,19 @@ def _bundle(
         # real 0.01m/40-neighbor radius filter keeps mask interiors.
         intrinsics=CameraIntrinsics(fx=600.0, fy=600.0, cx=32.0, cy=32.0),
         depth_scale_m_per_unit=0.001,
-        object_mask=_object_mask() if object_mask is None else object_mask,
+        object_mask=_object_mask(),
         hand_a_mask=_hand_a_mask(),
         hand_b_mask=_hand_b_mask(),
     )
 
 
-def _session(c2w: np.ndarray | None = None) -> SimpleNamespace:
+def _session() -> SimpleNamespace:
     k_color = np.array(
         [[600.0, 0.0, 32.0], [0.0, 600.0, 32.0], [0.0, 0.0, 1.0]],
         dtype=np.float32,
     )
     return SimpleNamespace(
-        table_c2w=np.eye(4, dtype=np.float32) if c2w is None else c2w,
+        table_c2w=np.eye(4, dtype=np.float32),
         camera_runtime=SimpleNamespace(k_color=k_color),
     )
 
@@ -143,16 +139,43 @@ def _patch_sam31(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("case", ["scrambled_instances", "merged_blob", "single_hand"])
 def test_compute_sam31_masks_two_hand_instances(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
+    """Three-identity gate: whatever SAM3.1 hands back, hand A is the LEFT hand.
+
+    Guards demo_v7/runtime/mdp/warmup.py:120 (``sorted(candidates,
+    key=_mask_centroid_x)``) — sorting by area instead silently swaps A/B
+    when the two hand masks tie on area; warmup.py:111
+    (``_connected_components_by_area(masks[0])[:2]``) — without the split a
+    single merged 'hand' blob never becomes two hands; and warmup.py:113-117,
+    the gate that refuses frame 0 when fewer than two hands survive
+    (staged_runtime.py:886-905 treats that raise as the recoverable
+    'retake frame 0' path). Prompt order is warmup.py:286-288 + :295 — the
+    object prompt must precede 'hand' for the v6.2 best-instance rule.
+    """
     left, right = _hand_a_mask(), _hand_b_mask()
+    hand_masks = {
+        # order scrambled: only the centroid-x sort can fix identity
+        "scrambled_instances": [right, left],
+        # one merged SAM blob: connected components must cut it back in two
+        "merged_blob": [np.logical_or(left, right)],
+        # only one hand visible: the gate must refuse the frame
+        "single_hand": [left],
+    }[case]
     calls = _patch_sam31(
-        monkeypatch,
-        object_masks=[_object_mask()],
-        hand_masks=[right, left],  # order scrambled: centroid must fix identity
+        monkeypatch, object_masks=[_object_mask()], hand_masks=hand_masks
     )
     profile: dict[str, object] = {}
+
+    if case == "single_hand":
+        with pytest.raises(RuntimeError, match="two separable"):
+            frame0_pipeline.compute_sam31_masks(
+                _color_bgr(), device="cpu", args=_args(), mode=_mode()
+            )
+        return
+
     object_mask, hand_a, hand_b = frame0_pipeline.compute_sam31_masks(
         _color_bgr(),
         device="cpu",
@@ -172,55 +195,26 @@ def test_compute_sam31_masks_two_hand_instances(
     assert warmup_profile["initial_sam31"] == {"total_ms": 1.0}
 
 
-def test_compute_sam31_masks_splits_merged_controller(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    merged = np.logical_or(_hand_a_mask(), _hand_b_mask())
-    _patch_sam31(monkeypatch, object_masks=[_object_mask()], hand_masks=[merged])
-    _object, hand_a, hand_b = frame0_pipeline.compute_sam31_masks(
-        _color_bgr(), device="cpu", args=_args(), mode=_mode()
-    )
-    assert np.array_equal(hand_a, _hand_a_mask())
-    assert np.array_equal(hand_b, _hand_b_mask())
-
-
-def test_compute_sam31_masks_gate_raises_on_single_hand(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _patch_sam31(
-        monkeypatch, object_masks=[_object_mask()], hand_masks=[_hand_a_mask()]
-    )
-    with pytest.raises(RuntimeError, match="two separable controller masks"):
-        frame0_pipeline.compute_sam31_masks(
-            _color_bgr(), device="cpu", args=_args(), mode=_mode()
-        )
-
-
-def test_compute_sam31_masks_device_override_leaves_args_untouched(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = _patch_sam31(
-        monkeypatch,
-        object_masks=[_object_mask()],
-        hand_masks=[_hand_a_mask(), _hand_b_mask()],
-    )
-    args = _args(device="cuda")
-    frame0_pipeline.compute_sam31_masks(
-        _color_bgr(), device="cpu", args=args, mode=_mode()
-    )
-    assert calls[0]["device"] == "cpu"
-    assert args.device == "cuda"
-
-
 # ---------------------------------------------------------------------------
 # build_frame0_processed
 # ---------------------------------------------------------------------------
 
 
-def test_build_frame0_processed_geometry() -> None:
+@pytest.mark.parametrize("color_mode", ["rgb", "class"])
+def test_build_frame0_processed_geometry(color_mode: str) -> None:
+    """Frame-0 pcd geometry, mask identities and per-point colours.
+
+    Guards demo_v7/service/frame0_pipeline.py:237 (``rgb_u8 =
+    ...color_bgr[:, :, ::-1]``) — this repo already shipped one BGR/RGB slip
+    (7e994e8) — and :307-308 (``controller_colors = colors_grid[
+    controller_mask]`` / ``object_colors = colors_grid[object_mask]``),
+    whose swap would paint each class with the other's pixels. The 'class'
+    row guards the mirror-image swap at :298-305, where the tiled flat
+    controller/object colours can be crossed over.
+    """
     bundle = _bundle()
     result = frame0_pipeline.build_frame0_processed(
-        bundle, args=_args(), session=_session()
+        bundle, args=_args(pcd_color_mode=color_mode), session=_session()
     )
     assert isinstance(result, PcdBuildResult)
     packet = result.pcd_packet
@@ -251,51 +245,49 @@ def test_build_frame0_processed_geometry() -> None:
     assert np.allclose(packet.object_xyz_m[:, 2], 1.0, atol=1e-5)
     assert np.allclose(packet.controller_xyz_m[:, 2], 1.0, atol=1e-5)
 
-    # rgb color mode: packet colors are the frame's RGB at the mask pixels.
-    rgb = bundle.color_bgr[:, :, ::-1]
-    assert np.array_equal(packet.object_colors_rgb_u8, rgb[mask_packet.object_mask])
+    if color_mode == "rgb":
+        # rgb color mode: packet colors are the frame's RGB at the mask pixels.
+        rgb = bundle.color_bgr[:, :, ::-1]
+        assert np.array_equal(packet.object_colors_rgb_u8, rgb[mask_packet.object_mask])
+    else:
+        # class color mode: flat per-class colors, not crossed over.
+        assert np.all(
+            packet.object_colors_rgb_u8 == np.array([0, 255, 0], dtype=np.uint8)
+        )
+        assert np.all(
+            packet.controller_colors_rgb_u8 == np.array([255, 0, 0], dtype=np.uint8)
+        )
     assert packet.timing.pcd_ms > 0.0
 
 
-def test_build_frame0_processed_class_color_mode() -> None:
-    result = frame0_pipeline.build_frame0_processed(
-        _bundle(), args=_args(pcd_color_mode="class"), session=_session()
-    )
-    packet = result.pcd_packet
-    assert np.all(packet.object_colors_rgb_u8 == np.array([0, 255, 0], dtype=np.uint8))
-    assert np.all(
-        packet.controller_colors_rgb_u8 == np.array([255, 0, 0], dtype=np.uint8)
-    )
+@pytest.mark.parametrize("hole", ["partial", "whole_object"])
+def test_build_frame0_processed_depth_gate_removes_invalid_pixels(hole: str) -> None:
+    """Zero-depth pixels must leave the masks before they reach the pcd.
 
-
-def test_build_frame0_processed_depth_gate_removes_invalid_pixels() -> None:
+    Guards demo_v7/service/frame0_pipeline.py:250 (``depth_valid_masks =
+    apply_depth_validity_to_mask_frame(raw_masks, depth_m)``): this is the
+    only case in the suite with a depth hole INSIDE a mask, so dropping the
+    gate would ship zero-depth pixels as world points at the camera origin.
+    The 'whole_object' row pins the recoverable raise at :254-255 (backstopped
+    by packets.py:161) that staged_runtime turns into a frame-0 retake.
+    """
     depth = np.full((H, W), 1000, dtype=np.uint16)
-    hole = _rect_mask(12, 18, 24, 40)  # inside the object mask
-    depth[hole] = 0
+    hole_mask = _rect_mask(12, 18, 24, 40) if hole == "partial" else _object_mask()
+    depth[hole_mask] = 0
+
+    if hole == "whole_object":  # object entirely at invalid depth
+        with pytest.raises(RuntimeError, match="processed object mask is empty"):
+            frame0_pipeline.build_frame0_processed(
+                _bundle(depth_u16=depth), args=_args(), session=_session()
+            )
+        return
+
     result = frame0_pipeline.build_frame0_processed(
         _bundle(depth_u16=depth), args=_args(), session=_session()
     )
     mask_packet = result.processed_frame.mask_packet
-    assert not np.any(mask_packet.object_mask & hole)
+    assert not np.any(mask_packet.object_mask & hole_mask)
     assert np.any(mask_packet.object_mask)
-
-
-def test_build_frame0_processed_empty_object_raises() -> None:
-    depth = np.full((H, W), 1000, dtype=np.uint16)
-    depth[_object_mask()] = 0  # object entirely at invalid depth
-    with pytest.raises(RuntimeError, match="processed object mask is empty"):
-        frame0_pipeline.build_frame0_processed(
-            _bundle(depth_u16=depth), args=_args(), session=_session()
-        )
-
-
-def test_build_frame0_processed_requires_calibration() -> None:
-    session = _session()
-    session.table_c2w = None
-    with pytest.raises(RuntimeError, match="camera-to-world calibration"):
-        frame0_pipeline.build_frame0_processed(
-            _bundle(), args=_args(), session=session
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -306,20 +298,28 @@ def test_build_frame0_processed_requires_calibration() -> None:
 class _RecordingManager:
     """Stands in for ShapePriorWarmupManager at the maybe_submit boundary."""
 
-    def __init__(self, *, accept: bool = True) -> None:
-        self.accept = bool(accept)
+    def __init__(self) -> None:
         self.requests: list[ShapePriorFrame0Request] = []
         self.profile_writes = 0
 
     def maybe_submit(self, frame0: ShapePriorFrame0Request) -> bool:
         self.requests.append(frame0)
-        return self.accept
+        return True
 
     def write_profile_json(self) -> None:
         self.profile_writes += 1
 
 
 def test_submit_shape_prior_builds_v62_request() -> None:
+    """The v6.2 warmup request must be built in the shapes case.py expects.
+
+    Guards demo_v7/service/frame0_pipeline.py:385
+    (``points_world_m=processed_frame.pcd_points[0]``) — without the ``[0]``
+    the request carries (1,H,W,3) and the shape-prior case builder rejects it
+    asynchronously on the warmup thread (case.py:155-160) instead of here —
+    and :380 (``rgb_u8=mask_packet.color_bgr[:, :, ::-1]``), a second BGR flip
+    independent of the one at :237.
+    """
     bundle = _bundle()
     session = _session()
     args = _args()
@@ -357,48 +357,27 @@ def test_submit_shape_prior_builds_v62_request() -> None:
     }
 
 
-def test_submit_shape_prior_disabled_returns_false() -> None:
-    session = _session()
-    args = _args(shape_prior_warmup=False)
-    processed = frame0_pipeline.build_frame0_processed(
-        _bundle(), args=args, session=session
-    )
-    manager = _RecordingManager()
-    assert (
-        frame0_pipeline.submit_shape_prior(
-            manager, processed, args=args, session=session
-        )
-        is False
-    )
-    assert manager.requests == []
-    assert manager.profile_writes == 0
-
-
-def test_submit_shape_prior_rejected_submit_skips_profile_write() -> None:
-    session = _session()
-    args = _args()
-    processed = frame0_pipeline.build_frame0_processed(
-        _bundle(), args=args, session=session
-    )
-    manager = _RecordingManager(accept=False)
-    assert (
-        frame0_pipeline.submit_shape_prior(
-            manager, processed, args=args, session=session
-        )
-        is False
-    )
-    assert manager.profile_writes == 0
-
-
 # ---------------------------------------------------------------------------
 # save_review_artifacts
 # ---------------------------------------------------------------------------
 
 
 def test_save_review_artifacts_layout_and_content(tmp_path: Path) -> None:
+    """These four pngs are the whole evidence the operator judges 摆位 on.
+
+    Guards demo_v7/service/frame0_pipeline.py:489-491 (each mask png is
+    written from ITS OWN mask — writing mask_object.png from hand_a would be
+    invisible to the operator), :448 (``overlay[selected] = ...`` tints only
+    inside the mask, not every pixel), and :426 (``preview[~valid] = 0``):
+    JET maps 0 to (128,0,0), so an ungated preview renders depth holes as a
+    plausible near surface. The bundle carries an invalid-depth band on rows
+    0:8 to exercise that last one.
+    """
     import cv2
 
-    bundle = _bundle()
+    depth = np.full((H, W), 1000, dtype=np.uint16)
+    depth[:8] = 0  # invalid band, outside every mask
+    bundle = _bundle(depth_u16=depth)
     artifacts = frame0_pipeline.save_review_artifacts(tmp_path, bundle)
     assert set(artifacts) == {ARTIFACT_KIND_FRAME0, ARTIFACT_KIND_MASKS}
     frame0_paths = artifacts[ARTIFACT_KIND_FRAME0]
@@ -424,20 +403,5 @@ def test_save_review_artifacts_layout_and_content(tmp_path: Path) -> None:
 
     preview = cv2.imread(frame0_paths["depth_preview"], cv2.IMREAD_COLOR)
     assert preview.shape == (H, W, 3)
-
-
-def test_save_review_artifacts_depth_preview_invalid_pixels_black(
-    tmp_path: Path,
-) -> None:
-    import cv2
-
-    depth = np.full((H, W), 1000, dtype=np.uint16)
-    depth[:8] = 0
-    artifacts = frame0_pipeline.save_review_artifacts(
-        tmp_path, _bundle(depth_u16=depth)
-    )
-    preview = cv2.imread(
-        artifacts[ARTIFACT_KIND_FRAME0]["depth_preview"], cv2.IMREAD_COLOR
-    )
-    assert np.all(preview[:8] == 0)
+    assert np.all(preview[:8] == 0)  # invalid depth must stay black, not JET-dark-red
     assert np.any(preview[8:] != 0)

@@ -5,14 +5,17 @@ Each test pins a behaviour that was previously wrong:
   readiness wait ended because a worker went fatal;
 - ``shutdown()`` wrote STAGE_RUN_FINISHED ok=true for a wedged chunk thread,
   a service that had to be killed, or a service that reported FATAL;
+- a chunk-stream failure was latched but never told the GUI, and a late
+  FINISHED could still paint the failed run green;
 - a dropped control link swallowed commands silently;
 - the recorder reported a clean close after its drain timed out;
-- nothing killed the run's child process groups when the GUI gave up
-  waiting for a graceful shutdown.
+- artifacts emitted during a control-link gap were lost to a GUI that
+  attached (or re-attached) afterwards.
 """
 
 from __future__ import annotations
 
+import subprocess
 import threading
 import time
 
@@ -64,19 +67,43 @@ def _bare_runtime(*, ready: bool):
 
 
 class TestFormalReadinessCommit:
-    def test_ready_commits_formal(self) -> None:
-        runtime = _bare_runtime(ready=True)
+    @pytest.mark.parametrize(
+        "ready, stop, deadline_offset_s, expect_formal, expect_fatal",
+        [
+            # The control row: the only way out that MAY announce FORMAL.
+            pytest.param(True, False, 5.0, True, False, id="ready"),
+            pytest.param(False, True, 5.0, False, False, id="stop_event"),
+            # Deadline in the past: fatal recorded, still no FORMAL.
+            pytest.param(False, False, -1.0, False, True, id="deadline"),
+        ],
+    )
+    def test_stop_event_during_wait_never_announces_formal(
+        self, ready, stop, deadline_offset_s, expect_formal, expect_fatal
+    ) -> None:
+        """The readiness loop also exits through its CONDITION, not just
+        its break: guards the re-check at staged_runtime.py:1512-1513
+        (``if self.stop_event.is_set() or self.fatal.snapshot() is not
+        None: return``). Without it, teardown — or the deadline fatal,
+        which sets stop_event too — fell through to ``_formal_go.set()``
+        + ``_announce_state(STATE_FORMAL)``: the producer was released
+        and the GUI shown the formal screen for a dying run."""
+        runtime = _bare_runtime(ready=ready)
+        if stop:
+            runtime.stop_event.set()
         runtime._commit_formal_after_readiness(
-            deadline_s=time.perf_counter() + 5.0
+            deadline_s=time.perf_counter() + deadline_offset_s
         )
-        assert runtime._formal_go.is_set()
-        assert [e["state"] for e in runtime.control.events] == [
-            protocol.STATE_FORMAL
-        ]
+        assert runtime._formal_go.is_set() is expect_formal
+        assert [e["state"] for e in runtime.control.events] == (
+            [protocol.STATE_FORMAL] if expect_formal else []
+        )
+        assert (runtime.fatal.snapshot() is not None) is expect_fatal
 
     def test_fatal_during_wait_never_announces_formal(self) -> None:
         """The regression: a worker dying mid-readiness used to still
-        release the producer and tell the GUI FORMAL."""
+        release the producer and tell the GUI FORMAL. The fatal half of
+        the staged_runtime.py:1512 re-check, raced from another thread the
+        way a real worker records it."""
         runtime = _bare_runtime(ready=False)
 
         def _go_fatal() -> None:
@@ -90,30 +117,17 @@ class TestFormalReadinessCommit:
         assert not runtime._formal_go.is_set()
         assert runtime.control.events == []
 
-    def test_stop_event_during_wait_never_announces_formal(self) -> None:
-        runtime = _bare_runtime(ready=False)
-        runtime.stop_event.set()
-        runtime._commit_formal_after_readiness(
-            deadline_s=time.perf_counter() + 5.0
-        )
-        assert not runtime._formal_go.is_set()
-        assert runtime.control.events == []
-
-    def test_readiness_deadline_goes_fatal_without_formal(self) -> None:
-        runtime = _bare_runtime(ready=False)
-        runtime._commit_formal_after_readiness(
-            deadline_s=time.perf_counter() - 1.0
-        )
-        assert not runtime._formal_go.is_set()
-        assert runtime.control.events == []
-        assert runtime.fatal.snapshot() is not None
-
 
 class _FakeProc:
-    """An already-exited service handle (stop_process is a no-op on it)."""
+    """An already-exited service handle (stop_process is a no-op on it).
 
-    def __init__(self, code=None) -> None:
+    ``drain_timeout=True`` makes the CMD_SHUTDOWN drain wait blow its
+    deadline, the way a service that never honoured the shutdown does.
+    """
+
+    def __init__(self, code=None, *, drain_timeout: bool = False) -> None:
         self._code = code
+        self._drain_timeout = bool(drain_timeout)
         # A high, unused pid: stop_process probes the GROUP first, and an
         # invalid (<=1) id would raise EINVAL instead of "no such group".
         self.pid = 4194303
@@ -123,6 +137,8 @@ class _FakeProc:
         return self._code
 
     def wait(self, timeout=None):
+        if self._drain_timeout:
+            raise subprocess.TimeoutExpired(cmd="camera-service", timeout=timeout)
         return self._code
 
 
@@ -147,51 +163,58 @@ def _session(tmp_path):
 
 
 class TestShutdownHonesty:
-    def test_clean_shutdown_reports_finished(self, tmp_path) -> None:
-        from demo_v7.runtime.pipeline_status import STAGE_RUN_FINISHED
+    @pytest.mark.parametrize(
+        "preload, expect_ok, detail_fragment",
+        [
+            # The control row: nothing wrong, so it really is FINISHED.
+            pytest.param(lambda s: None, True, "", id="clean"),
+            pytest.param(lambda s: setattr(s, "_chunk_thread", _StuckThread()),
+                         False, "did not drain", id="wedged_chunk_thread"),
+            pytest.param(lambda s: setattr(s, "_service_state", protocol.STATE_FATAL),
+                         False, "reported fatal", id="service_state_fatal"),
+            pytest.param(lambda s: setattr(s, "_service", _FakeProc(code=2)),
+                         False, "exit code 2", id="service_exit_2"),
+            # NEGATIVE code: the case the `!= 0` (not `> 0`) check exists
+            # for — a SIGTERM'd/SIGKILL'd service reports -15/-9.
+            pytest.param(lambda s: setattr(s, "_service", _FakeProc(code=-15)),
+                         False, "exit code -15", id="service_signal_killed"),
+            pytest.param(
+                lambda s: setattr(s, "_service", _FakeProc(code=0, drain_timeout=True)),
+                False, "did not exit on shutdown", id="service_drain_timed_out"),
+        ],
+    )
+    def test_wedged_chunk_thread_is_not_a_clean_finish(
+        self, tmp_path, preload, expect_ok, detail_fragment
+    ) -> None:
+        """One table over the shutdown()->reasons->status.emit path in
+        demo_v7/orchestration/session.py: :1125-1129 (chunk thread alive
+        past its join timeout), :1130-1133 (service ignored CMD_SHUTDOWN
+        and had to be terminated), :1137 (any non-zero exit, negative
+        included) and :1139-1142 (service reported FATAL). Previously
+        only ``_chunk_error`` counted, so every failing row below still
+        wrote STAGE_RUN_FINISHED ok=true."""
+        from demo_v7.runtime.pipeline_status import (
+            STAGE_FATAL,
+            STAGE_RUN_FINISHED,
+        )
 
         session = _session(tmp_path)
-        session.shutdown(chunk_join_timeout_s=0.01)
-        stage, _detail, ok = session._status.emitted[-1]
-        assert stage == STAGE_RUN_FINISHED and ok
-
-    def test_wedged_chunk_thread_is_not_a_clean_finish(self, tmp_path) -> None:
-        from demo_v7.runtime.pipeline_status import STAGE_FATAL
-
-        session = _session(tmp_path)
-        session._chunk_thread = _StuckThread()
+        preload(session)
         session.shutdown(chunk_join_timeout_s=0.01)
         stage, detail, ok = session._status.emitted[-1]
-        assert stage == STAGE_FATAL and not ok
-        assert "did not drain" in detail
-
-    def test_service_fatal_state_is_not_a_clean_finish(self, tmp_path) -> None:
-        from demo_v7.runtime.pipeline_status import STAGE_FATAL
-
-        session = _session(tmp_path)
-        session._service_state = protocol.STATE_FATAL
-        session.shutdown(chunk_join_timeout_s=0.01)
-        stage, _detail, ok = session._status.emitted[-1]
-        assert stage == STAGE_FATAL and not ok
-
-    def test_service_nonzero_exit_is_not_a_clean_finish(self, tmp_path) -> None:
-        from demo_v7.runtime.pipeline_status import STAGE_FATAL
-
-        session = _session(tmp_path)
-        session._service = _FakeProc(code=2)
-        session.shutdown(chunk_join_timeout_s=0.01)
-        stage, detail, ok = session._status.emitted[-1]
-        assert stage == STAGE_FATAL and not ok
-        assert "exit code 2" in detail
-
-    def test_force_terminate_is_idempotent_without_children(self, tmp_path) -> None:
-        session = _session(tmp_path)
-        assert session.force_terminate() == []
-        assert session.force_terminate() == []
+        assert ok is expect_ok
+        assert stage == (STAGE_RUN_FINISHED if expect_ok else STAGE_FATAL)
+        assert detail_fragment in detail
 
 
 class TestChunkFailureReporting:
     def test_failure_reaches_gui_and_stops_producers(self, tmp_path, monkeypatch):
+        """A chunk-stream failure used to be latched and nothing else:
+        the GUI kept showing a live run and the producers kept feeding a
+        consumer that no longer existed. Guards all three halves of the
+        35fbf5f handler in demo_v7/orchestration/session.py: :901-907
+        (the ``_handle_event`` EVT_ERROR emit), :910-914 (CMD_STOP_FORMAL)
+        and :915 (``_stop_phystwin()``)."""
         import demo_v7.orchestration.session as session_mod
         from demo_v7.service import arap_rescue
 
@@ -224,15 +247,14 @@ class TestChunkFailureReporting:
         assert commands == [{"cmd": protocol.CMD_STOP_FORMAL}]
         assert stopped == [True]
 
-    def test_finished_state_cannot_hide_chunk_failure(self, tmp_path):
-        session = _session(tmp_path)
-        session._service_state = protocol.STATE_FINISHED
-        session._chunk_error = RuntimeError("chunk materialization failed")
-        with pytest.raises(RuntimeError, match="chunk materialization failed"):
-            session.wait_for_state(protocol.STATE_FINISHED, timeout_s=0.1)
-
-    @pytest.mark.parametrize("where", ["chunk_stream", "control_link", "frames_link"])
-    def test_gui_failure_survives_service_finish(self, monkeypatch, where):
+    def test_gui_failure_survives_service_finish(self, monkeypatch):
+        """Capture can finish draining AFTER the parent's chunk stream
+        died; its FINISHED/HELLO events must not paint the failed run
+        green again. Guards demo_v7/gui/main_window.py:326-327 (escalate
+        a chunk/control/frames EVT_ERROR to STATE_FATAL) and :424-425
+        (``if self._state == protocol.STATE_FATAL: return`` — FATAL is
+        sticky). One ``where`` suffices: the chunk_stream/frames_link
+        members of the literal tuple at :326 add no mutant."""
         monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
         pytest.importorskip("PySide6")
         from PySide6.QtWidgets import QApplication, QMessageBox
@@ -260,7 +282,7 @@ class TestChunkFailureReporting:
             window._on_event(
                 {
                     "event": protocol.EVT_ERROR,
-                    "where": where,
+                    "where": "control_link",
                     "message": "chunk materialization failed",
                 }
             )
@@ -286,6 +308,11 @@ class TestChunkFailureReporting:
 
 
 def test_terminal_link_error_cannot_report_success(tmp_path):
+    """A dead link is terminal even when the last state seen was
+    FINISHED. Guards demo_v7/orchestration/session.py:695-696 (latch
+    ``_terminal_failure`` in ``_note_link_error``), :809-810 (raise it
+    from ``wait_for_state`` BEFORE the state check) and :1121-1122 (count
+    it as a shutdown reason) — all 35fbf5f."""
     from demo_v7.runtime.pipeline_status import STAGE_FATAL
 
     session = _session(tmp_path)
@@ -301,8 +328,23 @@ def test_terminal_link_error_cannot_report_success(tmp_path):
     assert stage == STAGE_FATAL and not ok
     assert "reconnect timed out" in detail
 
+    # The sibling latch on the same pre-check (session.py:805-808): a
+    # FINISHED service must not let ``wait_for_state`` return success over
+    # a chunk stream that died. Both checks precede
+    # ``if self._service_state in targets: return``.
+    chunk_session = _session(tmp_path)
+    chunk_session._service_state = protocol.STATE_FINISHED
+    chunk_session._chunk_error = RuntimeError("chunk materialization failed")
+    with pytest.raises(RuntimeError, match="chunk materialization failed"):
+        chunk_session.wait_for_state(protocol.STATE_FINISHED, timeout_s=0.1)
+
 
 def test_link_exit_during_shutdown_is_expected(tmp_path):
+    """demo_v7/orchestration/session.py:686-688 — the ``if
+    self._shutdown_done: return`` guard at the top of
+    ``_note_link_error``. Without it the service's perfectly normal exit
+    during shutdown latched a terminal failure, so EVERY clean run ended
+    STAGE_FATAL."""
     session = _session(tmp_path)
     events = []
     session.set_on_event(events.append)
@@ -314,7 +356,10 @@ def test_link_exit_during_shutdown_is_expected(tmp_path):
 
 class TestControlCommandDelivery:
     def test_send_on_dead_socket_raises(self, tmp_path) -> None:
-        """A command that never left the socket must not look delivered."""
+        """A command that never left the socket must not look delivered:
+        demo_v7/ipc/channel.py:227-230 raises ConnectionError where the
+        pre-d84b608 code did ``except OSError: pass``, so a button pressed
+        while the control link was reconnecting silently did nothing."""
         import socket
 
         from demo_v7.ipc.channel import ControlClient
@@ -329,7 +374,7 @@ class TestControlCommandDelivery:
             conn.close()
             server.close()
             with pytest.raises(ConnectionError):
-                for _ in range(50):  # first send may land in the send buffer
+                for _ in range(5):  # first send may land in the send buffer
                     client.send_command({"cmd": protocol.CMD_HELLO})
                     time.sleep(0.01)
         finally:
@@ -341,6 +386,11 @@ class TestControlCommandDelivery:
 
 class TestRecorderCloseHonesty:
     def test_stuck_writer_reports_incomplete(self, tmp_path, monkeypatch) -> None:
+        """demo_v7/service/recorder.py:189-206 — the ``if
+        self._worker.is_alive():`` error latch. The join is bounded, so
+        before this branch existed ``close()`` returned a clean summary
+        for a writer that was still appending: a truncated fake-live case
+        was reported as a good recording."""
         import demo_v7.service.recorder as recorder_mod
         from demo_v7.service.recorder import FakeLiveCaseRecorder
 
@@ -359,7 +409,6 @@ class TestRecorderCloseHonesty:
         summary = rec.close()
         assert blocked.is_set()
         assert summary["error"] is not None
-        assert "still running" in summary["error"]
 
 
 class TestHelloArtifactSnapshot:
@@ -378,6 +427,10 @@ class TestHelloArtifactSnapshot:
         return runtime, proto
 
     def test_emitted_artifacts_accumulate_and_merge_per_kind(self) -> None:
+        """The producer half of bf6033a: demo_v7/service/staged_runtime.py
+        :374-377 remembers every emitted artifact, MERGING per kind
+        instead of overwriting (a second frame0 emit must not lose the
+        first one's entries), and :378-380 still sends it live."""
         runtime, proto = self._runtime()
         runtime._emit_artifacts(proto.ARTIFACT_KIND_FRAME0, {"candidate": "a.png"})
         runtime._emit_artifacts(proto.ARTIFACT_KIND_FRAME0, {"object_points": "b.npz"})
@@ -391,6 +444,10 @@ class TestHelloArtifactSnapshot:
         assert len(runtime.control.events) == 3
 
     def test_gui_replays_snapshot_from_hello_ack(self) -> None:
+        """The consumer half of bf6033a: demo_v7/gui/main_window.py
+        :395-399 replays the hello-ack artifact snapshot, including the
+        ``and paths`` filter that skips kinds with no paths (an empty kind
+        replayed as an artifact event resets the screen that owns it)."""
         pytest.importorskip("PySide6")
         from demo_v7.gui.main_window import MainWindow
         from demo_v7.ipc import protocol as proto

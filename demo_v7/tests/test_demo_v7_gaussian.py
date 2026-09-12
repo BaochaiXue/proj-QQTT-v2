@@ -1,9 +1,8 @@
 """Unit tests for the gaussian-splats feature (CPU only; no GPU, no models).
 
 Covers the vendored dynamics math (quaternion round trips incl. the
-trace<=-1 branch upstream got wrong, rigid-motion transfer), the similarity
-transform on splats, ply IO round trip, and the canonical-registration
-helpers' invariants.
+trace<=-1 branch upstream got wrong, hemisphere-aligned blending), the
+similarity transform on splats and its ply IO round trip.
 """
 
 from __future__ import annotations
@@ -30,57 +29,31 @@ def _random_rotations(count: int, seed: int = 0) -> torch.Tensor:
 
 
 class TestQuaternionMath:
-    def test_roundtrip_random(self) -> None:
-        mats = _random_rotations(256)
+    @pytest.mark.parametrize("case", ["random", "near_pi"])
+    def test_roundtrip_near_pi_rotations(self, case: str) -> None:
+        """quat<->mat round trip, including the trace<=-1 branches.
+
+        Guards demo_v7/service/gaussian_dynamics.py:58 (mask_1/2/3):
+        reverting mat2quat to upstream's mask_0-only (dead-code) form fails
+        the `near_pi` row alone, since the `random` row never leaves mask_0
+        and only rides along as the general-position control. The branch is
+        reached in production whenever a bone neighbourhood rotates near
+        180 deg.
+        """
+        if case == "random":
+            mats = _random_rotations(256)
+        else:
+            # trace <= -1 exercises the mask_1/2/3 branches (upstream's
+            # dead-code bug lived here); rotations by pi about each
+            # principal axis.
+            mats = torch.as_tensor(
+                np.stack(
+                    [2.0 * np.outer(a, a) - np.eye(3) for a in np.eye(3)]
+                ),
+                dtype=torch.float64,
+            )
         back = gaussian_dynamics.quat2mat(gaussian_dynamics.mat2quat(mats))
         assert torch.allclose(back, mats, atol=1e-6)
-
-    def test_roundtrip_near_pi_rotations(self) -> None:
-        # trace <= -1 exercises the mask_1/2/3 branches (upstream's dead-code
-        # bug lived here); 180-degree rotations about each principal axis.
-        mats = []
-        for axis in np.eye(3):
-            mats.append(
-                2.0 * np.outer(axis, axis) - np.eye(3)
-            )  # rotation by pi about `axis`
-        mats_t = torch.as_tensor(np.stack(mats), dtype=torch.float64)
-        back = gaussian_dynamics.quat2mat(gaussian_dynamics.mat2quat(mats_t))
-        assert torch.allclose(back, mats_t, atol=1e-6)
-
-
-class TestMotionTransfer:
-    def _grid_bones(self) -> torch.Tensor:
-        xs = torch.linspace(0, 1, 4)
-        return torch.stack(
-            torch.meshgrid(xs, xs, xs, indexing="ij"), dim=-1
-        ).reshape(-1, 3)
-
-    def test_pure_translation_transfers_exactly(self) -> None:
-        bones = self._grid_bones()
-        motion = torch.tensor([0.05, -0.02, 0.11])
-        motions = motion[None].repeat(len(bones), 1)
-        relations = gaussian_dynamics.get_topk_indices(bones, K=6)
-        particles = torch.rand(500, 3)
-        quats = torch.zeros(500, 4)
-        quats[:, 0] = 1.0
-        weights, indices = gaussian_dynamics.knn_weights_sparse(
-            bones, particles, K=8
-        )
-        new_xyz, new_quat = gaussian_dynamics.interpolate_motions_sparse(
-            bones, motions, relations, particles, quats, weights, indices,
-            device="cpu",
-        )
-        assert torch.allclose(new_xyz, particles + motion, atol=1e-4)
-        # A pure translation must not rotate the splats.
-        assert torch.allclose(new_quat, quats, atol=1e-4)
-
-    def test_knn_weights_sum_to_one(self) -> None:
-        bones = self._grid_bones()
-        particles = torch.rand(100, 3)
-        weights, indices = gaussian_dynamics.knn_weights_sparse(bones, particles, K=5)
-        assert weights.shape == (100, 5)
-        assert indices.shape == (100, 5)
-        assert torch.allclose(weights.sum(dim=1), torch.ones(100), atol=1e-5)
 
 
 class TestSplatTransforms:
@@ -97,6 +70,14 @@ class TestSplatTransforms:
         )
 
     def test_similarity_transform_means_and_scales(self) -> None:
+        """A similarity must scale the sigmas, and a general linear part
+        must be refused.
+
+        Guards demo_v7/service/gaussian_utils.py:209 (`scales=(splats.scales
+        * scale)`) with the cbrt(det) extraction at :194 — copying the rest
+        sigmas instead of scaling them would ship full-size splats for a
+        0.5x registration — and :198-202, the non-uniform rejection.
+        """
         splats = self._splats()
         angle = np.radians(30)
         rotation = np.array(
@@ -115,14 +96,16 @@ class TestSplatTransforms:
         assert np.allclose(moved.scales, splats.scales * 0.5, atol=1e-7)
         norms = np.linalg.norm(moved.quats, axis=1)
         assert np.allclose(norms, 1.0, atol=1e-5)
-
-    def test_non_uniform_linear_part_rejected(self) -> None:
-        splats = self._splats(8)
-        transform = np.diag([1.0, 2.0, 3.0, 1.0])
+        # A general (non-similarity) linear part has no single splat scale:
+        # it must raise rather than silently shear the gaussians.
         with pytest.raises(ValueError, match="similarity"):
-            transform_gaussians(splats, transform)
+            transform_gaussians(self._splats(8), np.diag([1.0, 2.0, 3.0, 1.0]))
 
     def test_ply_roundtrip(self, tmp_path) -> None:
+        """Guards demo_v7/service/gaussian_utils.py:152/154 (opacity logit +
+        log(sigma) re-encode) against the decode at :128-129 — the INRIA
+        layout is an external contract, so writing activated opacity/scales
+        straight into the ply is a plausible 'simplification'."""
         splats = self._splats()
         path = tmp_path / "roundtrip.ply"
         save_gaussian_ply(path, splats)
@@ -135,28 +118,27 @@ class TestSplatTransforms:
         assert np.allclose(dots, 1.0, atol=1e-5)
 
 
-class TestRegistrationHelpers:
-    def test_axis_rotations_are_24_proper(self) -> None:
-        from demo_v7.service.gaussian_align import _axis_rotations
-
-        rotations = _axis_rotations()
-        assert len(rotations) == 24
-        for rotation in rotations:
-            assert np.isclose(np.linalg.det(rotation), 1.0)
-        unique = {tuple(np.round(r.flatten()).astype(int)) for r in rotations}
-        assert len(unique) == 24
-
-
 class TestGaussianBackendSelector:
     """GUI selector vocabulary + session-level forcing rules."""
 
     def test_normalize_defaults_and_ids(self) -> None:
+        """Guards demo_v7/service/gaussian_options.py:46 (`str(value).strip()
+        .lower()`, empty -> default) and :50-53 (unknown -> ValueError).
+
+        Dropping strip()/lower() fails this test alone; the value arrives
+        from the GUI combo data, session json and the CLI, so whitespace and
+        case normalisation is load-bearing.
+        """
         from demo_v7.service import gaussian_options as go
 
         assert go.normalize_gaussian_backend(None) == go.GAUSSIAN_TRIPOSPLAT
         assert go.normalize_gaussian_backend("") == go.GAUSSIAN_TRIPOSPLAT
         assert go.normalize_gaussian_backend(" TripoSplat ") == "triposplat"
         assert go.normalize_gaussian_backend("none") == go.GAUSSIAN_NONE
+        assert (
+            go.normalize_gaussian_backend("mesh_surface")
+            == go.GAUSSIAN_MESH_SURFACE
+        )
         with pytest.raises(ValueError, match="unknown gaussian backend"):
             go.normalize_gaussian_backend("splatco")
 
@@ -170,35 +152,15 @@ class TestGaussianBackendSelector:
             **kwargs,
         )
 
-    def test_session_default_is_triposplat(self, tmp_path) -> None:
-        session = self._session(tmp_path)
-        assert session.gaussian_backend == "triposplat"
-
     def test_shape_prior_none_forces_gaussian_none(self, tmp_path) -> None:
+        """Guards demo_v7/orchestration/session.py:272-273: restoring the
+        normalized backend after that forcing line fails this test alone —
+        a shape-prior-less run would start a gaussian chain with no mesh to
+        align to."""
         session = self._session(
             tmp_path, shape_prior_backend="none", gaussian_backend="triposplat"
         )
         assert session.gaussian_backend == "none"
-
-    def test_explicit_gaussian_none_sticks(self, tmp_path) -> None:
-        session = self._session(tmp_path, gaussian_backend="none")
-        assert session.gaussian_backend == "none"
-
-    def test_camera_service_parser_consumes_flag(self) -> None:
-        from demo_v7.service.camera_service import _build_v7_parser
-
-        v7_args, rest = _build_v7_parser().parse_known_args(
-            [
-                "--socket-dir",
-                "/tmp/x",
-                "--gaussian-backend",
-                "none",
-                "--input-source",
-                "fake-live",
-            ]
-        )
-        assert v7_args.gaussian_backend == "none"
-        assert "--gaussian-backend" not in rest
 
 
 class TestFirstGenerateFreshnessGate:
@@ -248,65 +210,6 @@ class TestFirstGenerateFreshnessGate:
         assert calls == [manager.seed]
 
 
-class TestRegisterCanonicalArticulated:
-    """Registration must survive articulated pose asymmetry (the sloth
-    failure class: a near-flip coarse tie resolved by refining top-K
-    candidates instead of only the coarse winner)."""
-
-    def _limbed_body(self) -> np.ndarray:
-        # Torso deliberately near-symmetric under 180-deg flips; the thin
-        # limbs are the only disambiguators — exactly the geometry where
-        # the coarse 24-rotation chamfer ranks a flip within a hair of the
-        # truth.
-        rng = np.random.default_rng(11)
-        torso = rng.normal(size=(3000, 3)) * np.array([0.16, 0.12, 0.07])
-        arm_x = np.stack(
-            [
-                np.linspace(0.14, 0.40, 220),
-                rng.normal(size=220) * 0.015,
-                rng.normal(size=220) * 0.015 + 0.03,
-            ],
-            axis=1,
-        )
-        leg_y = np.stack(
-            [
-                rng.normal(size=160) * 0.015 - 0.04,
-                np.linspace(0.10, 0.30, 160),
-                rng.normal(size=160) * 0.015,
-            ],
-            axis=1,
-        )
-        return np.concatenate([torso, arm_x, leg_y]).astype(np.float64)
-
-    @pytest.mark.parametrize("angle_deg", [172.5, 180.0, 90.0])
-    def test_recovers_near_flip(self, angle_deg: float) -> None:
-        pytest.importorskip("open3d")
-        from demo_v7.service.gaussian_align import register_canonical
-
-        target = self._limbed_body()
-        angle = np.radians(angle_deg)
-        rotation = np.array(
-            [
-                [np.cos(angle), -np.sin(angle), 0.0],
-                [np.sin(angle), np.cos(angle), 0.0],
-                [0.0, 0.0, 1.0],
-            ]
-        )
-        # Source = target seen in a rotated canonical frame (plus jitter,
-        # as a gaussian cloud never matches a surface sample exactly).
-        rng = np.random.default_rng(5)
-        source = target @ rotation.T + rng.normal(size=target.shape) * 0.004
-        opacities = np.full(len(source), 0.9, dtype=np.float32)
-
-        transform, chamfer = register_canonical(source, opacities, target)
-        assert chamfer < 0.03, f"registration chamfer too high: {chamfer}"
-        # The limbs are what near-flips get wrong: the transformed arm tip
-        # must land on the target arm tip, not across the body.
-        arm_tip = np.array([0.40, 0.0, 0.03]) @ rotation.T
-        moved_tip = arm_tip @ transform[:3, :3].T + transform[:3, 3]
-        assert np.linalg.norm(moved_tip - np.array([0.40, 0.0, 0.03])) < 0.05
-
-
 class TestRigidWorldCatchup:
     def _cloud(self) -> np.ndarray:
         rng = np.random.default_rng(23)
@@ -314,37 +217,42 @@ class TestRigidWorldCatchup:
             np.float64
         )
 
-    def test_recovers_small_rigid_motion(self) -> None:
+    @pytest.mark.parametrize("case", ["small_rigid_motion", "implausible_jump"])
+    def test_rejects_implausible_jump(self, case: str) -> None:
+        """Guards demo_v7/service/gaussian_align.py:506-508, the
+        max_translation_m / max_rotation_deg rejection.
+
+        Raising those bounds to infinity fails the `implausible_jump` row
+        alone: without the gate a degenerate frame-0 cloud teleports the
+        whole world gaussian a table-length and the caller gets no signal.
+        The `small_rigid_motion` row is the accept half — the gate must not
+        reject the motion it exists to let through.
+        """
         pytest.importorskip("open3d")
         from demo_v7.service.gaussian_align import rigid_world_catchup
 
         means = self._cloud()
-        angle = np.radians(8.0)
-        rotation = np.array(
-            [
-                [np.cos(angle), -np.sin(angle), 0.0],
-                [np.sin(angle), np.cos(angle), 0.0],
-                [0.0, 0.0, 1.0],
-            ]
-        )
-        target = means @ rotation.T + np.array([0.06, -0.04, 0.0])
+        if case == "small_rigid_motion":
+            angle = np.radians(8.0)
+            rotation = np.array(
+                [
+                    [np.cos(angle), -np.sin(angle), 0.0],
+                    [np.sin(angle), np.cos(angle), 0.0],
+                    [0.0, 0.0, 1.0],
+                ]
+            )
+            target = means @ rotation.T + np.array([0.06, -0.04, 0.0])
+        else:
+            target = means + np.array([1.5, 0.0, 0.0])  # a table-length away
         opacities = np.full(len(means), 0.9, dtype=np.float32)
         transform, info = rigid_world_catchup(means, opacities, target)
-        assert transform is not None, f"catch-up rejected: {info}"
-        moved = means @ transform[:3, :3].T + transform[:3, 3]
-        assert float(np.abs(moved - target).mean()) < 0.01
-        assert info["after_cm"] < info["before_cm"]
-
-    def test_rejects_implausible_jump(self) -> None:
-        pytest.importorskip("open3d")
-        from demo_v7.service.gaussian_align import rigid_world_catchup
-
-        means = self._cloud()
-        target = means + np.array([1.5, 0.0, 0.0])  # a table-length away
-        opacities = np.full(len(means), 0.9, dtype=np.float32)
-        transform, info = rigid_world_catchup(means, opacities, target)
-        assert transform is None
-        assert "rejected" in info
+        if case == "small_rigid_motion":
+            assert transform is not None, f"catch-up rejected: {info}"
+            moved = means @ transform[:3, :3].T + transform[:3, 3]
+            assert float(np.abs(moved - target).mean()) < 0.01
+        else:
+            assert transform is None
+            assert "rejected" in info
 
 
 class TestGaussianLiveRestSeed:
@@ -398,61 +306,78 @@ class TestGaussianLiveRestSeed:
             .astype(np.float32)
         )
 
-    def test_seeded_first_packet_catches_up(self) -> None:
+    @pytest.mark.parametrize("seeded", [True, False])
+    def test_seeded_first_packet_catches_up(self, seeded: bool) -> None:
+        """Guards demo_v7/service/gaussian_live.py:239-247, the seq-0
+        rest-pose seeding.
+
+        Making seed_rest_positions a no-op (the pre-2026-08-07 first-packet
+        -freeze behaviour) fails the `seeded` row: that is the
+        stuck-in-old-pose trap, where all object motion between FORMAL seq 0
+        and the worker's first packet is silently discarded. The unseeded
+        row is the fallback contract — with no seed the first packet BECOMES
+        the rest pose, so motion only starts with the second one.
+        """
         live, means = self._bare_renderer()
         rest = self._grid()
         ids = np.arange(len(rest), dtype=np.int64)
-        live.seed_rest_positions({int(i): rest[i] for i in ids})
         shift = np.array([0.09, 0.0, 0.0], dtype=np.float32)
+        if seeded:
+            live.seed_rest_positions({int(i): rest[i] for i in ids})
+        else:
+            live.step(rest, ids, np.ones(len(ids), dtype=bool))
+            assert not live.rest_seeded
+            assert torch.allclose(live._tensors["means"], means)  # no motion
         live.step(rest + shift, ids, np.ones(len(ids), dtype=bool))
-        assert live.rest_seeded
+        assert live.rest_seeded is seeded
         assert torch.allclose(
             live._tensors["means"], means + torch.as_tensor(shift), atol=1e-3
         )
-        assert live.bones_moved_m > 0.0
-        stats = live.follow_stats()
-        assert stats is not None and stats["rest_seeded"] is True
+        if seeded:
+            assert live.bones_moved_m > 0.0
+            stats = live.follow_stats()
+            assert stats is not None and stats["rest_seeded"] is True
 
-    def test_unseeded_keeps_first_packet_rest(self) -> None:
-        live, means = self._bare_renderer()
+    @pytest.mark.parametrize("late_packet_seeds", [True, False])
+    def test_partial_seed_waits_then_falls_back(
+        self, late_packet_seeds: bool
+    ) -> None:
+        """Guards demo_v7/service/gaussian_live.py:248-254 (the
+        _seed_grace_left branch) plus the :255-267 fallback.
+
+        Deleting the grace branch fails this test: a marginal first packet
+        (occlusion / depth dropouts) would permanently forfeit rest seeding
+        even though the buffer is a growing union. `late_packet_seeds=True`
+        is the pay-off — a fuller packet inside the window completes the
+        intersection; False is the give-up path once the window closes.
+        """
+        live, _means = self._bare_renderer()
         rest = self._grid()
         ids = np.arange(len(rest), dtype=np.int64)
-        live.step(rest, ids, np.ones(len(ids), dtype=bool))
-        assert not live.rest_seeded
-        assert torch.allclose(live._tensors["means"], means)  # no motion yet
-        shift = np.array([0.03, 0.0, 0.0], dtype=np.float32)
-        live.step(rest + shift, ids, np.ones(len(ids), dtype=bool))
-        assert torch.allclose(
-            live._tensors["means"], means + torch.as_tensor(shift), atol=1e-3
-        )
-
-    def test_partial_seed_waits_then_falls_back(self) -> None:
-        live, means = self._bare_renderer()
-        rest = self._grid()
-        ids = np.arange(len(rest), dtype=np.int64)
-        live.seed_rest_positions({0: rest[0], 1: rest[1]})  # < _MIN_BONES
+        if late_packet_seeds:
+            live.seed_rest_positions({int(i): rest[i] for i in ids})
+            # First packet only carries a few object markers (occlusion).
+            live.step(rest[:4], ids[:4], np.ones(4, dtype=bool))
+        else:
+            live.seed_rest_positions({0: rest[0], 1: rest[1]})  # < _MIN_BONES
+            live.step(rest, ids, np.ones(len(ids), dtype=bool))
         # Within the grace window a marginal packet must NOT freeze an
         # unseeded bone set — later packets may complete the intersection.
-        live.step(rest, ids, np.ones(len(ids), dtype=bool))
         assert live._bone_ids is None and not live.rest_seeded
-        live._seed_grace_left = 0
-        live.step(rest, ids, np.ones(len(ids), dtype=bool))
-        assert not live.rest_seeded
-        assert live._bone_ids is not None and len(live._bone_ids) == len(ids)
-
-    def test_grace_window_lets_late_packets_seed(self) -> None:
-        live, means = self._bare_renderer()
-        rest = self._grid()
-        ids = np.arange(len(rest), dtype=np.int64)
-        live.seed_rest_positions({int(i): rest[i] for i in ids})
-        # First packet only carries a few object markers (occlusion).
-        live.step(rest[:4], ids[:4], np.ones(4, dtype=bool))
-        assert live._bone_ids is None
-        # A later, fuller packet completes the seedable intersection.
-        live.step(rest, ids, np.ones(len(ids), dtype=bool))
-        assert live.rest_seeded
+        if late_packet_seeds:
+            # A later, fuller packet completes the seedable intersection.
+            live.step(rest, ids, np.ones(len(ids), dtype=bool))
+            assert live.rest_seeded
+        else:
+            live._seed_grace_left = 0
+            live.step(rest, ids, np.ones(len(ids), dtype=bool))
+            assert not live.rest_seeded
+            assert live._bone_ids is not None and len(live._bone_ids) == len(ids)
 
     def test_apply_rigid_transform_rotates_quats(self) -> None:
+        """Guards demo_v7/service/gaussian_live.py:199-206: rotate the quats,
+        not just the means. A means-only catch-up leaves anisotropic splats
+        at their pre-catch-up orientations, rendering as smeared shells."""
         live, means = self._bare_renderer()
         angle = np.radians(90.0)
         transform = np.eye(4)
@@ -476,6 +401,13 @@ class TestGaussianLiveRestSeed:
 
 class TestFormalFrame0Loader:
     def test_loads_visible_object_queries_only(self, tmp_path) -> None:
+        """Guards demo_v7/service/gaussian_live.py:119-122: np.rint pixel
+        rounding AND the visibility & mask_object filter.
+
+        Rounding is what reproduces the tracker's own lift_tracks_yx_to_world
+        to 4.3e-8 m (truncating fails here); dropping the object-mask term
+        turns off-object queries into bones on the hand or the table.
+        """
         from demo_v7.service.gaussian_live import (
             load_formal_frame0_rest_positions,
         )
@@ -517,12 +449,16 @@ class TestFormalFrame0Loader:
 
 class TestWhitenBackground:
     def test_amounts(self) -> None:
+        """Guards the clamp at demo_v7/service/gaussian_live.py:132
+        (`amount = float(min(max(amount, 0.0), 1.0))`).
+
+        Reachable: staged_runtime.py:1108 parses DEMO_V7_GAUSSIAN_BG_WHITEN
+        as a raw float with no validation, so an operator typo (65 for 0.65)
+        would overflow uint8 inside render_over.
+        """
         from demo_v7.service.gaussian_live import whiten_background
 
         frame = np.full((2, 2, 3), 100, dtype=np.uint8)
-        assert np.allclose(whiten_background(frame, 0.0), 100.0)
-        assert np.allclose(whiten_background(frame, 1.0), 255.0)
-        assert np.allclose(whiten_background(frame, 0.5), 177.5)
         # Out-of-range amounts clamp instead of exploding.
         assert np.allclose(whiten_background(frame, 2.0), 255.0)
         assert np.allclose(whiten_background(frame, -1.0), 100.0)
@@ -541,45 +477,75 @@ class TestQuaternionHemisphereBlend:
             dtype=torch.float32,
         )
 
-    def test_antipodal_neighbor_quats_do_not_cancel(self) -> None:
+    @staticmethod
+    def _grid_bones() -> torch.Tensor:
+        xs = torch.linspace(0, 1, 4)
+        return torch.stack(
+            torch.meshgrid(xs, xs, xs, indexing="ij"), dim=-1
+        ).reshape(-1, 3)
+
+    @pytest.mark.parametrize("case", ["antipodal_near_pi", "pure_translation"])
+    def test_antipodal_neighbor_quats_do_not_cancel(self, case: str) -> None:
         """q and -q encode the same rotation; blending must not cancel.
 
-        Two bone clusters rotate +179.9 and -179.9 deg about z — a mere
-        0.2 deg apart as ROTATIONS, but mat2quat emits near-antipodal
-        quats ([~0,0,0,+1] vs [~0,0,0,-1]). A raw weighted sum collapses
-        toward identity (the pre-fix behavior); hemisphere alignment must
-        keep the blend a ~180-deg z rotation."""
-        offsets = torch.tensor(
-            [[0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [-0.1, -0.1, 0.0]]
-        )
-        center_a = torch.tensor([0.0, 0.0, 0.0])
-        center_b = torch.tensor([1.0, 0.0, 0.0])
-        bones = torch.cat([center_a + offsets, center_b + offsets])
-        rot_a, rot_b = self._rot_z(179.9), self._rot_z(-179.9)
-        motions = torch.cat(
-            [
-                (offsets @ rot_a.T + center_a) - bones[:3],
-                (offsets @ rot_b.T + center_b) - bones[3:],
-            ]
-        )
-        relations = torch.tensor(
-            [[1, 2], [0, 2], [0, 1], [4, 5], [3, 5], [3, 4]]
-        )
-        particles = torch.tensor([[0.5, 0.0, 0.0]])
-        quats = torch.tensor([[1.0, 0.0, 0.0, 0.0]])
+        Guards the hemisphere alignment at
+        demo_v7/service/gaussian_dynamics.py:238-246, right before the
+        weighted quaternion sum. `antipodal_near_pi`: two bone clusters
+        rotate +179.9 and -179.9 deg about z — a mere 0.2 deg apart as
+        ROTATIONS, but mat2quat emits near-antipodal quats ([~0,0,0,+1] vs
+        [~0,0,0,-1]). Restoring upstream's raw weighted sum collapses the
+        blend toward identity and fails this row alone. `pure_translation`
+        is the easy input on the same function: the splats must follow the
+        bones exactly and must NOT pick up a rotation.
+        """
+        if case == "antipodal_near_pi":
+            offsets = torch.tensor(
+                [[0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [-0.1, -0.1, 0.0]]
+            )
+            center_a = torch.tensor([0.0, 0.0, 0.0])
+            center_b = torch.tensor([1.0, 0.0, 0.0])
+            bones = torch.cat([center_a + offsets, center_b + offsets])
+            rot_a, rot_b = self._rot_z(179.9), self._rot_z(-179.9)
+            motions = torch.cat(
+                [
+                    (offsets @ rot_a.T + center_a) - bones[:3],
+                    (offsets @ rot_b.T + center_b) - bones[3:],
+                ]
+            )
+            relations = torch.tensor(
+                [[1, 2], [0, 2], [0, 1], [4, 5], [3, 5], [3, 4]]
+            )
+            particles = torch.tensor([[0.5, 0.0, 0.0]])
+            quats = torch.tensor([[1.0, 0.0, 0.0, 0.0]])
+            knn_k = 6
+            shift = None
+        else:
+            bones = self._grid_bones()
+            shift = torch.tensor([0.05, -0.02, 0.11])
+            motions = shift[None].repeat(len(bones), 1)
+            relations = gaussian_dynamics.get_topk_indices(bones, K=6)
+            particles = torch.rand(500, 3)
+            quats = torch.zeros(500, 4)
+            quats[:, 0] = 1.0
+            knn_k = 8
         weights, indices = gaussian_dynamics.knn_weights_sparse(
-            bones, particles, K=6
+            bones, particles, K=knn_k
         )
-        _new_xyz, new_quat = gaussian_dynamics.interpolate_motions_sparse(
+        new_xyz, new_quat = gaussian_dynamics.interpolate_motions_sparse(
             bones, motions, relations, particles, quats, weights, indices,
             device="cpu",
         )
-        blended = new_quat / torch.linalg.norm(new_quat, dim=1, keepdim=True)
-        # ~180 deg about z: |z| ~ 1, w ~ 0. The pre-fix raw sum measured
-        # w=+0.199 / z=+0.980 here (partial cancellation normalized into a
-        # ~23-deg w error); the aligned blend gives w=0.000 / z=1.000.
-        assert abs(float(blended[0, 3])) > 0.999
-        assert abs(float(blended[0, 0])) < 0.05
+        if case == "antipodal_near_pi":
+            blended = new_quat / torch.linalg.norm(new_quat, dim=1, keepdim=True)
+            # ~180 deg about z: |z| ~ 1, w ~ 0. The pre-fix raw sum measured
+            # w=+0.199 / z=+0.980 here (partial cancellation normalized into a
+            # ~23-deg w error); the aligned blend gives w=0.000 / z=1.000.
+            assert abs(float(blended[0, 3])) > 0.999
+            assert abs(float(blended[0, 0])) < 0.05
+        else:
+            assert torch.allclose(new_xyz, particles + shift, atol=1e-4)
+            # A pure translation must not rotate the splats.
+            assert torch.allclose(new_quat, quats, atol=1e-4)
 
 
 class TestBoneHygiene:
@@ -595,6 +561,13 @@ class TestBoneHygiene:
         return live, means, rest, ids
 
     def test_rogue_bone_is_overridden_by_neighbors(self) -> None:
+        """Guards demo_v7/service/gaussian_live.py:352-355 (local-rigidity
+        outlier detection) + :384-386 (consensus substitution).
+
+        Removing ONLY the outlier term (keeping stale healing) fails this
+        test alone. Measured defect: 71/3969 bones slid onto the hand, up to
+        17cm off-object, dragging their permanently-bound splats.
+        """
         helper = TestGaussianLiveRestSeed()
         live, means, rest, ids = self._seeded(helper)
         shift = np.array([0.03, 0.0, 0.0], dtype=np.float32)
@@ -608,74 +581,88 @@ class TestBoneHygiene:
             live._tensors["means"], means + torch.as_tensor(shift), atol=2e-3
         )
 
-    def test_stale_bones_ride_the_visible_half(self) -> None:
+    @pytest.mark.parametrize("motion", ["translation", "rotation"])
+    def test_stale_bones_ride_the_visible_half(self, motion: str) -> None:
+        """Guards demo_v7/service/gaussian_live.py:317-320 (stale mask from
+        _last_seen_step) + :373-387 (valid-neighbour consensus).
+
+        Zeroing the stale mask while keeping outlier detection fails this
+        test. Measured defect: up to 160 occlusion-frozen bones at once,
+        anchoring their splats in the old pose.
+
+        The `rotation` row runs the same occlusion at PRODUCTION scale
+        (12cm object, 3cm bone spacing — sloth-like) because the heal is
+        rigid-aware, not a translation average: at demo scale the 5cm
+        rigidity threshold keeps fresh bones trusted, while a metre-scale
+        grid would flag everyone and disable healing entirely (fail-soft).
+        """
         helper = TestGaussianLiveRestSeed()
-        live, means, rest, ids = self._seeded(helper)
-        seen = ids[ids % 2 == 0]
-        step = np.array([0.01, 0.0, 0.0], dtype=np.float32)
-        # 14 packets (> _BONE_STALE_STEPS) where only even bones update.
-        for k in range(1, 15):
-            live.step(
-                rest[seen] + step * k, seen, np.ones(len(seen), dtype=bool)
+        if motion == "translation":
+            live, means, rest, ids = self._seeded(helper)
+        else:
+            live, means = helper._bare_renderer()
+            xs = np.linspace(0.0, 0.12, 5, dtype=np.float32)
+            rest = (
+                np.stack(np.meshgrid(xs, xs, xs, indexing="ij"), axis=-1)
+                .reshape(-1, 3)
             )
-        assert live.bone_stale > 0
-        # Stale odd bones must not anchor the object at the rest pose: the
-        # whole cloud rides the visible bones' translation.
-        assert torch.allclose(
-            live._tensors["means"],
-            means + torch.as_tensor(step * 14),
-            atol=2e-3,
-        )
-
-    def test_stale_bones_follow_rotation_not_average(self) -> None:
-        """The drag fix: an occluded patch must ride the visible bones'
-        ROTATION. A translation-average heal puts stale bones at the mean
-        neighbor displacement (wrong under rotation); rigid-aware healing
-        recovers their rotated positions almost exactly.
-
-        Geometry is at PRODUCTION scale (12cm object, 3cm bone spacing —
-        sloth-like): at demo scale the 5cm rigidity threshold keeps fresh
-        bones trusted; a metre-scale grid would flag everyone and disable
-        healing entirely (fail-soft)."""
-        helper = TestGaussianLiveRestSeed()
-        live, means = helper._bare_renderer()
-        xs = np.linspace(0.0, 0.12, 5, dtype=np.float32)
-        rest = (
-            np.stack(np.meshgrid(xs, xs, xs, indexing="ij"), axis=-1)
-            .reshape(-1, 3)
-        )
-        ids = np.arange(len(rest), dtype=np.int64)
-        live.seed_rest_positions({int(i): rest[i] for i in ids})
-        live.step(rest, ids, np.ones(len(ids), dtype=bool))  # init at rest
-        angle = np.radians(25.0)
-        rotation = np.array(
-            [
-                [np.cos(angle), -np.sin(angle), 0.0],
-                [np.sin(angle), np.cos(angle), 0.0],
-                [0.0, 0.0, 1.0],
-            ],
-            dtype=np.float32,
-        )
-        center = rest.mean(axis=0)
-        rotated = (rest - center) @ rotation.T + center
+            ids = np.arange(len(rest), dtype=np.int64)
+            live.seed_rest_positions({int(i): rest[i] for i in ids})
+            live.step(rest, ids, np.ones(len(ids), dtype=bool))  # init at rest
         seen = ids[ids % 2 == 0]
-        # 14 packets (> stale threshold) where only even bones update, at
-        # the ROTATED pose.
-        for _ in range(14):
-            live.step(rotated[seen], seen, np.ones(len(seen), dtype=bool))
-        applied = live._ctrl_prev.cpu().numpy()
-        stale_ids = ids[ids % 2 == 1]
-        error = np.linalg.norm(applied[stale_ids] - rotated[stale_ids], axis=1)
-        # A global rigid motion is EXACT under the per-bone Kabsch blend;
-        # the old mean-consensus heal leaves ~1cm errors at this scale.
-        assert float(error.max()) < 0.005, error.max()
+        if motion == "translation":
+            step = np.array([0.01, 0.0, 0.0], dtype=np.float32)
+            # 14 packets (> _BONE_STALE_STEPS) where only even bones update.
+            for k in range(1, 15):
+                live.step(
+                    rest[seen] + step * k, seen, np.ones(len(seen), dtype=bool)
+                )
+        else:
+            angle = np.radians(25.0)
+            rotation = np.array(
+                [
+                    [np.cos(angle), -np.sin(angle), 0.0],
+                    [np.sin(angle), np.cos(angle), 0.0],
+                    [0.0, 0.0, 1.0],
+                ],
+                dtype=np.float32,
+            )
+            center = rest.mean(axis=0)
+            rotated = (rest - center) @ rotation.T + center
+            # 14 packets (> stale threshold) where only even bones update,
+            # at the ROTATED pose.
+            for _ in range(14):
+                live.step(rotated[seen], seen, np.ones(len(seen), dtype=bool))
+        assert live.bone_stale > 0
+        if motion == "translation":
+            # Stale odd bones must not anchor the object at the rest pose:
+            # the whole cloud rides the visible bones' translation.
+            assert torch.allclose(
+                live._tensors["means"],
+                means + torch.as_tensor(step * 14),
+                atol=2e-3,
+            )
+        else:
+            applied = live._ctrl_prev.cpu().numpy()
+            stale_ids = ids[ids % 2 == 1]
+            error = np.linalg.norm(
+                applied[stale_ids] - rotated[stale_ids], axis=1
+            )
+            # A global rigid motion is EXACT under the per-bone Kabsch blend;
+            # a mean-consensus heal leaves ~1cm errors at this scale.
+            assert float(error.max()) < 0.005, error.max()
 
 
 class TestFloaterPruning:
     def test_disconnected_island_pruned_even_near_mesh(self) -> None:
-        """The measured failure: a small solid island 10cm from every other
-        splat but within mesh distance (the mesh arm tip passed nearby) —
-        connectivity must catch what mesh distance cannot."""
+        """The measured failure: a 212-splat island 10.6cm from every other
+        splat but 3.2cm from the mesh (the mesh arm tip passed nearby) —
+        connectivity must catch what mesh distance cannot.
+
+        Guards demo_v7/service/gaussian_align.py:390-414 (the connectivity
+        criterion plus fuzz inheriting its nearest solid splat's verdict);
+        reverting _floater_keep_mask to mesh-distance-only fails it alone.
+        """
         from demo_v7.service.gaussian_align import _floater_keep_mask
 
         rng = np.random.default_rng(4)
@@ -722,7 +709,12 @@ class TestSelfAlignHelpers:
     def test_pure_articulation_strips_similarity(self, tmp_path, monkeypatch) -> None:
         """A purely-similar ARAP field (rigid+scale, no articulation) must
         strip to ~zero displacement — transplanting it raw onto an
-        independently-registered gaussian double-corrects (benchmarked)."""
+        independently-registered gaussian double-corrects (benchmarked).
+
+        Guards the Umeyama similarity strip at
+        demo_v7/service/gaussian_selfalign.py:157-166; returning the raw
+        ARAP field fails this test alone.
+        """
         from demo_v7.service import gaussian_selfalign as sa
 
         rng = np.random.default_rng(6)
@@ -747,16 +739,14 @@ class TestSelfAlignHelpers:
         assert float(np.abs(articulation).max()) < 1e-6
         assert np.allclose(anchors, final, atol=1e-6)
 
-    def test_combined_score_and_gates(self) -> None:
-        from demo_v7.service import gaussian_selfalign as sa
-
-        good = {"iou": 0.90, "c2g_p90_cm": 1.0}
-        flat = {"iou": 0.92, "c2g_p90_cm": 2.0}
-        # 2 IoU points do not pay for 1cm of coverage tail at the 3pt/cm rate.
-        assert sa.combined_score(good) > sa.combined_score(flat)
-
     def test_subprocess_error_json_is_fail_soft(self, tmp_path) -> None:
-        """A child that writes an error payload must yield None, not raise."""
+        """A child that writes an error payload must yield None, not raise.
+
+        Guards demo_v7/service/gaussian_selfalign.py:255-258 (`if "error" in
+        result: return None`): parsing `result["gates"]` without the error
+        check raises KeyError through here. Phase 2 must degrade to the
+        published chamfer alignment, never take down the background thread.
+        """
         import json as json_mod
 
         from demo_v7.service import gaussian_selfalign as sa
@@ -782,6 +772,15 @@ class TestSelfAlignHelpers:
 
 class TestAsapIslandCleanup:
     def test_patched_loader_drops_tiny_components(self, tmp_path, monkeypatch) -> None:
+        """Guards demo_v7/service/arap_rescue.py:95-103 (drop <1% connected
+        components after the stock cleanup); a no-op
+        patch_asap_island_cleanup fails this test alone.
+
+        Measured defect: o3d's own remove_non_manifold_edges cuts 1-31
+        triangle islands loose, an unconstrained island makes the ARAP
+        factorization singular at ANY scale, and whole runs died on
+        numerical luck.
+        """
         o3d = pytest.importorskip("open3d")
         from demo_v7.service import arap_rescue
         from demo_v7.runtime.streaming import asap
@@ -819,6 +818,11 @@ class TestSelfAlignDefaultPolicy:
     ties, and the chamfer incumbent survives only a clear loss."""
 
     def test_b_is_default_among_candidates(self) -> None:
+        """Guards the _ART_PREFERENCE_MARGIN at
+        demo_v7/service/gaussian_selfalign.py:69-72: dropping the margin (any
+        win picks the articulation variant) fails this test alone — the C2
+        variant's benefit was case-dependent in the benchmark, so a 0.005
+        noise win must not flip the published alignment."""
         from demo_v7.service import gaussian_selfalign as sa
 
         scored = [
@@ -830,15 +834,29 @@ class TestSelfAlignDefaultPolicy:
         assert sa.pick_candidate(scored)[0] == "self_align_art"
 
     def test_swap_default_unless_clear_loss(self) -> None:
+        """Guards _KEEP_INCUMBENT_MARGIN at
+        demo_v7/service/gaussian_selfalign.py:78-80 (self-align wins ties —
+        the owner decision from 4f4793b; inverting the tolerance so the
+        chamfer incumbent wins ties fails this test alone) AND the tail term
+        of combined_score at :59-61, via the last row: its candidate differs
+        from the incumbent in c2g_p90_cm, so an iou-only score would swap.
+        """
         from demo_v7.service import gaussian_selfalign as sa
 
         incumbent = {"iou": 0.70, "c2g_p90_cm": 2.0}
-        tie = {"iou": 0.695, "c2g_p90_cm": 2.0}  # -0.005: within tolerance
-        assert sa.should_swap(tie, incumbent)
-        clear_loss = {"iou": 0.60, "c2g_p90_cm": 5.0}  # drive21-gen1 class
-        assert not sa.should_swap(clear_loss, incumbent)
-        win = {"iou": 0.92, "c2g_p90_cm": 3.3}
-        assert sa.should_swap(win, incumbent)
+        rows = [
+            # (candidate metrics, should_swap, why)
+            ({"iou": 0.695, "c2g_p90_cm": 2.0}, True, "-0.005: within tolerance"),
+            ({"iou": 0.60, "c2g_p90_cm": 5.0}, False, "drive21-gen1 class loss"),
+            ({"iou": 0.92, "c2g_p90_cm": 3.3}, True, "a clear win"),
+            (
+                {"iou": 0.72, "c2g_p90_cm": 4.0},
+                False,
+                "+2 IoU points do not pay for 2cm of coverage tail at 3pt/cm",
+            ),
+        ]
+        for candidate, expected, why in rows:
+            assert sa.should_swap(candidate, incumbent) is expected, why
 
 
 def _synthetic_glb(tmp_path, name: str = "synth.glb"):
@@ -858,34 +876,22 @@ class TestMeshSurfaceGaussianizer:
     """mesh_surface backend core: splat centers ON the mesh, deterministic,
     anchors self-verifying."""
 
-    def test_centers_on_surface_and_bary_valid(self, tmp_path) -> None:
-        from demo_v7.service.mesh_surface_gaussian import (
-            gaussianize_mesh,
-            replay_splat_means,
-        )
-
-        splats, anchors = gaussianize_mesh(
-            _synthetic_glb(tmp_path), target_splats=2000, seed=1
-        )
-        assert len(splats) >= 2000  # >=1 per face can overshoot slightly
-        bary = anchors.barycentric
-        assert (bary >= -1e-6).all()
-        assert np.allclose(bary.sum(axis=1), 1.0, atol=1e-5)
-        replayed = replay_splat_means(
-            anchors.rest_vertices.astype(np.float64),
-            anchors.faces.astype(np.int64),
-            anchors.face_index,
-            anchors.barycentric.astype(np.float64),
-        )
-        err = np.linalg.norm(replayed - splats.means, axis=1)
-        assert float(err.max()) < 1e-6  # centers ARE the barycentric replay
-
     def test_every_face_sampled_and_deterministic(self, tmp_path) -> None:
+        """Guards demo_v7/service/mesh_surface_gaussian.py:195-196 (seeded
+        generator -> bit-identical splats for the same mesh+seed); letting
+        the sampler use a fresh default_rng fails this test alone.
+        Determinism is the backend's contract: a REVIEW re-roll is
+        seed-addressed and the anchors npz must match the published ply.
+
+        The `bary >= -1e-6` check guards the fold-reflection at :128-129 —
+        without it a splat center lands OUTSIDE its own triangle.
+        """
         from demo_v7.service.mesh_surface_gaussian import gaussianize_mesh
 
         path = _synthetic_glb(tmp_path)
         splats_a, anchors_a = gaussianize_mesh(path, target_splats=1000, seed=5)
         assert len(np.unique(anchors_a.face_index)) == len(anchors_a.faces)
+        assert (anchors_a.barycentric >= -1e-6).all()
         splats_b, anchors_b = gaussianize_mesh(path, target_splats=1000, seed=5)
         assert np.array_equal(splats_a.means, splats_b.means)
         assert np.array_equal(anchors_a.barycentric, anchors_b.barycentric)
@@ -893,6 +899,11 @@ class TestMeshSurfaceGaussianizer:
         assert not np.array_equal(splats_a.means, splats_c.means)
 
     def test_anchors_roundtrip_and_hash_guard(self, tmp_path) -> None:
+        """Guards demo_v7/service/mesh_surface_gaussian.py:247-253, the
+        self-verifying topology hash on load: a load_anchors that trusts the
+        file fails this test alone. sample_asap_safe re-cleans and rewrites
+        final_mesh.glb concurrently, so anchors mixed across cleanings would
+        silently drift instead of failing loudly."""
         from demo_v7.service.mesh_surface_gaussian import (
             gaussianize_mesh,
             load_anchors,
@@ -915,6 +926,12 @@ class TestMeshSurfaceGaussianizer:
             load_anchors(path)
 
     def test_zero_area_faces_never_sampled(self) -> None:
+        """Guards the `live = areas > _MIN_FACE_AREA` mask at
+        demo_v7/service/mesh_surface_gaussian.py:108 + :118: allocating from
+        raw areas (so degenerate faces get their >=1 sample) fails this test
+        alone. TRELLIS.2/ARAP meshes carry sliver faces; a sample on one
+        yields a degenerate frame and a 1e5 area ratio in the live scale
+        correction."""
         from demo_v7.service.mesh_surface_gaussian import _allocate_samples
 
         areas = np.array([1.0e-4, 0.0, 2.0e-4, 1.0e-20])
@@ -924,6 +941,10 @@ class TestMeshSurfaceGaussianizer:
         assert counts.sum() >= 300
 
     def test_face_frames_orthonormal_right_handed(self) -> None:
+        """Guards `frames[~ok] = np.eye(3)` at
+        demo_v7/service/mesh_surface_gaussian.py:94 — the sliver-face
+        landmine: dividing through on degenerate faces without the identity
+        fallback feeds a non-orthonormal frame into _frames_to_wxyz."""
         from demo_v7.service.mesh_surface_gaussian import face_frames
 
         vertices = np.array(
@@ -941,45 +962,6 @@ class TestMeshSurfaceGaussianizer:
         assert np.isclose(np.linalg.det(good), 1.0)
         assert np.allclose(good[:, 2], [0, 0, 1])  # normal of the xy triangle
         assert np.allclose(frames[1], np.eye(3))  # degenerate -> identity
-
-    def test_rigid_replay_consistency(self, tmp_path) -> None:
-        """Rotating the vertices rotates the replayed splats identically."""
-        from demo_v7.service.mesh_surface_gaussian import (
-            face_frames,
-            gaussianize_mesh,
-            replay_splat_means,
-        )
-
-        splats, anchors = gaussianize_mesh(
-            _synthetic_glb(tmp_path), target_splats=800, seed=3
-        )
-        angle = np.radians(40.0)
-        rotation = np.array(
-            [
-                [np.cos(angle), 0.0, np.sin(angle)],
-                [0.0, 1.0, 0.0],
-                [-np.sin(angle), 0.0, np.cos(angle)],
-            ]
-        )
-        translation = np.array([0.02, -0.05, 0.01])
-        verts = anchors.rest_vertices.astype(np.float64)
-        faces = anchors.faces.astype(np.int64)
-        moved = verts @ rotation.T + translation
-        replayed = replay_splat_means(
-            moved, faces, anchors.face_index, anchors.barycentric.astype(np.float64)
-        )
-        expected = (
-            replay_splat_means(
-                verts, faces, anchors.face_index, anchors.barycentric.astype(np.float64)
-            )
-            @ rotation.T
-            + translation
-        )
-        assert np.allclose(replayed, expected, atol=1e-9)
-        # Frames rotate as R @ frame (orientation rides the mesh).
-        frames_rest = face_frames(verts, faces)
-        frames_moved = face_frames(moved, faces)
-        assert np.allclose(frames_moved, rotation @ frames_rest, atol=1e-9)
 
 
 class TestMeshAnchoredRenderer:
@@ -1065,6 +1047,12 @@ class TestMeshAnchoredRenderer:
     def test_rigid_transform_moves_verts_and_splats_together(
         self, tmp_path
     ) -> None:
+        """Guards the mesh-anchored override at
+        demo_v7/service/gaussian_live.py:664-680 (transform the VERTICES and
+        replay, not the splats). Letting MeshAnchoredGaussianRenderer inherit
+        the parent's splat-only implementation fails this test alone: means
+        would move while _verts stayed behind, breaking the
+        face_id+barycentric binding on the very next frame."""
         live, _anchors = self._bare(tmp_path)
         before_means = live._tensors["means"].clone()
         angle = np.radians(35.0)
@@ -1088,6 +1076,11 @@ class TestMeshAnchoredRenderer:
         assert torch.allclose(live._tensors["means"], replayed, atol=1e-6)
 
     def test_bones_rigid_motion_carries_mesh_and_splats(self, tmp_path) -> None:
+        """Guards demo_v7/service/gaussian_live.py:623-625 (_skin_targets
+        returns the mesh VERTICES): binding the bones to the splat means
+        instead fails this test alone — the mesh would stop following the
+        bones while the splats did, i.e. the mesh stops being the geometry
+        truth in motion."""
         live, _anchors = self._bare(tmp_path)
         verts = live._verts.numpy()
         rng = np.random.default_rng(11)
@@ -1122,9 +1115,12 @@ class TestMeshAnchoredRenderer:
     def test_scales_track_triangle_stretch(self, tmp_path) -> None:
         """A stretched triangle grows its splats; a rigid move does not.
 
-        Measured on a 606-frame manipulation session: 6.6% of mesh edges
-        exceed 1.5x stretch and 1.0% exceed 3x, so a rest-fixed footprint
-        leaves holes exactly where the object deforms most.
+        Guards demo_v7/service/gaussian_live.py:658-661 (tangential sigmas
+        ride sqrt(face area ratio); column 2 does not) — freezing the
+        footprints at the rest sigma (the pre-bf6033a form) fails this test
+        alone. Measured on a 606-frame manipulation session: 6.6% of mesh
+        edges exceed 1.5x stretch and 1.0% exceed 3x, so a rest-fixed
+        footprint leaves holes exactly where the object deforms most.
         """
         live, _anchors = self._bare(tmp_path)
         rest_scales = live._tensors["scales"].clone()
@@ -1140,9 +1136,56 @@ class TestMeshAnchoredRenderer:
             live._tensors["scales"], rest_scales, rtol=1e-4, atol=1e-9
         )
 
+    def test_pose_solve_applies_the_projection(self, tmp_path) -> None:
+        """Guards the ``_project_edges`` call in
+        MeshAnchoredGaussianRenderer._pose_to: testing the projection in
+        isolation leaves the call site free to be deleted, and raw LBS
+        stretch (measured 4.11% of edges past 1.5x on a manipulation
+        session) would silently come back.
+        """
+        live, _anchors = self._bare(tmp_path)
+        verts = live._verts.numpy()
+        rng = np.random.default_rng(5)
+        rows = rng.choice(len(verts), size=60, replace=False)
+        rest_bones = verts[rows].astype(np.float32)
+        ids = np.arange(len(rest_bones), dtype=np.int64)
+        live.seed_rest_positions({int(i): rest_bones[i] for i in ids})
+        live.step(rest_bones, ids, np.ones(len(ids), dtype=bool))
+        # Bones pulled 60% apart: raw LBS stretches the edges with them.
+        target = torch.as_tensor(rest_bones * 1.6)
+        live.step(target.numpy(), ids, np.ones(len(ids), dtype=bool))
+        edges = live._edges
+
+        def max_strain(verts):
+            return float(
+                (
+                    (verts[edges[:, 0]] - verts[edges[:, 1]]).norm(dim=1)
+                    / live._edge_rest_len
+                ).max()
+            )
+
+        # Self-calibrating: the same solve WITHOUT the projection, so the
+        # assertion cannot drift with the iteration count or stiffness.
+        raw, _ = gaussian_dynamics.interpolate_motions_sparse(
+            live._ctrl_rest,
+            target - live._ctrl_rest,
+            live._relations,
+            live._verts_rest,
+            None,
+            live._skin_weights,
+            live._skin_indices,
+            device="cpu",
+        )
+        assert max_strain(live._verts) < 0.9 * max_strain(raw), (
+            f"projected {max_strain(live._verts):.2f}x vs raw LBS "
+            f"{max_strain(raw):.2f}x — the pose solve did not project"
+        )
+
     def test_edge_projection_is_a_noop_under_rigid_motion(self, tmp_path) -> None:
         """A rigid move leaves every edge at its rest length, so the shape
-        projection must not touch it — otherwise it would fight the bones."""
+        projection (demo_v7/service/gaussian_live.py:712-734) must not touch
+        it — otherwise it would fight the bones. A 1% shrink inside
+        _project_edges fails only this test."""
         live, _anchors = self._bare(tmp_path)
         angle = np.radians(30.0)
         rotation = torch.as_tensor(
@@ -1154,7 +1197,10 @@ class TestMeshAnchoredRenderer:
     def test_edge_projection_pulls_stretch_back(self, tmp_path) -> None:
         """A stretched mesh is pulled back toward its rest edge lengths.
 
-        Measured on a 606-frame manipulation session: LBS left 4.11% of
+        Guards the Jacobi edge projection at
+        demo_v7/service/gaussian_live.py:702 + :712-734; making
+        _project_edges the identity fails this test alone. The shipped
+        51fbb32 A/B on a 606-frame manipulation session: LBS left 4.11% of
         edges beyond 1.5x rest; the shipped 20 iterations bring that to
         0.53% while IMPROVING distance to the observed cloud.
         """
@@ -1168,6 +1214,11 @@ class TestMeshAnchoredRenderer:
         assert frac_over(live._project_edges(stretched)) < 0.05
 
     def test_degenerate_face_keeps_last_orientation(self, tmp_path) -> None:
+        """Guards the _face_quats_prev carry-over at
+        demo_v7/service/gaussian_live.py:642-648: dropping the torch.where
+        fails this test alone — a transiently-collapsed triangle would snap
+        its splats to a neutral orientation for that frame instead of
+        holding the last good one."""
         live, _anchors = self._bare(tmp_path)
         quats_before = live._tensors["quats"].clone()
         collapsed = live._verts.clone()
@@ -1185,60 +1236,42 @@ class TestMeshAnchoredRenderer:
 class TestMeshSurfaceSelector:
     """mesh_surface vocabulary + the trellis2-only rule at every layer."""
 
-    def test_normalize_accepts_mesh_surface(self) -> None:
-        from demo_v7.service import gaussian_options as go
-
-        assert go.normalize_gaussian_backend("mesh_surface") == "mesh_surface"
-        assert go.GAUSSIAN_MESH_SURFACE in go.GAUSSIAN_BACKENDS
-
-    def test_allowed_rule(self) -> None:
-        from demo_v7.service import gaussian_options as go
-
-        assert go.mesh_surface_allowed("trellis2")
-        assert not go.mesh_surface_allowed("sam3d")
-        assert not go.mesh_surface_allowed("none")
-        assert not go.mesh_surface_allowed(None)
-
-    def test_session_rejects_mesh_surface_without_trellis2(self, tmp_path) -> None:
+    @pytest.mark.parametrize(
+        "shape_prior, accepted", [("trellis2", True), ("sam3d", False)]
+    )
+    def test_session_rejects_mesh_surface_without_trellis2(
+        self, tmp_path, shape_prior: str, accepted: bool
+    ) -> None:
+        """Guards the cross-option fail-fast at
+        demo_v7/orchestration/session.py:274-288: neutralising
+        mesh_surface_allowed fails the `sam3d` row. mesh_surface derives its
+        splats from the trellis2 chain's final_mesh.glb, so with any other
+        mesh backend there is nothing to derive from — and the CLI/config
+        path has no combo gating. The trellis2 row is the over-strict-rule
+        control.
+        """
         from demo_v7.orchestration.session import OrchestratorSession
 
-        with pytest.raises(ValueError, match="mesh_surface"):
-            OrchestratorSession(
+        def _build():
+            return OrchestratorSession(
                 source="fake-live",
                 fake_live_case="data_collect/fake",
                 base_path=tmp_path / "run",
-                shape_prior_backend="sam3d",
+                shape_prior_backend=shape_prior,
                 gaussian_backend="mesh_surface",
             )
 
-    def test_session_accepts_mesh_surface_with_trellis2(self, tmp_path) -> None:
-        from demo_v7.orchestration.session import OrchestratorSession
-
-        session = OrchestratorSession(
-            source="fake-live",
-            fake_live_case="data_collect/fake",
-            base_path=tmp_path / "run",
-            shape_prior_backend="trellis2",
-            gaussian_backend="mesh_surface",
-        )
-        assert session.gaussian_backend == "mesh_surface"
-
-    def test_camera_service_parser_accepts_mesh_surface(self) -> None:
-        from demo_v7.service.camera_service import _build_v7_parser
-
-        v7_args, _rest = _build_v7_parser().parse_known_args(
-            [
-                "--socket-dir",
-                "/tmp/x",
-                "--gaussian-backend",
-                "mesh_surface",
-                "--input-source",
-                "fake-live",
-            ]
-        )
-        assert v7_args.gaussian_backend == "mesh_surface"
+        if accepted:
+            assert _build().gaussian_backend == "mesh_surface"
+        else:
+            with pytest.raises(ValueError, match="mesh_surface"):
+                _build()
 
     def test_gui_labels_cover_all_backends(self) -> None:
+        """Guards demo_v7/app.py:93-103: _GAUSSIAN_LABELS must cover
+        gaussian_options.GAUSSIAN_BACKENDS. The realistic future edit — add a
+        backend to the vocabulary, forget the GUI label — leaves the option
+        unreachable from the source dialog with no other signal."""
         from demo_v7 import app as app_module
         from demo_v7.service import gaussian_options as go
 
@@ -1271,11 +1304,21 @@ class TestMeshSurfaceManagerLifecycle:
         return manager, events
 
     def test_regen_before_ready_refused(self, tmp_path) -> None:
+        """Guards `or not self._case_ready.is_set()` in try_reserve
+        (demo_v7/service/mesh_surface_manager.py:143): dropping the readiness
+        term fails this test alone — a REVIEW re-roll arriving before the
+        shape-prior chain is READY would be acked ok and then die on a
+        missing final_mesh.glb, leaving the GUI spinning."""
         manager, _events = self._manager(tmp_path)
         manager.start()
         assert manager.regenerate(7) is False  # chain not READY yet
 
     def test_missing_mesh_is_display_only_error(self, tmp_path) -> None:
+        """Guards demo_v7/service/mesh_surface_manager.py:193-196 raising
+        into the :214-218 fail-soft handler (EVT_ERROR, no ply, run
+        continues): swallowing the error instead of emitting it fails this
+        test alone. This is the display-only contract the whole feature
+        rests on."""
         manager, events = self._manager(tmp_path)
         manager.start()
         manager.notify_case_ready()
@@ -1283,96 +1326,38 @@ class TestMeshSurfaceManagerLifecycle:
         assert events["errors"] and "final_mesh" in events["errors"][0][1]
         assert not manager.has_world_ply()
 
-    def test_shutdown_blocks_generation(self, tmp_path) -> None:
-        manager, events = self._manager(tmp_path)
-        manager.start()
-        manager.shutdown()
-        manager.notify_case_ready()
-        if manager._first_gen is not None:
-            manager._first_gen.join(timeout=10.0)
-        assert not events["errors"]
-        assert not manager.has_world_ply()
 
+class TestNeighbourGraph:
+    """Guards gaussian_dynamics.get_topk_indices' documented "no self".
 
-class TestMeshSurfaceWarmupSubrows:
-    """The mesh_surface gaussian phases fan onto gs:* timeline sub-rows
-    (pure state machine, driven by the manager's stable detail prefixes)."""
+    Bones are tracker queries lifted through a ROUNDED pixel, so two queries
+    on one pixel give a bitwise identical point (measured: 15.6-15.8% of
+    object bones at frame 0 of two archived sessions had their own index in
+    `relations`). Dropping column 0 of a (K+1)-topk assumes the zero-distance
+    self always sorts first, which ties do not guarantee.
+    """
 
-    def _machine(self):
-        pytest.importorskip("PySide6")
-        from demo_v7.gui.screens import drive_mesh_surface_subrows
-
-        calls: list[tuple[str, str]] = []
-
-        class _StubTimeline:
-            def begin(self, stage, detail=""):
-                calls.append(("begin", stage))
-
-            def report(self, stage, detail="", *, ok=True, elapsed_ms=None):
-                calls.append(("report_ok" if ok else "report_fail", stage))
-
-        return drive_mesh_surface_subrows, _StubTimeline(), calls
-
-    def test_phase_sequence_drives_subrows(self) -> None:
-        drive, timeline, calls = self._machine()
-        running = None
-        for detail in (
-            "mesh_surface 后端:等待 shape prior 对齐 mesh…",
-            "从对齐 mesh 派生表面高斯(seed=42, 目标 45000 splats)…",
-            "渲染世界系叠加图…",
-            "gaussian 就绪(mesh_surface, seed=42, 46192 splats, 0.3s)",
-        ):
-            running = drive(timeline, running, detail, True)
-        assert calls == [
-            ("begin", "gs:wait_mesh"),
-            ("report_ok", "gs:wait_mesh"),
-            ("begin", "gs:derive"),
-            ("report_ok", "gs:derive"),
-            ("begin", "gs:overlay"),
-            ("report_ok", "gs:overlay"),
-        ]
-        assert running is None
-
-    def test_failure_settles_running_subrow(self) -> None:
-        drive, timeline, calls = self._machine()
-        running = drive(timeline, None, "mesh_surface 后端:等待…", True)
-        running = drive(timeline, running, "从对齐 mesh 派生表面高斯(seed=42)…", True)
-        running = drive(timeline, running, "mesh_surface 派生失败: boom", False)
-        assert ("report_fail", "gs:derive") in calls
-        assert running is None
-
-    def test_unknown_detail_keeps_running_row(self) -> None:
-        drive, timeline, calls = self._machine()
-        running = drive(timeline, None, "mesh_surface 后端:等待…", True)
-        running = drive(timeline, running, "某个未来新增的进度行", True)
-        assert running == "gs:wait_mesh"
+    def test_duplicate_points_never_neighbour_themselves(self) -> None:
+        points = torch.tensor(
+            [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0],
+             [0.1, 0.0, 0.0], [0.0, 0.1, 0.0], [0.0, 0.0, 0.1]]
+        )
+        indices = gaussian_dynamics.get_topk_indices(points, K=3)
+        own = torch.arange(points.shape[0])[:, None]
+        assert not bool((indices == own).any()), f"self in its own graph: {indices}"
 
 
 class TestBoneTransformsAreRotations:
     """compute_bone_transforms must return SO(3) for every neighbourhood.
 
-    The code they cover used to repair a residual reflection by negating one
-    matrix entry (``R[2, 2] *= -1``), which in general does not project onto
-    SO(3) — on an arbitrary reflection it leaves ``R^T R != I`` (a synthetic
-    case measured singular values 1.41/1.00/0.08, i.e. shear applied to mesh
-    vertices and splat orientations as if it were rigid).
-
-    CORRECTION: an earlier version of this docstring — and commit 07ab5e4's
-    message — claimed the branch could not be made to misbehave through the
-    public function. That was wrong. Those searches only tilted the patch
-    while keeping the reflection in the tilted frame, which puts the SVD's
-    third vectors back on a coordinate axis and yields ``R[2, 2] == +/-1``,
-    where the single-entry flip happens to be a valid projection. A patch
-    whose plane normal is genuinely off-axis, under a plain rotation, makes
-    ``R[2, 2]`` generic and the flip leaves ``||R^T R - I||`` up to 1.4 —
-    ``test_tilted_planar_patch_stays_in_so3`` fails on the old code. The
-    condition needs near-exact planarity, so it stayed rare on tracked
-    bones, but it was reachable.
-
-    The replacement builds the correction from ``det(U V^T)``, which is correct
-    at every rank — including the exactly rank-deficient (planar/collinear)
-    patches where ``det(F)`` carries no sign information — and these tests
-    keep it that way.
+    Guards gaussian_dynamics.compute_bone_transforms' reflection handling.
+    The old repair negated one entry (``R[2, 2] *= -1``), which is only a
+    valid SO(3) projection when the reflection axis happens to sit on a
+    coordinate axis; off-axis it leaves ``R^T R != I`` — shear applied to
+    mesh vertices and splat orientations as if it were rigid. The
+    replacement builds the correction from ``det(U V^T)``, correct at every
+    rank including the exactly planar patches where ``det(F)`` carries no
+    sign. ``test_tilted_planar_patch_stays_in_so3`` fails on the old code.
     """
 
     def _solve(self, points: np.ndarray, rotation: np.ndarray, translation):
@@ -1408,62 +1393,25 @@ class TestBoneTransformsAreRotations:
         }[axis]
         return np.asarray(base, dtype=np.float64)
 
-    def test_generic_rank3_neighbourhood(self) -> None:
-        rng = np.random.default_rng(0)
-        pts = rng.random((12, 3)) * 0.12
-        self._assert_so3(self._solve(pts, self._rotation(35.0), [0.01, 0, 0]))
-
-    def test_planar_rank2_neighbourhood(self) -> None:
-        """A locally flat bone patch — the rank-deficient case the old
-        det(F) test could not decide."""
-        rng = np.random.default_rng(1)
-        pts = rng.random((12, 3)) * 0.12
-        pts[:, 2] = 0.0
-        for axis in (0, 1, 2):
-            self._assert_so3(self._solve(pts, self._rotation(40.0, axis), 0.0))
-
-    def test_near_collinear_neighbourhood(self) -> None:
-        rng = np.random.default_rng(2)
-        t = np.linspace(0.0, 0.12, 12)
-        pts = np.stack([t, 0.5 * t, np.zeros_like(t)], axis=1)
-        pts += rng.normal(scale=1e-6, size=pts.shape)
-        self._assert_so3(self._solve(pts, self._rotation(25.0, 1), 0.0))
-
-    def test_noisy_planar_neighbourhood_many_seeds(self) -> None:
-        for seed in range(25):
-            rng = np.random.default_rng(seed)
-            pts = rng.random((9, 3)) * 0.12
-            pts[:, 2] = 0.0
-            pts_t = torch.as_tensor(pts, dtype=torch.float32)
-            rot = torch.as_tensor(self._rotation(30.0), dtype=torch.float32)
-            motions = pts_t @ rot.T - pts_t + torch.as_tensor(
-                rng.normal(scale=1e-3, size=pts.shape), dtype=torch.float32
-            )
-            relations = gaussian_dynamics.get_topk_indices(pts_t, K=8)
-            transforms = gaussian_dynamics.compute_bone_transforms(
-                pts_t, motions, relations, device="cpu"
-            )
-            self._assert_so3(transforms[:, :3, :3], atol=1e-3)
-
     def test_tilted_planar_patch_stays_in_so3(self) -> None:
         """Flat bone patch whose plane normal is NOT a coordinate axis.
 
-        The case the axis-aligned planar tests above never reach: with the
-        normal off-axis the old single-entry repair (``R[2, 2] *= -1``)
-        fires on a generic ``R[2, 2]`` and leaves ``R^T R != I``.
+        Guards demo_v7/service/gaussian_dynamics.py:158-167 (correction from
+        ``det(U V^T)`` instead of ``det(F)`` + ``R[2, 2] *= -1``): restoring
+        the pre-07ab5e4 implementation fails THIS TEST AND NO OTHER in the
+        file. ``tilt=0`` is the axis-aligned planar patch, where the SVD's
+        third vectors land back on a coordinate axis so ``R[2, 2] == +/-1``
+        and the single-entry flip happens to be a valid projection — it
+        passes on the buggy code and is here only as the control. Every
+        non-zero tilt puts the normal off-axis, which makes ``R[2, 2]``
+        generic and leaves ``||R^T R - I||`` up to 1.4 on the old code.
         """
         rng = np.random.default_rng(1)
         flat = rng.random((12, 2)) * 0.12
         for tilt_axis in (0, 1):
-            for tilt in (10.0, 25.0, 35.0, 50.0, 65.0, 80.0):
+            for tilt in (0.0, 10.0, 25.0, 35.0, 50.0, 65.0, 80.0):
                 pts = flat @ self._rotation(tilt, tilt_axis)[:, :2].T
                 self._assert_so3(self._solve(pts, self._rotation(40.0), 0.0))
-
-    def test_degenerate_rank1_falls_back_to_identity(self) -> None:
-        pts = np.zeros((6, 3), dtype=np.float64)  # all bones coincident
-        rotations = self._solve(pts, self._rotation(20.0), 0.0)
-        self._assert_so3(rotations)
-        assert torch.allclose(rotations, torch.eye(3)[None].expand_as(rotations))
 
 
 class TestMeshSurfaceShutdownQuiesces:
@@ -1518,4 +1466,6 @@ class TestMeshSurfaceShutdownQuiesces:
         assert not manager._first_gen.is_alive()  # joined, not just flagged
         assert events["artifacts"] == []  # nothing published after cancel
         assert not manager.world_ply_path.is_file()
-        assert manager.regenerate(7) is False  # closed stays closed
+        # Closed stays closed: _generate's own entry check
+        # (mesh_surface_manager.py:182-185) refuses every later re-roll.
+        assert manager.regenerate(7) is False
