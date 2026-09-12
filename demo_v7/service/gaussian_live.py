@@ -47,6 +47,10 @@ from demo_v7.service.gaussian_utils import (
     render_gaussians,
     splats_to_tensors,
 )
+from demo_v7.service.mesh_shape_constraint import (
+    build_face_rigid_shape_constraint,
+    project_face_rigid_shape,
+)
 
 _BONE_RELATION_K = 8
 _SKIN_K = 16
@@ -79,6 +83,13 @@ _BONE_MIN_VALID_NEIGHBORS = 3
 _HEAL_RIGID_MIN_VALID = 24
 _HEAL_RELATION_K = 8
 _HEAL_SKIN_K = 8
+# Variant F: preserve the proven K=16 LBS + baseline hygiene, then softly
+# project mesh vertices toward locally rigid rest triangles. This is a
+# spatial shape prior, not temporal smoothing: rigid motion and articulated
+# hinge motion are fixed points, while local stretch/shear is damped.
+_MESH_SHAPE_ITERATIONS = 2
+_MESH_SHAPE_STRENGTH = 0.5
+_MESH_SHAPE_MAX_CORRECTION_M = 0.008
 
 
 def load_formal_frame0_rest_positions(
@@ -556,6 +567,9 @@ class MeshAnchoredGaussianRenderer(GaussianLiveRenderer):
         )
         self._anchor_bary = torch.as_tensor(anchors.barycentric, device=device)
         self._face_quats_prev = None  # degenerate-face carryover, set below
+        # Built against the post-catchup rest vertices in _init_bones.
+        self._shape_constraint = None
+        self._shape_correction = None
         # Rest face areas + rest sigmas: the splat footprint has to follow
         # the triangle it is bound to. Measured on a 606-frame manipulation
         # session: the median edge holds its rest length (0.998), but 6.6% of
@@ -654,7 +668,7 @@ class MeshAnchoredGaussianRenderer(GaussianLiveRenderer):
         self.bones_moved_m += float(step.norm(dim=1).mean())
         centroid_before = self._tensors["means"].mean(dim=0)
         total = ctrl_target - self._ctrl_rest
-        new_verts, _ = gaussian_dynamics.interpolate_motions_sparse(
+        lbs_verts, _ = gaussian_dynamics.interpolate_motions_sparse(
             self._ctrl_rest,
             total,
             self._relations,
@@ -664,6 +678,19 @@ class MeshAnchoredGaussianRenderer(GaussianLiveRenderer):
             self._skin_indices,
             device=self.device,
         )
+        if self._shape_constraint is None:
+            raise RuntimeError("mesh shape constraint was not initialized")
+        new_verts = project_face_rigid_shape(
+            lbs_verts,
+            self._shape_constraint,
+            iterations=_MESH_SHAPE_ITERATIONS,
+            strength=_MESH_SHAPE_STRENGTH,
+            max_correction_m=_MESH_SHAPE_MAX_CORRECTION_M,
+        )
+        # Keep the tensor on-device; follow_stats samples it only on the
+        # existing 5-second telemetry cadence, so the live loop adds no
+        # quantile/synchronization tax.
+        self._shape_correction = (new_verts - lbs_verts).norm(dim=1).detach()
         means, quats = self._replay(new_verts)
         self._verts = new_verts
         self._tensors["means"] = means
@@ -677,11 +704,42 @@ class MeshAnchoredGaussianRenderer(GaussianLiveRenderer):
         """Freeze the rest state; also freeze the rest VERTICES snapshot."""
         ready = super()._init_bones()
         if ready:
+            # Catch-up runs before bone initialization. Build the constraint
+            # from this exact rest state so its data contract matches the LBS
+            # vertices, even when frame-0 registration applied a rigid move.
             self._verts_rest = self._verts.clone()
+            self._shape_constraint = build_face_rigid_shape_constraint(
+                self._verts_rest, self._faces
+            )
+            self._shape_correction = self._torch.zeros(
+                self._verts.shape[0],
+                dtype=self._verts.dtype,
+                device=self._verts.device,
+            )
         return ready
 
     def follow_stats(self, *, max_bones: int = 512) -> dict | None:
         stats = super().follow_stats(max_bones=max_bones)
         if stats is not None:
             stats["mesh_anchored"] = True
+            stats["shape_constrained"] = True
+            stats["shape_constraint_iterations"] = _MESH_SHAPE_ITERATIONS
+            stats["shape_constraint_strength"] = _MESH_SHAPE_STRENGTH
+            correction = self._shape_correction
+            if correction is not None and correction.numel():
+                quantiles = self._torch.quantile(
+                    correction,
+                    self._torch.tensor(
+                        [0.5, 0.95], device=correction.device
+                    ),
+                )
+                stats["shape_correction_p50_mm"] = round(
+                    float(quantiles[0]) * 1000.0, 3
+                )
+                stats["shape_correction_p95_mm"] = round(
+                    float(quantiles[1]) * 1000.0, 3
+                )
+                stats["shape_correction_max_mm"] = round(
+                    float(correction.max()) * 1000.0, 3
+                )
         return stats
