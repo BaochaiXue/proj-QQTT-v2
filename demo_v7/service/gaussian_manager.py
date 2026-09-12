@@ -87,6 +87,9 @@ class GaussianManager:
         self._timing: dict[str, float] = {}
         self._generation_timings: list[dict[str, Any]] = []
         self._align_epoch = 0  # guards background upgrades across re-rolls
+        # Tracked so the service teardown can let a finished upgrade
+        # publish before the process exits (see join_selfalign).
+        self._selfalign_thread: threading.Thread | None = None
         self._submit_wall: float | None = None
         self._submit_perf: float | None = None
         self._request_perf: float | None = None
@@ -193,7 +196,38 @@ class GaussianManager:
             time.sleep(0.15)
 
     def shutdown(self) -> None:
-        """Ask the worker to exit (idempotent; bounded wait then kill)."""
+        """Ask the worker to exit (idempotent; bounded wait then kill).
+
+        Stops the generation worker — the ~18GB peak that the "free the
+        camera GPU before FORMAL" contract is actually about — and blocks
+        any NEW self-align upgrade from starting.
+
+        It deliberately does NOT touch the background self-align, which
+        normally starts AFTER this returns: the worker's "done" handler
+        publishes its artifacts first, and the operator (or the fake-live
+        driver) asks for FORMAL within ~0.2s of seeing them. Three stricter
+        policies were tried and measured, and each cost more than the
+        overlap it removed:
+          - refuse to start once closed  -> self-align never runs at all
+                                            (measured 2/2 drives: provenance
+                                            stays on mesh_chain);
+          - kill the in-flight child     -> same loss of the upgrade, which
+                                            is this demo's DEFAULT alignment
+                                            and measurably better than the
+                                            chamfer chain (IoU 0.56 -> 0.92
+                                            on one archived case);
+          - wait for it before FORMAL    -> pushes the FORMAL start ~8s,
+                                            which in fake-live replay lands
+                                            past the manipulation segment
+                                            and fails controller selection
+                                            outright (measured 3/3 drives).
+        What the overlap actually costs was measured too: the child peaks
+        676 MiB for 8.4s on the camera GPU, against the ~18GB generation
+        worker this method does stop. It runs inside the service's process
+        group so the parent's killpg reaps it when the service exits, and
+        the epoch guard in _self_align_upgrade refuses to publish anything
+        once a re-roll has superseded it.
+        """
         with self._lock:
             if self._closed:
                 return
@@ -212,6 +246,37 @@ class GaussianManager:
             proc.wait(timeout=10.0)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+    def join_selfalign(self, timeout_s: float = 20.0) -> None:
+        """Let a running self-align finish publishing before the process dies.
+
+        The upgrade runs on a DAEMON thread, so process exit kills it
+        instantly — and its subprocess takes a measured 8.4s while the
+        fake-live driver asks for FORMAL within ~0.2s of the artifacts and
+        stops ~4s later. The result JSON was landing on disk and then being
+        thrown away with the thread: every short run silently kept the
+        chamfer-chain alignment instead of this demo's DEFAULT self-align
+        (provenance stuck on method=mesh_chain, measured on 163f7a6 and on
+        two drives before this). The publish itself is scoring plus a ply
+        write and one small overlay render, so waiting for it at teardown
+        costs nothing a departing process needs.
+        """
+        with self._lock:
+            thread = self._selfalign_thread
+        if thread is None or not thread.is_alive():
+            return
+        print(
+            "[gaussian-selfalign] waiting for the in-flight upgrade to "
+            f"publish (<= {timeout_s:.0f}s)",
+            flush=True,
+        )
+        thread.join(timeout=float(timeout_s))
+        if thread.is_alive():
+            print(
+                f"[gaussian-selfalign] still running after {timeout_s:.0f}s; "
+                "leaving the published alignment as-is",
+                flush=True,
+            )
 
     # -- commands ------------------------------------------------------------
 
@@ -294,8 +359,21 @@ class GaussianManager:
                 with self._lock:
                     self._busy = False
                 self._emit_error("gaussian", f"{type(exc).__name__}: {exc}")
-        # EOF: worker exited. Normal after shutdown(); an error mid-run
-        # already produced an error event above.
+        # EOF: worker exited. Normal after shutdown(), but a HARD death
+        # mid-generate (OOM kill, native abort) never ran the worker's own
+        # except-clause, so nothing cleared _busy — every later regen was
+        # acked "already in flight" forever and the GUI spinner never
+        # settled, turning a loud failure into a permanent lie.
+        with self._lock:
+            stranded = self._busy and not self._closed
+            self._busy = False
+        if stranded:
+            message = (
+                f"gaussian worker exited unexpectedly (code "
+                f"{proc.poll()}) while a generation was in flight"
+            )
+            self._emit_error("gaussian", message)
+            self._emit_progress("gaussian", message, ok=False)
 
     def _on_worker_event(self, event: dict[str, Any]) -> None:
         kind = event.get("event")
@@ -369,12 +447,13 @@ class GaussianManager:
         with self._lock:
             self._align_epoch += 1
             epoch = self._align_epoch
-        thread = threading.Thread(
-            target=self._self_align_upgrade,
-            args=(dict(done_event), dict(artifacts), epoch),
-            name="gaussian-selfalign",
-            daemon=True,
-        )
+            thread = threading.Thread(
+                target=self._self_align_upgrade,
+                args=(dict(done_event), dict(artifacts), epoch),
+                name="gaussian-selfalign",
+                daemon=True,
+            )
+            self._selfalign_thread = thread
         thread.start()
 
     def _self_align_upgrade(
@@ -395,8 +474,19 @@ class GaussianManager:
                 Path(done_event["ply"]),
                 self.out_dir / "selfalign",
             )
-            if result is None or self._is_closed():
+            if result is None:
                 return
+            # NOTE deliberately no `self._is_closed()` bail-out here. The
+            # child has already finished; what is left is scoring plus a ply
+            # write and one small overlay render. Bailing on "closed" made
+            # the upgrade unreachable in the normal timing: the worker's
+            # "done" handler publishes its artifacts first, and the operator
+            # (or the fake-live driver) asks for FORMAL within ~0.2s of
+            # seeing them, so shutdown() always won the race and the run
+            # silently kept the chamfer-chain alignment — provenance stuck
+            # on method=mesh_chain, measured on clean 163f7a6. The epoch
+            # guard below is the real protection: it drops a result a
+            # RE-ROLL has superseded, which is what this check was for.
             transform, gates = result
             observation = selfalign.load_case_observation(self.case_dir)
             provenance_path = Path(done_event["provenance"])
@@ -437,7 +527,9 @@ class GaussianManager:
             with self._lock:
                 # A re-roll superseded this generation, or we are closing:
                 # its own upgrade pass owns the artifacts now.
-                if self._align_epoch != epoch or self._closed or self._busy:
+                # Epoch (not `_closed`): only a superseding re-roll may
+                # discard a finished upgrade — see the note above.
+                if self._align_epoch != epoch or self._busy:
                     return
                 if swap:
                     tmp_path = self.world_ply_path.with_suffix(

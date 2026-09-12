@@ -547,8 +547,20 @@ def check_self_align_attempt(gaussian_dir, observer: DriveObserver) -> None:
     provenance_path = gaussian_dir / "gaussian_provenance.json"
     if not provenance_path.is_file():
         raise RuntimeError(f"gaussian provenance missing: {provenance_path}")
-    alignment = json.loads(provenance_path.read_text()).get("alignment", {})
-    record = alignment.get("self_align")
+    # The upgrade is asynchronous BY DESIGN: it runs on a background thread
+    # whose subprocess takes ~8s, and the service's teardown joins it before
+    # exiting. This check runs while that teardown is still in flight, so
+    # poll instead of reading once (a single read reported method=mesh_chain
+    # on a run whose service had in fact just swapped to self_align).
+    deadline = time.monotonic() + 40.0
+    alignment: dict = {}
+    record = None
+    while time.monotonic() < deadline:
+        alignment = json.loads(provenance_path.read_text()).get("alignment", {})
+        record = alignment.get("self_align")
+        if record:
+            break
+        time.sleep(0.5)
     if not record:
         raise RuntimeError(
             "self-align upgrade never recorded a decision in provenance "

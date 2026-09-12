@@ -490,6 +490,7 @@ class ReviewScreen(QWidget):
         )
         mesh_bar.addStretch(1)
         self._prior_grid = _ArtifactGrid()
+        self._prior_paths: dict[str, str] = {}
         prior_page = QWidget()
         prior_layout = QVBoxLayout(prior_page)
         prior_layout.addLayout(mesh_bar)
@@ -647,6 +648,13 @@ class ReviewScreen(QWidget):
         self._gaussian_backend = str(backend)
         if self._gaussian_backend == "none":
             self._apply_gaussian_disabled_notice()
+        elif self._gaussian_backend == "mesh_surface":
+            # mesh_surface derives its splats FROM the aligned world mesh —
+            # there is no second, canonical generation to look at, and the
+            # manager emits no canonical ply. Offering "原始(生成系)" made
+            # the view fall back to the world ply, i.e. a selector that lied.
+            if self._gaussian_view_pick.count() > 1:
+                self._gaussian_view_pick.removeItem(1)
 
     def _apply_gaussian_disabled_notice(self) -> None:
         self._gaussian_status.setText(
@@ -681,7 +689,7 @@ class ReviewScreen(QWidget):
                 self._mesh_paths.setdefault(1, path)
         self._show_picked_mesh()
         self._maybe_build_sampling_view()
-        self._prior_grid.add_images(paths)
+        self._refresh_prior_grid(paths)
 
     def set_frame0_artifacts(self, paths: dict[str, str]) -> None:
         """Frame-0 kind artifacts: keep the observed-object-points npz."""
@@ -740,7 +748,21 @@ class ReviewScreen(QWidget):
             pass
 
     def set_alignment_artifacts(self, paths: dict[str, str]) -> None:
-        self._prior_grid.add_images(paths)
+        self._refresh_prior_grid(paths)
+
+    def _refresh_prior_grid(self, paths: dict[str, str]) -> None:
+        """Rebuild the shared prior grid from the union of what has landed.
+
+        The hello ack replays the whole artifact snapshot, so a mid-run
+        control re-dial re-delivers stills the grid already shows — and
+        ``add_images`` only appends. The masks and gaussian grids clear
+        first, but shape_prior and alignment feed THIS one grid, so neither
+        setter can clear alone without wiping the other's stills. Keeping
+        the union and rebuilding makes both replay-safe.
+        """
+        self._prior_paths.update(paths)
+        self._prior_grid.clear()
+        self._prior_grid.add_images(self._prior_paths)
 
     def set_gaussian_artifacts(self, paths: dict[str, str]) -> None:
         """A generation (or re-roll) landed: refresh stills + 3D view."""
@@ -799,6 +821,7 @@ class ReviewScreen(QWidget):
     def reset(self) -> None:
         self._masks_grid.clear()
         self._prior_grid.clear()
+        self._prior_paths.clear()
         self._gaussian_grid.clear()
         self._gaussian_ply_paths.clear()
         self._gaussian_view.clear()

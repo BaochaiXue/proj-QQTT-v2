@@ -247,6 +247,15 @@ class FakeLiveCaseRecorder:
         return round((len(ts) - 1) / (ts[-1] - ts[0]), 3)
 
     def _write_metadata(self) -> None:
+        # Under _meta_lock: the worker thread mutates _timestamps/_step while
+        # writing frames, and close() writes metadata from the MAIN thread
+        # after a bounded drain that may have timed out — snapshotting an
+        # unlocked dict there can disagree with the directory or raise on a
+        # dict that changed size.
+        with self._meta_lock:
+            self._write_metadata_locked()
+
+    def _write_metadata_locked(self) -> None:
         packet = self._first_packet
         assert packet is not None
         height, width = packet.color_bgr.shape[:2]

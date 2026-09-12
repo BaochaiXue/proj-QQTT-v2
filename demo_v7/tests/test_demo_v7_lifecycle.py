@@ -486,3 +486,41 @@ class TestHelloArtifactSnapshot:
         )
         assert replayed == [{"kind": proto.ARTIFACT_KIND_MASKS,
                              "paths": {"object": "m.png"}}]
+
+
+class TestReviewArtifactReplay:
+    """The hello ack replays the whole artifact snapshot on every control
+    re-dial, so the Review screen's shared prior grid must be idempotent —
+    ``_ArtifactGrid.add_images`` only appends, and shape_prior + alignment
+    feed the SAME grid so neither setter may clear it alone."""
+
+    def _screen(self):
+        pytest.importorskip("PySide6")
+        from demo_v7.gui.screens import ReviewScreen
+
+        rendered: list[dict] = []
+
+        class _Grid:
+            def clear(self):
+                rendered.clear()
+
+            def add_images(self, paths):
+                rendered.append(dict(paths))
+
+        screen = ReviewScreen.__new__(ReviewScreen)
+        screen._prior_grid = _Grid()
+        screen._prior_paths = {}
+        return screen, rendered
+
+    def test_replayed_snapshot_does_not_duplicate_or_lose_stills(self) -> None:
+        from demo_v7.gui.screens import ReviewScreen
+
+        screen, rendered = self._screen()
+        ReviewScreen._refresh_prior_grid(screen, {"mesh_glb": "m.png"})
+        ReviewScreen._refresh_prior_grid(screen, {"match": "a.png"})
+        # A reconnect replays both kinds again.
+        ReviewScreen._refresh_prior_grid(screen, {"mesh_glb": "m.png"})
+        ReviewScreen._refresh_prior_grid(screen, {"match": "a.png"})
+        assert rendered[-1] == {"mesh_glb": "m.png", "match": "a.png"}, (
+            "the shared grid lost one kind's stills or duplicated them"
+        )

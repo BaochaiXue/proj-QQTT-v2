@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -348,3 +349,36 @@ def test_stuck_critical_worker_blocks_a_clean_finish(
             assert snapshot is None, "display-only worker failed the run"
     finally:
         release.set()
+
+
+# --- the gaussian manager must really free the camera GPU before FORMAL ---
+
+
+def triposplat_manager(tmp_path):
+    from demo_v7.service.gaussian_manager import GaussianManager
+
+    events: list[tuple] = []
+    return GaussianManager(
+        case_dir=tmp_path / "case",
+        out_dir=tmp_path / "gaussian",
+        controller_name="hand",
+        emit_progress=lambda *a, **k: events.append(("prog", a)),
+        emit_artifacts=lambda *a, **k: events.append(("art", a)),
+        emit_error=lambda *a, **k: events.append(("err", a)),
+    ), events
+
+
+def test_silent_worker_eof_settles_busy_loudly(tmp_path):
+    """A hard worker death (OOM kill / native abort) skips the worker's own
+    error path, so the reader loop must clear _busy and say so — otherwise
+    every later regen is acked "already in flight" forever."""
+    import io
+
+    manager, events = triposplat_manager(tmp_path)
+    manager._busy = True
+    manager._proc = SimpleNamespace(
+        stdout=io.StringIO(""), poll=lambda: -9, stdin=None
+    )
+    manager._reader_loop()
+    assert manager.busy is False, "busy stayed set after the worker died"
+    assert any(kind == "err" for kind, _ in events), "the death was silent"

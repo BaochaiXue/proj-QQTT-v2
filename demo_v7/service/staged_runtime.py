@@ -1730,6 +1730,14 @@ class StagedRuntime:
         # The gaussian worker is a child process (model in VRAM): a fatal
         # mid-warmup exit must not orphan it. Idempotent after _launch_formal.
         self._shutdown_gaussian_manager()
+        manager = self._gaussian_manager
+        if manager is not None and hasattr(manager, "join_selfalign"):
+            # Process exit kills the daemon upgrade thread; give a finished
+            # self-align its chance to publish first (see join_selfalign).
+            try:
+                manager.join_selfalign()
+            except Exception:
+                pass
         formal = self._formal
         if formal is not None:
             try:

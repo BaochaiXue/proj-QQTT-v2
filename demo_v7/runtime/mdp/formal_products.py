@@ -6,7 +6,7 @@ import argparse
 import threading
 import time
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 
@@ -37,9 +37,14 @@ from demo_v7.runtime.utils.concurrency import elapsed_ms as _elapsed_ms
 
 
 if TYPE_CHECKING:
-    from demo_v7.runtime.mdp.capture import CaptureStage
     from demo_v7.runtime.mdp.session import CameraSession
     from demo_v7.runtime.mdp.shape_prior_flow import ShapePriorPublisher
+
+
+class _StartupHold(Protocol):
+    """The one attribute this stage needs from its capture hold."""
+
+    startup_hold_s: float
 
 
 class FormalProductStage:
@@ -59,7 +64,10 @@ class FormalProductStage:
         stage_stats: StageStatsBoard,
         timeline_gate: FormalTimelineGate,
         shape_prior: ShapePriorPublisher,
-        capture: CaptureStage,
+        # Only `startup_hold_s` is ever read (see below), and the v7
+        # composition root passes its own hold object, not the deleted
+        # v6.2 CaptureStage — so the contract is structural.
+        capture: _StartupHold,
         stop_event: threading.Event,
         fatal: FatalErrorLatch,
         live_viz_slot: object | None = None,
