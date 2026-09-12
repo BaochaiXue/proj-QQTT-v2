@@ -489,7 +489,7 @@ class GaussianLiveRenderer:
             quantiles = torch.quantile(
                 distances, torch.tensor([0.5, 0.9], device=distances.device)
             )
-        return {
+        stats = {
             "bones": int(self._ctrl_prev.shape[0]),
             "rest_seeded": bool(self.rest_seeded),
             "failed": bool(self.failed),
@@ -501,6 +501,8 @@ class GaussianLiveRenderer:
             "bone2splat_p50_cm": round(float(quantiles[0]) * 100.0, 2),
             "bone2splat_p90_cm": round(float(quantiles[1]) * 100.0, 2),
         }
+        stats.update(getattr(self, "loaded_alignment", None) or {})
+        return stats
 
     def render_over(
         self,

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -129,6 +130,27 @@ def resolve_socket_dir(config: dict[str, Any], base_path: Path) -> Path:
             "(shorten --base-path or session.socket_dir_template)"
         )
     return socket_dir
+
+
+V7_ARTIFACT_DIRS = ("gaussian", "frame0")
+
+
+def clear_v7_artifact_dirs(base_path: str | Path) -> dict[str, bool]:
+    """Remove demo_v7's own per-run artifact dirs from a reused base path.
+
+    The vendored ``prepare_realtime_output_for_new_run`` predates demo_v7
+    and does not know these two dirs. Leaving them meant a run reusing a
+    base path (the default, "outputs") inherited the PREVIOUS run's splats,
+    and the gaussian managers' file-existence check handed those to FORMAL
+    whenever this run's own generation failed or was not done.
+    """
+    removed: dict[str, bool] = {}
+    for name in V7_ARTIFACT_DIRS:
+        target = Path(base_path) / name
+        removed[f"removed_{name}"] = target.is_dir()
+        if target.is_dir():
+            shutil.rmtree(target)
+    return removed
 
 
 def case_table_calibrate_snapshot(case_dir: str | Path | None) -> Path | None:
@@ -405,6 +427,7 @@ class OrchestratorSession:
             self.base_path,
             legacy_case_prefix=str(self._args.case_prefix),
         )
+        self.startup_output_cleanup.update(clear_v7_artifact_dirs(self.base_path))
         self._run_start_monotonic_s = time.monotonic()
         self._status = PipelineStatusWriter(self.base_path, "orchestrator")
         self._status.emit(

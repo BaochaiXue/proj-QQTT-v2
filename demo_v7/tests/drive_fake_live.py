@@ -548,10 +548,11 @@ def check_self_align_attempt(gaussian_dir, observer: DriveObserver) -> None:
     if not provenance_path.is_file():
         raise RuntimeError(f"gaussian provenance missing: {provenance_path}")
     # The upgrade is asynchronous BY DESIGN: it runs on a background thread
-    # whose subprocess takes ~8s, and the service's teardown joins it before
-    # exiting. This check runs while that teardown is still in flight, so
-    # poll instead of reading once (a single read reported method=mesh_chain
-    # on a run whose service had in fact just swapped to self_align).
+    # whose subprocess takes ~8s. This check runs BEFORE session.shutdown(),
+    # while the service sits alive in FINISHED, so poll instead of reading
+    # once. (That also means this poll — not the service's teardown join —
+    # is what gives the upgrade its time here; the teardown join has its own
+    # unit test.)
     deadline = time.monotonic() + 40.0
     alignment: dict = {}
     record = None
@@ -565,6 +566,26 @@ def check_self_align_attempt(gaussian_dir, observer: DriveObserver) -> None:
         raise RuntimeError(
             "self-align upgrade never recorded a decision in provenance "
             f"(method={alignment.get('method')})"
+        )
+    # What the operator actually SAW: the live channel used to load the fast
+    # chamfer-chain ply once and keep it for the whole FORMAL segment while
+    # only the on-disk artifact got the self-align. It must reload when the
+    # upgrade lands — unless FORMAL ended first, which a default 2-chunk
+    # drive usually does (the upgrade lands ~8-18s after the re-roll). The
+    # stats json's last write is the channel's exit; the reload took <3s.
+    stats_path = gaussian_dir / "gaussian_live_stats.json"
+    loaded = json.loads(stats_path.read_text()).get("alignment_method_loaded")
+    final = alignment.get("method")
+    if loaded != final:
+        upgraded_at = (gaussian_dir / "gaussian_world.ply").stat().st_mtime
+        if upgraded_at < stats_path.stat().st_mtime - 5.0:
+            raise RuntimeError(
+                f"the live Gaussian channel kept alignment {loaded!r} although "
+                f"the {final!r} upgrade landed while it was still running"
+            )
+        observer.log(
+            f"live channel ended before the {final} upgrade landed "
+            f"(rendered {loaded}); use more --target-chunks to cover the reload"
         )
     observer.log(
         f"self-align verified: {record.get('decision')} "

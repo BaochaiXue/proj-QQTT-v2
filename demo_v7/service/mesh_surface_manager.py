@@ -67,6 +67,10 @@ class MeshSurfaceGaussianManager:
         self._lock = threading.Lock()
         self._busy = False
         self._closed = False
+        # Set only when THIS manager publishes a world ply; see
+        # has_world_ply for why file existence is not enough.
+        self._published = False
+        self._ply_version = 0  # bumped on every (re)publish of the world ply
         self._case_ready = threading.Event()
         self._first_gen: threading.Thread | None = None
         self._workers: list[threading.Thread] = []
@@ -173,8 +177,25 @@ class MeshSurfaceGaussianManager:
         with self._lock:
             return self._busy
 
+    @property
+    def ply_version(self) -> int:
+        with self._lock:
+            return self._ply_version
+
     def has_world_ply(self) -> bool:
-        return self.world_ply_path.is_file() and self.anchors_path.is_file()
+        """True only for a ply THIS run's manager derived and published.
+
+        File existence alone answered for whatever the output dir held, and
+        the dir is reused across runs — so a failed or unfinished derivation
+        let FORMAL load the previous run's splats, i.e. the wrong object.
+        """
+        with self._lock:
+            published = self._published
+        return (
+            published
+            and self.world_ply_path.is_file()
+            and self.anchors_path.is_file()
+        )
 
     # -- derivation ----------------------------------------------------------
 
@@ -202,6 +223,9 @@ class MeshSurfaceGaussianManager:
             artifacts, num_splats = self._derive_and_collect()
             if self._is_closed():
                 return
+            with self._lock:
+                self._published = True
+                self._ply_version += 1
             self._emit_artifacts("gaussian", artifacts)
             self._emit_progress(
                 "gaussian",

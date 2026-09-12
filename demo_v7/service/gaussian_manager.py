@@ -79,6 +79,10 @@ class GaussianManager:
         self._lock = threading.Lock()
         self._busy = False
         self._closed = False
+        # Set only when THIS manager publishes a world ply; see
+        # has_world_ply for why file existence is not enough.
+        self._published = False
+        self._ply_version = 0  # bumped on every (re)publish of the world ply
         self._submitted = False
         self._case_ready = threading.Event()
         self.world_ply_path = self.out_dir / "gaussian_world.ply"
@@ -247,7 +251,7 @@ class GaussianManager:
         except subprocess.TimeoutExpired:
             proc.kill()
 
-    def join_selfalign(self, timeout_s: float = 20.0) -> None:
+    def join_selfalign(self, timeout_s: float = 12.0) -> None:
         """Let a running self-align finish publishing before the process dies.
 
         The upgrade runs on a DAEMON thread, so process exit kills it
@@ -259,7 +263,9 @@ class GaussianManager:
         (provenance stuck on method=mesh_chain, measured on 163f7a6 and on
         two drives before this). The publish itself is scoring plus a ply
         write and one small overlay render, so waiting for it at teardown
-        costs nothing a departing process needs.
+        costs nothing a departing process needs. The default stays under
+        the parent's 15s wait for a non-FORMAL service, after which it
+        SIGTERMs the group (20s used to make the last 5s unreachable).
         """
         with self._lock:
             thread = self._selfalign_thread
@@ -292,6 +298,11 @@ class GaussianManager:
         """
         with self._lock:
             if self._closed or self._proc is None or self._proc.stdin is None:
+                return False
+            # A dead worker still has a Popen and a stdin object; without
+            # this the regen was acked ok=true and only failed later on a
+            # broken pipe (reproduced with a SIGKILLed child).
+            if self._proc.poll() is not None:
                 return False
             if self._busy:
                 return False
@@ -336,8 +347,21 @@ class GaussianManager:
         with self._lock:
             return self._busy
 
+    @property
+    def ply_version(self) -> int:
+        with self._lock:
+            return self._ply_version
+
     def has_world_ply(self) -> bool:
-        return self.world_ply_path.is_file()
+        """True only for a ply THIS run's manager aligned and published.
+
+        File existence alone answered for whatever the output dir held, and
+        the dir is reused across runs — so a failed or unfinished generation
+        let FORMAL load the previous run's splats, i.e. the wrong object.
+        """
+        with self._lock:
+            published = self._published
+        return published and self.world_ply_path.is_file()
 
     # -- worker events -------------------------------------------------------
 
@@ -345,6 +369,7 @@ class GaussianManager:
         proc = self._proc
         if proc is None or proc.stdout is None:
             return
+        last_kind = None
         for line in proc.stdout:
             line = line.strip()
             if not line:
@@ -353,6 +378,7 @@ class GaussianManager:
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            last_kind = event.get("event")
             try:
                 self._on_worker_event(event)
             except Exception as exc:
@@ -364,13 +390,19 @@ class GaussianManager:
         # except-clause, so nothing cleared _busy — every later regen was
         # acked "already in flight" forever and the GUI spinner never
         # settled, turning a loud failure into a permanent lie.
+        # Any EOF before shutdown() is a death — during model load and while
+        # idle too, not only mid-generate (reproduced: a worker killed after
+        # "ready" produced no event at all). Skip one the worker already
+        # announced, or a soft load failure would be overwritten by a vaguer
+        # second message.
         with self._lock:
-            stranded = self._busy and not self._closed
+            was_busy = self._busy
+            died = not self._closed and (was_busy or last_kind != "error")
             self._busy = False
-        if stranded:
+        if died:
             message = (
-                f"gaussian worker exited unexpectedly (code "
-                f"{proc.poll()}) while a generation was in flight"
+                f"gaussian worker exited unexpectedly (code {proc.poll()})"
+                + (" while a generation was in flight" if was_busy else "")
             )
             self._emit_error("gaussian", message)
             self._emit_progress("gaussian", message, ok=False)
@@ -416,6 +448,9 @@ class GaussianManager:
                 align_start = time.perf_counter()
                 artifacts = self._align_and_collect(event)
                 align_s = time.perf_counter() - align_start
+                with self._lock:
+                    self._published = True
+                    self._ply_version += 1
                 self._emit_artifacts("gaussian", artifacts)
                 self._emit_progress(
                     "gaussian",
@@ -553,6 +588,10 @@ class GaussianManager:
                     "transform": np.asarray(transform).tolist(),
                 }
                 provenance_path.write_text(json.dumps(provenance, indent=1))
+                if swap:
+                    # Last, with ply and provenance both final: the live
+                    # renderer reloads on this.
+                    self._ply_version += 1
             if not swap:
                 print(
                     f"[gaussian-selfalign] keeping mesh_chain "

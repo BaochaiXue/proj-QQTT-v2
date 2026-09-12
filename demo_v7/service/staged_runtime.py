@@ -122,6 +122,17 @@ def _ack(cmd: str, *, ok: bool, error: str | None = None, **extra: Any) -> dict:
     return ack
 
 
+def _loaded_alignment_method(manager) -> dict:
+    """Which alignment the live renderer loaded, for its stats json (the
+    ply and provenance are republished together under the manager lock)."""
+    provenance = Path(manager.world_ply_path).with_name("gaussian_provenance.json")
+    try:
+        method = json.loads(provenance.read_text())["alignment"]["method"]
+    except Exception:  # noqa: BLE001 - telemetry must not block the channel
+        method = None
+    return {"alignment_method_loaded": method}
+
+
 class StagedRuntime:
     """Camera-service state machine (states/commands/events in protocol.py)."""
 
@@ -1080,24 +1091,10 @@ class StagedRuntime:
         manager = self._gaussian_manager
         if formal is None or manager is None or not manager.has_world_ply():
             return
-        try:
-            from demo_v7.runtime.mdp.constants import TABLE_WORLD_FRAME_KIND
-            from demo_v7.service.gaussian_live import (
-                GaussianLiveRenderer,
-                MeshAnchoredGaussianRenderer,
-            )
+        from demo_v7.runtime.mdp.constants import TABLE_WORLD_FRAME_KIND
 
-            anchors_path = getattr(manager, "anchors_path", None)
-            if anchors_path is not None:
-                # mesh_surface backend: splats ride the mesh vertices via
-                # their barycentric anchors (hard binding stays in motion).
-                live = MeshAnchoredGaussianRenderer(
-                    str(manager.world_ply_path), str(anchors_path)
-                )
-            else:
-                live = GaussianLiveRenderer(str(manager.world_ply_path))
-        except Exception as exc:
-            print(f"[gaussian-live] init failed: {exc}", flush=True)
+        live, ply_version = self._build_gaussian_live(manager)
+        if live is None:
             return
         table_c2w = self.session.table_c2w
         if table_c2w is None:
@@ -1120,6 +1117,25 @@ class StagedRuntime:
             while not self.stop_event.is_set():
                 if formal.lossless.processing_done.is_set() or live.failed:
                     return
+                if manager.ply_version != ply_version:
+                    # The fast chamfer-chain alignment is published first and
+                    # the self-align upgrade replaces the ply ~8s later —
+                    # measured on two drives landing AFTER FORMAL had loaded
+                    # the chain ply, so the live view kept the old alignment
+                    # for the whole segment. Waiting for the upgrade instead
+                    # blanked the channel for a short FORMAL (measured: the
+                    # 3-chunk drive finished before the first frame). Reload:
+                    # a renderer built after seq 0 is the normal late-start
+                    # path, catch-up included.
+                    rebuilt, ply_version = self._build_gaussian_live(manager)
+                    if rebuilt is not None:
+                        self._gaussian_formal_catchup(rebuilt)
+                        live = rebuilt
+                        print(
+                            "[gaussian-live] world ply republished; renderer "
+                            f"reloaded ({live.loaded_alignment['alignment_method_loaded']})",
+                            flush=True,
+                        )
                 pair = slot.get_latest_after(rendered_seq)
                 if pair is None:
                     time.sleep(0.02)
@@ -1162,6 +1178,32 @@ class StagedRuntime:
             # snapshot — the json carries failed/frames_stepped so a stale
             # healthy-looking file cannot mask a dead channel.
             self._write_gaussian_live_stats(live)
+
+    def _build_gaussian_live(self, manager):
+        """Renderer over the manager's current world ply, plus the ply
+        version it was built from (read FIRST, so a republish racing the
+        load leaves it stale and the loop reloads once more)."""
+        ply_version = manager.ply_version
+        try:
+            from demo_v7.service.gaussian_live import (
+                GaussianLiveRenderer,
+                MeshAnchoredGaussianRenderer,
+            )
+
+            anchors_path = getattr(manager, "anchors_path", None)
+            if anchors_path is not None:
+                # mesh_surface backend: splats ride the mesh vertices via
+                # their barycentric anchors (hard binding stays in motion).
+                live = MeshAnchoredGaussianRenderer(
+                    str(manager.world_ply_path), str(anchors_path)
+                )
+            else:
+                live = GaussianLiveRenderer(str(manager.world_ply_path))
+            live.loaded_alignment = _loaded_alignment_method(manager)
+        except Exception as exc:
+            print(f"[gaussian-live] init failed: {exc}", flush=True)
+            return None, ply_version
+        return live, ply_version
 
     def _gaussian_formal_catchup(self, live) -> None:
         """Close the capture-frame-0 -> FORMAL seq-0 gap before the loop.

@@ -221,6 +221,13 @@ def run_self_align_subprocess(
     work_dir = Path(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
     result_path = work_dir / "self_align_result.json"
+    # The work dir is shared by every generation, and a child that dies
+    # without writing left the PREVIOUS result in place — which was then
+    # returned as this generation's transform (reproduced). The trigger is
+    # ordinary: align_gaussian raises SystemExit("no candidate produced a
+    # valid Sim(3)"), which bypasses the child's `except Exception`, so the
+    # child exits rc=1 without writing its error payload.
+    result_path.unlink(missing_ok=True)
     try:
         completed = subprocess.run(
             [

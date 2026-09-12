@@ -382,3 +382,88 @@ def test_silent_worker_eof_settles_busy_loudly(tmp_path):
     manager._reader_loop()
     assert manager.busy is False, "busy stayed set after the worker died"
     assert any(kind == "err" for kind, _ in events), "the death was silent"
+
+
+def test_idle_worker_death_is_reported(tmp_path):
+    """Any EOF before shutdown() is a death — during model load or idle too,
+    not only mid-generate (a worker killed after "ready" produced no event)."""
+    import io
+
+    manager, events = triposplat_manager(tmp_path)
+    manager._busy = False
+    manager._proc = SimpleNamespace(
+        stdout=io.StringIO('{"event": "ready", "load_s": 7.4}\n'),
+        poll=lambda: -9,
+        stdin=None,
+    )
+    manager._reader_loop()
+    assert any(kind == "err" for kind, _ in events), "an idle worker died silently"
+
+
+def test_dead_worker_cannot_be_reserved(tmp_path):
+    """A dead worker still has a Popen and a stdin object, so without a
+    liveness check the regen was acked ok=true and failed later."""
+    manager, _events = triposplat_manager(tmp_path)
+    manager._proc = SimpleNamespace(stdin=object(), poll=lambda: -9)
+    assert manager.try_reserve() is False
+
+
+# --- one run must never inherit another run's artifacts --------------------
+
+
+@pytest.mark.parametrize("backend", ["mesh_surface", "triposplat"])
+def test_previous_runs_ply_is_not_this_runs(tmp_path, backend):
+    """Guards has_world_ply: the output dir is reused across runs (default
+    "outputs"), so file existence answered for the PREVIOUS run and FORMAL
+    loaded its splats — the wrong object — whenever this run's own
+    generation failed or had not finished (reproduced on both backends)."""
+    out = tmp_path / "gaussian"
+    out.mkdir()
+    (out / "gaussian_world.ply").write_bytes(b"left by an earlier run")
+    (out / "gaussian_anchors.npz").write_bytes(b"left by an earlier run")
+    if backend == "mesh_surface":
+        manager = mesh_surface_manager(tmp_path)
+        manager.out_dir = out
+        manager.world_ply_path = out / "gaussian_world.ply"
+        manager.anchors_path = out / "gaussian_anchors.npz"
+    else:
+        manager, _events = triposplat_manager(tmp_path)
+    assert manager.has_world_ply() is False, "a previous run's ply was accepted"
+
+
+def test_new_session_clears_the_v7_artifact_dirs(tmp_path):
+    """The vendored new-run cleanup predates demo_v7's gaussian/ and frame0/."""
+    from demo_v7.orchestration.session import clear_v7_artifact_dirs
+
+    base = tmp_path / "run"
+    for stale in ("gaussian", "frame0"):
+        (base / stale).mkdir(parents=True)
+        (base / stale / "left_over").write_text("previous run")
+    (base / "capture").mkdir()  # not ours to touch here
+    removed = clear_v7_artifact_dirs(base)
+    assert removed == {"removed_gaussian": True, "removed_frame0": True}
+    assert not (base / "gaussian").exists()
+    assert not (base / "frame0").exists()
+    assert (base / "capture").exists()
+
+
+def test_stale_selfalign_result_is_not_returned(tmp_path, monkeypatch):
+    """A child that dies without writing used to leave the PREVIOUS result in
+    the shared work dir, and it was returned as this generation's transform.
+    The trigger is ordinary: align_gaussian's SystemExit("no candidate
+    produced a valid Sim(3)") bypasses the child's `except Exception`."""
+    import json as _json
+
+    import demo_v7.service.gaussian_selfalign as sa
+
+    work = tmp_path / "selfalign"
+    work.mkdir()
+    (work / "self_align_result.json").write_text(_json.dumps({
+        "transform": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+        "gates": {"inliers": 99, "inlier_rms_m": 0.001,
+                  "refined_iou": 0.99, "refine_status": "ok"},
+    }))
+    dies = tmp_path / "dies.py"
+    dies.write_text("import sys\nsys.exit(1)\n")
+    monkeypatch.setattr(sa, "__file__", str(dies))
+    assert sa.run_self_align_subprocess(tmp_path, tmp_path / "raw.ply", work) is None
