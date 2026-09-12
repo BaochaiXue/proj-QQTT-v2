@@ -59,7 +59,8 @@ history-free determinism, and actual integration in
 Focused local result: 10 tests passed (the six new F tests plus the existing
 mesh-anchored renderer tests). On a 10,242-vertex / 20,480-face icosphere, two
 CPU projection iterations measured 9.6 ms. Rigid-motion numerical error was
-1.83e-8 m.
+1.83e-8 m. The branch gate additionally runs the entire hermetic demo_v7 test
+suite and repository guards.
 
 The final acceptance gate is the same A/F replay table on the real 606-frame
 capture. F is accepted only if it materially lowers jelly and edge strain
