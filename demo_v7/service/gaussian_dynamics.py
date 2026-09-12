@@ -93,8 +93,18 @@ def quaternion_multiply(q1: torch.Tensor, q2: torch.Tensor) -> torch.Tensor:
 
 def get_topk_indices(points: torch.Tensor, K: int = 5) -> torch.Tensor:
     """(N,3) -> (N,K) indices of each point's K nearest neighbors (no self)."""
+    # Exclude self BY INDEX, not by tie order. Dropping column 0 of a
+    # (K+1)-topk assumes the zero-distance self always sorts first, which is
+    # not guaranteed once two points coincide — and they do: bones are
+    # tracker queries lifted through a rounded integer pixel, so two queries
+    # landing on the same pixel produce a bitwise identical world point.
+    # Measured on two archived sessions: 15.6-15.8% of object bones had their
+    # own index in `relations`, which both wastes a neighbour slot and lets a
+    # bone vote in its own rigidity median in the hygiene pass.
     dist_matrix = torch.cdist(points, points, p=2)
-    return torch.topk(dist_matrix, K + 1, largest=False).indices[:, 1:]
+    index = torch.arange(points.shape[0], device=points.device)
+    dist_matrix[index, index] = float("inf")
+    return torch.topk(dist_matrix, K, largest=False).indices
 
 
 def compute_bone_transforms(

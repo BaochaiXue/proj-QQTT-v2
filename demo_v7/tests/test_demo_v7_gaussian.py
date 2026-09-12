@@ -1028,6 +1028,17 @@ class TestMeshAnchoredRenderer:
         live._anchor_face = torch.as_tensor(anchors.face_index.astype(np.int64))
         live._anchor_bary = torch.as_tensor(anchors.barycentric)
         live._face_quats_prev = None
+        tri_rest = live._verts[live._faces]
+        live._rest_double_area = (
+            torch.cross(
+                tri_rest[:, 1] - tri_rest[:, 0],
+                tri_rest[:, 2] - tri_rest[:, 0],
+                dim=1,
+            )
+            .norm(dim=1)
+            .clamp(min=1e-12)
+        )
+        live._rest_scales = live._tensors["scales"].clone()
         means, quats = live._replay(live._verts)
         live._tensors["means"] = means
         live._tensors["quats"] = quats
@@ -1088,6 +1099,27 @@ class TestMeshAnchoredRenderer:
         replayed, _ = live._replay(live._verts)
         assert torch.allclose(
             live._tensors["means"], replayed, atol=1e-6
+        )
+
+    def test_scales_track_triangle_stretch(self, tmp_path) -> None:
+        """A stretched triangle grows its splats; a rigid move does not.
+
+        Measured on a 606-frame manipulation session: 6.6% of mesh edges
+        exceed 1.5x stretch and 1.0% exceed 3x, so a rest-fixed footprint
+        leaves holes exactly where the object deforms most.
+        """
+        live, _anchors = self._bare(tmp_path)
+        rest_scales = live._tensors["scales"].clone()
+        # Uniform 2x blow-up: every triangle doubles linearly, so every
+        # tangential sigma should double; the surfel thickness must not.
+        live._replay(live._verts * 2.0)
+        grown = live._tensors["scales"]
+        assert torch.allclose(grown[:, :2], rest_scales[:, :2] * 2.0, rtol=1e-3)
+        assert torch.allclose(grown[:, 2], rest_scales[:, 2])
+        # A rigid move changes no area, so the sigmas must come back.
+        live._replay(live._verts + 0.07)
+        assert torch.allclose(
+            live._tensors["scales"], rest_scales, rtol=1e-4, atol=1e-9
         )
 
     def test_degenerate_face_keeps_last_orientation(self, tmp_path) -> None:
@@ -1274,18 +1306,25 @@ class TestMeshSurfaceWarmupSubrows:
 class TestBoneTransformsAreRotations:
     """compute_bone_transforms must return SO(3) for every neighbourhood.
 
-    These are GUARDS, not a regression for an observed failure. The code
-    they cover used to repair a residual reflection by negating one matrix
-    entry (``R[2, 2] *= -1``), which in general does not project onto SO(3)
-    — on an arbitrary reflection it leaves ``R^T R != I`` (a synthetic case
-    measured singular values 1.41/1.00/0.08, i.e. shear applied to mesh
-    vertices and splat orientations as if it were rigid). In practice that
-    branch could NOT be made to misbehave here: across ~9k randomised solves
-    plus targeted in-plane-reflection patches at five tilts, every firing
-    had ``R[2, 2] == +/-1`` (the reflection axis aligned with a coordinate
-    axis), where the single-entry flip happens to be a valid projection. So
-    the old code was a latent hazard rather than a demonstrated defect. The
-    replacement builds the correction from ``det(U V^T)``, which is correct
+    The code they cover used to repair a residual reflection by negating one
+    matrix entry (``R[2, 2] *= -1``), which in general does not project onto
+    SO(3) — on an arbitrary reflection it leaves ``R^T R != I`` (a synthetic
+    case measured singular values 1.41/1.00/0.08, i.e. shear applied to mesh
+    vertices and splat orientations as if it were rigid).
+
+    CORRECTION: an earlier version of this docstring — and commit 07ab5e4's
+    message — claimed the branch could not be made to misbehave through the
+    public function. That was wrong. Those searches only tilted the patch
+    while keeping the reflection in the tilted frame, which puts the SVD's
+    third vectors back on a coordinate axis and yields ``R[2, 2] == +/-1``,
+    where the single-entry flip happens to be a valid projection. A patch
+    whose plane normal is genuinely off-axis, under a plain rotation, makes
+    ``R[2, 2]`` generic and the flip leaves ``||R^T R - I||`` up to 1.4 —
+    ``test_tilted_planar_patch_stays_in_so3`` fails on the old code. The
+    condition needs near-exact planarity, so it stayed rare on tracked
+    bones, but it was reachable.
+
+    The replacement builds the correction from ``det(U V^T)``, which is correct
     at every rank — including the exactly rank-deficient (planar/collinear)
     patches where ``det(F)`` carries no sign information — and these tests
     keep it that way.
@@ -1360,6 +1399,20 @@ class TestBoneTransformsAreRotations:
                 pts_t, motions, relations, device="cpu"
             )
             self._assert_so3(transforms[:, :3, :3], atol=1e-3)
+
+    def test_tilted_planar_patch_stays_in_so3(self) -> None:
+        """Flat bone patch whose plane normal is NOT a coordinate axis.
+
+        The case the axis-aligned planar tests above never reach: with the
+        normal off-axis the old single-entry repair (``R[2, 2] *= -1``)
+        fires on a generic ``R[2, 2]`` and leaves ``R^T R != I``.
+        """
+        rng = np.random.default_rng(1)
+        flat = rng.random((12, 2)) * 0.12
+        for tilt_axis in (0, 1):
+            for tilt in (10.0, 25.0, 35.0, 50.0, 65.0, 80.0):
+                pts = flat @ self._rotation(tilt, tilt_axis)[:, :2].T
+                self._assert_so3(self._solve(pts, self._rotation(40.0), 0.0))
 
     def test_degenerate_rank1_falls_back_to_identity(self) -> None:
         pts = np.zeros((6, 3), dtype=np.float64)  # all bones coincident

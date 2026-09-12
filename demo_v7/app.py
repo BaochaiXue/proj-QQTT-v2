@@ -877,6 +877,9 @@ class AppController(QObject):
         self._session: Any = None
         self._shutdown_thread: threading.Thread | None = None
         self._dying_session: Any = None
+        # Distinguishes "user cancelled the dialog" (exit 0) from "launch
+        # failed" (nonzero) — both used to return False from _launch.
+        self.launch_failed = False
         self._record_dir_seeded = False
         # One-time language init (CLI wins over config); afterwards the
         # dialog owns the choice and 回到开始 keeps the last selection.
@@ -960,6 +963,7 @@ class AppController(QObject):
                 tr("无法启动相机服务:", "Could not start the camera service: ")
                 + str(exc),
             )
+            self.launch_failed = True
             return False
         self._window = MainWindow(self._session)
         self._window.restartRequested.connect(
@@ -1088,7 +1092,11 @@ def main(argv: list[str] | None = None) -> int:
     app.setStyleSheet(_APP_STYLESHEET)
     controller = AppController(app, args)
     if not controller.start():
-        return 0
+        # A startup failure (camera service died, CUDA/driver mismatch,
+        # missing checkpoint) must surface as a nonzero exit: the launcher
+        # only shows its failure dialog on one, and exiting 0 made a
+        # windowless crash look like a clean quit. Cancelling stays 0.
+        return 1 if controller.launch_failed else 0
     try:
         status = app.exec()
     finally:

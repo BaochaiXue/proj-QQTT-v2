@@ -212,6 +212,9 @@ class StagedRuntime:
         # gaussian worker.
         self._gaussian_manager: Any = None
         self._deferred: deque[Callable[[], None]] = deque()
+        # kind -> merged paths, replayed in the hello ack so a GUI that
+        # reconnects (or attaches late) still sees everything already built.
+        self._artifacts_sent: dict[str, dict[str, str]] = {}
         self._last_publish_s: dict[str, float] = {}
         self._acq_thread: threading.Thread | None = None
         self._warmup_thread: threading.Thread | None = None
@@ -352,7 +355,18 @@ class StagedRuntime:
         self.control.send_event(event)
 
     def _emit_artifacts(self, kind: str, paths: dict[str, str]) -> None:
-        """Send one EVT_ARTIFACTS event."""
+        """Send one EVT_ARTIFACTS event and remember it for re-sync.
+
+        ControlServer drops events when no GUI is attached or its per-
+        connection outbox is full, and the outbox does not survive a
+        reconnect — so an artifact emitted during a control-link gap was
+        lost forever and the Review screen stayed permanently blank for it
+        (the warmup window, where masks/mesh/gaussian all land, is minutes
+        long). The accumulated set rides the next hello ack.
+        """
+        merged = dict(self._artifacts_sent.get(str(kind), {}))
+        merged.update({str(k): str(v) for k, v in paths.items()})
+        self._artifacts_sent[str(kind)] = merged
         self.control.send_event(
             {"event": protocol.EVT_ARTIFACTS, "kind": str(kind), "paths": dict(paths)}
         )
@@ -521,6 +535,7 @@ class StagedRuntime:
             shape_prior_backend=self.shape_prior_backend,
             shape_prior_upscale=self.shape_prior_use_upscale,
             gaussian_backend=self.gaussian_backend,
+            artifacts={k: dict(v) for k, v in self._artifacts_sent.items()},
         )
         return ack, None
 

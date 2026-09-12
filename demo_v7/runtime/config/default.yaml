@@ -40,7 +40,10 @@ chunking:
   # Options: positive float meters. Origin data_process_sample.py
   # --volume_sample_size parity: one object query per occupied voxel on the
   # first batch (identity frozen at chunk 0); also drives the shape-prior
-  # sample stage voxel. 0.005 preserves origin parity.
+  # sample stage voxel. NOTE the shipped value is 0.05, not the 0.005 of
+  # origin data_process_sample.py — a 10x coarser voxel, i.e. far fewer
+  # sampled points. This is the demo's realtime setting, not origin parity;
+  # pass --volume-sample-size-m 0.005 to reproduce the origin sampling.
   volume_sample_size_m: 0.05
 
 # Camera capture, depth, masks, and local model runtime.

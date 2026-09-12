@@ -386,6 +386,15 @@ class MainWindow(QMainWindow):
                 # of waiting forever (service-resolved truthful echo).
                 self._review.set_gaussian_backend(gaussian_backend)
                 self._warmup.set_gaussian_backend(gaussian_backend)
+            # Replay artifacts built before this GUI attached (or during a
+            # control-link gap, where events are dropped with no retention).
+            # AFTER the backend setters: the Review screen's 补点 view keys
+            # off the resolved backend when it decides it has enough inputs.
+            snapshot = event.get("artifacts")
+            if isinstance(snapshot, dict):
+                for kind, paths in snapshot.items():
+                    if isinstance(paths, dict) and paths:
+                        self._on_artifacts({"kind": kind, "paths": paths})
 
     def _on_artifacts(self, event: dict) -> None:
         kind = event.get("kind")

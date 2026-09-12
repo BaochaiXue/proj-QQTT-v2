@@ -556,6 +556,23 @@ class MeshAnchoredGaussianRenderer(GaussianLiveRenderer):
         )
         self._anchor_bary = torch.as_tensor(anchors.barycentric, device=device)
         self._face_quats_prev = None  # degenerate-face carryover, set below
+        # Rest face areas + rest sigmas: the splat footprint has to follow
+        # the triangle it is bound to. Measured on a 606-frame manipulation
+        # session: the median edge holds its rest length (0.998), but 6.6% of
+        # edges exceed 1.5x stretch (worst frame 16.2%) and 1.0% exceed 3x.
+        # A stretched triangle spreads its splats without growing them
+        # (holes/streaks); a compressed one over-overlaps (smeared thickening).
+        tri_rest = self._verts[self._faces]
+        self._rest_double_area = (
+            torch.cross(
+                tri_rest[:, 1] - tri_rest[:, 0],
+                tri_rest[:, 2] - tri_rest[:, 0],
+                dim=1,
+            )
+            .norm(dim=1)
+            .clamp(min=1e-12)
+        )
+        self._rest_scales = self._tensors["scales"].clone()
         means, quats = self._replay(self._verts)
         drift = float((means - self._tensors["means"]).norm(dim=1).max())
         if drift > 1e-3:
@@ -597,6 +614,16 @@ class MeshAnchoredGaussianRenderer(GaussianLiveRenderer):
         quats = torch.nn.functional.normalize(
             face_quats[self._anchor_face], dim=-1
         )
+        # Tangential sigmas ride the face's area change. Columns 0/1 ARE the
+        # tangential axes (the quats above are the face frame) and column 2
+        # is the surfel thickness, which must not grow. sqrt(area ratio) is
+        # the isotropic first-order correction; the clamp covers the measured
+        # p99 stretch (~3x linear) while refusing the degenerate tail — a
+        # near-zero-area rest triangle otherwise reports a ratio of 1e5.
+        ratio = (normal_len / self._rest_double_area).clamp(0.25, 9.0).sqrt()
+        scales = self._rest_scales.clone()
+        scales[:, :2] *= ratio[self._anchor_face][:, None]
+        self._tensors["scales"] = scales
         return means, quats
 
     def apply_rigid_transform(self, transform: np.ndarray) -> None:

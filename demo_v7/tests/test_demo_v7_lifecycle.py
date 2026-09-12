@@ -238,3 +238,71 @@ class TestRecorderCloseHonesty:
         assert blocked.is_set()
         assert summary["error"] is not None
         assert "still running" in summary["error"]
+
+
+class TestHelloArtifactSnapshot:
+    """A GUI attaching late (or after a control-link gap) must still learn
+    the artifacts already produced — events are dropped with no retention
+    while no client is connected."""
+
+    def _runtime(self):
+        from demo_v7.ipc import protocol as proto
+        from demo_v7.service.staged_runtime import StagedRuntime
+
+        runtime = object.__new__(StagedRuntime)
+        runtime._artifacts_sent = {}
+        runtime.control = _ControlStub()
+        return runtime, proto
+
+    def test_emitted_artifacts_accumulate_and_merge_per_kind(self) -> None:
+        runtime, proto = self._runtime()
+        runtime._emit_artifacts(proto.ARTIFACT_KIND_FRAME0, {"candidate": "a.png"})
+        runtime._emit_artifacts(proto.ARTIFACT_KIND_FRAME0, {"object_points": "b.npz"})
+        runtime._emit_artifacts(proto.ARTIFACT_KIND_MASKS, {"object": "m.png"})
+        assert runtime._artifacts_sent[proto.ARTIFACT_KIND_FRAME0] == {
+            "candidate": "a.png",
+            "object_points": "b.npz",
+        }
+        assert runtime._artifacts_sent[proto.ARTIFACT_KIND_MASKS] == {"object": "m.png"}
+        # Still sent live, unchanged.
+        assert len(runtime.control.events) == 3
+
+    def test_gui_replays_snapshot_from_hello_ack(self) -> None:
+        pytest.importorskip("PySide6")
+        from demo_v7.gui.main_window import MainWindow
+        from demo_v7.ipc import protocol as proto
+
+        replayed: list[dict] = []
+
+        class _Screen:
+            def __getattr__(self, _name):
+                return lambda *a, **k: None
+
+        class _Window:
+            """Duck-typed stand-in: MainWindow is a Qt class and cannot be
+            built with object.__new__, but _on_ack only needs these."""
+
+            def __init__(self) -> None:
+                self._on_artifacts = replayed.append
+                self._apply_state = lambda *a, **k: None
+                self.setWindowTitle = lambda *a, **k: None
+                self.statusBar = lambda: _Screen()
+                self._review = _Screen()
+                self._warmup = _Screen()
+                self._hello_synced = False
+
+        window = _Window()
+        MainWindow._on_ack(
+            window,
+            {
+                "event": proto.EVT_ACK,
+                "cmd": proto.CMD_HELLO,
+                "ok": True,
+                "artifacts": {
+                    proto.ARTIFACT_KIND_MASKS: {"object": "m.png"},
+                    proto.ARTIFACT_KIND_SHAPE_PRIOR: {},
+                },
+            },
+        )
+        assert replayed == [{"kind": proto.ARTIFACT_KIND_MASKS,
+                             "paths": {"object": "m.png"}}]
