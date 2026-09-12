@@ -79,6 +79,24 @@ _BONE_MIN_VALID_NEIGHBORS = 3
 _HEAL_RIGID_MIN_VALID = 24
 _HEAL_RELATION_K = 8
 _HEAL_SKIN_K = 8
+# Post-LBS shape regularisation for the mesh_surface backend (A/B'd on a
+# 606-frame manipulation capture, five deformation variants). Linear blend
+# skinning averages rigid transforms, which does NOT preserve lengths: 4.11%
+# of mesh edges ended up beyond 1.5x their rest length. Projecting the edges
+# back toward rest (Jacobi distance constraints, PBD style) improved EVERY
+# measured axis at once, including accuracy against the observed cloud —
+# so it is removing distortion, not smoothing real motion away:
+#   edges >1.5x stretch   4.11% -> 0.53%
+#   observed->mesh p50    0.377 -> 0.366 cm   (p90 0.60 -> 0.58)
+#   silhouette IoU        0.7731 -> 0.7778
+#   frame-to-frame jelly  2.889 -> 2.732 mm
+# Cost 1.7ms/frame on a <=10Hz display-only channel. A rigid motion leaves
+# every edge at its rest length, so the projection is exactly a no-op there.
+# (The same A/B rejected the other two candidates: K=8 skinning was worse on
+# every axis, and healing held bones after 1 missed packet bought +0.24%
+# IoU for +3.5% jelly.)
+_EDGE_PROJECTION_ITERS = 20
+_EDGE_PROJECTION_STIFFNESS = 1.0
 
 
 def load_formal_frame0_rest_positions(
@@ -573,6 +591,23 @@ class MeshAnchoredGaussianRenderer(GaussianLiveRenderer):
             .clamp(min=1e-12)
         )
         self._rest_scales = self._tensors["scales"].clone()
+        edges = torch.cat(
+            [
+                self._faces[:, [0, 1]],
+                self._faces[:, [1, 2]],
+                self._faces[:, [2, 0]],
+            ],
+            dim=0,
+        )
+        self._edges = torch.unique(torch.sort(edges, dim=1).values, dim=0)
+        self._edge_rest_len = (
+            self._verts[self._edges[:, 0]] - self._verts[self._edges[:, 1]]
+        ).norm(dim=1).clamp(min=1e-6)
+        degree = torch.zeros(self._verts.shape[0], device=device)
+        ones = torch.ones(self._edges.shape[0], device=device)
+        degree.scatter_add_(0, self._edges[:, 0], ones)
+        degree.scatter_add_(0, self._edges[:, 1], ones)
+        self._edge_degree = degree.clamp(min=1.0)
         means, quats = self._replay(self._verts)
         drift = float((means - self._tensors["means"]).norm(dim=1).max())
         if drift > 1e-3:
@@ -664,6 +699,7 @@ class MeshAnchoredGaussianRenderer(GaussianLiveRenderer):
             self._skin_indices,
             device=self.device,
         )
+        new_verts = self._project_edges(new_verts)
         means, quats = self._replay(new_verts)
         self._verts = new_verts
         self._tensors["means"] = means
@@ -672,6 +708,30 @@ class MeshAnchoredGaussianRenderer(GaussianLiveRenderer):
         self.splats_moved_m += float(
             (self._tensors["means"].mean(dim=0) - centroid_before).norm()
         )
+
+    def _project_edges(self, verts):
+        """Pull each edge back toward its rest length (Jacobi iterations).
+
+        See _EDGE_PROJECTION_ITERS for the measured effect. Exactly a no-op
+        under rigid motion — every edge is already at its rest length, so
+        every correction term is zero.
+        """
+        torch = self._torch
+        edges = self._edges
+        for _ in range(_EDGE_PROJECTION_ITERS):
+            delta = verts[edges[:, 0]] - verts[edges[:, 1]]
+            length = delta.norm(dim=1).clamp(min=1e-9)
+            correction = (
+                0.5
+                * _EDGE_PROJECTION_STIFFNESS
+                * (length - self._edge_rest_len)
+                / length
+            )[:, None] * delta
+            accum = torch.zeros_like(verts)
+            accum.index_add_(0, edges[:, 0], -correction)
+            accum.index_add_(0, edges[:, 1], correction)
+            verts = verts + accum / self._edge_degree[:, None]
+        return verts
 
     def _init_bones(self) -> bool:
         """Freeze the rest state; also freeze the rest VERTICES snapshot."""

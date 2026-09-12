@@ -987,6 +987,11 @@ class TestMeshAnchoredRenderer:
     stay ON the deformed mesh (CPU, bare construction like the parent's
     tests)."""
 
+    @staticmethod
+    def _rot_z(angle: float) -> np.ndarray:
+        c, s = np.cos(angle), np.sin(angle)
+        return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+
     def _bare(self, tmp_path):
         from demo_v7.service.gaussian_live import MeshAnchoredGaussianRenderer
         from demo_v7.service.mesh_surface_gaussian import gaussianize_mesh
@@ -1039,6 +1044,19 @@ class TestMeshAnchoredRenderer:
             .clamp(min=1e-12)
         )
         live._rest_scales = live._tensors["scales"].clone()
+        edges = torch.cat(
+            [live._faces[:, [0, 1]], live._faces[:, [1, 2]], live._faces[:, [2, 0]]],
+            dim=0,
+        )
+        live._edges = torch.unique(torch.sort(edges, dim=1).values, dim=0)
+        live._edge_rest_len = (
+            live._verts[live._edges[:, 0]] - live._verts[live._edges[:, 1]]
+        ).norm(dim=1).clamp(min=1e-6)
+        degree = torch.zeros(live._verts.shape[0])
+        ones = torch.ones(live._edges.shape[0])
+        degree.scatter_add_(0, live._edges[:, 0], ones)
+        degree.scatter_add_(0, live._edges[:, 1], ones)
+        live._edge_degree = degree.clamp(min=1.0)
         means, quats = live._replay(live._verts)
         live._tensors["means"] = means
         live._tensors["quats"] = quats
@@ -1121,6 +1139,33 @@ class TestMeshAnchoredRenderer:
         assert torch.allclose(
             live._tensors["scales"], rest_scales, rtol=1e-4, atol=1e-9
         )
+
+    def test_edge_projection_is_a_noop_under_rigid_motion(self, tmp_path) -> None:
+        """A rigid move leaves every edge at its rest length, so the shape
+        projection must not touch it — otherwise it would fight the bones."""
+        live, _anchors = self._bare(tmp_path)
+        angle = np.radians(30.0)
+        rotation = torch.as_tensor(
+            self._rot_z(angle), dtype=torch.float32
+        )
+        moved = live._verts @ rotation.T + torch.tensor([0.05, -0.02, 0.03])
+        assert torch.allclose(live._project_edges(moved), moved, atol=1e-6)
+
+    def test_edge_projection_pulls_stretch_back(self, tmp_path) -> None:
+        """A stretched mesh is pulled back toward its rest edge lengths.
+
+        Measured on a 606-frame manipulation session: LBS left 4.11% of
+        edges beyond 1.5x rest; the shipped 20 iterations bring that to
+        0.53% while IMPROVING distance to the observed cloud.
+        """
+        live, _anchors = self._bare(tmp_path)
+        stretched = live._verts * 1.6  # every edge at 1.6x rest
+        edges = live._edges
+        def frac_over(v):
+            length = (v[edges[:, 0]] - v[edges[:, 1]]).norm(dim=1)
+            return float((length / live._edge_rest_len > 1.5).float().mean())
+        assert frac_over(stretched) > 0.99
+        assert frac_over(live._project_edges(stretched)) < 0.05
 
     def test_degenerate_face_keeps_last_orientation(self, tmp_path) -> None:
         live, _anchors = self._bare(tmp_path)

@@ -190,6 +190,96 @@ class TestShutdownHonesty:
         assert session.force_terminate() == []
 
 
+class TestChunkFailureReporting:
+    def test_failure_reaches_gui_and_stops_producers(self, tmp_path, monkeypatch):
+        import demo_v7.orchestration.session as session_mod
+        from demo_v7.service import arap_rescue
+
+        session = _session(tmp_path)
+        session._service_state = protocol.STATE_FORMAL
+        events = []
+        commands = []
+        stopped = []
+        session.set_on_event(events.append)
+        monkeypatch.setattr(session, "send_command", commands.append)
+        monkeypatch.setattr(session, "_stop_phystwin", lambda: stopped.append(True))
+        monkeypatch.setattr(arap_rescue, "patch_arap_factorize_rescue", lambda: None)
+        monkeypatch.setattr(arap_rescue, "patch_asap_island_cleanup", lambda: None)
+        failure = RuntimeError("chunk materialization failed")
+
+        def fail_stream(**kwargs):
+            raise failure
+
+        monkeypatch.setattr(
+            session_mod, "ChunkStreamSession", lambda *args, **kwargs: fail_stream()
+        )
+        session._run_chunk_stream()
+
+        assert session.chunk_error is failure
+        assert events == [
+            {
+                "event": protocol.EVT_ERROR,
+                "where": "chunk_stream",
+                "message": str(failure),
+            }
+        ]
+        assert commands == [{"cmd": protocol.CMD_STOP_FORMAL}]
+        assert stopped == [True]
+
+    def test_finished_state_cannot_hide_chunk_failure(self, tmp_path):
+        session = _session(tmp_path)
+        session._service_state = protocol.STATE_FINISHED
+        session._chunk_error = RuntimeError("chunk materialization failed")
+        with pytest.raises(RuntimeError, match="chunk materialization failed"):
+            session.wait_for_state(protocol.STATE_FINISHED, timeout_s=0.1)
+
+    def test_gui_failure_survives_service_finish(self, monkeypatch):
+        import os
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        pytest.importorskip("PySide6")
+        from PySide6.QtWidgets import QApplication, QMessageBox
+
+        from demo_v7.gui.main_window import MainWindow
+
+        app = QApplication.instance() or QApplication([])
+        dialogs = []
+        monkeypatch.setattr(
+            QMessageBox, "critical", lambda *args: dialogs.append(args[-1])
+        )
+
+        class Session:
+            def send_command(self, command):
+                pass
+
+            def set_on_event(self, callback):
+                pass
+
+            def set_on_frame(self, callback):
+                pass
+
+        window = MainWindow(Session())
+        try:
+            window._on_event(
+                {
+                    "event": protocol.EVT_ERROR,
+                    "where": "chunk_stream",
+                    "message": "chunk materialization failed",
+                }
+            )
+            window._on_event(
+                {"event": protocol.EVT_STATE, "state": protocol.STATE_FINISHED}
+            )
+            app.processEvents()
+            assert window._state == protocol.STATE_FATAL
+            assert window._stack.currentWidget() is window._finished
+            assert len(dialogs) == 1
+            assert "chunk materialization failed" in dialogs[0]
+        finally:
+            window.detach_session()
+            window.close()
+
+
 class TestControlCommandDelivery:
     def test_send_on_dead_socket_raises(self, tmp_path) -> None:
         """A command that never left the socket must not look delivered."""
