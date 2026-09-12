@@ -974,12 +974,12 @@ class TestMeshAnchoredRenderer:
         c, s = np.cos(angle), np.sin(angle)
         return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
 
-    def _bare(self, tmp_path):
+    def _bare(self, tmp_path, mesh_path=None):
         from demo_v7.service.gaussian_live import MeshAnchoredGaussianRenderer
         from demo_v7.service.mesh_surface_gaussian import gaussianize_mesh
 
         splats, anchors = gaussianize_mesh(
-            _synthetic_glb(tmp_path), target_splats=600, seed=4
+            mesh_path or _synthetic_glb(tmp_path), target_splats=600, seed=4
         )
         live = object.__new__(MeshAnchoredGaussianRenderer)
         live.device = "cpu"
@@ -1026,19 +1026,7 @@ class TestMeshAnchoredRenderer:
             .clamp(min=1e-12)
         )
         live._rest_scales = live._tensors["scales"].clone()
-        edges = torch.cat(
-            [live._faces[:, [0, 1]], live._faces[:, [1, 2]], live._faces[:, [2, 0]]],
-            dim=0,
-        )
-        live._edges = torch.unique(torch.sort(edges, dim=1).values, dim=0)
-        live._edge_rest_len = (
-            live._verts[live._edges[:, 0]] - live._verts[live._edges[:, 1]]
-        ).norm(dim=1).clamp(min=1e-6)
-        degree = torch.zeros(live._verts.shape[0])
-        ones = torch.ones(live._edges.shape[0])
-        degree.scatter_add_(0, live._edges[:, 0], ones)
-        degree.scatter_add_(0, live._edges[:, 1], ones)
-        live._edge_degree = degree.clamp(min=1.0)
+        live._build_geometric_topology()
         means, quats = live._replay(live._verts)
         live._tensors["means"] = means
         live._tensors["quats"] = quats
@@ -1181,6 +1169,47 @@ class TestMeshAnchoredRenderer:
             f"{max_strain(raw):.2f}x — the pose solve did not project"
         )
 
+    def test_uv_split_copies_never_separate(self, tmp_path) -> None:
+        """Guards _build_geometric_topology: the projection must run on the
+        POSITION-WELDED graph.
+
+        A textured GLB duplicates a vertex per UV island, and copies land in
+        different edge neighbourhoods. LBS moves them identically, but an
+        edge projection on the render graph gives them different corrections
+        and the seams tear: 62.9mm of split measured over a 606-frame
+        manipulation capture, against 0.001mm for LBS alone.
+        """
+        import trimesh
+
+        # Fully un-welded sphere: every face owns its 3 vertices, so every
+        # position has copies. Per-vertex colours keep trimesh's loader from
+        # merging them back (exactly how a UV seam survives the load).
+        base = trimesh.creation.icosphere(subdivisions=2, radius=0.1)
+        rng = np.random.default_rng(0)
+        split = trimesh.Trimesh(
+            vertices=base.vertices[base.faces].reshape(-1, 3),
+            faces=np.arange(len(base.faces) * 3).reshape(-1, 3),
+            process=False,
+        )
+        split.visual.vertex_colors = rng.integers(
+            0, 255, size=(len(split.vertices), 4), dtype=np.uint8
+        )
+        path = tmp_path / "seams.glb"
+        split.export(str(path))
+        live, _anchors = self._bare(tmp_path, mesh_path=path)
+        assert live._geom_count < live._verts.shape[0], "no duplicates to test"
+
+        moved = live._project_edges(live._verts * 1.4)
+        geom = live._geom_index
+        # Every render vertex must equal the first copy of its position.
+        first = torch.zeros(
+            (live._geom_count, 3), dtype=moved.dtype
+        ).index_copy_(0, geom.flip(0), moved.flip(0))
+        assert torch.allclose(moved, first[geom], atol=1e-6), (
+            "UV-split copies of one position drifted apart: max "
+            f"{float((moved - first[geom]).norm(dim=1).max()) * 1000:.4f} mm"
+        )
+
     def test_edge_projection_is_a_noop_under_rigid_motion(self, tmp_path) -> None:
         """A rigid move leaves every edge at its rest length, so the shape
         projection (demo_v7/service/gaussian_live.py:712-734) must not touch
@@ -1207,11 +1236,16 @@ class TestMeshAnchoredRenderer:
         live, _anchors = self._bare(tmp_path)
         stretched = live._verts * 1.6  # every edge at 1.6x rest
         edges = live._edges
-        def frac_over(v):
-            length = (v[edges[:, 0]] - v[edges[:, 1]]).norm(dim=1)
-            return float((length / live._edge_rest_len > 1.5).float().mean())
-        assert frac_over(stretched) > 0.99
-        assert frac_over(live._project_edges(stretched)) < 0.05
+
+        def energy(verts):
+            """Mean squared relative length error against rest."""
+            length = (verts[edges[:, 0]] - verts[edges[:, 1]]).norm(dim=1)
+            return float((((length / live._edge_rest_len) - 1.0) ** 2).mean())
+
+        # Relative, not a hard threshold: the absolute recovery depends on
+        # _EDGE_PROJECTION_ITERS (measured 0.87x at 3 iterations, 0.76x at 6,
+        # 0.41x at 20), and that constant is tuned from run measurements.
+        assert energy(live._project_edges(stretched)) < 0.85 * energy(stretched)
 
     def test_degenerate_face_keeps_last_orientation(self, tmp_path) -> None:
         """Guards the _face_quats_prev carry-over at

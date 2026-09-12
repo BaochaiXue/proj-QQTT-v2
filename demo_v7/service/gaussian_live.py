@@ -79,23 +79,36 @@ _BONE_MIN_VALID_NEIGHBORS = 3
 _HEAL_RIGID_MIN_VALID = 24
 _HEAL_RELATION_K = 8
 _HEAL_SKIN_K = 8
-# Post-LBS shape regularisation for the mesh_surface backend (A/B'd on a
-# 606-frame manipulation capture, five deformation variants). Linear blend
-# skinning averages rigid transforms, which does NOT preserve lengths: 4.11%
-# of mesh edges ended up beyond 1.5x their rest length. Projecting the edges
-# back toward rest (Jacobi distance constraints, PBD style) improved EVERY
-# measured axis at once, including accuracy against the observed cloud —
-# so it is removing distortion, not smoothing real motion away:
-#   edges >1.5x stretch   4.11% -> 0.53%
-#   observed->mesh p50    0.377 -> 0.366 cm   (p90 0.60 -> 0.58)
-#   silhouette IoU        0.7731 -> 0.7778
-#   frame-to-frame jelly  2.889 -> 2.732 mm
-# Cost 1.7ms/frame on a <=10Hz display-only channel. A rigid motion leaves
-# every edge at its rest length, so the projection is exactly a no-op there.
-# (The same A/B rejected the other two candidates: K=8 skinning was worse on
-# every axis, and healing held bones after 1 missed packet bought +0.24%
-# IoU for +3.5% jelly.)
-_EDGE_PROJECTION_ITERS = 20
+# Post-LBS shape regularisation for the mesh_surface backend. Linear blend
+# skinning averages rigid transforms and so does NOT preserve lengths: on a
+# 606-frame manipulation capture 4.11% of mesh edges ended up beyond 1.5x
+# their rest length. Projecting the edges back toward rest (Jacobi distance
+# constraints, PBD style) on the POSITION-WELDED graph fixes that.
+#
+# Strength swept on that capture (observation-grounded metrics; the mesh
+# under test cannot also be the reference). Precision/recall decompose the
+# silhouette IoU, and they move in opposite directions: the projection makes
+# the mesh hold its shape, so it COVERS more of the observed object
+# (recall 0.848 -> 0.854) and spills slightly more outside it
+# (precision 0.904 -> 0.888):
+#
+#   iters  obs2mesh p50  IoU     prec   rec    edges>1.5x  jelly
+#   0      0.377 cm      0.7731  0.904  0.848  4.11%       2.889 mm
+#   3      0.375         0.7730  0.898  0.851  2.81%       2.792
+#   6      0.375         0.7725  0.896  0.853  2.50%       2.755   <- shipped
+#   10     0.374         0.7714  0.894  0.853  2.26%       2.726
+#   20     0.373         0.7688  0.890  0.854  1.87%       2.679
+#   40     0.372         0.7674  0.888  0.854  1.55%       2.610
+#
+# The trade-off is monotonic with no knee, so 6 is the strongest setting
+# that costs no headline metric: IoU 0.7725 vs 0.7731 is 0.08%, while edge
+# strain drops 39% and the frame-to-frame jelly 4.6%. (20 was tuned before
+# the welding fix below, when part of the apparent strain relief came from
+# seams TEARING rather than from the mesh holding together, and it does cost
+# 0.55% IoU.) Cost 0.5ms/frame on a <=10Hz display-only channel, and a
+# rigid motion leaves every edge at its rest length so the projection is
+# exactly a no-op there (asserted in a test).
+_EDGE_PROJECTION_ITERS = 6
 _EDGE_PROJECTION_STIFFNESS = 1.0
 
 
@@ -591,23 +604,7 @@ class MeshAnchoredGaussianRenderer(GaussianLiveRenderer):
             .clamp(min=1e-12)
         )
         self._rest_scales = self._tensors["scales"].clone()
-        edges = torch.cat(
-            [
-                self._faces[:, [0, 1]],
-                self._faces[:, [1, 2]],
-                self._faces[:, [2, 0]],
-            ],
-            dim=0,
-        )
-        self._edges = torch.unique(torch.sort(edges, dim=1).values, dim=0)
-        self._edge_rest_len = (
-            self._verts[self._edges[:, 0]] - self._verts[self._edges[:, 1]]
-        ).norm(dim=1).clamp(min=1e-6)
-        degree = torch.zeros(self._verts.shape[0], device=device)
-        ones = torch.ones(self._edges.shape[0], device=device)
-        degree.scatter_add_(0, self._edges[:, 0], ones)
-        degree.scatter_add_(0, self._edges[:, 1], ones)
-        self._edge_degree = degree.clamp(min=1.0)
+        self._build_geometric_topology()
         means, quats = self._replay(self._verts)
         drift = float((means - self._tensors["means"]).norm(dim=1).max())
         if drift > 1e-3:
@@ -709,29 +706,101 @@ class MeshAnchoredGaussianRenderer(GaussianLiveRenderer):
             (self._tensors["means"].mean(dim=0) - centroid_before).norm()
         )
 
+    def _build_geometric_topology(self) -> None:
+        """Position-welded graph the shape projection runs on.
+
+        A textured GLB duplicates a vertex per UV island, and those copies
+        sit in DIFFERENT edge neighbourhoods (measured on the aligned sloth
+        mesh: 11097 render vertices are only 7045 distinct positions, 37%
+        duplicated). LBS moves copies identically — same position, same
+        nearest bones, same weights — but an edge projection run on the
+        RENDER graph hands them different corrections and the seams tear
+        open: 62.9mm of split over a 606-frame manipulation capture, against
+        0.001mm for LBS alone. So the projection runs on the welded graph
+        and its result is scattered back to every copy, which keeps seams
+        closed by construction (measured 2.4e-5 mm after this change).
+        """
+        torch = self._torch
+        welded = np.unique(
+            np.round(self._verts.detach().cpu().numpy(), 6),
+            axis=0,
+            return_inverse=True,
+        )[1].astype(np.int64)
+        self._geom_index = torch.as_tensor(welded, device=self.device)
+        self._geom_count = int(welded.max()) + 1
+        copies = torch.zeros(self._geom_count, device=self.device)
+        copies.index_add_(
+            0,
+            self._geom_index,
+            torch.ones(welded.shape[0], device=self.device),
+        )
+        self._geom_copies = copies.clamp(min=1.0)
+        edges = torch.cat(
+            [
+                self._faces[:, [0, 1]],
+                self._faces[:, [1, 2]],
+                self._faces[:, [2, 0]],
+            ],
+            dim=0,
+        )
+        self._edges = torch.unique(torch.sort(edges, dim=1).values, dim=0)
+        geom_edges = self._geom_index[self._edges]
+        # Welding turns an edge between two copies of ONE position into a
+        # self-loop — a meaningless constraint the previous version kept
+        # alive by clamping its rest length up to 1um (331 such edges here).
+        geom_edges = geom_edges[geom_edges[:, 0] != geom_edges[:, 1]]
+        self._geom_edges = torch.unique(
+            torch.sort(geom_edges, dim=1).values, dim=0
+        )
+        geom_rest = self._geometric(self._verts)
+        self._geom_rest_len = (
+            geom_rest[self._geom_edges[:, 0]]
+            - geom_rest[self._geom_edges[:, 1]]
+        ).norm(dim=1).clamp(min=1e-9)
+        degree = torch.zeros(self._geom_count, device=self.device)
+        ones = torch.ones(self._geom_edges.shape[0], device=self.device)
+        degree.scatter_add_(0, self._geom_edges[:, 0], ones)
+        degree.scatter_add_(0, self._geom_edges[:, 1], ones)
+        self._geom_degree = degree.clamp(min=1.0)
+        # Kept for tests/telemetry: rest lengths on the render graph.
+        self._edge_rest_len = (
+            self._verts[self._edges[:, 0]] - self._verts[self._edges[:, 1]]
+        ).norm(dim=1).clamp(min=1e-9)
+
+    def _geometric(self, verts):
+        """Render vertices -> one position per DISTINCT geometric vertex."""
+        torch = self._torch
+        geom = torch.zeros(
+            (self._geom_count, 3), dtype=verts.dtype, device=verts.device
+        )
+        geom.index_add_(0, self._geom_index, verts)
+        return geom / self._geom_copies[:, None]
+
     def _project_edges(self, verts):
         """Pull each edge back toward its rest length (Jacobi iterations).
 
-        See _EDGE_PROJECTION_ITERS for the measured effect. Exactly a no-op
-        under rigid motion — every edge is already at its rest length, so
-        every correction term is zero.
+        Runs on the position-welded graph (see __init__) so UV-split copies
+        of one position can never receive different corrections. Exactly a
+        no-op under rigid motion: every edge is already at its rest length,
+        so every correction term is zero.
         """
         torch = self._torch
-        edges = self._edges
+        edges = self._geom_edges
+        geom = self._geometric(verts)
         for _ in range(_EDGE_PROJECTION_ITERS):
-            delta = verts[edges[:, 0]] - verts[edges[:, 1]]
+            delta = geom[edges[:, 0]] - geom[edges[:, 1]]
             length = delta.norm(dim=1).clamp(min=1e-9)
             correction = (
                 0.5
                 * _EDGE_PROJECTION_STIFFNESS
-                * (length - self._edge_rest_len)
+                * (length - self._geom_rest_len)
                 / length
             )[:, None] * delta
-            accum = torch.zeros_like(verts)
+            accum = torch.zeros_like(geom)
             accum.index_add_(0, edges[:, 0], -correction)
             accum.index_add_(0, edges[:, 1], correction)
-            verts = verts + accum / self._edge_degree[:, None]
-        return verts
+            geom = geom + accum / self._geom_degree[:, None]
+        return geom[self._geom_index]
 
     def _init_bones(self) -> bool:
         """Freeze the rest state; also freeze the rest VERTICES snapshot."""
