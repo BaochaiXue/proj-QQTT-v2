@@ -673,15 +673,22 @@ class OrchestratorSession:
                 self._reconnecting.discard(which)
 
     def _note_link_error(self, which: str, message: str) -> None:
-        """Surface a dead link as an error event (stored + forwarded)."""
+        """Report a link whose reconnection ended as a terminal run failure."""
+        with self._lock:
+            if self._shutdown_done:
+                return
         event = {
             "event": protocol.EVT_ERROR,
             "where": f"{which}_link",
             "message": str(message),
         }
         with self._state_cond:
+            if self._terminal_failure is None:
+                self._terminal_failure = f"{which}_link: {message}"
             self._last_error_event = dict(event)
             self._state_cond.notify_all()
+        if self._status is not None:
+            self._status.emit(STAGE_FATAL, self._terminal_failure, ok=False)
         callback = self._on_event
         if callback is not None:
             try:
@@ -771,12 +778,14 @@ class OrchestratorSession:
         deadline = time.monotonic() + float(timeout_s)
         with self._state_cond:
             while True:
-                if self._service_state in targets:
-                    return str(self._service_state)
                 if self._chunk_error is not None:
                     raise RuntimeError(
                         f"chunk stream failed: {self._chunk_error!r}"
                     ) from self._chunk_error
+                if self._terminal_failure is not None:
+                    raise RuntimeError(self._terminal_failure)
+                if self._service_state in targets:
+                    return str(self._service_state)
                 if (
                     self._service_state == protocol.STATE_FATAL
                     and protocol.STATE_FATAL not in targets
@@ -865,6 +874,21 @@ class OrchestratorSession:
             traceback.print_exc()
             with self._state_cond:
                 self._state_cond.notify_all()
+            self._handle_event(
+                {
+                    "event": protocol.EVT_ERROR,
+                    "where": "chunk_stream",
+                    "message": str(error),
+                }
+            )
+            # No consumer remains: drain capture and stop downstream work.
+            # Preserve the original failure if the service link also died.
+            if self.service_state == protocol.STATE_FORMAL:
+                try:
+                    self.send_command({"cmd": protocol.CMD_STOP_FORMAL})
+                except Exception:
+                    traceback.print_exc()
+            self._stop_phystwin()
 
     def _note_chunk_written(self, manifest: dict[str, Any]) -> None:
         """demo_v7/runtime/main.py on_chunk_written minus the window visualizer."""

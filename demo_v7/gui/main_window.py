@@ -323,6 +323,8 @@ class MainWindow(QMainWindow):
                 + f" [{event.get('where', '?')}]: {event.get('message', '')}"
             )
             self.statusBar().showMessage(message)
+            if event.get("where") in ("chunk_stream", "control_link", "frames_link"):
+                self._apply_state(protocol.STATE_FATAL, message)
         elif name == protocol.EVT_REPLAY_EXHAUSTED:
             if event.get("wrapped", False):
                 # Pre-formal wrap: the stream keeps running (a camera never
@@ -417,6 +419,10 @@ class MainWindow(QMainWindow):
             self._review.set_gaussian_artifacts(paths)
 
     def _apply_state(self, state: str, detail: Any) -> None:
+        # Capture can finish draining after the parent's chunk stream fails.
+        # Its FINISHED/HELLO events must not turn this failed run green again.
+        if self._state == protocol.STATE_FATAL:
+            return
         if state not in self._state_to_screen:
             return
         previous = self._state
@@ -433,7 +439,10 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(
                 self,
                 tr("致命错误", "Fatal error"),
-                tr("相机服务遇到不可恢复的错误:", "The camera service hit an unrecoverable error: ")
+                tr(
+                    "本次运行遇到不可恢复的错误:",
+                    "This run hit an unrecoverable error: ",
+                )
                 + str(detail or tr("详见日志", "see the logs")),
             )
         self._stack.setCurrentWidget(self._state_to_screen[state])

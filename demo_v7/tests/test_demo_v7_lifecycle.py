@@ -207,12 +207,10 @@ class TestChunkFailureReporting:
         monkeypatch.setattr(arap_rescue, "patch_asap_island_cleanup", lambda: None)
         failure = RuntimeError("chunk materialization failed")
 
-        def fail_stream(**kwargs):
+        def fail_stream(*args, **kwargs):
             raise failure
 
-        monkeypatch.setattr(
-            session_mod, "ChunkStreamSession", lambda *args, **kwargs: fail_stream()
-        )
+        monkeypatch.setattr(session_mod, "ChunkStreamSession", fail_stream)
         session._run_chunk_stream()
 
         assert session.chunk_error is failure
@@ -233,10 +231,9 @@ class TestChunkFailureReporting:
         with pytest.raises(RuntimeError, match="chunk materialization failed"):
             session.wait_for_state(protocol.STATE_FINISHED, timeout_s=0.1)
 
-    def test_gui_failure_survives_service_finish(self, monkeypatch):
-        import os
-
-        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    @pytest.mark.parametrize("where", ["chunk_stream", "control_link", "frames_link"])
+    def test_gui_failure_survives_service_finish(self, monkeypatch, where):
+        monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
         pytest.importorskip("PySide6")
         from PySide6.QtWidgets import QApplication, QMessageBox
 
@@ -263,12 +260,20 @@ class TestChunkFailureReporting:
             window._on_event(
                 {
                     "event": protocol.EVT_ERROR,
-                    "where": "chunk_stream",
+                    "where": where,
                     "message": "chunk materialization failed",
                 }
             )
             window._on_event(
                 {"event": protocol.EVT_STATE, "state": protocol.STATE_FINISHED}
+            )
+            window._on_event(
+                {
+                    "event": protocol.EVT_ACK,
+                    "cmd": protocol.CMD_HELLO,
+                    "ok": True,
+                    "state": protocol.STATE_FORMAL,
+                }
             )
             app.processEvents()
             assert window._state == protocol.STATE_FATAL
@@ -278,6 +283,33 @@ class TestChunkFailureReporting:
         finally:
             window.detach_session()
             window.close()
+
+
+def test_terminal_link_error_cannot_report_success(tmp_path):
+    from demo_v7.runtime.pipeline_status import STAGE_FATAL
+
+    session = _session(tmp_path)
+    events = []
+    session.set_on_event(events.append)
+    session._service_state = protocol.STATE_FINISHED
+    session._note_link_error("control", "reconnect timed out")
+    assert events[-1]["where"] == "control_link"
+    with pytest.raises(RuntimeError, match="reconnect timed out"):
+        session.wait_for_state(protocol.STATE_FINISHED, timeout_s=0.1)
+    session.shutdown(chunk_join_timeout_s=0.01)
+    stage, detail, ok = session._status.emitted[-1]
+    assert stage == STAGE_FATAL and not ok
+    assert "reconnect timed out" in detail
+
+
+def test_link_exit_during_shutdown_is_expected(tmp_path):
+    session = _session(tmp_path)
+    events = []
+    session.set_on_event(events.append)
+    session._shutdown_done = True
+    session._note_link_error("control", "service exited")
+    assert events == []
+    assert session._terminal_failure is None
 
 
 class TestControlCommandDelivery:
