@@ -132,20 +132,33 @@ class MeshSurfaceGaussianManager:
 
     # -- commands ------------------------------------------------------------
 
-    def regenerate(self, seed: int | None) -> bool:
-        """Re-derive with a new sampling seed (REVIEW 拣选 re-roll)."""
+    def try_reserve(self) -> bool:
+        """Atomically claim the single in-flight derivation slot.
+
+        Admission must happen where the ack is decided (the control thread),
+        not inside the worker: ``_busy`` used to be set by ``_generate``, so
+        two regen commands could both pass the check and both be acked ok.
+        """
         with self._lock:
             if self._closed or self._busy or not self._case_ready.is_set():
                 return False
+            self._busy = True
+            return True
+
+    def regenerate(self, seed: int | None, *, reserved: bool = False) -> bool:
+        """Re-derive with a new sampling seed (REVIEW 拣选 re-roll)."""
+        if not reserved and not self.try_reserve():
+            return False
         if seed is None:
             seed = (self.seed + int(time.time())) % 1_000_000 or 1
         worker = threading.Thread(
-            target=lambda: self._generate(int(seed)),
+            target=lambda: self._generate(int(seed), reserved=True),
             name="gaussian-mesh-surface-regen",
             daemon=True,
         )
         with self._lock:
             if self._closed:
+                self._busy = False
                 return False
             self._workers.append(worker)
         worker.start()
@@ -165,11 +178,15 @@ class MeshSurfaceGaussianManager:
 
     # -- derivation ----------------------------------------------------------
 
-    def _generate(self, seed: int) -> None:
+    def _generate(self, seed: int, *, reserved: bool = False) -> None:
         with self._lock:
-            if self._closed or self._busy:
+            if self._closed:
+                self._busy = False if reserved else self._busy
                 return
-            self._busy = True
+            if not reserved:
+                if self._busy:
+                    return
+                self._busy = True
         try:
             self.seed = int(seed)
             started_s = time.perf_counter()

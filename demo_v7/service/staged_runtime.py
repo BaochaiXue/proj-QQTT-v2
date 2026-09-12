@@ -82,6 +82,12 @@ REPOSITION_OVERLAY_ALPHA = 0.5
 # CMD_SHUTDOWN during FORMAL drains + finalizes the run first; a drain that
 # cannot finish within this bound goes fatal and the service exits anyway.
 SHUTDOWN_DRAIN_DEADLINE_S = 120.0
+# One shared budget for every FORMAL worker to stop once the drain is done.
+_FINALIZE_DRAIN_S = 5.0
+# Display-only observers: fail-soft by contract, so a straggler is logged
+# rather than fatal. Everything else is a producer or a writer, and a run
+# cannot honestly reach FINISHED while one of those is still running.
+_OBSERVER_WORKERS = ("demo-v7-composite", "demo-v7-gaussian")
 # Shape-prior warmup progress: case-dir milestone files, checked while the
 # manager status is still RUNNING (per-stage timing lands only at the end).
 _SHAPE_PRIOR_MILESTONES: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -215,6 +221,7 @@ class StagedRuntime:
         # kind -> merged paths, replayed in the hello ack so a GUI that
         # reconnects (or attaches late) still sees everything already built.
         self._artifacts_sent: dict[str, dict[str, str]] = {}
+        self._artifacts_lock = threading.Lock()
         self._last_publish_s: dict[str, float] = {}
         self._acq_thread: threading.Thread | None = None
         self._warmup_thread: threading.Thread | None = None
@@ -364,9 +371,10 @@ class StagedRuntime:
         (the warmup window, where masks/mesh/gaussian all land, is minutes
         long). The accumulated set rides the next hello ack.
         """
-        merged = dict(self._artifacts_sent.get(str(kind), {}))
-        merged.update({str(k): str(v) for k, v in paths.items()})
-        self._artifacts_sent[str(kind)] = merged
+        with self._artifacts_lock:
+            merged = dict(self._artifacts_sent.get(str(kind), {}))
+            merged.update({str(k): str(v) for k, v in paths.items()})
+            self._artifacts_sent[str(kind)] = merged
         self.control.send_event(
             {"event": protocol.EVT_ARTIFACTS, "kind": str(kind), "paths": dict(paths)}
         )
@@ -526,6 +534,8 @@ class StagedRuntime:
         self, message: dict
     ) -> tuple[dict, Callable[[], None] | None]:
         """hello -> ack with version/state/source_kind/shape_prior_backend."""
+        with self._artifacts_lock:
+            artifacts = {k: dict(v) for k, v in self._artifacts_sent.items()}
         ack = _ack(
             protocol.CMD_HELLO,
             ok=True,
@@ -535,7 +545,7 @@ class StagedRuntime:
             shape_prior_backend=self.shape_prior_backend,
             shape_prior_upscale=self.shape_prior_use_upscale,
             gaussian_backend=self.gaussian_backend,
-            artifacts={k: dict(v) for k, v in self._artifacts_sent.items()},
+            artifacts=artifacts,
         )
         return ack, None
 
@@ -726,7 +736,12 @@ class StagedRuntime:
                 error="gaussian feature is not active in this run",
             )
             return ack, None
-        if manager.busy:
+        # Claim the slot HERE, on the control thread, so the ack states what
+        # actually happened. Checking `manager.busy` and deferring the submit
+        # acked ok=true for work the deferred call could still refuse (closed
+        # manager, dead worker pipe, or a second command in the same tick),
+        # and that refusal was discarded — the GUI kept spinning forever.
+        if not manager.try_reserve():
             ack = _ack(
                 protocol.CMD_REGEN_GAUSSIAN,
                 ok=False,
@@ -736,7 +751,7 @@ class StagedRuntime:
         seed = message.get("seed")
         seed = int(seed) if seed is not None else None
         ack = _ack(protocol.CMD_REGEN_GAUSSIAN, ok=True)
-        return ack, lambda: manager.regenerate(seed)
+        return ack, lambda: manager.regenerate(seed, reserved=True)
 
     def _cmd_stop_formal(
         self, message: dict
@@ -1653,9 +1668,31 @@ class StagedRuntime:
         threads = list(formal.threads)
         if self._acq_thread is not None:
             threads.append(self._acq_thread)
+        # ONE shared drain budget, not a fresh second per thread, and then
+        # check what actually stopped: reporting FINISHED while a producer or
+        # writer is still running is the same false success the chunk-thread
+        # join used to produce. Composite/gaussian are display-only observers
+        # (fail-soft by contract) — they are logged, never fatal.
+        deadline_s = time.perf_counter() + _FINALIZE_DRAIN_S
         for thread in threads:
             if thread.is_alive():
-                thread.join(timeout=1.0)
+                thread.join(timeout=max(0.0, deadline_s - time.perf_counter()))
+        still_running = [t.name for t in threads if t.is_alive()]
+        if still_running:
+            print(
+                f"[formal-finalize] workers still running after "
+                f"{_FINALIZE_DRAIN_S:.0f}s: {still_running}",
+                flush=True,
+            )
+        critical = [n for n in still_running if n not in _OBSERVER_WORKERS]
+        if critical:
+            self.fatal.record(
+                "formal finalize",
+                RuntimeError(
+                    f"critical workers did not stop within "
+                    f"{_FINALIZE_DRAIN_S:.0f}s: {critical}"
+                ),
+            )
         self.session.release_camera()
         self.shape_prior_manager.write_profile_json()
         incomplete_error = formal.timeline_gate.incomplete_run_error()

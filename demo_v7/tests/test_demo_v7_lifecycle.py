@@ -373,6 +373,7 @@ class TestHelloArtifactSnapshot:
 
         runtime = object.__new__(StagedRuntime)
         runtime._artifacts_sent = {}
+        runtime._artifacts_lock = threading.Lock()
         runtime.control = _ControlStub()
         return runtime, proto
 

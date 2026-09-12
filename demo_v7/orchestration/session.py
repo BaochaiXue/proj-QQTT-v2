@@ -371,6 +371,7 @@ class OrchestratorSession:
         # Sockets currently being re-dialed after a mid-run disconnect
         # (guarded by _lock so each link has at most one reconnect thread).
         self._reconnecting: set[str] = set()
+        self._link_generation = {"control": 0, "frames": 0}
         self._chunk_thread: threading.Thread | None = None
         self._chunk_error: BaseException | None = None
         self._capture_finished_event = threading.Event()
@@ -592,7 +593,10 @@ class OrchestratorSession:
         (shutdown closes the clients itself and close() suppresses on_dead).
         """
         with self._lock:
-            if self._shutdown_done or which in self._reconnecting:
+            if self._shutdown_done:
+                return
+            self._link_generation[which] += 1
+            if which in self._reconnecting:
                 return
             self._reconnecting.add(which)
         threading.Thread(
@@ -610,12 +614,14 @@ class OrchestratorSession:
         never a reconnect loop) and gives up after connect_timeout_s even if
         the process lingers without re-binding its sockets.
         """
+        owns_reconnect_slot = True
         try:
             deadline = time.monotonic() + self._connect_timeout_s
             while True:
                 with self._lock:
                     if self._shutdown_done:
                         return
+                    generation = self._link_generation[which]
                 service = self._service
                 if service is None or service.poll() is not None:
                     self._note_link_error(
@@ -641,36 +647,39 @@ class OrchestratorSession:
                 except OSError:
                     time.sleep(self._connect_poll_interval_s)
                     continue
+                if which == "control":
+                    try:
+                        client.send_command({"cmd": protocol.CMD_HELLO})
+                    except (OSError, ConnectionError):
+                        client.close()
+                        time.sleep(self._connect_poll_interval_s)
+                        continue
                 old: ControlClient | FrameStreamClient | None = None
                 installed = False
                 with self._lock:
-                    if not self._shutdown_done:
+                    if (
+                        not self._shutdown_done
+                        and generation == self._link_generation[which]
+                    ):
                         installed = True
                         if which == "control":
                             old, self._control = self._control, client
                         else:
                             old, self._frames = self._frames, client
+                        # A death after this point must start a NEW worker.
+                        # Release ownership in the same lock as installation.
+                        self._reconnecting.remove(which)
+                        owns_reconnect_slot = False
                 if not installed:
                     client.close()
-                    return
+                    continue
                 if old is not None and old is not client:
-                    try:
-                        old.close()
-                    except Exception:
-                        pass
-                if isinstance(client, ControlClient):
-                    # Re-hello: the ack carries the current state, so the
-                    # session (and GUI) re-syncs after the gap. Best-effort:
-                    # a link that died again between connect and send must
-                    # not kill this reconnect thread.
-                    try:
-                        client.send_command({"cmd": protocol.CMD_HELLO})
-                    except Exception:
-                        pass
+                    old.close()
                 return
         finally:
-            with self._lock:
-                self._reconnecting.discard(which)
+            if owns_reconnect_slot:
+                with self._lock:
+                    self._reconnecting.discard(which)
 
     def _note_link_error(self, which: str, message: str) -> None:
         """Report a link whose reconnection ended as a terminal run failure."""
@@ -695,6 +704,21 @@ class OrchestratorSession:
                 callback(event)
             except Exception:
                 traceback.print_exc()
+        # Same quiesce the chunk-stream failure path performs: reporting the
+        # failure is not enough, nothing may keep producing for a run that
+        # has already failed. Without this the chunk stream waits out its
+        # shape-prior timeout for rows that can never arrive, and PhysTwin
+        # keeps its GPU until the operator happens to quit.
+        self._capture_finished_event.set()
+        if which != "control" and self.service_state == protocol.STATE_FORMAL:
+            # The control link is the one that can still carry the command;
+            # if IT is what died there is nothing to ask, and the GUI's
+            # teardown owns the process group from here.
+            try:
+                self.send_command({"cmd": protocol.CMD_STOP_FORMAL})
+            except Exception:
+                traceback.print_exc()
+        self._stop_phystwin()
 
     # -- IPC dispatch -------------------------------------------------------
 

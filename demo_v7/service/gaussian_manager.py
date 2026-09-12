@@ -215,14 +215,32 @@ class GaussianManager:
 
     # -- commands ------------------------------------------------------------
 
-    def regenerate(self, seed: int | None) -> bool:
-        """Queue one generation; False when busy/closed (caller acks that)."""
+    def try_reserve(self) -> bool:
+        """Atomically claim the single in-flight generation slot.
+
+        The control thread acks CMD_REGEN_GAUSSIAN before the main loop runs
+        the actual submit, so admission has to be decided WHERE the ack is
+        decided: two regen commands arriving inside one main-loop tick both
+        used to see ``busy == False`` and both got ok=true, and the loser's
+        later ``regenerate() -> False`` was dropped on the floor, leaving the
+        GUI spinning on work that never started.
+        """
         with self._lock:
             if self._closed or self._proc is None or self._proc.stdin is None:
                 return False
             if self._busy:
                 return False
             self._busy = True
+            return True
+
+    def regenerate(self, seed: int | None, *, reserved: bool = False) -> bool:
+        """Queue one generation; False when busy/closed (caller acks that)."""
+        if not reserved and not self.try_reserve():
+            return False
+        with self._lock:
+            if self._closed or self._proc is None or self._proc.stdin is None:
+                self._busy = False
+                return False
             if seed is None:
                 # A fresh die roll that never repeats the current seed.
                 seed = (self.seed + int(time.time())) % 1_000_000 or 1
