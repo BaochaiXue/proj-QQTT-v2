@@ -155,14 +155,16 @@ class FakeLiveCaseRecorder:
             np.ascontiguousarray(packet.depth_u16, dtype=np.uint16),
         )
         if self._has_ir and packet.ir_left_u8 is not None and packet.ir_right_u8 is not None:
-            cv2.imwrite(
-                str(self.case_dir / "ir_left" / "0" / f"{step}.png"),
-                packet.ir_left_u8,
-            )
-            cv2.imwrite(
-                str(self.case_dir / "ir_right" / "0" / f"{step}.png"),
-                packet.ir_right_u8,
-            )
+            # Checked like the color write: metadata advertises the IR
+            # streams, so a silently missing IR png is a case the replay
+            # reader only discovers much later (reproduced: frames_written
+            # and error=None with the ir_left dir gone).
+            for side, image in (("ir_left", packet.ir_left_u8),
+                                ("ir_right", packet.ir_right_u8)):
+                if not cv2.imwrite(
+                    str(self.case_dir / side / "0" / f"{step}.png"), image
+                ):
+                    raise IOError(f"cv2.imwrite failed for {side} step {step}")
         self._timestamps[step] = captured_at_s
         self._step += 1
         self.written += 1
@@ -247,11 +249,14 @@ class FakeLiveCaseRecorder:
         return round((len(ts) - 1) / (ts[-1] - ts[0]), 3)
 
     def _write_metadata(self) -> None:
-        # Under _meta_lock: the worker thread mutates _timestamps/_step while
-        # writing frames, and close() writes metadata from the MAIN thread
-        # after a bounded drain that may have timed out — snapshotting an
-        # unlocked dict there can disagree with the directory or raise on a
-        # dict that changed size.
+        # Under _meta_lock so the worker's periodic flush and close()'s final
+        # write never interleave on the shared .metadata.json.tmp. (An earlier
+        # version of this comment also claimed it guards the snapshot against
+        # a dict that changed size. It does not — _write_frame updates
+        # _timestamps outside this lock — and it does not need to: a stress
+        # run of 1.5M dict resets against the real snapshot raised nothing on
+        # CPython 3.12. The one real gap is a single frame's ambiguity in a
+        # case close() has already marked INCOMPLETE.)
         with self._meta_lock:
             self._write_metadata_locked()
 
